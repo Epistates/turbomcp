@@ -41,6 +41,48 @@ zero-boilerplate surface and strict spec compliance as a feature.
   response caching (SEP-2549), and bidirectional elicitation — each opt-in
   behind a feature flag.
 
+## How this relates to `rmcp`, the official Rust SDK
+
+[`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) is the official SDK,
+maintained in the `modelcontextprotocol` organization. It is the reasonable
+default, and this project is tested against it — cross-SDK interop tests run in
+both directions, a TurboMCP client against an rmcp server and the reverse, on
+every change.
+
+The two make a different central bet.
+
+**rmcp models the protocol once and branches where revisions differ:** one set
+of model types organized by concept, a negotiated `ProtocolVersion` string, and
+conditional checks at the points where behaviour changes. That is lighter, and
+it reaches further back — rmcp 2.2 knows five revisions (`2024-11-05`,
+`2025-03-26`, `2025-06-18`, `2025-11-25`, `2026-07-28`) where TurboMCP serves
+three. **If you need clients on `2024-11-05` or `2025-03-26`, use rmcp; this
+project cannot serve them.**
+
+**TurboMCP generates a separate wire type set per revision and converts between
+them.** Handlers speak version-neutral types; each revision's shapes are
+generated from that revision's published schema, and the conversions between
+them destructure exhaustively — so adding a field to one revision's wire is a
+compile error until someone decides what the other does with it. Fewer
+revisions, but the differences between them are checked by the compiler rather
+than by a reviewer.
+
+Beyond that, TurboMCP ships things you would otherwise write yourself:
+capabilities *derived* from the markers present (advertisement can't drift from
+implementation); per-RPC typed contexts, so calling elicitation from a
+`list_tools` handler doesn't compile; `Composite` for mounting several servers
+as one; `with_visibility` for deciding per caller which components exist;
+`tower::Layer` middleware at the frame seam; and a `no_std`, `wasm32`-portable
+foundation.
+
+Both forbid `unsafe`, both are edition 2024, both cover server and client.
+rmcp is Apache-2.0; this is MIT.
+
+**Pick rmcp** for the official implementation, the older protocol revisions, or
+the smallest dependency surface. **Pick TurboMCP** for the macro surface,
+multi-revision support the type system enforces, or the composition, visibility,
+and auth seams above.
+
 ## Quickstart
 
 ```rust

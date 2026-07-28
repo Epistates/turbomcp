@@ -11,7 +11,7 @@ use turbomcp::prelude::*;
 use turbomcp::tower::{Service, ServiceExt};
 use turbomcp::{
     Composite, CompositeServer, Implementation, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
-    LegacySessionAdapter, ProtocolVersion, VersionDispatcher,
+    LegacySessionAdapter, ProtocolVersion, ServerBuilder, VersionDispatcher, neutral,
 };
 
 #[derive(Clone)]
@@ -432,4 +432,187 @@ async fn the_composite_owns_protocol_negotiation() {
     let error = r.error.expect("an excluded revision must be refused");
     assert_eq!(error.code, -32004);
     assert_eq!(error.data.unwrap()["supported"], json!(["2025-11-25"]));
+}
+
+// ---- pagination --------------------------------------------------------------
+
+/// A hand-written server that actually paginates. Nothing `#[server]` generates
+/// does — it lists everything in one page — so a composite's cursor handling has
+/// no other way to be exercised.
+///
+/// The cursor shape is deliberately private to this server *and* tagged with its
+/// own id, so a cursor handed to the wrong mount is an error rather than a
+/// coincidence that happens to parse.
+#[derive(Clone)]
+struct Paged {
+    id: &'static str,
+    count: usize,
+}
+
+impl McpServerCore for Paged {
+    fn server_info(&self) -> Implementation {
+        Implementation::new(self.id, "1.0.0")
+    }
+}
+
+impl WithTools for Paged {
+    async fn list_tools(
+        &self,
+        _ctx: &ListToolsContext,
+        params: neutral::ListParams,
+    ) -> McpResult<neutral::ListToolsResult> {
+        let at: usize = match params.cursor.as_deref() {
+            None => 0,
+            Some(c) => c
+                .strip_prefix(self.id)
+                .and_then(|rest| rest.strip_prefix('#'))
+                .and_then(|n| n.parse().ok())
+                .ok_or_else(|| {
+                    McpError::invalid_params(format!(
+                        "{} was handed a foreign cursor: {c}",
+                        self.id
+                    ))
+                })?,
+        };
+        let mut out = neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            format!("t{at}"),
+            json!({ "type": "object" }),
+        )]);
+        if at + 1 < self.count {
+            out.next_cursor = Some(format!("{}#{}", self.id, at + 1));
+        }
+        Ok(out)
+    }
+
+    async fn call_tool(
+        &self,
+        _ctx: &CallToolContext,
+        params: neutral::CallToolParams,
+    ) -> McpResult<neutral::CallToolResult> {
+        Ok(neutral::CallToolResult::new(vec![neutral::Content::text(
+            format!("{}:{}", self.id, params.name),
+        )]))
+    }
+}
+
+fn paged(id: &'static str, count: usize) -> ServerBuilder<Paged> {
+    ServerBuilder::new(Paged { id, count }).with_tools()
+}
+
+async fn list_page(
+    svc: &mut LegacySessionAdapter<VersionDispatcher<CompositeServer>>,
+    id: i64,
+    cursor: Option<&str>,
+) -> Value {
+    let params = cursor.map_or_else(|| json!({}), |c| json!({ "cursor": c }));
+    result(
+        svc,
+        JsonRpcRequest::new(id, request::TOOLS_LIST, Some(params)),
+    )
+    .await
+}
+
+/// The whole point: paging through a composite reaches *every* tool of *every*
+/// mount, exactly once. Concatenating each mount's first page and dropping its
+/// `next_cursor` — what the composite used to do — would return three of six.
+#[tokio::test]
+async fn paging_visits_every_mounts_every_page() {
+    let mut svc = connect(
+        Composite::new(Implementation::new("gateway", "1.0.0"))
+            .mount("a", paged("a", 3))
+            .expect("mount a")
+            .mount("b", paged("b", 2))
+            .expect("mount b")
+            .mount("c", paged("c", 1))
+            .expect("mount c"),
+    )
+    .await;
+
+    let mut seen = Vec::new();
+    let mut cursor: Option<String> = None;
+    for id in 0..10 {
+        let page = list_page(&mut svc, id, cursor.as_deref()).await;
+        seen.extend(names(&page, "tools"));
+        cursor = page["nextCursor"].as_str().map(ToOwned::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    assert!(cursor.is_none(), "pagination never terminated");
+    assert_eq!(
+        seen,
+        ["a.t0", "a.t1", "a.t2", "b.t0", "b.t1", "c.t0"],
+        "every mount's every page, in mount order, each exactly once"
+    );
+}
+
+/// A mount's cursor is private to it. The composite must never hand mount `a`'s
+/// cursor to mount `b` — `Paged` rejects a foreign cursor outright, so if the
+/// composite forwarded the caller's cursor to every mount (the old behaviour)
+/// the second request would fail instead of returning a page.
+#[tokio::test]
+async fn a_mounts_cursor_never_reaches_another_mount() {
+    let mut svc = connect(
+        Composite::new(Implementation::new("gateway", "1.0.0"))
+            .mount("a", paged("a", 2))
+            .expect("mount a")
+            .mount("b", paged("b", 2))
+            .expect("mount b"),
+    )
+    .await;
+
+    let first = list_page(&mut svc, 1, None).await;
+    assert_eq!(names(&first, "tools"), ["a.t0"]);
+    let cursor = first["nextCursor"].as_str().expect("more pages").to_owned();
+
+    // A success, not `a` rejecting a cursor it didn't mint — and it *resumes*
+    // `a` at t1 rather than restarting it. `b.t0` follows in the same page
+    // because `a` is exhausted by then and a page runs on until some mount
+    // reports more.
+    let second = list_page(&mut svc, 2, Some(&cursor)).await;
+    assert_eq!(names(&second, "tools"), ["a.t1", "b.t0"]);
+}
+
+/// A cursor the composite did not mint is a client error. Silently starting over
+/// would hand back a page the caller already has, and treating it as a mount's
+/// own cursor would leak one server's private state into another's parser.
+#[tokio::test]
+async fn a_cursor_this_server_did_not_issue_is_refused() {
+    let mut svc = connect(
+        Composite::new(Implementation::new("gateway", "1.0.0"))
+            .mount("a", paged("a", 2))
+            .expect("mount a"),
+    )
+    .await;
+
+    for bogus in ["no-separator", "nosuchmount:0", "a#1"] {
+        let r = respond(
+            &mut svc,
+            JsonRpcRequest::new(1, request::TOOLS_LIST, Some(json!({ "cursor": bogus }))),
+        )
+        .await;
+        assert!(
+            r.error.is_some(),
+            "`{bogus}` should not be accepted as a cursor, got {:?}",
+            r.result
+        );
+    }
+}
+
+/// Mounts that don't paginate — every `#[server]` impl — still answer in one
+/// page with no cursor at all.
+#[tokio::test]
+async fn a_composite_of_single_page_mounts_advertises_no_cursor() {
+    let mut svc = connect(gateway()).await;
+    let page = list_page(&mut svc, 1, None).await;
+
+    assert_eq!(
+        names(&page, "tools"),
+        ["weather.forecast", "news.forecast", "health.ping"]
+    );
+    assert!(
+        page.get("nextCursor").is_none_or(Value::is_null),
+        "a single-page composite must not advertise another page: {page}"
+    );
 }

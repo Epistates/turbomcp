@@ -554,13 +554,101 @@ pre-release: test audit docs-check
   echo "Git hash: {{git_hash}}"
   echo "Pre-release checks completed"
 
-# Dry-run publish to check everything
+# The order the crates must be published in, derived from the actual dependency
+# graph rather than maintained by hand. crates.io resolves a dependency the
+# moment it is published, so a crate published before something it depends on is
+# rejected — and a release cannot be undone, only yanked, which leaves a partial
+# release permanently on the index.
+[group: 'release']
+publish-order:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cargo metadata --no-deps --format-version 1 | jq -r '
+    .packages[] | select(.publish != []) | .name as $n
+    | ([.dependencies[].name | select(startswith("turbomcp"))] | unique) as $deps
+    | if ($deps | length) == 0 then "\($n) \($n)" else ($deps[] | "\(.) \($n)") end
+  ' | tsort
+
+# Verify what can be verified before a release.
+#
+# Note what is *not* here: building each packaged tarball. Both `cargo publish
+# --dry-run` and `cargo package` resolve dependencies against crates.io, where a
+# packaged crate's path deps have become registry deps — so on the first release
+# of a version every crate but the graph roots fails, because its siblings do
+# not exist on the index yet. That is a property of publishing a workspace, not
+# something to work around, and it is precisely why `just publish` goes in
+# dependency order.
+#
+# What is checkable without resolution: the metadata crates.io requires, that
+# every crate shares one version, and the exact file list each would ship.
 [group: 'release']
 publish-check:
-  @echo "Checking publish readiness..."
-  cargo publish --dry-run -p turbomcp-macros
-  cargo publish --dry-run -p turbomcp
-  @echo "Publish check completed"
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  echo "== versions =="
+  versions=$(cargo metadata --no-deps --format-version 1 \
+    | jq -r '[.packages[] | select(.publish != []) | .version] | unique | .[]')
+  echo "$versions" | sed 's/^/  /'
+  if [ "$(echo "$versions" | wc -l | tr -d ' ')" != "1" ]; then
+    echo "  ERROR: publishable crates disagree on the version" >&2
+    exit 1
+  fi
+
+  echo
+  echo "== required metadata =="
+  missing=$(cargo metadata --no-deps --format-version 1 | jq -r '
+    .packages[] | select(.publish != [])
+    | . as $p
+    | [ (if $p.description then empty else "description" end)
+      , (if $p.license then empty else "license" end)
+      , (if $p.repository then empty else "repository" end)
+      , (if $p.readme then empty else "readme" end)
+      ] as $gaps
+    | if ($gaps | length) > 0 then "\($p.name): missing \($gaps | join(", "))" else empty end')
+  if [ -n "$missing" ]; then
+    echo "$missing" | sed 's/^/  /' >&2
+    exit 1
+  fi
+  echo "  all crates carry description, license, repository, readme"
+
+  echo
+  echo "== packaged file counts =="
+  for crate in $(just publish-order); do
+    n=$(cargo package --list -p "$crate" --allow-dirty 2>/dev/null | wc -l | tr -d ' ')
+    printf '  %-26s %s files\n' "$crate" "$n"
+  done
+
+  echo
+  echo "Publish order:"
+  just publish-order | sed 's/^/  /'
+
+# Publish every crate to crates.io in dependency order.
+#
+# Guarded because it cannot be undone. Set CONFIRM=yes to run it for real;
+# without it this prints exactly what it would do and stops.
+[group: 'release']
+publish:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  order=$(just publish-order)
+  if [ "${CONFIRM:-}" != "yes" ]; then
+    echo "Would publish {{version}} in this order:"
+    echo "$order" | sed 's/^/  /'
+    echo
+    echo "This is irreversible — crates.io allows yanking, not deletion."
+    echo "Re-run with CONFIRM=yes to publish."
+    exit 0
+  fi
+  for crate in $order; do
+    echo "==> publishing $crate"
+    cargo publish -p "$crate"
+    # crates.io indexes asynchronously; the next crate's dependency on this one
+    # is unresolvable until it lands. `cargo publish` waits for the index by
+    # default, but a short settle keeps a slow index from failing the chain.
+    sleep 15
+  done
+  echo "Published {{version}}."
 
 # =============================================================================
 # Utilities

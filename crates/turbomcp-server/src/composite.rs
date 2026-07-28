@@ -48,6 +48,16 @@
 //! composite's. Setting any of them on a mounted builder is rejected rather than
 //! ignored.
 //!
+//! # Pagination
+//!
+//! A cursor only means something to the server that minted it, so the composite
+//! mints its own — `{prefix}:{that mount's cursor}` — and hands each mount only
+//! a cursor it issued. A page walks the mounts in order and ends at the first
+//! one reporting another page of its own, so no mount's `next_cursor` is
+//! dropped and a page may span several mounts. A cursor the composite did not
+//! issue, or one naming a mount that is no longer there, is refused rather than
+//! quietly restarting from the beginning.
+//!
 //! Likewise a mount's `supported_versions()` does not narrow the composite's.
 //! Handlers are version-neutral, so a sub-server pinned to one revision is not
 //! protected by that pin once it is mounted — the composite's dispatcher owns
@@ -72,6 +82,14 @@ use crate::traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, 
 
 /// The separator between a mount's prefix and a component's own name.
 const SEP: char = '.';
+
+/// The separator inside a composite pagination cursor,
+/// `{prefix}:{the mount's own cursor}`.
+///
+/// A prefix is `[A-Za-z0-9_-]+` (see [`validate_prefix`]) so it can never
+/// contain `:`, which makes the split back to `(mount, own cursor)`
+/// unambiguous however the mount chose to encode its half.
+const CURSOR_SEP: char = ':';
 
 /// The spec's upper bound on a tool name (`server/tools`, both revisions).
 const MAX_TOOL_NAME: usize = 128;
@@ -460,6 +478,84 @@ fn qualify(prefix: &str, name: &str) -> String {
     out
 }
 
+/// Decode a cursor this composite minted into the index of the mount to resume
+/// and the cursor *that mount* issued.
+///
+/// A cursor is opaque to the client but not to us: it has to say which mount is
+/// mid-page, because a cursor only means something to the server that minted it.
+/// Handing mount A's cursor to mount B — which is what forwarding the caller's
+/// `cursor` to every mount would do — asks a server to interpret another
+/// server's private state.
+///
+/// No cursor starts at the first mount. An unparseable one, or one naming a
+/// mount that no longer exists, is a client error: cursors do not survive a
+/// change to the composite's shape, and continuing from the beginning would
+/// silently repeat a page the caller already has.
+fn resume_at(mounts: &[Mount], cursor: Option<&str>) -> McpResult<(usize, Option<String>)> {
+    let Some(cursor) = cursor else {
+        return Ok((0, None));
+    };
+    let bad = || McpError::invalid_params(format!("not a cursor this server issued: `{cursor}`"));
+    let (prefix, own) = cursor.split_once(CURSOR_SEP).ok_or_else(bad)?;
+    let at = mounts
+        .iter()
+        .position(|m| m.prefix == prefix)
+        .ok_or_else(bad)?;
+    Ok((at, (!own.is_empty()).then(|| own.to_owned())))
+}
+
+/// Wrap a mount's own cursor so the next request resumes at that mount.
+fn resume_cursor(mount: &Mount, own: &str) -> String {
+    let mut out = String::with_capacity(mount.prefix.len() + 1 + own.len());
+    out.push_str(&mount.prefix);
+    out.push(CURSOR_SEP);
+    out.push_str(own);
+    out
+}
+
+/// One page of a composed list.
+///
+/// Walks the mounts from wherever `params.cursor` left off, handing the
+/// resuming mount its own cursor and every later mount none, and **stops at the
+/// first mount that reports another page** — returning a cursor that names it.
+/// That is what keeps a mount's `next_cursor` from being dropped: the page ends
+/// where the pagination does, rather than concatenating first pages and
+/// discarding the rest.
+///
+/// `$adapt` runs per item with the owning mount in scope, and may borrow
+/// anything the caller declared before the invocation (the duplicate-URI set,
+/// for the two resource lists).
+macro_rules! page_through {
+    ($self:ident, $ctx:ident, $params:ident, $dispatch:ident, $field:ident, $result:ty,
+     |$mount:ident, $item:ident| $adapt:block) => {{
+        let mounts = &$self.inner.mounts;
+        let (start, mut own) = resume_at(mounts, $params.cursor.as_deref())?;
+        let mut items = Vec::new();
+        let mut next = None;
+        for $mount in &mounts[start..] {
+            let mut params = $params.clone();
+            // Only the mount the cursor names gets one; the rest start fresh.
+            params.cursor = own.take();
+            let Some(fut) = $mount.server.$dispatch($ctx.clone(), params) else {
+                continue;
+            };
+            let page = fut.await?;
+            #[allow(unused_mut)]
+            for mut $item in page.$field {
+                $adapt
+                items.push($item);
+            }
+            if let Some(cursor) = page.next_cursor {
+                next = Some(resume_cursor($mount, &cursor));
+                break;
+            }
+        }
+        let mut out = <$result>::new(items);
+        out.next_cursor = next;
+        Ok(out)
+    }};
+}
+
 impl McpServerCore for CompositeServer {
     fn server_info(&self) -> Implementation {
         self.inner.info.clone()
@@ -480,12 +576,14 @@ impl WithTools for CompositeServer {
         ctx: &ListToolsContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        let mut tools = Vec::new();
-        for mount in &self.inner.mounts {
-            let Some(fut) = mount.server.list_tools(ctx.clone(), params.clone()) else {
-                continue;
-            };
-            for mut tool in fut.await?.tools {
+        page_through!(
+            self,
+            ctx,
+            params,
+            list_tools,
+            tools,
+            neutral::ListToolsResult,
+            |mount, tool| {
                 tool.name = qualify(&mount.prefix, &tool.name);
                 // The spec bounds a tool name at 128 characters and clients
                 // reject or mangle what exceeds it. The macro checks the
@@ -500,10 +598,8 @@ impl WithTools for CompositeServer {
                         mount.prefix,
                     )));
                 }
-                tools.push(tool);
             }
-        }
-        Ok(neutral::ListToolsResult::new(tools))
+        )
     }
 
     async fn call_tool(
@@ -536,18 +632,18 @@ impl WithResources for CompositeServer {
         ctx: &ListResourcesContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListResourcesResult> {
-        let mut resources: Vec<neutral::Resource> = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
-        for mount in &self.inner.mounts {
-            let Some(fut) = mount.server.list_resources(ctx.clone(), params.clone()) else {
-                continue;
-            };
-            for resource in fut.await?.resources {
+        page_through!(
+            self,
+            ctx,
+            params,
+            list_resources,
+            resources,
+            neutral::ListResourcesResult,
+            |mount, resource| {
                 claim_uri(&mut seen, &resource.uri, &mount.prefix, "resource")?;
-                resources.push(resource);
             }
-        }
-        Ok(neutral::ListResourcesResult::new(resources))
+        )
     }
 
     async fn list_resource_templates(
@@ -555,21 +651,18 @@ impl WithResources for CompositeServer {
         ctx: &ListResourceTemplatesContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListResourceTemplatesResult> {
-        let mut templates: Vec<neutral::ResourceTemplate> = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
-        for mount in &self.inner.mounts {
-            let Some(fut) = mount
-                .server
-                .list_resource_templates(ctx.clone(), params.clone())
-            else {
-                continue;
-            };
-            for template in fut.await?.resource_templates {
+        page_through!(
+            self,
+            ctx,
+            params,
+            list_resource_templates,
+            resource_templates,
+            neutral::ListResourceTemplatesResult,
+            |mount, template| {
                 claim_uri(&mut seen, &template.uri_template, &mount.prefix, "template")?;
-                templates.push(template);
             }
-        }
-        Ok(neutral::ListResourceTemplatesResult::new(templates))
+        )
     }
 
     async fn read_resource(
@@ -600,17 +693,17 @@ impl WithPrompts for CompositeServer {
         ctx: &ListPromptsContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListPromptsResult> {
-        let mut prompts = Vec::new();
-        for mount in &self.inner.mounts {
-            let Some(fut) = mount.server.list_prompts(ctx.clone(), params.clone()) else {
-                continue;
-            };
-            for mut prompt in fut.await?.prompts {
+        page_through!(
+            self,
+            ctx,
+            params,
+            list_prompts,
+            prompts,
+            neutral::ListPromptsResult,
+            |mount, prompt| {
                 prompt.name = qualify(&mount.prefix, &prompt.name);
-                prompts.push(prompt);
             }
-        }
-        Ok(neutral::ListPromptsResult::new(prompts))
+        )
     }
 
     async fn get_prompt(
@@ -684,6 +777,11 @@ impl WithCompletions for CompositeServer {
 /// says which was meant, and letting the first win would silently hide the
 /// second. The `#[server]` macro rejects the same collision within one server at
 /// compile time; across mounts it can only be seen here.
+///
+/// The check is per *page*, which is every resource a mount has unless it
+/// paginates. Catching a collision between two mounts whose resources land on
+/// different pages would mean draining every mount on every request, which is
+/// the cost pagination exists to avoid.
 fn claim_uri(seen: &mut BTreeSet<String>, uri: &str, prefix: &str, what: &str) -> McpResult<()> {
     if !seen.insert(uri.to_owned()) {
         return Err(McpError::internal(format!(

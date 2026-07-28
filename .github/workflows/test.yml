@@ -88,6 +88,100 @@ jobs:
       if: always()
       run: cargo clean 2>/dev/null || true
 
+  # Everything above runs on Linux only. This job is the portability guard: MCP's
+  # default transport is stdio over a spawned child process, and the largest MCP
+  # host runs on Windows, so "it compiles on Linux" says nothing about the
+  # platform most users will actually run a server on.
+  #
+  # Deliberately leaner than the Linux job: fmt, clippy, docs and the fuzz/wasm
+  # guards are platform-independent, so re-running them here would only buy
+  # minutes on the slowest runners. What is platform-*dependent* is whether the
+  # code builds and the tests pass.
+  cross-platform:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    # turbomcp-telemetry's `otlp` feature exports over gRPC (tonic), whose build
+    # script needs protoc. The Linux jobs apt-get it; this installs the same tool
+    # on both runners.
+    - name: Install protoc
+      uses: taiki-e/install-action@v2
+      with:
+        tool: protoc
+
+    - name: Cache cargo registry & target
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-xplat-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-xplat-
+
+    # Examples are built rather than only type-checked: the `child_process`
+    # integration test execs one, and spawning a child is exactly the part of
+    # this codebase most likely to differ per platform.
+    - name: Build examples
+      run: cargo build --workspace --all-features --examples
+
+    - name: Tests
+      run: cargo test --workspace --all-features --lib --bins --tests
+
+  # `--all-features` and `--no-default-features` are both tested above, and
+  # neither says anything about the combinations in between — which is what a
+  # user actually compiles when they enable, say, `client` without `http`. A
+  # `cfg` that only lines up at the extremes is the classic way a Rust library
+  # breaks for everyone who didn't turn everything on.
+  #
+  # Scoped to the facade because that is where users choose features; depth 2
+  # because it catches every pairwise interaction at a fraction of the full
+  # powerset's cost. `--no-dev-deps` skips building the test harness for each
+  # combination — this job is asking whether the *library* configures, and dev
+  # dependencies would otherwise be rebuilt dozens of times.
+  features:
+    name: Feature combinations
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-hack
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-hack
+
+    - name: Cache cargo registry & target
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-features-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-features-
+
+    - name: Check every feature pair on the facade
+      run: cargo hack check -p turbomcp --feature-powerset --depth 2 --no-dev-deps
+
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-latest

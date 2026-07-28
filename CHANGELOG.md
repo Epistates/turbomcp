@@ -48,7 +48,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releasing it would put a version number on an API that doesn't exist. It
   ships when the extension does.
 
+### Fixed — since `4.0.0-alpha.1`
+
+- **`Composite` mishandled pagination.** A composed list forwarded the caller's
+  `cursor` to *every* mount and dropped whatever `next_cursor` each returned, so
+  a mount that paginated was truncated to its first page and one mount's opaque
+  cursor could be handed to another that had no basis to interpret it. The
+  composite now mints its own cursor (`{prefix}:{that mount's cursor}`), gives
+  each mount only a cursor it issued, and ends a page at the first mount
+  reporting more — so paging reaches every mount's every page, in order. A
+  cursor the composite did not issue is now refused rather than silently
+  restarting from the beginning.
+
+  Unreachable before now: nothing `#[server]` generates paginates, so no client
+  could hold a cursor to send back. It becomes reachable as soon as a mounted
+  server does.
+
+  One consequence worth knowing: the duplicate-resource-URI check across mounts
+  is per *page*. For non-paginating mounts — every macro-generated server —
+  that is unchanged, since their whole list is one page.
+
 ### Added
+
+- **A security policy** (`SECURITY.md`): private reporting channels, response
+  times, supported versions, and an explicit scope — including what is *not*
+  in scope, such as vulnerabilities in a server written with the SDK.
 
 - **`2025-06-18` support** — the revision v3 served and v4 had dropped. A
   client on it was previously answered `2025-11-25`, and the lifecycle spec

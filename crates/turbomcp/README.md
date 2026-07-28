@@ -51,6 +51,55 @@ zero-boilerplate surface and strict spec compliance as a feature.
   response caching (SEP-2549), and bidirectional elicitation (MRTR) — each
   opt-in behind a feature flag.
 
+## How this relates to `rmcp`, the official Rust SDK
+
+[`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) is the official SDK,
+maintained in the `modelcontextprotocol` organization. It is the reasonable
+default, and this crate is tested against it: the repo runs cross-SDK interop
+tests in both directions (a TurboMCP client against an rmcp server and the
+reverse) on every change.
+
+The two make a different central bet, and it is worth knowing which one you
+want before you pick.
+
+**rmcp models the protocol once and branches where revisions differ.** One set
+of model types organized by concept, a `ProtocolVersion` string negotiated at
+the handshake, and conditional checks at the specific points where behaviour
+changes. That is lighter, and it stretches further back: rmcp 2.2 knows five
+revisions — `2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25`, and
+`2026-07-28` — where TurboMCP serves three. **If you need to talk to clients on
+`2024-11-05` or `2025-03-26`, use rmcp; this crate cannot.**
+
+**TurboMCP generates a separate wire type set per revision and converts between
+them.** Handlers speak version-neutral types; each revision's shapes are
+generated from that revision's published schema, and the conversions between
+them destructure exhaustively. Adding a field to one revision's wire is a
+compile error until someone decides what the other revision does with it. The
+cost is the three revisions above; the benefit is that "which fields does
+`2025-06-18` not have?" is answered by the compiler rather than by a reviewer.
+
+Beyond that, TurboMCP ships some things you would otherwise build yourself:
+
+- **Capabilities derived from the code.** Writing a `#[resource]` is what
+  advertises the `resources` capability. There is no capabilities builder, so
+  advertisement cannot drift from implementation.
+- **Per-RPC typed contexts.** `ctx.client` — elicitation and sampling — exists
+  only on the three contexts where the protocol permits it, so calling it from
+  a `list_tools` handler doesn't compile rather than failing at runtime.
+- **Composition and visibility.** `Composite` mounts several servers as one;
+  `with_visibility` decides per caller which components exist at all.
+- **A `no_std` foundation.** The core, codec, and protocol crates are
+  `wasm32`-portable, guarded in CI.
+- **Middleware as `tower::Layer`** at the frame seam, rather than a hook list.
+
+Both crates forbid `unsafe`, both are edition 2024, both cover server and
+client. rmcp is Apache-2.0; this is MIT.
+
+**Pick rmcp** if you want the official implementation, need the older protocol
+revisions, or want the smallest dependency surface. **Pick TurboMCP** if you
+want the macro surface, multi-revision support that the type system enforces,
+or the composition/visibility/auth seams above.
+
 ## Quickstart
 
 ```rust

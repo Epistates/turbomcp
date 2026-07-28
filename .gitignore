@@ -125,6 +125,7 @@ benchmark_results.md
 *.md
 !README.md
 !CHANGELOG.md
+!SECURITY.md
 !docs/**/*.md
 !**/MIGRATION.md
 
