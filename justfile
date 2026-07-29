@@ -330,6 +330,38 @@ audit:
     echo "cargo-audit not installed. Install with: cargo install cargo-audit"
   fi
 
+# Fuzz every untrusted-input decoder briefly (needs nightly + cargo-fuzz)
+[group: 'security']
+fuzz secs='30':
+  #!/usr/bin/env bash
+  set -euo pipefail
+  # The bounded regression run that used to be a CI job: each target must build
+  # under the sanitizer and survive `secs` without a crash. A guard, not a
+  # campaign — see `fuzz-long`. Setup:
+  #   rustup toolchain install nightly && cargo install cargo-fuzz
+  #
+  # cargo-fuzz defaults --target to the triple it was itself compiled for, which
+  # for the prebuilt musl binary means building targets for musl, where ASan is
+  # unsupported. Pin to the actual host triple.
+  host="$(rustc +nightly -vV | sed -n 's/^host: //p')"
+  cd fuzz
+  for target in codec_decode mcp_header_codec uri_template sonic_decode; do
+    echo "==> fuzzing $target for {{secs}}s"
+    cargo +nightly fuzz run "$target" --target "$host" -- \
+      -max_total_time={{secs}} -rss_limit_mb=4096
+  done
+  echo "All fuzz targets survived {{secs}}s each."
+
+# A real campaign against one target. `just fuzz-long codec_decode 3600`.
+[group: 'security']
+fuzz-long target secs='3600':
+  #!/usr/bin/env bash
+  set -euo pipefail
+  host="$(rustc +nightly -vV | sed -n 's/^host: //p')"
+  cd fuzz
+  cargo +nightly fuzz run "{{target}}" --target "$host" -- \
+    -max_total_time={{secs}} -rss_limit_mb=4096
+
 # Comprehensive security analysis
 [group: 'security']
 security: audit
@@ -357,17 +389,29 @@ docs-check: test-docs
   @echo "Checking documentation..."
   cargo doc --workspace --no-deps --document-private-items
 
-# Build docs exactly as docs.rs does — nightly + `--cfg docsrs`, so the
-# `doc(cfg(feature = ...))` labels compile — and fail on any rustdoc warning.
-# This is the CI `Rustdoc (docs.rs config)` job; needs a nightly toolchain.
-# turbomcp-protocol is exempt: its @generated types embed the spec's prose,
-# which rustdoc misreads as code (same reason it opts out of doctests).
+# Build docs exactly as docs.rs does, failing on any warning (needs nightly)
 [group: 'docs']
 docs-rs:
-  @echo "Building docs in the docs.rs configuration..."
+  #!/usr/bin/env bash
+  set -euo pipefail
+  # nightly + `--cfg docsrs` so the `doc(cfg(feature = ...))` labels compile.
+  #
+  # This is the ONLY enforcement of rustdoc correctness — there is no CI job,
+  # because docs.rs's configuration needs nightly and CI is stable-only. A broken
+  # doc build is invisible until it renders wrong on docs.rs, so `just test` runs
+  # this as its last step.
+  #
+  # turbomcp-protocol is exempt: its @generated types embed the spec's prose,
+  # which rustdoc misreads as code (same reason it opts out of doctests).
+  if ! rustup toolchain list | grep -q '^nightly'; then
+    echo "error: this check needs a nightly toolchain (docs.rs builds on one)." >&2
+    echo "       rustup toolchain install nightly" >&2
+    exit 1
+  fi
+  echo "Building docs in the docs.rs configuration..."
   RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc \
     --workspace --all-features --no-deps --exclude turbomcp-protocol
-  @echo "Rustdoc clean"
+  echo "Rustdoc clean"
 
 # =============================================================================
 # Coverage
@@ -556,37 +600,36 @@ pre-release: test audit docs-check
   echo "Git hash: {{git_hash}}"
   echo "Pre-release checks completed"
 
-# The order the crates must be published in, derived from the actual dependency
-# graph rather than maintained by hand. crates.io resolves a dependency the
-# moment it is published, so a crate published before something it depends on is
-# rejected — and a release cannot be undone, only yanked, which leaves a partial
-# release permanently on the index.
+# Print the order the crates must be published in
 [group: 'release']
 publish-order:
   #!/usr/bin/env bash
   set -euo pipefail
+  # Derived from the real dependency graph rather than a hand-kept list.
+  # crates.io resolves a dependency the moment it is published, so a crate
+  # published before something it depends on is rejected — and a release cannot
+  # be undone, only yanked, which leaves a partial release on the index forever.
   cargo metadata --no-deps --format-version 1 | jq -r '
     .packages[] | select(.publish != []) | .name as $n
     | ([.dependencies[].name | select(startswith("turbomcp"))] | unique) as $deps
     | if ($deps | length) == 0 then "\($n) \($n)" else ($deps[] | "\(.) \($n)") end
   ' | tsort
 
-# Verify what can be verified before a release.
-#
-# Note what is *not* here: building each packaged tarball. Both `cargo publish
-# --dry-run` and `cargo package` resolve dependencies against crates.io, where a
-# packaged crate's path deps have become registry deps — so on the first release
-# of a version every crate but the graph roots fails, because its siblings do
-# not exist on the index yet. That is a property of publishing a workspace, not
-# something to work around, and it is precisely why `just publish` goes in
-# dependency order.
-#
-# What is checkable without resolution: the metadata crates.io requires, that
-# every crate shares one version, and the exact file list each would ship.
+# Check version consistency, crates.io metadata, and packaged file lists
 [group: 'release']
 publish-check:
   #!/usr/bin/env bash
   set -euo pipefail
+  # Note what is *not* here: building each packaged tarball. Both `cargo publish
+  # --dry-run` and `cargo package` resolve dependencies against crates.io, where
+  # a packaged crate's path deps have become registry deps — so on the first
+  # release of a version every crate but the graph roots fails, because its
+  # siblings do not exist on the index yet. That is a property of publishing a
+  # workspace, not something to work around, and it is exactly why `just
+  # publish` goes in dependency order.
+  #
+  # What is checkable without resolution: one shared version, the metadata
+  # crates.io requires, and the file list each crate would ship.
 
   echo "== versions =="
   versions=$(cargo metadata --no-deps --format-version 1 \
@@ -625,14 +668,12 @@ publish-check:
   echo "Publish order:"
   just publish-order | sed 's/^/  /'
 
-# Publish every crate to crates.io in dependency order.
-#
-# Guarded because it cannot be undone. Set CONFIRM=yes to run it for real;
-# without it this prints exactly what it would do and stops.
+# Publish every crate to crates.io in dependency order (needs CONFIRM=yes)
 [group: 'release']
 publish:
   #!/usr/bin/env bash
   set -euo pipefail
+  # Guarded because it cannot be undone: crates.io allows yanking, not deletion.
   order=$(just publish-order)
   if [ "${CONFIRM:-}" != "yes" ]; then
     echo "Would publish {{version}} in this order:"

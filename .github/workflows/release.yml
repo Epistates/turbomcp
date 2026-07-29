@@ -1,0 +1,140 @@
+name: Release
+
+# Publishing is irreversible — crates.io allows yanking, not deletion, and a
+# half-published workspace stays on the index forever. So this runs only from a
+# tag someone pushed deliberately, verifies the tag agrees with the manifests
+# before touching the network, and publishes in dependency order.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'   # -alpha.N, -beta.N, -rc.N
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_NET_RETRY: 2
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # Gate the release on the same checks `main` gets. The tag might not be on a
+  # commit CI has already seen — and even if it is, a release is the one moment
+  # where re-running is cheaper than being wrong.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+        sudo rm -rf /usr/local/.ghcup /usr/local/lib/android
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    # The tag is the claim; the manifests are the fact. Publishing a `v4.0.1`
+    # tag from a tree that says `4.0.0` would put the wrong version on crates.io
+    # under the right-looking release, so fail before anything is uploaded.
+    - name: Tag must match the workspace version
+      id: version
+      run: |
+        set -euo pipefail
+        tag="${GITHUB_REF_NAME#v}"
+        versions=$(cargo metadata --no-deps --format-version 1 \
+          | jq -r '[.packages[] | select(.publish != []) | .version] | unique | .[]')
+        if [ "$(echo "$versions" | wc -l | tr -d ' ')" != "1" ]; then
+          echo "::error::publishable crates disagree on the version:"
+          echo "$versions"
+          exit 1
+        fi
+        if [ "$versions" != "$tag" ]; then
+          echo "::error::tag is v$tag but the manifests say $versions"
+          exit 1
+        fi
+        echo "version=$tag" >> "$GITHUB_OUTPUT"
+        echo "Releasing $tag"
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+    - name: Tests
+      run: cargo test --workspace --all-features
+
+    - name: Release-readiness checks
+      uses: taiki-e/install-action@v2
+      with:
+        tool: just
+    - run: just publish-check
+
+  publish:
+    name: Publish to crates.io
+    needs: verify
+    runs-on: ubuntu-latest
+    # A release should be visible as one, and a protected environment is where a
+    # required reviewer or a secret scope can be attached without editing this
+    # file. Remove the `environment:` line if you have not created it.
+    environment: crates-io
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install just
+      uses: taiki-e/install-action@v2
+      with:
+        tool: just
+
+    # `just publish` walks `just publish-order`, which derives the topological
+    # order from the actual dependency graph rather than a hand-kept list, and
+    # waits between crates because crates.io indexes asynchronously. CONFIRM is
+    # the guard that keeps a stray local invocation from publishing.
+    - name: Publish in dependency order
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        CONFIRM: 'yes'
+      run: just publish
+
+  github-release:
+    name: GitHub release
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v6
+
+    # A prerelease tag (-alpha/-beta/-rc) is marked as such so it does not
+    # become the repository's "latest release".
+    - name: Create the release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ needs.verify.outputs.version }}
+      run: |
+        set -euo pipefail
+        prerelease=""
+        case "$VERSION" in
+          *-*) prerelease="--prerelease" ;;
+        esac
+        gh release create "$GITHUB_REF_NAME" \
+          --title "v$VERSION" \
+          --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md)." \
+          $prerelease

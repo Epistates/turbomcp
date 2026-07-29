@@ -151,9 +151,10 @@ Compliance is tested, not asserted:
   response caching, auth negative paths, client failure semantics against
   misbehaving servers, and byte-level codec interchangeability
   (serde_json ↔ sonic-rs).
-- **Fuzzing + supply chain** — cargo-fuzz targets (codec decode, header
-  sentinel, URI templates) and `cargo-deny`
-  (advisories/bans/licenses/sources) run in CI.
+- **Fuzzing + supply chain** — cargo-fuzz targets for every untrusted-input
+  decoder (JSON-RPC codec, `Mcp-Param` header sentinel, URI templates, and a
+  sonic-vs-serde differential), run out of band via `just fuzz`; `cargo-deny`
+  (advisories/bans/licenses/sources) runs in CI on every push.
 - **wasm-portable foundation** — `turbomcp-core`/`-codec`/`-protocol` build
   `no_std` for `wasm32-unknown-unknown` on every gate run.
 

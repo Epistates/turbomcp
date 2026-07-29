@@ -72,7 +72,10 @@ Stated so you know what to hold us to, not as a guarantee:
 - **`#![forbid(unsafe_code)]` in every published crate.** There is no `unsafe`
   block to audit, and adding one is a compile error rather than a review
   question.
-- **Continuous fuzzing** of the untrusted-input decoders, on every push.
+- **Fuzz targets for every untrusted-input decoder** — the JSON-RPC codec, the
+  `Mcp-Param` header codec, URI-template matching, and a sonic-vs-serde
+  differential. Run out of band (`just fuzz`, `just fuzz-long <target>`) rather
+  than on every push.
 - **`cargo-deny`** on every push for RUSTSEC advisories, license policy, and
   source provenance.
 - **A conformance suite** run against the official MCP conformance harness, and

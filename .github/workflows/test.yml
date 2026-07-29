@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main, v4-rewrite ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, v4-rewrite ]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -93,10 +93,10 @@ jobs:
   # host runs on Windows, so "it compiles on Linux" says nothing about the
   # platform most users will actually run a server on.
   #
-  # Deliberately leaner than the Linux job: fmt, clippy, docs and the fuzz/wasm
-  # guards are platform-independent, so re-running them here would only buy
-  # minutes on the slowest runners. What is platform-*dependent* is whether the
-  # code builds and the tests pass.
+  # Deliberately leaner than the Linux job: fmt, clippy and the wasm guard are
+  # platform-independent, so re-running them here would only buy minutes on the
+  # slowest runners. What is platform-*dependent* is whether the code builds and
+  # the tests pass.
   cross-platform:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -233,42 +233,6 @@ jobs:
       with:
         command: check advisories bans licenses sources
 
-  fuzz-smoke:
-    name: Fuzz (smoke)
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-    - name: Install nightly + cargo-fuzz
-      uses: dtolnay/rust-toolchain@nightly
-    - name: Install cargo-fuzz
-      uses: taiki-e/install-action@v2
-      with:
-        tool: cargo-fuzz
-
-    # Short deterministic runs (not a soak): each target must build under the
-    # sanitizer and survive a bounded run without a crash. Catches regressions
-    # in the untrusted-input decoders (wire codec, Mcp-Param header sentinel,
-    # URI-template matcher, and the sonic-vs-serde differential) on every
-    # push. Longer campaigns run out of band.
-    # The prebuilt cargo-fuzz binary is musl-linked, and cargo-fuzz defaults
-    # --target to the triple *it* was compiled for — building the fuzz targets
-    # for musl, where ASan is unsupported (statically linked libc). Pin the
-    # build to the actual host triple.
-    - name: Fuzz each target briefly
-      working-directory: fuzz
-      run: |
-        HOST_TARGET="$(rustc +nightly -vV | sed -n 's/^host: //p')"
-        for target in codec_decode mcp_header_codec uri_template sonic_decode; do
-          echo "::group::fuzz $target"
-          cargo +nightly fuzz run "$target" --target "$HOST_TARGET" -- -max_total_time=30 -rss_limit_mb=4096
-          echo "::endgroup::"
-        done
-
   wasm:
     name: WASM
     runs-on: ubuntu-latest
@@ -388,42 +352,6 @@ jobs:
         fail_ci_if_error: false
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  docs:
-    name: Rustdoc (docs.rs config)
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-    # docs.rs builds on nightly with `--cfg docsrs`; so does this. That is what
-    # makes `#![cfg_attr(docsrs, feature(doc_cfg))]` and the per-item
-    # `doc(cfg(feature = …))` labels compile, so a stale or malformed label
-    # fails here rather than silently rendering wrong on docs.rs.
-    - name: Install nightly
-      uses: dtolnay/rust-toolchain@nightly
-
-    - name: Cache cargo registry
-      uses: actions/cache@v5
-      with:
-        path: |
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: ${{ runner.os }}-cargo-docs-
-
-    # Broken intra-doc links are invisible until someone reads docs.rs, so any
-    # rustdoc diagnostic is a failure. turbomcp-protocol is exempt for the same
-    # reason it opts out of doctests: its @generated types embed the spec's
-    # prose, which rustdoc misreads as code.
-    - name: Build docs
-      env:
-        RUSTDOCFLAGS: --cfg docsrs -D warnings
-      run: cargo doc --workspace --all-features --no-deps --exclude turbomcp-protocol
 
   semver:
     name: SemVer (public API)

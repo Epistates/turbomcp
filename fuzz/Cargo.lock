@@ -1219,6 +1219,7 @@ name = "turbomcp-service"
 version = "4.0.0-alpha.1"
 dependencies = [
  "base64",
+ "futures",
  "governor",
  "serde_json",
  "thiserror",
