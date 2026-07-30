@@ -12,9 +12,9 @@ zero-boilerplate surface and strict spec compliance as a feature.
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
 > MSRV 1.88. It passes the official MCP conformance suite (43/43) and
 > interoperates with the official Rust SDK in both directions. The draft
-> protocol revision it speaks (`2026-07-28`) tracks the pre-freeze spec and
-> may shift at the ~2026-07-28 freeze; `2025-06-18` and `2025-11-25` support
-> is stable.
+> protocol revision it speaks (`2026-07-28`) is synced to the upstream
+> `2026-07-28-RC` tag, and an RC is not a freeze — draft wire details may still
+> move. `2025-06-18` and `2025-11-25` support is stable.
 > **Found something broken or unergonomic? Please open an issue.**
 
 ## What you get

@@ -9,8 +9,9 @@ zero-boilerplate surface and strict spec compliance as a feature.
 > `3.x`. Edition 2024, MSRV 1.88. Passes the official MCP conformance suite
 > with zero failures and interoperates with the official Rust SDK (rmcp 2.x)
 > in both directions, verified in-repo. The draft protocol revision
-> (`2026-07-28`) tracks the pre-freeze spec; `2025-06-18` and `2025-11-25`
-> support is stable.
+> (`2026-07-28`) is synced to the upstream `2026-07-28-RC` tag, and an RC is
+> not a freeze — draft wire details may still move. `2025-06-18` and
+> `2025-11-25` support is stable.
 
 ## What you get
 

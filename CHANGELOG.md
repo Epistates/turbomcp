@@ -7,7 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed — breaking (since `4.0.0-alpha.1`)
+## [4.0.0-alpha.1] - 2026-07-30
+
+**v4 is a ground-up rewrite of TurboMCP**, shipped as the same `turbomcp` crate
+at a new major version, and this is its **first published release** — a
+prerelease for community testing, so the API can still change before `4.0.0`.
+v4 is now the `main` line; the stable `3.x` line lives on branch `v3.x`.
+Edition 2024, MSRV 1.88.
+
+> **Draft-protocol caveat:** alongside stable `2025-06-18` and `2025-11-25`,
+> this alpha speaks the MCP **draft** revision (wire string `2026-07-28`,
+> exposed as the slip-proof `ProtocolVersion::Draft` channel) as synced to the
+> upstream `2026-07-28-RC` tag. An RC is not a freeze: if the spec moves before
+> it freezes, draft wire details may change. The dated re-pin — a frozen
+> `V2026_07_28` variant — lands in the release that follows the freeze.
+
+### Highlights
+
+- **One macro defines a server.** `#[server]` + `#[tool]` / `#[resource]`
+  (fixed or RFC 6570 templated URIs) / `#[prompt]` / `#[completion]`. JSON
+  schemas are generated from signatures at compile time; advertised
+  capabilities are *derived* from the markers present, so they cannot drift.
+  `Json<T>` returns produce `structuredContent` plus a generated
+  `outputSchema`; `Image` / `Audio` returns produce media content blocks.
+- **Three protocol revisions, one handler.** The same server answers
+  `2025-06-18`, `2025-11-25`, and the `2026-07-28` draft. Handlers speak
+  version-neutral types (`turbomcp::neutral`); each revision's wire types are
+  generated from its own published schema and the conversions between them
+  destructure exhaustively, so a field added to one revision is a compile error
+  until someone decides what the others do with it.
+- **Transports:** stdio (always linked), Streamable HTTP on axum 0.8 (per-POST
+  SSE upgrade, sessions + DELETE termination, Origin/Host DNS-rebinding
+  guards, trusted-proxy `X-Forwarded-For`), and WebSocket with the same
+  production guards (`WsConfig`: Origin policy, bearer auth via the shared
+  `HttpAuthenticator` seam, message-size caps, keepalive pings + idle-peer
+  reaping) — `run_stdio()` / `run_http(addr, cfg)` / `ws::serve_websocket`.
+  The `Transport` trait documents the seven-invariant parity contract every
+  transport upholds.
+- **A typed client** (`feature = "client"`): handshake + version negotiation
+  (`ConnectMode`), the server-turn loop for elicitation/sampling, an HTTP
+  transport, and a task-aware `call_tool` that transparently drives
+  `resultType: "task"` answers to completion (with `task_get` / `task_update`
+  / `task_cancel` escape hatches).
+- **Servers compose, and can be hidden per caller.** `Composite` mounts several
+  servers as one — tools and prompts namespaced `{prefix}.{name}`, resource URIs
+  untouched, capabilities still derived. `with_visibility(…)` decides per caller
+  which components exist at all, by tag, by declared scopes, or by any closure;
+  hidden means *unreachable*, refused exactly as something that never existed.
+- **Middleware is `tower`.** The dispatcher *is* a
+  `tower::Service<JsonRpcMessage>`, so cross-cutting concerns are ordinary
+  `Layer`s — one `call` for every method under every transport.
+- **Tasks, both generations:** core Tasks on `2025-11-25`
+  (`ServerBuilder::with_tasks()`, per-tool `#[tool(task)]`) and the draft
+  Tasks extension (`feature = "ext-tasks"`, SEP-2663 **Final**) including
+  in-execution `input_required` — a running tool can elicit through
+  `ctx.client` and receive the answer via `tasks/update`.
+- **Enterprise seams:** OAuth 2.1 resource-server auth (JWKS bearer
+  validation, RFC 8707 `aud` binding, RFC 9728 metadata, per-tool
+  `#[tool(scopes(…))]`), a full OAuth 2.1 **client** flow
+  (`feature = "client-oauth"`: auth-code + PKCE, RFC 8414/OIDC discovery,
+  RFC 7591 registration + CIMD, RFC 8707 `resource` binding, RFC 9207 `iss`
+  validation, issuer-keyed credential store), identity-keyed rate limiting,
+  OpenTelemetry tracing **and metrics** (request count / duration / in-flight,
+  W3C `_meta` propagation, PII-safe labels), pluggable session and task
+  storage (`SessionBackend` / `TaskBackend` — in-memory bundled, Redis-shaped
+  seam for multi-instance deployments), session idle timeout and termination.
+- **Bidirectional + realtime:** `subscriptions/listen` (draft) and legacy
+  resource subscriptions, elicitation (MRTR request-state model + legacy
+  inline), sampling, roots, progress, and logging.
+- **`no_std` foundation:** `turbomcp-core` / `-codec` / `-protocol` build for
+  `wasm32-unknown-unknown`, guarded on every CI run.
+- **Verified:** official `@modelcontextprotocol/conformance` suite — 47
+  checks, 43 pass, 0 fail (4 info); cross-SDK interop with the official Rust
+  SDK (rmcp) in both directions; ~90% line coverage against an 85% CI floor;
+  every facade feature *pair* compiled in CI; Linux, macOS, and Windows;
+  `cargo-deny` supply-chain checks on every push; and cargo-fuzz targets for
+  each untrusted-input decoder, run out of band via `just fuzz`.
+
+### Compatibility
+
+- The macro surface is intentionally source-compatible with v3 for the common
+  case; see `crates/turbomcp/MIGRATION.md` for the deltas (error constructors,
+  per-RPC contexts, derived capabilities, Tasks split).
+- Not ported from v3: the TCP and Unix-socket transports (dropped as non-spec —
+  use stdio for local IPC, HTTP/WebSocket for network access), gRPC, and DPoP.
+  Server composition and visibility, dropped in early v4, are back — as
+  `Composite` and `with_visibility` above.
+
+### Detailed changes since the 2026-07-16 preview
+
+The sections below track development against an internal `4.0.0-alpha.1`
+snapshot dated 2026-07-16 that was prepared but never published. They are
+recorded here because they explain *why* the shipped API looks as it does;
+nothing in them is a break against any released version.
+
+### Changed — breaking (against the 2026-07-16 preview)
 
 - **`2025-06-18` is now served, so `ProtocolVersion::SUPPORTED` has three
   entries** (`["2025-06-18", "2025-11-25", "2026-07-28"]`, chronological). A
@@ -48,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releasing it would put a version number on an API that doesn't exist. It
   ships when the extension does.
 
-### Fixed — since `4.0.0-alpha.1`
+### Fixed — against the 2026-07-16 preview
 
 - **`Composite` mishandled pagination.** A composed list forwarded the caller's
   `cursor` to *every* mount and dropped whatever `next_cursor` each returned, so
@@ -491,82 +585,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `POST`/`GET`.
 - The `Transport` parity-contract doc spells out the trusted-channel posture
   and the inbound frame-size cap.
-
-## [4.0.0-alpha.1] - 2026-07-16
-
-**v4 is a ground-up rewrite of TurboMCP**, shipped as the same `turbomcp` crate
-at a new major version. This is a **prerelease for community testing** — the
-API can still change before `4.0.0`. The stable line remains `3.x` (branch
-`main`); v4 lives on `v4-rewrite`. Edition 2024, MSRV 1.88.
-
-> **Draft-protocol caveat:** alongside stable `2025-11-25`, this alpha speaks
-> the MCP **draft** revision (wire string `2026-07-28`, exposed as the
-> `ProtocolVersion::Draft` channel) as of spec commit `26897cc3` — the freeze
-> candidate. If the spec moves before its ~2026-07-28 freeze, draft wire
-> details may change; the dated re-pin (a frozen `V2026_07_28` variant) lands
-> in the next prerelease.
-
-### Highlights
-
-- **One macro defines a server.** `#[server]` + `#[tool]` / `#[resource]`
-  (fixed or RFC 6570 templated URIs) / `#[prompt]` / `#[completion]`. JSON
-  schemas are generated from signatures at compile time; advertised
-  capabilities are *derived* from the markers present, so they cannot drift.
-  `Json<T>` returns produce `structuredContent` plus a generated
-  `outputSchema`; `Image` / `Audio` returns produce media content blocks.
-- **Two protocol versions, one handler.** The same server answers `2025-11-25`
-  and the `2026-07-28` draft. Handlers speak version-neutral types
-  (`turbomcp::neutral`); wire shapes are conversions at the edges — including
-  the draft's Streamable HTTP request-metadata headers (`MCP-Protocol-Version`
-  mirror, `Mcp-Method` / `Mcp-Name` / `Mcp-Param-*` validation) and
-  result-`_meta` `serverInfo`.
-- **Transports:** stdio (always linked), Streamable HTTP on axum 0.8 (per-POST
-  SSE upgrade, sessions + DELETE termination, Origin/Host DNS-rebinding
-  guards, trusted-proxy `X-Forwarded-For`), and WebSocket with the same
-  production guards (`WsConfig`: Origin policy, bearer auth via the shared
-  `HttpAuthenticator` seam, message-size caps, keepalive pings + idle-peer
-  reaping) — `run_stdio()` / `run_http(addr, cfg)` / `ws::serve_websocket`.
-  The `Transport` trait documents the seven-invariant parity contract every
-  transport upholds.
-- **A typed client** (`feature = "client"`): handshake + version negotiation
-  (`ConnectMode`), the server-turn loop for elicitation/sampling, an HTTP
-  transport, and a task-aware `call_tool` that transparently drives
-  `resultType: "task"` answers to completion (with `task_get` / `task_update`
-  / `task_cancel` escape hatches).
-- **Tasks, both generations:** core Tasks on `2025-11-25`
-  (`ServerBuilder::with_tasks()`, per-tool `#[tool(task)]`) and the draft
-  Tasks extension (`feature = "ext-tasks"`, SEP-2663 **Final**) including
-  in-execution `input_required` — a running tool can elicit through
-  `ctx.client` and receive the answer via `tasks/update`.
-- **Enterprise seams:** OAuth 2.1 resource-server auth (JWKS bearer
-  validation, RFC 8707 `aud` binding, RFC 9728 metadata, per-tool
-  `#[tool(scopes(…))]`), a full OAuth 2.1 **client** flow
-  (`feature = "client-oauth"`: auth-code + PKCE, RFC 8414/OIDC discovery,
-  RFC 7591 registration + CIMD, RFC 8707 `resource` binding, RFC 9207 `iss`
-  validation, issuer-keyed credential store), identity-keyed rate limiting,
-  OpenTelemetry tracing **and metrics** (request count / duration / in-flight,
-  W3C `_meta` propagation, PII-safe labels), pluggable session and task
-  storage (`SessionBackend` / `TaskBackend` — in-memory bundled, Redis-shaped
-  seam for multi-instance deployments), session idle timeout and termination.
-- **Bidirectional + realtime:** `subscriptions/listen` (draft) and legacy
-  resource subscriptions, elicitation (MRTR request-state model + legacy
-  inline), sampling, roots, progress, and logging.
-- **`no_std` foundation:** `turbomcp-core` / `-codec` / `-protocol` build for
-  `wasm32-unknown-unknown`.
-- **Verified:** official `@modelcontextprotocol/conformance` suite — 47
-  checks, 43 pass, 0 fail (4 info); cross-SDK interop with the official Rust
-  SDK (rmcp) in both directions; fuzzed untrusted-input decoders (wire codec,
-  `Mcp-Param-*` header sentinel, URI-template matcher) and `cargo-deny`
-  supply-chain checks, both in CI.
-
-### Compatibility
-
-- The macro surface is intentionally source-compatible with v3 for the common
-  case; see `crates/turbomcp/MIGRATION.md` for the deltas (error constructors,
-  per-RPC contexts, derived capabilities, Tasks split).
-- Not ported from v3: server composition (`CompositeHandler`), visibility
-  layers, and the TCP/Unix-socket transports (dropped as non-spec — use stdio
-  for local IPC, HTTP/WebSocket for network access).
 
 ## [3.1.5] - 2026-05-11
 
