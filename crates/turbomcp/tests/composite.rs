@@ -96,7 +96,13 @@ async fn connect(composite: Composite) -> LegacySessionAdapter<VersionDispatcher
         ),
     )
     .await;
-    assert_eq!(init["serverInfo"]["name"], json!("gateway"));
+    // The composite owns identity — a client never sees a mounted server's name,
+    // whichever composite this is.
+    let served = init["serverInfo"]["name"].as_str().unwrap_or_default();
+    assert!(
+        !served.is_empty() && !["weather", "news", "health", "notes", "graph"].contains(&served),
+        "the client must see the composite's own name, got {served:?}"
+    );
     svc
 }
 
@@ -615,4 +621,218 @@ async fn a_composite_of_single_page_mounts_advertises_no_cursor() {
         page.get("nextCursor").is_none_or(Value::is_null),
         "a single-page composite must not advertise another page: {page}"
     );
+}
+
+// ---- flat mounts -------------------------------------------------------------
+
+/// Two servers that would be split out of one monolith: distinct tools, distinct
+/// resource URIs, distinct prompts — the case flat mounting exists for.
+#[derive(Clone)]
+struct Notes;
+
+#[server(name = "notes", version = "1.0.0")]
+impl Notes {
+    #[tool(description = "Read a note")]
+    async fn read_note(&self, id: String) -> String {
+        format!("note {id}")
+    }
+
+    #[prompt(description = "Summarize a note")]
+    async fn summarize(&self, id: String) -> String {
+        format!("Summarize note {id}")
+    }
+}
+
+#[derive(Clone)]
+struct Graph;
+
+#[server(name = "graph", version = "1.0.0")]
+impl Graph {
+    #[tool(description = "Find backlinks")]
+    async fn backlinks(&self, id: String) -> String {
+        format!("links to {id}")
+    }
+}
+
+/// Deliberately collides with `Notes::read_note`.
+#[derive(Clone)]
+struct Shadow;
+
+#[server(name = "shadow", version = "1.0.0")]
+impl Shadow {
+    #[tool(description = "Also read a note")]
+    async fn read_note(&self, id: String) -> String {
+        format!("shadowed {id}")
+    }
+}
+
+/// The whole point: names survive the composite unchanged, so decomposing a
+/// server into several is not a breaking change for anything calling it.
+#[tokio::test]
+async fn flat_mounts_do_not_rename_anything() {
+    let mut svc = connect(
+        Composite::new(Implementation::new("vault", "1.0.0"))
+            .mount_flat(Notes.into_server())
+            .expect("mount notes")
+            .mount_flat(Graph.into_server())
+            .expect("mount graph"),
+    )
+    .await;
+
+    let tools = result(
+        &mut svc,
+        JsonRpcRequest::new(2, request::TOOLS_LIST, Some(json!({}))),
+    )
+    .await;
+    assert_eq!(names(&tools, "tools"), ["read_note", "backlinks"]);
+
+    let prompts = result(
+        &mut svc,
+        JsonRpcRequest::new(3, request::PROMPTS_LIST, Some(json!({}))),
+    )
+    .await;
+    assert_eq!(names(&prompts, "prompts"), ["summarize"]);
+
+    // And each unprefixed name reaches the server that actually owns it.
+    for (tool, arg, expected) in [
+        ("read_note", "a", "note a"),
+        ("backlinks", "b", "links to b"),
+    ] {
+        let called = result(
+            &mut svc,
+            JsonRpcRequest::new(
+                4,
+                request::TOOLS_CALL,
+                Some(json!({ "name": tool, "arguments": { "id": arg } })),
+            ),
+        )
+        .await;
+        assert_eq!(text(&called), expected);
+    }
+
+    let got = result(
+        &mut svc,
+        JsonRpcRequest::new(
+            5,
+            request::PROMPTS_GET,
+            Some(json!({ "name": "summarize", "arguments": { "id": "z" } })),
+        ),
+    )
+    .await;
+    assert!(
+        got["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("note z"),
+        "{got}"
+    );
+}
+
+/// Flat and prefixed in one composite — the "flat core, prefixed plugins" shape.
+#[tokio::test]
+async fn a_flat_core_and_a_prefixed_plugin_coexist() {
+    let mut svc = connect(
+        Composite::new(Implementation::new("vault", "1.0.0"))
+            .mount_flat(Notes.into_server())
+            .expect("mount notes")
+            .mount("weather", Weather.into_server())
+            .expect("mount weather"),
+    )
+    .await;
+
+    let tools = result(
+        &mut svc,
+        JsonRpcRequest::new(2, request::TOOLS_LIST, Some(json!({}))),
+    )
+    .await;
+    assert_eq!(names(&tools, "tools"), ["read_note", "weather.forecast"]);
+
+    // Both routes work side by side: an exact name and a prefixed one.
+    let flat = result(
+        &mut svc,
+        JsonRpcRequest::new(
+            3,
+            request::TOOLS_CALL,
+            Some(json!({ "name": "read_note", "arguments": { "id": "q" } })),
+        ),
+    )
+    .await;
+    assert_eq!(text(&flat), "note q");
+
+    let prefixed = result(
+        &mut svc,
+        JsonRpcRequest::new(
+            4,
+            request::TOOLS_CALL,
+            Some(json!({ "name": "weather.forecast", "arguments": { "city": "Oslo" } })),
+        ),
+    )
+    .await;
+    assert_eq!(text(&prefixed), "Oslo: sunny");
+}
+
+/// The cost of flat mounting, and the reason it is detected rather than allowed:
+/// the protocol gives a client no way to tell two identical names apart, so the
+/// list fails loudly instead of silently dropping one.
+#[tokio::test]
+async fn two_flat_mounts_exposing_one_name_is_reported() {
+    let mut svc = connect(
+        Composite::new(Implementation::new("vault", "1.0.0"))
+            .mount_flat(Notes.into_server())
+            .expect("mount notes")
+            .mount_flat(Shadow.into_server())
+            .expect("mount shadow"),
+    )
+    .await;
+
+    let r = respond(
+        &mut svc,
+        JsonRpcRequest::new(2, request::TOOLS_LIST, Some(json!({}))),
+    )
+    .await;
+    let error = r.error.expect("a name claimed twice must be reported");
+    let message = error.message;
+    assert!(
+        message.contains("read_note") && message.contains("notes") && message.contains("shadow"),
+        "the error must name the tool and both servers, got: {message}"
+    );
+}
+
+/// An empty prefix is neither flat nor namespaced, so it is refused — and the
+/// message has to say what to use instead, or the caller has no way to find it.
+#[test]
+fn an_empty_prefix_points_at_mount_flat() {
+    let err = Composite::new(Implementation::new("vault", "1.0.0"))
+        .mount("", Notes.into_server())
+        .expect_err("an empty prefix must be refused");
+    assert!(err.to_string().contains("mount_flat"), "got: {err}");
+}
+
+/// Preflight is the deploy-time form of the same check, so a bad composition
+/// fails at startup rather than on a client's first list.
+#[tokio::test]
+async fn preflight_reports_a_collision_before_any_request() {
+    let composed = Composite::new(Implementation::new("vault", "1.0.0"))
+        .mount_flat(Notes.into_server())
+        .expect("mount notes")
+        .mount_flat(Shadow.into_server())
+        .expect("mount shadow")
+        .build();
+
+    let err = composed
+        .preflight(RequestContext::new(ProtocolVersion::V2025_11_25))
+        .await
+        .expect_err("preflight must catch what a list would have caught");
+    assert!(err.to_string().contains("read_note"), "got: {err}");
+
+    // And a sound composition passes.
+    Composite::new(Implementation::new("vault", "1.0.0"))
+        .mount_flat(Notes.into_server())
+        .expect("mount notes")
+        .mount_flat(Graph.into_server())
+        .expect("mount graph")
+        .build()
+        .preflight(RequestContext::new(ProtocolVersion::V2025_11_25))
+        .await
+        .expect("no collision");
 }

@@ -1,5 +1,5 @@
-//! [`Composite`]: build one MCP server out of several, each mounted under a
-//! prefix.
+//! [`Composite`]: build one MCP server out of several, each mounted either under
+//! a prefix or flat.
 //!
 //! ```no_run
 //! # use turbomcp_server::{Composite, McpServerCore};
@@ -19,9 +19,33 @@
 //! # Ok(()) }
 //! ```
 //!
+//! # Two kinds of mount
+//!
+//! [`mount`](Composite::mount) namespaces: `weather.forecast`. Use it for
+//! optional or third-party servers, where a caller seeing which vertical a tool
+//! came from is a feature, and where a clash with something else in the process
+//! is a real risk.
+//!
+//! [`mount_flat`](Composite::mount_flat) does not rename anything. Use it to
+//! assemble one public catalogue out of several servers — splitting a large
+//! server into focused ones without breaking any client, since `read_note` stays
+//! `read_note`. That is the only way to decompose an existing server without a
+//! breaking change, so it is the right default for a server's *own* components
+//! and the wrong one for anything it merely hosts.
+//!
+//! They compose: a composite can carry a flat core and prefixed plugins at once.
+//!
+//! The trade is collisions. Prefixing makes them impossible; flat mounting makes
+//! them **detected** — two mounts exposing one name fails the list that would
+//! have shown both, naming the servers involved, because the protocol gives a
+//! client no way to disambiguate two identical names and silently dropping one
+//! would be worse. [`preflight`](CompositeServer::preflight) runs that check
+//! ahead of a first request.
+//!
 //! # What gets namespaced, and what doesn't
 //!
-//! **Tools and prompts are prefixed** — `weather.forecast`, `news.headlines`.
+//! **A prefixed mount's tools and prompts are prefixed** — `weather.forecast`,
+//! `news.headlines`.
 //! Their names are flat, short, and chosen without knowing what else the process
 //! will serve, so collisions are likely; prefixing makes them impossible. `.` is
 //! the separator because the spec's name charset allows it and it already reads
@@ -51,8 +75,10 @@
 //! # Pagination
 //!
 //! A cursor only means something to the server that minted it, so the composite
-//! mints its own — `{prefix}:{that mount's cursor}` — and hands each mount only
-//! a cursor it issued. A page walks the mounts in order and ends at the first
+//! mints its own — `{mount}:{that mount's cursor}`, where `{mount}` is the
+//! prefix, or `#{index}` for a flat mount since `#` is outside the prefix
+//! charset — and hands each mount only a cursor it issued. A page walks the
+//! mounts in order and ends at the first
 //! one reporting another page of its own, so no mount's `next_cursor` is
 //! dropped and a page may span several mounts. A cursor the composite did not
 //! issue, or one naming a mount that is no longer there, is refused rather than
@@ -64,12 +90,12 @@
 //! wire rendering. Mounting a narrower server is an error naming the fix: pin
 //! the composite with [`protocols`](Composite::protocols).
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
 
-use turbomcp_core::{Implementation, McpError, McpResult, ProtocolVersion};
+use turbomcp_core::{Implementation, McpError, McpResult, ProtocolVersion, RequestContext};
 use turbomcp_protocol::neutral;
 
 use crate::builder::ServerBuilder;
@@ -243,8 +269,23 @@ impl<S: McpServerCore> Mounted for Erased<S> {
 }
 
 struct Mount {
-    prefix: String,
+    /// `None` for a flat mount, whose components keep their own names.
+    prefix: Option<String>,
+    /// Identifies this mount inside a pagination cursor. The prefix when there
+    /// is one; otherwise `#{index}`, which cannot collide with a prefix because
+    /// `#` is outside the prefix charset.
+    cursor_id: String,
+    /// The mounted server's own `server_info().name`, so a collision can name
+    /// the servers involved. A flat mount has no prefix to blame.
+    name: String,
     server: Box<dyn Mounted>,
+}
+
+impl Mount {
+    /// How this mount is referred to in diagnostics.
+    fn label(&self) -> &str {
+        self.prefix.as_deref().unwrap_or(&self.name)
+    }
 }
 
 // ---- the builder -------------------------------------------------------------
@@ -263,18 +304,23 @@ impl std::fmt::Debug for Composite {
         f.debug_struct("Composite")
             .field("info", &self.info)
             .field("versions", &self.versions)
-            .field("mounts", &Prefixes(&self.mounts))
+            .field("mounts", &Mounts(&self.mounts))
             .finish()
     }
 }
 
-/// The mount prefixes, for `Debug` — a mounted server is opaque.
-struct Prefixes<'a>(&'a [Mount]);
+/// How the mounts are labelled, for `Debug` — a mounted server is opaque.
+/// A prefixed mount shows its prefix; a flat one shows its server's name in
+/// braces, so the two cannot be confused.
+struct Mounts<'a>(&'a [Mount]);
 
-impl std::fmt::Debug for Prefixes<'_> {
+impl std::fmt::Debug for Mounts<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list()
-            .entries(self.0.iter().map(|m| &m.prefix))
+            .entries(self.0.iter().map(|m| match &m.prefix {
+                Some(prefix) => prefix.clone(),
+                None => format!("{{{}}}", m.name),
+            }))
             .finish()
     }
 }
@@ -324,21 +370,76 @@ impl Composite {
     ///   once mounted; narrow the composite with [`protocols`](Self::protocols).
     /// - `server`'s builder carries dispatcher-level configuration, which
     ///   belongs on the composite's own builder.
-    pub fn mount<S>(mut self, prefix: &str, server: ServerBuilder<S>) -> McpResult<Self>
+    pub fn mount<S>(self, prefix: impl AsRef<str>, server: ServerBuilder<S>) -> McpResult<Self>
     where
         S: McpServerCore,
     {
+        let prefix = prefix.as_ref();
         validate_prefix(prefix)?;
-        if self.mounts.iter().any(|m| m.prefix == prefix) {
+        if self
+            .mounts
+            .iter()
+            .any(|m| m.prefix.as_deref() == Some(prefix))
+        {
             return Err(McpError::invalid_params(format!(
                 "`{prefix}` is already mounted; give each mounted server a distinct prefix"
             )));
         }
+        self.push(Some(prefix.to_owned()), server)
+    }
+
+    /// Mount `server` *without* a prefix: its tools and prompts join this
+    /// composite under **their own names**, unchanged.
+    ///
+    /// This is how a public tool catalogue is assembled from several servers
+    /// without renaming anything — a client's `read_note` stays `read_note`, so
+    /// splitting one large server into focused ones is not a breaking change for
+    /// anyone calling it. Prefixed [`mount`](Self::mount) remains the right
+    /// choice for optional or third-party servers, where namespacing is a
+    /// feature. The two compose freely in one composite.
+    ///
+    /// # Collisions
+    ///
+    /// Prefixing makes a name clash impossible; flat mounting does not, so it is
+    /// **detected instead of prevented**. Two flat mounts exposing one tool name
+    /// makes `tools/list` fail, naming both servers — no silent shadowing, since
+    /// the spec gives a client no way to disambiguate two identical names.
+    ///
+    /// The check happens when the list is built, not at mount time, and that is
+    /// deliberate: what a server exposes depends on the request. A tool gated by
+    /// [`with_visibility`](crate::ServerBuilder::with_visibility) exists for one
+    /// caller and not another, so a snapshot taken at mount time — with no
+    /// identity — could report a clash no caller can reach, or miss one two
+    /// privileged callers hit. [`preflight`](CompositeServer::preflight) runs
+    /// the same check ahead of time for whichever identity you name.
+    ///
+    /// # Errors
+    /// - `server` accepts fewer protocol revisions than this composite —
+    ///   handlers are version-neutral, so a sub-server's pin cannot be honored
+    ///   once mounted; narrow the composite with [`protocols`](Self::protocols).
+    /// - `server`'s builder carries dispatcher-level configuration, which
+    ///   belongs on the composite's own builder.
+    pub fn mount_flat<S>(self, server: ServerBuilder<S>) -> McpResult<Self>
+    where
+        S: McpServerCore,
+    {
+        self.push(None, server)
+    }
+
+    /// The half of mounting that does not care whether there is a prefix.
+    fn push<S>(mut self, prefix: Option<String>, server: ServerBuilder<S>) -> McpResult<Self>
+    where
+        S: McpServerCore,
+    {
+        let at = match &prefix {
+            Some(prefix) => format!("mounted at `{prefix}`"),
+            None => "mounted flat".to_owned(),
+        };
         if let Some(setting) = server.dispatcher_setting() {
             return Err(McpError::invalid_params(format!(
-                "the server mounted at `{prefix}` sets `{setting}`, which configures the \
-                 dispatcher — there is one dispatcher and it is the composite's. Move the \
-                 call to the composite's own builder."
+                "the server {at} sets `{setting}`, which configures the dispatcher — there \
+                 is one dispatcher and it is the composite's. Move the call to the \
+                 composite's own builder."
             )));
         }
         let (server, router) = server.into_parts();
@@ -350,13 +451,22 @@ impl Composite {
             .collect();
         if !narrowed.is_empty() {
             return Err(McpError::invalid_params(format!(
-                "the server mounted at `{prefix}` does not accept {narrowed:?}, which this \
-                 composite does. Handlers are version-neutral, so mounting cannot honor a \
-                 sub-server's pin — narrow the composite with `.protocols(…)` instead."
+                "the server {at} does not accept {narrowed:?}, which this composite does. \
+                 Handlers are version-neutral, so mounting cannot honor a sub-server's pin \
+                 — narrow the composite with `.protocols(…)` instead."
             )));
         }
+        // A flat mount has no prefix to name it in a cursor, so it is identified
+        // by its position. `#` is outside the prefix charset, so the two spaces
+        // cannot overlap.
+        let cursor_id = prefix
+            .clone()
+            .unwrap_or_else(|| format!("#{}", self.mounts.len()));
+        let name = server.server_info().name;
         self.mounts.push(Mount {
-            prefix: prefix.to_owned(),
+            prefix,
+            cursor_id,
+            name,
             server: Box::new(Erased { server, router }),
         });
         Ok(self)
@@ -383,7 +493,12 @@ impl Composite {
 /// held to the same character set minus the separator itself.
 fn validate_prefix(prefix: &str) -> McpResult<()> {
     if prefix.is_empty() {
-        return Err(McpError::invalid_params("a mount prefix may not be empty"));
+        // An empty prefix would yield `.read_note`, which is neither flat nor
+        // namespaced — so it names the method that actually means "flat".
+        return Err(McpError::invalid_params(
+            "a mount prefix may not be empty — use `mount_flat` to mount a server whose \
+             tools and prompts keep their own names",
+        ));
     }
     if let Some(bad) = prefix
         .chars()
@@ -416,15 +531,7 @@ impl std::fmt::Debug for CompositeServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CompositeServer")
             .field("info", &self.inner.info)
-            .field(
-                "mounts",
-                &self
-                    .inner
-                    .mounts
-                    .iter()
-                    .map(|m| m.prefix.as_str())
-                    .collect::<Vec<_>>(),
-            )
+            .field("mounts", &Mounts(&self.inner.mounts))
             .finish()
     }
 }
@@ -462,12 +569,141 @@ impl CompositeServer {
         self.inner.mounts.iter().any(|m| has(m.server.as_ref()))
     }
 
-    /// Split a composed tool/prompt name into the mount that owns it and the
-    /// name it knows itself by.
+    /// Walk every list this composite serves, as `request` would see them, and
+    /// report the first name or URI two mounts both claim.
+    ///
+    /// Flat mounts move collisions from impossible to *detected*, and detection
+    /// happens when a list is built — which without this means the first real
+    /// `tools/list` of a bad deploy is what surfaces the misconfiguration. Run
+    /// this at startup and fail there instead.
+    ///
+    /// # What it can and cannot promise
+    ///
+    /// It checks the catalogue **as the identity in `request` sees it**. That is
+    /// the honest limit: with
+    /// [`with_visibility`](crate::ServerBuilder::with_visibility) installed, what
+    /// a server exposes is a function of the caller, so no single check covers
+    /// every caller. Pass a context per identity class that matters — an
+    /// anonymous one, an admin one — rather than treating one pass as proof.
+    ///
+    /// Unlike a request, this drains every page, so a collision between mounts
+    /// whose components land on different pages is caught too.
+    ///
+    /// # Errors
+    /// The collision, naming both mounts and the identifier they share. Also any
+    /// error a mount raises while listing, since a mount that cannot be listed
+    /// cannot be checked.
+    pub async fn preflight(&self, request: RequestContext) -> McpResult<()> {
+        // A mount that keeps issuing cursors would otherwise hang startup. The
+        // bound is far above any real catalogue, so tripping it means a mount is
+        // misbehaving — which is itself worth failing on.
+        const MAX_PAGES: usize = 1000;
+
+        macro_rules! drain {
+            ($ctx:expr, $list:ident, $label:literal) => {{
+                let ctx = $ctx;
+                let mut cursor = None;
+                for page in 0.. {
+                    if page == MAX_PAGES {
+                        return Err(McpError::internal(format!(
+                            "a mounted server is still paginating {} after {MAX_PAGES} pages \
+                             — it is not terminating its cursor",
+                            $label
+                        )));
+                    }
+                    let mut params = neutral::ListParams::default();
+                    params.cursor = cursor;
+                    let result = self.$list(&ctx, params).await?;
+                    match result.next_cursor {
+                        Some(next) => cursor = Some(next),
+                        None => break,
+                    }
+                }
+            }};
+        }
+
+        drain!(ListToolsContext::new(request.clone()), list_tools, "tools");
+        drain!(
+            ListResourcesContext::new(request.clone()),
+            list_resources,
+            "resources"
+        );
+        drain!(
+            ListResourceTemplatesContext::new(request.clone()),
+            list_resource_templates,
+            "resource templates"
+        );
+        drain!(ListPromptsContext::new(request), list_prompts, "prompts");
+        Ok(())
+    }
+
+    /// Split a *prefixed* name into the mount that owns it and the name it knows
+    /// itself by. `None` when no mounted prefix claims it — which includes every
+    /// name belonging to a flat mount.
     fn route(&self, qualified: &str) -> Option<(&Mount, String)> {
         let (prefix, name) = qualified.split_once(SEP)?;
-        let mount = self.inner.mounts.iter().find(|m| m.prefix == prefix)?;
+        let mount = self
+            .inner
+            .mounts
+            .iter()
+            .find(|m| m.prefix.as_deref() == Some(prefix))?;
         Some((mount, name.to_owned()))
+    }
+
+    /// Whether any mount is flat — i.e. whether an unprefixed name could belong
+    /// to something. When none is, an unroutable name is unroutable immediately
+    /// and no list is needed.
+    fn has_flat(&self) -> bool {
+        self.inner.mounts.iter().any(|m| m.prefix.is_none())
+    }
+
+    /// Find the flat mount exposing `name`, by asking each what it currently
+    /// serves.
+    ///
+    /// A flat mount's names are not derivable from the name itself, and they are
+    /// not fixed either — visibility policies and dynamic catalogues both make
+    /// the answer request-dependent — so the only correct source is the list for
+    /// *this* request.
+    ///
+    /// The obvious alternative, dispatching to each mount until one does not
+    /// answer "unknown tool", is **unsound**: a tool-level failure is a
+    /// `CallToolResult` with `is_error`, indistinguishable from not knowing the
+    /// name, so a call that genuinely ran and failed would be re-dispatched to
+    /// the next server — running its side effects a second time.
+    async fn flat_owner<'a, T, F>(
+        mounts: &'a [Mount],
+        name: &str,
+        mut list: F,
+    ) -> McpResult<Option<&'a Mount>>
+    where
+        F: FnMut(&'a Mount) -> Option<BoxFuture<'static, McpResult<T>>>,
+        T: Names,
+    {
+        for mount in mounts.iter().filter(|m| m.prefix.is_none()) {
+            let Some(fut) = list(mount) else { continue };
+            if fut.await?.has(name) {
+                return Ok(Some(mount));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// A list result that can say whether it contains a given component name — the
+/// one thing [`CompositeServer::flat_owner`] needs from it.
+trait Names {
+    fn has(&self, name: &str) -> bool;
+}
+
+impl Names for neutral::ListToolsResult {
+    fn has(&self, name: &str) -> bool {
+        self.tools.iter().any(|t| t.name == name)
+    }
+}
+
+impl Names for neutral::ListPromptsResult {
+    fn has(&self, name: &str) -> bool {
+        self.prompts.iter().any(|p| p.name == name)
     }
 }
 
@@ -498,18 +734,18 @@ fn resume_at(mounts: &[Mount], cursor: Option<&str>) -> McpResult<(usize, Option
         return Ok((0, None));
     };
     let bad = || McpError::invalid_params(format!("not a cursor this server issued: `{cursor}`"));
-    let (prefix, own) = cursor.split_once(CURSOR_SEP).ok_or_else(bad)?;
+    let (id, own) = cursor.split_once(CURSOR_SEP).ok_or_else(bad)?;
     let at = mounts
         .iter()
-        .position(|m| m.prefix == prefix)
+        .position(|m| m.cursor_id == id)
         .ok_or_else(bad)?;
     Ok((at, (!own.is_empty()).then(|| own.to_owned())))
 }
 
 /// Wrap a mount's own cursor so the next request resumes at that mount.
 fn resume_cursor(mount: &Mount, own: &str) -> String {
-    let mut out = String::with_capacity(mount.prefix.len() + 1 + own.len());
-    out.push_str(&mount.prefix);
+    let mut out = String::with_capacity(mount.cursor_id.len() + 1 + own.len());
+    out.push_str(&mount.cursor_id);
     out.push(CURSOR_SEP);
     out.push_str(own);
     out
@@ -578,6 +814,7 @@ impl WithTools for CompositeServer {
         ctx: &ListToolsContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
         page_through!(
             self,
             ctx,
@@ -586,20 +823,28 @@ impl WithTools for CompositeServer {
             tools,
             neutral::ListToolsResult,
             |mount, tool| {
-                tool.name = qualify(&mount.prefix, &tool.name);
+                if let Some(prefix) = &mount.prefix {
+                    tool.name = qualify(prefix, &tool.name);
+                }
                 // The spec bounds a tool name at 128 characters and clients
-                // reject or mangle what exceeds it. The macro checks the
-                // unmounted name at compile time; the prefix is only added
-                // here, so this is the first point the composed name exists.
+                // reject or mangle what exceeds it. The macro checks a name it
+                // generates, but the composed name only exists here — and a flat
+                // mount may be a server this process never declared.
                 if tool.name.len() > MAX_TOOL_NAME {
                     return Err(McpError::internal(format!(
-                        "the tool `{}` is {} characters once mounted at `{}`, over the \
-                         spec's {MAX_TOOL_NAME}-character limit — use a shorter prefix",
+                        "the tool `{}` from `{}` is {} characters, over the spec's \
+                         {MAX_TOOL_NAME}-character limit{}",
                         tool.name,
+                        mount.label(),
                         tool.name.len(),
-                        mount.prefix,
+                        if mount.prefix.is_some() {
+                            " once mounted — use a shorter prefix"
+                        } else {
+                            ""
+                        },
                     )));
                 }
+                claim(&mut seen, &tool.name, mount, Kind::Tool)?;
             }
         )
     }
@@ -609,9 +854,24 @@ impl WithTools for CompositeServer {
         ctx: &CallToolContext,
         mut params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
-        let Some((mount, name)) = self.route(&params.name) else {
-            // Matches what a `#[server]` impl answers for a name it doesn't
-            // know: a tool-level error the model can act on, not a JSON-RPC one.
+        // A name with no prefix may still belong to a flat mount, which only its
+        // current list can say. Matches what a `#[server]` impl answers for a
+        // name it doesn't know: a tool-level error the model can act on, not a
+        // JSON-RPC one.
+        let routed = match self.route(&params.name) {
+            Some(routed) => Some(routed),
+            None if self.has_flat() => {
+                Self::flat_owner(&self.inner.mounts, &params.name, |mount| {
+                    mount
+                        .server
+                        .list_tools(ListToolsContext::new(ctx.base.clone()), Default::default())
+                })
+                .await?
+                .map(|mount| (mount, params.name.clone()))
+            }
+            None => None,
+        };
+        let Some((mount, name)) = routed else {
             return Ok(neutral::CallToolResult::error(format!(
                 "unknown tool: {}",
                 params.name
@@ -621,7 +881,7 @@ impl WithTools for CompositeServer {
         let Some(fut) = mount.server.call_tool(ctx.clone(), params) else {
             return Ok(neutral::CallToolResult::error(format!(
                 "the server mounted at `{}` serves no tools",
-                mount.prefix
+                mount.label()
             )));
         };
         fut.await
@@ -634,7 +894,7 @@ impl WithResources for CompositeServer {
         ctx: &ListResourcesContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListResourcesResult> {
-        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
         page_through!(
             self,
             ctx,
@@ -643,7 +903,7 @@ impl WithResources for CompositeServer {
             resources,
             neutral::ListResourcesResult,
             |mount, resource| {
-                claim_uri(&mut seen, &resource.uri, &mount.prefix, "resource")?;
+                claim(&mut seen, &resource.uri, mount, Kind::Resource)?;
             }
         )
     }
@@ -653,7 +913,7 @@ impl WithResources for CompositeServer {
         ctx: &ListResourceTemplatesContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListResourceTemplatesResult> {
-        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
         page_through!(
             self,
             ctx,
@@ -662,7 +922,7 @@ impl WithResources for CompositeServer {
             resource_templates,
             neutral::ListResourceTemplatesResult,
             |mount, template| {
-                claim_uri(&mut seen, &template.uri_template, &mount.prefix, "template")?;
+                claim(&mut seen, &template.uri_template, mount, Kind::Template)?;
             }
         )
     }
@@ -695,6 +955,7 @@ impl WithPrompts for CompositeServer {
         ctx: &ListPromptsContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListPromptsResult> {
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
         page_through!(
             self,
             ctx,
@@ -703,7 +964,10 @@ impl WithPrompts for CompositeServer {
             prompts,
             neutral::ListPromptsResult,
             |mount, prompt| {
-                prompt.name = qualify(&mount.prefix, &prompt.name);
+                if let Some(prefix) = &mount.prefix {
+                    prompt.name = qualify(prefix, &prompt.name);
+                }
+                claim(&mut seen, &prompt.name, mount, Kind::Prompt)?;
             }
         )
     }
@@ -713,7 +977,21 @@ impl WithPrompts for CompositeServer {
         ctx: &GetPromptContext,
         mut params: neutral::GetPromptParams,
     ) -> McpResult<neutral::GetPromptResult> {
-        let Some((mount, name)) = self.route(&params.name) else {
+        let routed = match self.route(&params.name) {
+            Some(routed) => Some(routed),
+            None if self.has_flat() => {
+                Self::flat_owner(&self.inner.mounts, &params.name, |mount| {
+                    mount.server.list_prompts(
+                        ListPromptsContext::new(ctx.base.clone()),
+                        Default::default(),
+                    )
+                })
+                .await?
+                .map(|mount| (mount, params.name.clone()))
+            }
+            None => None,
+        };
+        let Some((mount, name)) = routed else {
             return Err(McpError::invalid_params(format!(
                 "unknown prompt: {}",
                 params.name
@@ -723,7 +1001,7 @@ impl WithPrompts for CompositeServer {
         let Some(fut) = mount.server.get_prompt(ctx.clone(), params) else {
             return Err(McpError::invalid_params(format!(
                 "the server mounted at `{}` serves no prompts",
-                mount.prefix
+                mount.label()
             )));
         };
         fut.await
@@ -737,10 +1015,25 @@ impl WithCompletions for CompositeServer {
         mut params: neutral::CompleteParams,
     ) -> McpResult<neutral::CompleteResult> {
         match &mut params.reference {
-            // A prompt reference names a prompt, and prompt names *are*
-            // prefixed — so this routes exactly.
+            // A prompt reference names a prompt. A prefixed one routes exactly;
+            // an unprefixed one is resolved the same way `get_prompt` resolves
+            // it, so completion and the call it completes for agree on the owner.
             neutral::CompletionReference::Prompt { name } => {
-                let Some((mount, own)) = self.route(name) else {
+                let routed = match self.route(name) {
+                    Some(routed) => Some(routed),
+                    None if self.has_flat() => {
+                        Self::flat_owner(&self.inner.mounts, name, |mount| {
+                            mount.server.list_prompts(
+                                ListPromptsContext::new(ctx.base.clone()),
+                                Default::default(),
+                            )
+                        })
+                        .await?
+                        .map(|mount| (mount, name.clone()))
+                    }
+                    None => None,
+                };
+                let Some((mount, own)) = routed else {
                     return Ok(neutral::CompleteResult::new(vec![]));
                 };
                 *name = own;
@@ -773,23 +1066,67 @@ impl WithCompletions for CompositeServer {
     }
 }
 
-/// Record `uri` as claimed by `prefix`, refusing a second claim.
+/// What sort of thing a wire-visible identifier names, so a collision can say
+/// what to do about it.
+#[derive(Clone, Copy)]
+enum Kind {
+    Tool,
+    Prompt,
+    Resource,
+    Template,
+}
+
+impl Kind {
+    fn what(self) -> &'static str {
+        match self {
+            Self::Tool => "tool",
+            Self::Prompt => "prompt",
+            Self::Resource => "resource URI",
+            Self::Template => "template URI",
+        }
+    }
+
+    /// The fix, which differs by why the identifier is unprefixed.
+    fn remedy(self) -> &'static str {
+        match self {
+            // Names are prefixed unless a mount is flat, so a clash means two
+            // flat mounts — or a flat one against a prefixed one's product.
+            Self::Tool | Self::Prompt => {
+                "flat mounts do not rename, so two of them cannot expose the same name — \
+                 mount one under a prefix instead"
+            }
+            Self::Resource | Self::Template => {
+                "resource URIs are never prefixed by mounting — give each server its own \
+                 scheme or authority"
+            }
+        }
+    }
+}
+
+/// Record `id` as claimed by `mount`, refusing a second claim.
 ///
-/// Two mounts exposing one URI is a genuine ambiguity: nothing in the request
-/// says which was meant, and letting the first win would silently hide the
-/// second. The `#[server]` macro rejects the same collision within one server at
-/// compile time; across mounts it can only be seen here.
+/// Two mounts exposing one wire-visible identifier is a genuine ambiguity:
+/// nothing in the request says which was meant, and letting the first win would
+/// silently hide the second — which the spec gives a client no way to detect.
+/// The `#[server]` macro rejects the same collision within one server at compile
+/// time; across mounts it can only be seen here.
 ///
-/// The check is per *page*, which is every resource a mount has unless it
-/// paginates. Catching a collision between two mounts whose resources land on
-/// different pages would mean draining every mount on every request, which is
-/// the cost pagination exists to avoid.
-fn claim_uri(seen: &mut BTreeSet<String>, uri: &str, prefix: &str, what: &str) -> McpResult<()> {
-    if !seen.insert(uri.to_owned()) {
+/// The check is per *page*, which is everything a mount has unless it paginates.
+/// Catching a collision between two mounts whose components land on different
+/// pages would mean draining every mount on every request, which is the cost
+/// pagination exists to avoid.
+fn claim(
+    seen: &mut BTreeMap<String, String>,
+    id: &str,
+    mount: &Mount,
+    kind: Kind,
+) -> McpResult<()> {
+    if let Some(first) = seen.insert(id.to_owned(), mount.label().to_owned()) {
         return Err(McpError::internal(format!(
-            "two mounted servers claim the {what} URI `{uri}` (the second is `{prefix}`). \
-             Resource URIs are not prefixed by mounting — give each server its own scheme \
-             or authority."
+            "two mounted servers expose the {} `{id}`: `{first}` and `{}` — {}",
+            kind.what(),
+            mount.label(),
+            kind.remedy(),
         )));
     }
     Ok(())

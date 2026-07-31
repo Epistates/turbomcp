@@ -36,11 +36,13 @@ zero-boilerplate surface and strict spec compliance as a feature.
   components exist — by tag, by the scopes a tool declares, or by any closure
   you write. Hidden means *unreachable*, not merely unlisted, and refused
   exactly as something that doesn't exist.
-- **Servers compose.** `Composite` mounts several servers under prefixes and
-  serves them as one — tools and prompts namespaced `{prefix}.{name}`, resource
-  URIs untouched, capabilities still derived from what the mounts actually have.
-  A mounted server is an ordinary `#[server]` impl that knows nothing about
-  being mounted.
+- **Servers compose.** `Composite` serves several servers as one, and a mounted
+  server is an ordinary `#[server]` impl that knows nothing about being mounted.
+  `mount_flat` keeps a server's names exactly as they are — so a large server can
+  be split into focused ones without breaking any client — while `mount` puts one
+  under a prefix (`weather.forecast`) where namespacing is what you want. Mix
+  both; resource URIs are untouched either way, and capabilities are still
+  derived from what the mounts actually have.
 - **Middleware is `tower`.** The dispatcher *is* a `tower::Service<JsonRpcMessage>`,
   so cross-cutting concerns are ordinary `Layer`s — one `call` for every method
   under every transport, and `ServiceBuilder` / `timeout` / `ConcurrencyLimit`

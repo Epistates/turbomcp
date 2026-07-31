@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Composite::mount_flat`** — mount a server whose tools and prompts keep
+  **their own names**. This is what lets a large server be split into focused
+  ones without breaking anything that calls it: `read_note` stays `read_note`.
+  Prefixed `mount` remains the right choice for optional or third-party servers,
+  and the two mix freely in one composite ("flat core, prefixed plugins").
+
+  Resource URIs were already never rewritten, so flat mounting changes only
+  tools and prompts.
+
+  Prefixing makes a name clash impossible; flat mounting makes it **detected**.
+  Two flat mounts exposing one name fails the list that would have shown both,
+  naming both servers — the protocol gives a client no way to tell two identical
+  names apart, so silently dropping one would be worse.
+
+  The check runs when a list is built rather than at mount time, deliberately:
+  with `with_visibility` installed, what a server exposes is a function of the
+  caller, so a mount-time snapshot — taken with no identity — could report a
+  clash no caller can reach, or miss one two privileged callers hit.
+
+  An empty prefix is still refused, and now says to use `mount_flat`.
+
+- **`CompositeServer::preflight(request)`** — run every list ahead of any
+  request, so a composition with a name two mounts both claim fails at startup
+  instead of on a client's first `tools/list`. Drains all pages, unlike a
+  request, so it also catches a clash between mounts whose components land on
+  different pages. It checks the catalogue as the identity in `request` sees it;
+  a server using visibility policies should preflight each identity that matters.
+
+### Changed
+
+- `Composite::mount` takes `impl AsRef<str>` for the prefix rather than `&str`,
+  matching `instructions` and `Implementation::new`. Source-compatible.
+
 ## [4.0.0-alpha.1] - 2026-07-30
 
 **v4 is a ground-up rewrite of TurboMCP**, shipped as the same `turbomcp` crate

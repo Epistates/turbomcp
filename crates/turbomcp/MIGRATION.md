@@ -254,6 +254,47 @@ Namespacing differs in one place, deliberately:
   rejects a duplicate URI within one server. Give each mounted server its own
   scheme or authority.
 
+### Flat mounts, for a catalogue that must not be renamed
+
+`mount_flat` mounts a server whose tools and prompts keep **their own names**:
+
+```rust
+let vault = Composite::new(Implementation::new("vault", "1.0.0"))
+    .mount_flat(Notes.into_server())?     // read_note stays read_note
+    .mount_flat(Graph.into_server())?     // backlinks stays backlinks
+    .mount("tasks", TasksPlugin.into_server())?   // tasks.schedule
+    .into_server()
+    .build();
+```
+
+This is what lets an existing server be split into focused ones without breaking
+anything that calls it — a client's `read_note` keeps working. Prefixed mounts
+remain the right choice for optional or third-party servers. The two mix freely.
+
+v3 had no equivalent: `mount(handler, "")` produced `_read_note`, which is
+neither flat nor namespaced. v4 rejects an empty prefix and points at
+`mount_flat`.
+
+The trade-off is collisions. Prefixing makes them impossible; flat mounting makes
+them **detected**. Two flat mounts exposing one name fails the list that would
+have shown both, naming both servers — the protocol gives a client no way to tell
+two identical names apart, so dropping one silently would be worse.
+
+That check runs when a list is built, not at mount time, and that is deliberate:
+what a server exposes depends on the caller once `with_visibility` is in play, so
+a mount-time snapshot — taken with no identity — could report a clash no caller
+can reach, or miss one that two privileged callers hit.
+`CompositeServer::preflight(request)` runs the same check at startup for an
+identity you name, so a bad composition fails on deploy rather than on a client's
+first `tools/list`.
+
+One cost worth knowing: an unprefixed `tools/call` has to ask the flat mounts
+what they currently serve in order to find the owner, so it costs one list per
+call. Dispatching speculatively instead would be unsound — a tool-level failure
+is indistinguishable from "I don't have that tool", so a call that genuinely ran
+and failed would be retried against the next server, running its side effects
+twice.
+
 Two things `mount` rejects rather than silently ignoring:
 
 - **Dispatcher-level settings on a mounted builder** (`with_tasks`,

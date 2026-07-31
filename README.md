@@ -70,8 +70,9 @@ than by a reviewer.
 Beyond that, TurboMCP ships things you would otherwise write yourself:
 capabilities *derived* from the markers present (advertisement can't drift from
 implementation); per-RPC typed contexts, so calling elicitation from a
-`list_tools` handler doesn't compile; `Composite` for mounting several servers
-as one; `with_visibility` for deciding per caller which components exist;
+`list_tools` handler doesn't compile; `Composite` for serving several servers as
+one, either under prefixes or flat so a decomposed server keeps its public tool
+names; `with_visibility` for deciding per caller which components exist;
 `tower::Layer` middleware at the frame seam; and a `no_std`, `wasm32`-portable
 foundation.
 
