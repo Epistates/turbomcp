@@ -560,7 +560,7 @@ cargo run --example unix_client
 Enable features in `Cargo.toml`:
 ```toml
 [dependencies]
-turbomcp-client = { version = "3.1.4", features = ["tcp", "websocket"] }
+turbomcp-client = { version = "3.1.6", features = ["tcp", "websocket"] }
 ```
 
 ## Architecture

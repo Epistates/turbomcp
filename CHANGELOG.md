@@ -7,12 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.1.6] - 2026-07-22
+## [3.1.6] - 2026-08-05
 
 Patch release: Streamable HTTP correctness fixes (client response hang, CRLF
 SSE parsing, POST-stream primer events) and transport hot-path performance.
-Most of this release was contributed by @ForrestThump (#14, #15, #18, #19,
-#20, #21) — thank you!
+Most of this release was contributed by @ForrestThump (#14, #15, #16, #18,
+#19, #20, #21) — thank you!
 
 ### Fixed
 
@@ -30,7 +30,7 @@ Most of this release was contributed by @ForrestThump (#14, #15, #18, #19,
   POST-initiated streams once again open with an empty-data event carrying a
   globally unique, stream-encoding event ID (`{session}-{stream}-0`), giving
   clients a `Last-Event-ID` for resumption as the 2025-11-25 Streamable HTTP
-  transport spec recommends. (#17)
+  transport spec recommends. (#16, #17)
 - **`McpHandler` public-method types are re-exported** so downstream code can
   name them without depending on internal crates. (#15)
 - **`just test` works on Windows.** (#14)

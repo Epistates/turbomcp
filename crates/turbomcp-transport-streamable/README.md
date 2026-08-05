@@ -39,7 +39,7 @@ This crate supports `no_std` environments with the `alloc` feature:
 
 ```toml
 [dependencies]
-turbomcp-transport-streamable = { version = "3.1.4", default-features = false, features = ["alloc"] }
+turbomcp-transport-streamable = { version = "3.1.6", default-features = false, features = ["alloc"] }
 ```
 
 ## Feature Flags
