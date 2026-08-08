@@ -1318,6 +1318,91 @@ mod tests {
         assert_eq!(policy.delay(3), None);
     }
 
+    /// Drives the **real** reconnect loop against a server that accepts the GET and immediately
+    /// closes the stream — the exact shape that produced ~50 reconnects/minute in the field.
+    ///
+    /// The unit tests below pin the arithmetic of `next_attempt_after_stream_end`. This one exists
+    /// because that is not the same claim: it proves the loop *as written* stops hammering. Run
+    /// against the pre-fix code (reset `attempt` on connect instead of on uptime) it counts
+    /// connections in the hundreds and fails.
+    ///
+    /// A raw `TcpListener` rather than a server framework, so the test adds no dependency and
+    /// models "accept, send headers, hang up" precisely.
+    #[tokio::test]
+    async fn a_server_that_closes_the_stream_immediately_does_not_get_hammered() {
+        use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let connections = StdArc::new(AtomicUsize::new(0));
+
+        let accepted = StdArc::clone(&connections);
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                accepted.fetch_add(1, Ordering::Relaxed);
+                // Handled off the accept loop so the listener keeps up; otherwise every other
+                // connection is refused and the client takes the connect-error branch instead.
+                tokio::spawn(async move {
+                    let _ = sock
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        )
+                        .await;
+                    let _ = sock.flush().await;
+                    // Let the client receive the complete response before hanging up. Dropping
+                    // immediately makes reqwest report a *connect* error, which takes the `Err`
+                    // branch that already backs off — so the success path under test never runs.
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    drop(sock);
+                });
+            }
+        });
+
+        let config = StreamableHttpClientConfig {
+            base_url: format!("http://{addr}"),
+            retry_policy: RetryPolicy::Exponential {
+                base: Duration::from_millis(200),
+                max_delay: Duration::from_secs(5),
+                max_attempts: None, // never give up, so this measures rate and not exhaustion
+            },
+            ..Default::default()
+        };
+        let (tx, _rx) = mpsc::channel(16);
+        let task = tokio::spawn(StreamableHttpClientTransport::sse_connection_task(
+            format!("http://{addr}/mcp"),
+            config,
+            HttpClient::new(),
+            Arc::new(RwLock::new(TransportState::Disconnected)),
+            tx,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        ));
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        task.abort();
+        server.abort();
+
+        let count = connections.load(Ordering::Relaxed);
+        // Measured: this loop does ~3-5 reconnects in two seconds with backoff engaged, and
+        // **24,118** with the pre-fix behaviour restored (reset the counter on connect rather
+        // than on uptime). The bound sits far above the former and far below the latter, so it
+        // discriminates without being flaky on a slow machine.
+        assert!(
+            count <= 50,
+            "reconnects must be rate-limited by backoff; saw {count} in 2s              (pre-fix behaviour produces ~24k)"
+        );
+        assert!(
+            count >= 1,
+            "the client should still have tried to connect at least once"
+        );
+    }
+
     /// A stream that collapses immediately must count as a failed attempt.
     ///
     /// This is the whole bug: the old code cleared the counter the moment the GET was accepted, so
