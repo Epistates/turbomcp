@@ -18,7 +18,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
@@ -80,6 +80,32 @@ impl Default for RetryPolicy {
             max_delay: Duration::from_secs(60),
             max_attempts: Some(10),
         }
+    }
+}
+
+/// How long a standalone SSE stream must stay up before it counts as a *successful* connection
+/// rather than a failed one.
+///
+/// Connecting is not the same as working. A server that accepts the GET and then immediately closes
+/// the stream — no keepalive, or it does not really support the standalone channel — used to reset
+/// the backoff counter on every accept, so the client reconnected with **zero** delay, forever. In
+/// the field that produced ~50 reconnects a minute on a completely idle connection (93.5k in 24h),
+/// which survives functionally but buries every other diagnostic in the log.
+///
+/// Streams that do real work run far longer than this, so a genuine reconnect after a deploy still
+/// gets a full set of fresh attempts.
+const HEALTHY_STREAM_THRESHOLD: Duration = Duration::from_secs(30);
+
+/// The attempt counter after a stream ends, given how long it was up.
+///
+/// Separated from the loop so the rule is stated once and can be tested without a server: a stream
+/// that lasted is a success and clears the backoff; one that collapsed immediately is a failure and
+/// must count as one, or backoff never engages.
+fn next_attempt_after_stream_end(previous: u32, uptime: Duration) -> u32 {
+    if uptime >= HEALTHY_STREAM_THRESHOLD {
+        0
+    } else {
+        previous.saturating_add(1)
     }
 }
 
@@ -635,7 +661,9 @@ impl StreamableHttpClientTransport {
 
                     info!("SSE connection established");
                     *state.write().await = TransportState::Connected;
-                    attempt = 0; // Reset attempt counter on success
+                    // Deliberately *not* resetting `attempt` here: accepting the GET is not
+                    // evidence the stream works. That is decided below, from how long it lasted.
+                    let connected_at = Instant::now();
 
                     // Process SSE stream
                     let mut stream = response.bytes_stream();
@@ -711,7 +739,16 @@ impl StreamableHttpClientTransport {
                         }
                     }
 
-                    warn!("SSE stream ended");
+                    let uptime = connected_at.elapsed();
+                    attempt = next_attempt_after_stream_end(attempt, uptime);
+                    if attempt == 0 {
+                        warn!("SSE stream ended after {:?}; reconnecting", uptime);
+                    } else {
+                        warn!(
+                            "SSE stream ended after only {:?} (attempt {}); backing off",
+                            uptime, attempt
+                        );
+                    }
                     *state.write().await = TransportState::Disconnected;
                 }
                 Err(e) => {
@@ -1279,6 +1316,70 @@ mod tests {
         assert_eq!(policy.delay(1), Some(Duration::from_secs(5)));
         assert_eq!(policy.delay(2), Some(Duration::from_secs(5)));
         assert_eq!(policy.delay(3), None);
+    }
+
+    /// A stream that collapses immediately must count as a failed attempt.
+    ///
+    /// This is the whole bug: the old code cleared the counter the moment the GET was accepted, so
+    /// a server that accepted and instantly closed produced an unthrottled reconnect loop — the
+    /// `if attempt > 0` guard on the sleep meant zero delay, every time, forever.
+    #[test]
+    fn a_stream_that_ends_immediately_counts_as_a_failed_attempt() {
+        assert_eq!(next_attempt_after_stream_end(0, Duration::ZERO), 1);
+        assert_eq!(
+            next_attempt_after_stream_end(3, Duration::from_millis(50)),
+            4
+        );
+        // Just under the bar is still a failure — no "close enough".
+        assert_eq!(
+            next_attempt_after_stream_end(1, HEALTHY_STREAM_THRESHOLD - Duration::from_millis(1)),
+            2
+        );
+    }
+
+    /// A stream that did real work clears the backoff, so a later reconnect (a deploy, say) starts
+    /// from a full set of attempts rather than inheriting an old count.
+    #[test]
+    fn a_long_lived_stream_resets_the_backoff() {
+        assert_eq!(
+            next_attempt_after_stream_end(7, HEALTHY_STREAM_THRESHOLD),
+            0,
+            "the threshold itself must count as healthy"
+        );
+        assert_eq!(
+            next_attempt_after_stream_end(9, Duration::from_secs(3600)),
+            0
+        );
+    }
+
+    /// The counter feeds `delay()`, whose `max_attempts` eventually gives up. Incrementing must not
+    /// wrap round to 0 and restart the storm it was added to stop.
+    #[test]
+    fn the_attempt_counter_saturates_rather_than_wrapping() {
+        assert_eq!(
+            next_attempt_after_stream_end(u32::MAX, Duration::ZERO),
+            u32::MAX
+        );
+    }
+
+    /// Ties the rule back to the observable it exists to fix: with the counter rising, the policy
+    /// hands back real delays instead of the zero-delay spin.
+    #[test]
+    fn a_flapping_stream_actually_earns_a_delay() {
+        let policy = RetryPolicy::Exponential {
+            base: Duration::from_secs(1),
+            max_delay: Duration::from_secs(60),
+            max_attempts: Some(10),
+        };
+        let mut attempt = 0u32;
+        for _ in 0..3 {
+            attempt = next_attempt_after_stream_end(attempt, Duration::from_millis(10));
+        }
+        assert_eq!(attempt, 3);
+        assert!(
+            policy.delay(attempt).unwrap() >= Duration::from_secs(3),
+            "three straight collapses must buy real backoff, not another immediate retry"
+        );
     }
 
     #[test]
