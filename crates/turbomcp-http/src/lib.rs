@@ -92,7 +92,10 @@
 mod transport;
 
 // Re-export the transport implementation
-pub use transport::{RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTransport};
+pub use transport::{
+    DEFAULT_SSE_HEALTHY_STREAM_THRESHOLD, RetryPolicy, StreamableHttpClientConfig,
+    StreamableHttpClientTransport,
+};
 
 // Re-export common types from traits crate for convenience
 pub use turbomcp_transport_traits::{

@@ -94,15 +94,32 @@ impl Default for RetryPolicy {
 ///
 /// Streams that do real work run far longer than this, so a genuine reconnect after a deploy still
 /// gets a full set of fresh attempts.
-const HEALTHY_STREAM_THRESHOLD: Duration = Duration::from_secs(30);
+/// Default for [`StreamableHttpClientConfig::sse_healthy_stream_threshold`].
+///
+/// Well below a typical server idle timeout on purpose. Servers commonly close an idle SSE stream
+/// on a round number — 30s and 60s are both common — and a threshold at or above that would
+/// classify every ordinary cycle as a failure, accumulate backoff against normal operation, and
+/// eventually abandon the channel. Measured against one such server: streams ended at 29.9999s,
+/// every time.
+pub const DEFAULT_SSE_HEALTHY_STREAM_THRESHOLD: Duration = Duration::from_secs(10);
+
+/// Whether a stream that stayed up for `uptime` did real work.
+///
+/// The single judgement this file makes about a closed stream, used twice: to decide whether the
+/// backoff counter resets, and to decide whether the reconnect is worth logging loudly. A server
+/// that closes idle streams on a timer is behaving normally and should be neither backed off from
+/// nor reported as an error.
+fn stream_was_healthy(uptime: Duration, threshold: Duration) -> bool {
+    uptime >= threshold
+}
 
 /// The attempt counter after a stream ends, given how long it was up.
 ///
 /// Separated from the loop so the rule is stated once and can be tested without a server: a stream
 /// that lasted is a success and clears the backoff; one that collapsed immediately is a failure and
 /// must count as one, or backoff never engages.
-fn next_attempt_after_stream_end(previous: u32, uptime: Duration) -> u32 {
-    if uptime >= HEALTHY_STREAM_THRESHOLD {
+fn next_attempt_after_stream_end(previous: u32, uptime: Duration, threshold: Duration) -> u32 {
+    if stream_was_healthy(uptime, threshold) {
         0
     } else {
         previous.saturating_add(1)
@@ -204,6 +221,16 @@ pub struct StreamableHttpClientConfig {
     /// the SSE task breaks and the reconnect loop takes over. Set generously —
     /// the SSE protocol tolerates long idle periods between events. Default: 5 minutes.
     pub sse_read_timeout: Duration,
+
+    /// How long a standalone SSE stream must stay up to count as having done real work.
+    ///
+    /// Below this, a stream that ends is treated as a failed attempt: backoff accrues and the
+    /// reconnect is logged as a warning. At or above it, the stream is considered to have worked —
+    /// the counter resets and the reconnect is routine (`debug`).
+    ///
+    /// Keep it comfortably under the server's idle timeout. See
+    /// [`DEFAULT_SSE_HEALTHY_STREAM_THRESHOLD`].
+    pub sse_healthy_stream_threshold: Duration,
 }
 
 impl Default for StreamableHttpClientConfig {
@@ -220,6 +247,7 @@ impl Default for StreamableHttpClientConfig {
             limits: LimitsConfig::default(),
             tls: TlsConfig::default(),
             sse_read_timeout: Duration::from_secs(300),
+            sse_healthy_stream_threshold: DEFAULT_SSE_HEALTHY_STREAM_THRESHOLD,
         }
     }
 }
@@ -733,16 +761,35 @@ impl StreamableHttpClientTransport {
                                 }
                             }
                             Err(e) => {
-                                error!("Error reading SSE stream: {}", e);
+                                // Not necessarily a fault: a server closing an idle stream
+                                // surfaces here as a decode error. Whether that mattered is
+                                // decided below, from how long the stream lasted — logging it as
+                                // an error unconditionally reports normal operation as a failure.
+                                if stream_was_healthy(
+                                    connected_at.elapsed(),
+                                    config.sse_healthy_stream_threshold,
+                                ) {
+                                    debug!("SSE stream closed by server: {}", e);
+                                } else {
+                                    error!("Error reading SSE stream: {}", e);
+                                }
                                 break;
                             }
                         }
                     }
 
                     let uptime = connected_at.elapsed();
-                    attempt = next_attempt_after_stream_end(attempt, uptime);
-                    if attempt == 0 {
-                        warn!("SSE stream ended after {:?}; reconnecting", uptime);
+                    let healthy = stream_was_healthy(uptime, config.sse_healthy_stream_threshold);
+                    attempt = next_attempt_after_stream_end(
+                        attempt,
+                        uptime,
+                        config.sse_healthy_stream_threshold,
+                    );
+                    if healthy {
+                        // A server that closes idle streams on a timer is behaving normally, and
+                        // this is the client doing its job. Reporting it at warn/error once per
+                        // cycle per peer is what buried real diagnostics under log rotation.
+                        debug!("SSE stream ended after {:?}; reconnecting", uptime);
                     } else {
                         warn!(
                             "SSE stream ended after only {:?} (attempt {}); backing off",
@@ -1279,6 +1326,10 @@ impl Transport for StreamableHttpClientTransport {
 
 #[cfg(test)]
 mod tests {
+    /// Threshold used by the rule tests; the production default is
+    /// [`DEFAULT_SSE_HEALTHY_STREAM_THRESHOLD`].
+    const T: Duration = DEFAULT_SSE_HEALTHY_STREAM_THRESHOLD;
+
     use super::*;
 
     #[test]
@@ -1403,6 +1454,86 @@ mod tests {
         );
     }
 
+    /// A server that holds the stream open past the threshold and then closes it is behaving
+    /// normally, and must NOT accrue backoff.
+    ///
+    /// This is the case measured in production: streams ended at 29.9999s, every time, against a
+    /// server whose idle timeout is 30s. A threshold at or above that classified every ordinary
+    /// cycle as a failure — backoff accumulated against normal operation and the client was on
+    /// course to hit `max_attempts` and abandon the channel altogether.
+    ///
+    /// Asserted through the real loop rather than the rule alone, because the rule was already
+    /// correct in isolation and the bug was in the value it was given.
+    #[tokio::test]
+    async fn a_stream_that_lives_past_the_threshold_is_not_treated_as_a_failure() {
+        use std::sync::Arc as StdArc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::AsyncWriteExt;
+
+        // Server holds each stream open for 300ms, then closes — "long-lived" relative to the
+        // 100ms threshold below, exactly as 30s is to a 10s default.
+        const HOLD: Duration = Duration::from_millis(300);
+        const THRESHOLD: Duration = Duration::from_millis(100);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let connections = StdArc::new(AtomicUsize::new(0));
+
+        let accepted = StdArc::clone(&connections);
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                accepted.fetch_add(1, Ordering::Relaxed);
+                tokio::spawn(async move {
+                    let _ = sock
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n",
+                        )
+                        .await;
+                    let _ = sock.flush().await;
+                    tokio::time::sleep(HOLD).await;
+                    drop(sock);
+                });
+            }
+        });
+
+        let config = StreamableHttpClientConfig {
+            base_url: format!("http://{addr}"),
+            sse_healthy_stream_threshold: THRESHOLD,
+            retry_policy: RetryPolicy::Exponential {
+                base: Duration::from_secs(5), // huge, so any backoff at all is unmistakable
+                max_delay: Duration::from_secs(30),
+                max_attempts: None,
+            },
+            ..Default::default()
+        };
+        let (tx, _rx) = mpsc::channel(16);
+        let task = tokio::spawn(StreamableHttpClientTransport::sse_connection_task(
+            format!("http://{addr}/mcp"),
+            config,
+            HttpClient::new(),
+            Arc::new(RwLock::new(TransportState::Disconnected)),
+            tx,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        ));
+
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        task.abort();
+        server.abort();
+
+        // Each cycle costs ~300ms, so ~4 fit in 1.5s. If the threshold mis-classified these as
+        // failures the 5s backoff would engage and only the first connection would ever happen.
+        let count = connections.load(Ordering::Relaxed);
+        assert!(
+            count >= 3,
+            "a healthy stream that ends must reconnect promptly, not back off; saw {count} in 1.5s"
+        );
+    }
+
     /// A stream that collapses immediately must count as a failed attempt.
     ///
     /// This is the whole bug: the old code cleared the counter the moment the GET was accepted, so
@@ -1410,14 +1541,14 @@ mod tests {
     /// `if attempt > 0` guard on the sleep meant zero delay, every time, forever.
     #[test]
     fn a_stream_that_ends_immediately_counts_as_a_failed_attempt() {
-        assert_eq!(next_attempt_after_stream_end(0, Duration::ZERO), 1);
+        assert_eq!(next_attempt_after_stream_end(0, Duration::ZERO, T), 1);
         assert_eq!(
-            next_attempt_after_stream_end(3, Duration::from_millis(50)),
+            next_attempt_after_stream_end(3, Duration::from_millis(50), T),
             4
         );
         // Just under the bar is still a failure — no "close enough".
         assert_eq!(
-            next_attempt_after_stream_end(1, HEALTHY_STREAM_THRESHOLD - Duration::from_millis(1)),
+            next_attempt_after_stream_end(1, T - Duration::from_millis(1), T),
             2
         );
     }
@@ -1427,12 +1558,12 @@ mod tests {
     #[test]
     fn a_long_lived_stream_resets_the_backoff() {
         assert_eq!(
-            next_attempt_after_stream_end(7, HEALTHY_STREAM_THRESHOLD),
+            next_attempt_after_stream_end(7, T, T),
             0,
             "the threshold itself must count as healthy"
         );
         assert_eq!(
-            next_attempt_after_stream_end(9, Duration::from_secs(3600)),
+            next_attempt_after_stream_end(9, Duration::from_secs(3600), T),
             0
         );
     }
@@ -1442,7 +1573,7 @@ mod tests {
     #[test]
     fn the_attempt_counter_saturates_rather_than_wrapping() {
         assert_eq!(
-            next_attempt_after_stream_end(u32::MAX, Duration::ZERO),
+            next_attempt_after_stream_end(u32::MAX, Duration::ZERO, T),
             u32::MAX
         );
     }
@@ -1458,7 +1589,7 @@ mod tests {
         };
         let mut attempt = 0u32;
         for _ in 0..3 {
-            attempt = next_attempt_after_stream_end(attempt, Duration::from_millis(10));
+            attempt = next_attempt_after_stream_end(attempt, Duration::from_millis(10), T);
         }
         assert_eq!(attempt, 3);
         assert!(
