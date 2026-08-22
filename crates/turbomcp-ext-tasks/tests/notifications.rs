@@ -2,7 +2,7 @@
 //!
 //! Drives the dispatcher directly with a manually-registered `outbound` writer
 //! (the same pattern the core subscription unit tests use) — no serve driver
-//! needed to prove the push mechanism and the `-32003` capability gate.
+//! needed to prove the push mechanism and the `-32021` capability gate.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -198,7 +198,10 @@ async fn non_declaring_listen_with_task_ids_is_missing_capability() {
         panic!("expected an error response")
     };
     let err = r.error.expect("missing-capability error");
-    assert_eq!(err.code, -32003);
+    assert_eq!(
+        err.code,
+        turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY
+    );
     assert_eq!(
         err.data.unwrap()["requiredCapabilities"]["extensions"][EXTENSION_ID],
         json!({})

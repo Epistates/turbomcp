@@ -203,8 +203,9 @@ pub(super) fn discover_response<S: McpServerCore>(
     router: &MethodRouter<S>,
     supported: &[ProtocolVersion],
     extensions: &[Arc<dyn Extension>],
+    cache: neutral::CachePolicy,
 ) -> JsonRpcMessage {
-    let result = build_discover_result(server, router, supported);
+    let result = build_discover_result(server, router, supported, cache);
     let mut value = match serde_json::to_value(&result) {
         Ok(v) => v,
         Err(e) => return error_response(id, &McpError::internal(format!("serialize result: {e}"))),
@@ -228,6 +229,7 @@ fn build_discover_result<S: McpServerCore>(
     server: &S,
     router: &MethodRouter<S>,
     supported: &[ProtocolVersion],
+    cache: neutral::CachePolicy,
 ) -> draft::DiscoverResult {
     // `listChanged`/`subscribe` are true: the subscription registry delivers
     // these for every registered capability (`subscriptions/listen`).
@@ -260,14 +262,23 @@ fn build_discover_result<S: McpServerCore>(
             }),
     };
     draft::DiscoverResult {
+        cache_scope: match cache.scope {
+            neutral::CacheScope::Private => draft::DiscoverResultCacheScope::Private,
+            neutral::CacheScope::Public => draft::DiscoverResultCacheScope::Public,
+        },
         capabilities,
         instructions: server.instructions(),
-        meta: None,
+        // Server identity rides in the result's `_meta`. The 2026-07-28 RC had
+        // briefly promoted it to a first-class `serverInfo` field; the frozen
+        // spec reverted that, and `server/discover` has no other place to put
+        // it — the stateless model has no `initialize` result.
+        meta: Some(draft::ResultMetaObject {
+            io_modelcontextprotocol_server_info: Some(to_draft_impl(server.server_info())),
+            extra: Map::new(),
+        }),
         result_type: neutral::result_type::COMPLETE.to_string(),
-        // `serverInfo` is a first-class required field again (2026-07-28 RC;
-        // the earlier draft's `_meta` identity convention is gone).
-        server_info: to_draft_impl(server.server_info()),
         supported_versions: supported.iter().map(|v| v.as_str().to_owned()).collect(),
+        ttl_ms: cache.ttl_ms,
     }
 }
 

@@ -117,7 +117,7 @@ mod tests {
                 supported: vec![]
             }
             .jsonrpc_code(),
-            -32004
+            turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION
         );
     }
 }

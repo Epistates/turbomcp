@@ -411,14 +411,17 @@ impl ClientHandle {
         key: &str,
         params: neutral::ElicitUrlParams,
     ) -> McpResult<neutral::ElicitOutcome> {
-        // Both wires require `elicitationId` on URL-mode requests (the draft
-        // briefly dropped it; the 2026-07-28 RC restored it as required,
-        // pairing it with `notifications/elicitation/complete`). Mint one if
-        // the handler didn't set it.
-        let elicitation_id = params
-            .elicitation_id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        // `elicitationId` is `2025-11-25`-only. The 2026-07-28 RC had briefly
+        // made it required on URL-mode requests; the frozen spec removed it
+        // again, together with `notifications/elicitation/complete`, so the
+        // draft wire must not carry it. Mint one only where it belongs, if the
+        // handler didn't set it.
+        let elicitation_id = self.wire_carries_elicitation_id().then(|| {
+            params
+                .elicitation_id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        });
         let raw = self
             .obtain(
                 key,
@@ -440,9 +443,18 @@ impl ClientHandle {
     /// [`ElicitUrlParams::with_elicitation_id`](neutral::ElicitUrlParams::with_elicitation_id)
     /// when you intend to notify (an id minted for you is never surfaced).
     ///
-    /// Best-effort: `false` if the initiating connection is already gone (the
-    /// client's own retry controls cover that case — the spec requires them).
+    /// **`2025-11-25` only.** The frozen `2026-07-28` deleted this
+    /// notification along with `elicitationId`, so on a draft handle this is a
+    /// no-op returning `false` rather than a notification the client's schema
+    /// does not define.
+    ///
+    /// Best-effort otherwise: `false` if the initiating connection is already
+    /// gone (the client's own retry controls cover that case — the spec
+    /// requires them).
     pub async fn notify_elicitation_complete(&self, elicitation_id: &str) -> bool {
+        if !self.wire_carries_elicitation_id() {
+            return false;
+        }
         let Some(writer) = request_writer(&self.inner.connection, self.session_id()) else {
             return false;
         };
@@ -451,6 +463,19 @@ impl ClientHandle {
             Some(json!({ "elicitationId": elicitation_id })),
         );
         writer.send(note.into()).await.is_ok()
+    }
+
+    /// Whether this handle's wire defines URL-elicitation correlation:
+    /// `elicitationId` on the request and the paired
+    /// `notifications/elicitation/complete`.
+    ///
+    /// Only `2025-11-25` does, which the mode already tells us — `Bidi` is the
+    /// legacy inline-bidirectional path, while `Mrtr` and `TaskMediated` are
+    /// both `2026-07-28`. The frozen `2026-07-28` schema has neither field nor
+    /// notification (the RC briefly had both), so sending either on the draft
+    /// wire would be inventing protocol.
+    fn wire_carries_elicitation_id(&self) -> bool {
+        matches!(self.inner.mode, HandleMode::Bidi { .. })
     }
 
     /// The legacy session this handle is bound to, if any (draft handles are
@@ -707,17 +732,24 @@ fn elicit_request_value(params: &neutral::ElicitParams) -> Value {
     })
 }
 
-/// The wire `InputRequest` object for a URL-mode elicitation. Both wires
-/// require `elicitationId` (2026-07-28 RC).
-fn elicit_url_request_value(params: &neutral::ElicitUrlParams, elicitation_id: String) -> Value {
+/// The wire `InputRequest` object for a URL-mode elicitation. `elicitation_id`
+/// is `Some` only on `2025-11-25`, the one wire that defines `elicitationId`
+/// (see [`ClientHandle::wire_carries_elicitation_id`]).
+fn elicit_url_request_value(
+    params: &neutral::ElicitUrlParams,
+    elicitation_id: Option<String>,
+) -> Value {
+    let mut wire = json!({
+        "mode": "url",
+        "message": params.message,
+        "url": params.url,
+    });
+    if let Some(id) = elicitation_id {
+        wire["elicitationId"] = Value::String(id);
+    }
     json!({
         "method": request::ELICITATION_CREATE,
-        "params": {
-            "mode": "url",
-            "message": params.message,
-            "url": params.url,
-            "elicitationId": elicitation_id,
-        },
+        "params": wire,
     })
 }
 
@@ -880,47 +912,82 @@ mod tests {
         let params = &collected["k"]["params"];
         assert_eq!(params["mode"], "url");
         assert_eq!(params["url"], "https://auth.example/go");
-        // Both wires require `elicitationId` (2026-07-28 RC) — the handler's
-        // explicit id is carried verbatim.
+        // The frozen `2026-07-28` has no `elicitationId`. Even a handler that
+        // sets one explicitly must not put it on this wire — the field was
+        // deleted at freeze along with `notifications/elicitation/complete`.
+        assert!(
+            params.get("elicitationId").is_none(),
+            "the draft wire defines no elicitationId"
+        );
+    }
+
+    /// The legacy counterpart: `2025-11-25` *requires* `elicitationId` on a
+    /// URL-mode request, and the handler's explicit id is carried verbatim.
+    #[tokio::test]
+    async fn elicit_url_carries_elicitation_id_on_legacy() {
+        let (handle, pending, mut rx, _guard) = bidi_handle("bidi-elicit-url");
+        let task = tokio::spawn(async move {
+            handle
+                .elicit_url(
+                    "k",
+                    neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go")
+                        .with_elicitation_id("eid-1"),
+                )
+                .await
+        });
+
+        let req = next_request(&mut rx).await;
+        let params = req.params.clone().expect("params");
+        assert_eq!(params["mode"], "url");
         assert_eq!(params["elicitationId"], "eid-1");
+        pending.complete(JsonRpcResponse::success(
+            req.id,
+            json!({ "action": "accept" }),
+        ));
+        task.await.unwrap().expect("the client accepted");
     }
 
     #[test]
-    fn elicit_url_wire_value_carries_elicitation_id() {
+    fn elicit_url_wire_value_carries_elicitation_id_only_when_given() {
         let params = neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go");
-        let value = elicit_url_request_value(&params, "eid-9".into());
-        assert_eq!(value["params"]["elicitationId"], "eid-9");
+        let legacy = elicit_url_request_value(&params, Some("eid-9".to_string()));
+        assert_eq!(legacy["params"]["elicitationId"], "eid-9");
+        let draft = elicit_url_request_value(&params, None);
+        assert!(draft["params"].get("elicitationId").is_none());
+        // The fields both wires share survive either way.
+        assert_eq!(draft["params"]["mode"], "url");
+        assert_eq!(draft["params"]["url"], "https://auth.example/go");
     }
 
+    /// Minting only happens on the wire that has somewhere to put the id.
     #[tokio::test]
-    async fn elicit_url_mints_an_id_when_unset() {
-        let handle = ClientHandle::mrtr(
-            "",
-            Some(json!({ "elicitation": {} })),
-            BTreeMap::new(),
-            None,
-            false,
-        );
-        let err = handle
-            .elicit_url(
-                "k",
-                neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go"),
-            )
-            .await
-            .expect_err("no cached response → abort");
-        assert!(matches!(err, McpError::InputRequired));
-        let collected = handle.collected();
-        let id = collected["k"]["params"]["elicitationId"]
+    async fn elicit_url_mints_an_id_when_unset_on_legacy() {
+        let (handle, pending, mut rx, _guard) = bidi_handle("bidi-elicit-mint");
+        let task = tokio::spawn(async move {
+            handle
+                .elicit_url(
+                    "k",
+                    neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go"),
+                )
+                .await
+        });
+
+        let req = next_request(&mut rx).await;
+        let params = req.params.clone().expect("params");
+        let id = params["elicitationId"]
             .as_str()
             .expect("a minted elicitationId");
         assert!(!id.is_empty());
+        pending.complete(JsonRpcResponse::success(
+            req.id,
+            json!({ "action": "accept" }),
+        ));
+        task.await.unwrap().expect("the client accepted");
     }
 
     #[tokio::test]
     async fn elicitation_complete_reaches_only_the_initiating_connection() {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
-        let _guard = turbomcp_service::outbound::register("elicit-conn", tx);
-        let handle = ClientHandle::mrtr("elicit-conn", None, BTreeMap::new(), None, false);
+        let (handle, _pending, mut rx, _guard) = bidi_handle("elicit-conn");
 
         assert!(handle.notify_elicitation_complete("eid-1").await);
         let turbomcp_core::JsonRpcMessage::Notification(n) = rx.try_recv().expect("a notification")
@@ -930,10 +997,29 @@ mod tests {
         assert_eq!(n.method, "notifications/elicitation/complete");
         assert_eq!(n.params.unwrap()["elicitationId"], "eid-1");
 
-        // No connection (an MRTR handle whose transport never named one) is a
-        // no-op, not an error: the notification is a spec MAY.
-        let orphan = ClientHandle::mrtr("", None, BTreeMap::new(), None, false);
+        // No connection (a handle whose transport never named one) is a no-op,
+        // not an error: the notification is a spec MAY.
+        let orphan = ClientHandle::bidi("sess", "", Arc::new(PendingRequests::default()), None);
         assert!(!orphan.notify_elicitation_complete("eid-1").await);
+    }
+
+    /// The frozen `2026-07-28` deleted `notifications/elicitation/complete`.
+    /// A draft handle must stay silent rather than emit a notification the
+    /// client's schema does not define.
+    #[tokio::test]
+    async fn elicitation_complete_is_a_no_op_on_the_draft_wire() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let _guard = turbomcp_service::outbound::register("draft-elicit-conn", tx);
+        let handle = ClientHandle::mrtr("draft-elicit-conn", None, BTreeMap::new(), None, false);
+
+        assert!(
+            !handle.notify_elicitation_complete("eid-1").await,
+            "the draft wire has no elicitation/complete"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing may reach the client on the draft wire"
+        );
     }
 
     #[tokio::test]

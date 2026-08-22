@@ -5690,16 +5690,16 @@ impl ::core::default::Default for NotificationParams {
 ///  ],
 ///  "properties": {
 ///    "default": {
-///      "type": "integer"
+///      "type": "number"
 ///    },
 ///    "description": {
 ///      "type": "string"
 ///    },
 ///    "maximum": {
-///      "type": "integer"
+///      "type": "number"
 ///    },
 ///    "minimum": {
-///      "type": "integer"
+///      "type": "number"
 ///    },
 ///    "title": {
 ///      "type": "string"
@@ -5718,13 +5718,13 @@ impl ::core::default::Default for NotificationParams {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct NumberSchema {
     #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
-    pub default: ::core::option::Option<i64>,
+    pub default: ::core::option::Option<f64>,
     #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
-    pub maximum: ::core::option::Option<i64>,
+    pub maximum: ::core::option::Option<f64>,
     #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
-    pub minimum: ::core::option::Option<i64>,
+    pub minimum: ::core::option::Option<f64>,
     #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]

@@ -65,7 +65,7 @@ codegen:
     "${root}/2025-11-25/schema.json" \
     crates/turbomcp-protocol/src/v2025_11_25/types.rs "MCP 2025-11-25"
   cargo run -q -p turbomcp-codegen -- \
-    "${root}/draft/schema.json" \
+    "${root}/2026-07-28/schema.json" \
     crates/turbomcp-protocol/src/draft/types.rs "MCP 2026-07-28"
   cargo fmt -p turbomcp-protocol
   echo "Done. Review the diff before committing."

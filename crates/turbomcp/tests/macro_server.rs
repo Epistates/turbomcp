@@ -92,11 +92,21 @@ async fn call(req: JsonRpcRequest) -> serde_json::Value {
 #[tokio::test]
 async fn discover_derives_capabilities_from_impls() {
     let result = call(JsonRpcRequest::new(1, "server/discover", None)).await;
-    // `serverInfo` is a first-class required field on both wires (the draft
-    // briefly moved it into `_meta`; the 2026-07-28 RC restored it).
-    let server_info = &result["serverInfo"];
+    // Server identity rides in the result's `_meta` on `2026-07-28`: the RC
+    // had briefly promoted it to a first-class `serverInfo` field, and the
+    // frozen spec reverted that. `server/discover` has nowhere else to put it
+    // — the stateless model has no `initialize` result.
+    let server_info = &result["_meta"]["io.modelcontextprotocol/serverInfo"];
     assert_eq!(server_info["name"], "demo");
     assert_eq!(server_info["title"], "Demo Server");
+    assert!(
+        result.get("serverInfo").is_none(),
+        "the frozen wire has no top-level serverInfo"
+    );
+    // Both cache fields are required on this wire; the conservative default
+    // says "don't reuse me".
+    assert_eq!(result["ttlMs"], 0);
+    assert_eq!(result["cacheScope"], "private");
     assert_eq!(
         result["instructions"],
         "A demo server exercising every macro."

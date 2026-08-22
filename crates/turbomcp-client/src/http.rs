@@ -132,11 +132,15 @@ async fn post_and_pump(shared: Arc<Shared>, msg: JsonRpcMessage) {
     if let Err(err) = pump(&shared, msg).await {
         match request_id {
             Some(id) => {
-                // Surface the failure to the one waiting caller.
+                // Surface the failure to the one waiting caller. This is a
+                // locally synthesized *transport* error, so it takes the
+                // implementation-defined floor — the same code
+                // `McpError::Transport` maps to. (It read `-32001` when that
+                // was our header-mismatch code, which this is not.)
                 let resp = JsonRpcResponse::error(
                     id,
                     JsonRpcError {
-                        code: -32001,
+                        code: -32000,
                         message: err,
                         data: None,
                     },

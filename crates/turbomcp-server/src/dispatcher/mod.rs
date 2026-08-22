@@ -105,12 +105,19 @@ struct Shared {
 
 /// Per-capability cache defaults (SEP-2549) for the `2026-07-28` wire's
 /// `ttlMs`/`cacheScope` fields — one [`CachePolicy`] per cacheable surface
-/// (the four `*/list`s and `resources/read`; `server/discover` lost its cache
-/// fields in the 2026-07-28 RC and is not configurable). The default is
-/// [`CachePolicy::NO_CACHE`] everywhere (private + immediately stale —
+/// (the four `*/list`s, `resources/read`, and `server/discover`). The default
+/// is [`CachePolicy::NO_CACHE`] everywhere (private + immediately stale —
 /// exactly the pre-configuration behavior). A handler-set policy on a neutral
 /// result wins over these defaults. The `2025-11-25` wire has no cache
 /// fields, so this configuration is inert there.
+///
+/// `server/discover` is the one surface where `ttlMs`/`cacheScope` are
+/// **required** on the wire, so it always emits a policy; the conservative
+/// default merely says "don't reuse me". Raise it only if the discover
+/// response really is identical for every caller — capabilities are derived
+/// from the impl and so are caller-independent today, but a `public` scope
+/// would let a shared proxy serve one tenant's discover to another if that
+/// ever stops being true.
 ///
 /// For the common one-knob case a bare [`CachePolicy`] converts into a
 /// uniform `CachePolicies`; chain the per-surface setters for granularity:
@@ -128,6 +135,7 @@ pub struct CachePolicies {
     pub(crate) resource_templates_list: CachePolicy,
     pub(crate) resources_read: CachePolicy,
     pub(crate) prompts_list: CachePolicy,
+    pub(crate) discover: CachePolicy,
 }
 
 impl CachePolicies {
@@ -140,6 +148,7 @@ impl CachePolicies {
             resource_templates_list: policy,
             resources_read: policy,
             prompts_list: policy,
+            discover: policy,
         }
     }
 
@@ -175,6 +184,13 @@ impl CachePolicies {
     #[must_use]
     pub fn prompts_list(mut self, policy: CachePolicy) -> Self {
         self.prompts_list = policy;
+        self
+    }
+
+    /// Set the `server/discover` policy.
+    #[must_use]
+    pub fn discover(mut self, policy: CachePolicy) -> Self {
+        self.discover = policy;
         self
     }
 }
@@ -292,14 +308,14 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         }
     }
 
-    /// Drop every live `subscriptions/listen` subscription at graceful
-    /// shutdown. The subscriptions spec (2026-07-28 RC) sends **no** closing
-    /// response — the server ends a subscription by closing the underlying
-    /// stream, which the HTTP transport does off its shutdown token. This
-    /// clears the registry so no further notifications are routed.
-    /// `run_http` wires it to the configured shutdown token automatically.
-    pub fn close_subscriptions(&self) {
-        self.shared.subs.close_all();
+    /// End every live `subscriptions/listen` subscription at graceful
+    /// shutdown, answering each listen request with the frozen `2026-07-28`
+    /// `SubscriptionsListenResult` envelope before clearing the registry.
+    /// Best-effort: a connection that is already gone gets nothing, which the
+    /// spec allows (an abrupt close carries no response). `run_http` wires
+    /// this to the configured shutdown token automatically.
+    pub async fn close_subscriptions(&self) {
+        self.shared.subs.close_all().await;
     }
 
     /// Opt in to strict elicitation keys: reusing an `elicit` key with a
@@ -599,6 +615,7 @@ async fn handle_request<S: McpServerCore>(
             router,
             supported,
             &shared.extensions,
+            shared.cache.discover,
         )),
         methods::request::PING => Ok(JsonRpcResponse::success(id, serde_json::json!({})).into()),
 
@@ -918,12 +935,12 @@ fn error_response_for(id: RequestId, version: &ProtocolVersion, err: &McpError) 
     JsonRpcResponse::error(id, mcp_to_jsonrpc_error_for(err, version)).into()
 }
 
-/// `-32003` Missing Required Client Capability (SEP-2663): the client requested
-/// an extension's behavior without declaring its capability. The `data` names
-/// the required extension so the client can re-declare and retry.
+/// Missing Required Client Capability (SEP-2663): the client requested an
+/// extension's behavior without declaring its capability. The `data` names the
+/// required extension so the client can re-declare and retry.
 fn missing_capability_response(id: RequestId, extension_id: &str) -> JsonRpcMessage {
     let err = JsonRpcError {
-        code: -32003,
+        code: turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
         message: "missing required client capability".to_owned(),
         data: Some(serde_json::json!({
             "requiredCapabilities": { "extensions": { extension_id: {} } }

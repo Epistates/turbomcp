@@ -111,7 +111,11 @@ async fn discover_list_and_call_over_http() {
         "application/json"
     );
     let v = body_json(resp).await;
-    assert_eq!(v["result"]["serverInfo"]["name"], "calculator");
+    // Identity is in the result's `_meta` on the frozen `2026-07-28`.
+    assert_eq!(
+        v["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "calculator"
+    );
 
     // tools/list (modern, version in _meta + mirrored headers)
     let resp = app(HttpConfig::new())

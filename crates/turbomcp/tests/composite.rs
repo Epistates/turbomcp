@@ -11,7 +11,7 @@ use turbomcp::prelude::*;
 use turbomcp::tower::{Service, ServiceExt};
 use turbomcp::{
     Composite, CompositeServer, Implementation, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
-    LegacySessionAdapter, ProtocolVersion, ServerBuilder, VersionDispatcher, neutral,
+    LegacySessionAdapter, ProtocolVersion, ServerBuilder, VersionDispatcher, codes, neutral,
 };
 
 #[derive(Clone)]
@@ -436,7 +436,7 @@ async fn the_composite_owns_protocol_negotiation() {
     )
     .await;
     let error = r.error.expect("an excluded revision must be refused");
-    assert_eq!(error.code, -32004);
+    assert_eq!(error.code, codes::UNSUPPORTED_PROTOCOL_VERSION);
     assert_eq!(error.data.unwrap()["supported"], json!(["2025-11-25"]));
 }
 

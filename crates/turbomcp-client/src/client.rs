@@ -319,14 +319,19 @@ impl Handshake {
     /// `initialize` or `server/discover` result; missing fields degrade
     /// gracefully rather than fail the handshake.
     ///
-    /// Both wires carry the server identity as a top-level `serverInfo`
-    /// field (the draft briefly moved it into `_meta`; the 2026-07-28 RC
-    /// made it first-class again).
+    /// The two wires disagree on where the server identity lives, so both
+    /// places are read. `initialize` (`2025-06-18`/`2025-11-25`) carries a
+    /// top-level `serverInfo`; the frozen `2026-07-28` moved it into the
+    /// result's `_meta` under `io.modelcontextprotocol/serverInfo`, having
+    /// briefly promoted it back to a field during the RC. Preferring `_meta`
+    /// costs nothing on the legacy wire, which never sets it.
     fn from_result(version: ProtocolVersion, result: &Value) -> Self {
         Self {
             version,
             server_info: result
-                .get("serverInfo")
+                .get("_meta")
+                .and_then(|m| m.get(keys::SERVER_INFO))
+                .or_else(|| result.get("serverInfo"))
                 .and_then(|v| serde_json::from_value(v.clone()).ok()),
             server_capabilities: result
                 .get("capabilities")

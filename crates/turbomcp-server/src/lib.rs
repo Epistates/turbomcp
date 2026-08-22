@@ -292,8 +292,12 @@ mod tests {
             panic!("expected response")
         };
         let result = r.result.expect("discover result");
-        // `serverInfo` is a first-class required field again (RC).
-        assert_eq!(result["serverInfo"]["name"], "calculator");
+        // Identity rides in `_meta` on the frozen `2026-07-28` (the RC had
+        // briefly made it a first-class `serverInfo` field).
+        assert_eq!(
+            result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "calculator"
+        );
         assert_eq!(result["capabilities"]["tools"]["listChanged"], true);
         assert_eq!(result["resultType"], "complete");
         let versions = result["supportedVersions"].as_array().unwrap();
@@ -343,7 +347,7 @@ mod tests {
             panic!()
         };
         let err = r.error.expect("should be an error");
-        assert_eq!(err.code, -32004);
+        assert_eq!(err.code, turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION);
     }
 
     #[tokio::test]

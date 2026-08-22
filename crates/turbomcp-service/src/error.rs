@@ -17,7 +17,7 @@ pub enum ProtocolError {
     /// A frame could not be parsed (JSON-RPC `-32700`).
     #[error("parse error: {0}")]
     Parse(String),
-    /// The request's protocol version is absent or unsupported (`-32004`).
+    /// The request's protocol version is absent or unsupported (`-32022`).
     #[error("unsupported protocol version (requested {requested:?}; supported {supported:?})")]
     UnsupportedVersion {
         /// The version the client asked for, if any.
@@ -25,7 +25,7 @@ pub enum ProtocolError {
         /// The versions this server accepts.
         supported: Vec<String>,
     },
-    /// A required capability for the requested method is not available (`-32003`).
+    /// A required capability for the requested method is not available (`-32021`).
     #[error("missing required capability: {0}")]
     MissingCapability(String),
     /// The request referenced a session this server does not know — expired,
@@ -51,12 +51,11 @@ impl ProtocolError {
     pub fn jsonrpc_code(&self) -> i32 {
         match self {
             Self::Parse(_) => -32700,
-            // Spec-allocated codes (2026-07-28 RC error-code allocation).
-            Self::UnsupportedVersion { .. } => -32004,
-            Self::MissingCapability(_) => -32003,
+            // Spec-allocated codes (`turbomcp_core::codes` owns the numbers).
+            Self::UnsupportedVersion { .. } => turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION,
+            Self::MissingCapability(_) => turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
             Self::UnknownSession(_) => -32002,
-            // `-32000` is the implementation-defined floor; `-32001` now
-            // belongs to `HeaderMismatch` per the RC allocation.
+            // `-32000` is the implementation-defined floor.
             Self::Transport(_) | Self::ServerShuttingDown => -32000,
             Self::Internal(_) => -32603,
         }

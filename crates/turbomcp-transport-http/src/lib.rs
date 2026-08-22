@@ -1407,15 +1407,15 @@ fn message_has_version(msg: &JsonRpcMessage) -> bool {
         .is_some()
 }
 
-/// `400` + a `HeaderMismatch` JSON-RPC error (`-32001`): an HTTP header did
-/// not match the corresponding request-body value, or a required header is
-/// missing or malformed (transports spec §Server Validation).
+/// `400` + a `HeaderMismatch` JSON-RPC error: an HTTP header did not match the
+/// corresponding request-body value, or a required header is missing or
+/// malformed (transports spec §Server Validation).
 fn header_mismatch_rejection(detail: &str) -> Response {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": null,
         "error": {
-            "code": -32001,
+            "code": turbomcp_core::codes::HEADER_MISMATCH,
             "message": format!("header mismatch: {detail}"),
         },
     });
@@ -1423,7 +1423,7 @@ fn header_mismatch_rejection(detail: &str) -> Response {
 }
 
 /// `400` for an explicit but unsupported `MCP-Protocol-Version` header
-/// (`UnsupportedProtocolVersionError`, `-32004`, with the spec-required
+/// (`UnsupportedProtocolVersionError`, with the spec-required
 /// `data: { supported, requested }`).
 fn version_header_rejection(requested: &str) -> Response {
     let supported: Vec<&str> = ProtocolVersion::SUPPORTED
@@ -1434,7 +1434,7 @@ fn version_header_rejection(requested: &str) -> Response {
         "jsonrpc": "2.0",
         "id": null,
         "error": {
-            "code": -32004,
+            "code": turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION,
             "message": format!("unsupported MCP-Protocol-Version header: {requested}"),
             "data": { "supported": supported, "requested": requested },
         },

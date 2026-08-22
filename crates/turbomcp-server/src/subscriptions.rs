@@ -251,15 +251,38 @@ impl SubscriptionRegistry {
         }
     }
 
-    /// Drop every live draft subscription at graceful teardown. The
-    /// subscriptions spec (2026-07-28 RC) sends **no** closing response — a
-    /// listen request's "response" is the open stream itself, and the server
-    /// ends a subscription by closing the underlying stream/connection. The
-    /// HTTP transport ends its dedicated listen SSE streams off its shutdown
-    /// token; on stdio the connection itself is what closes. This just clears
-    /// the registry so no further notifications are routed.
-    pub(crate) fn close_all(&self) {
-        self.lock().clear();
+    /// Drop every live draft subscription at graceful teardown, answering each
+    /// listen request with the `SubscriptionsListenResult` envelope that ends
+    /// its stream.
+    ///
+    /// The 2026-07-28 RC had deleted that envelope, leaving a stream with no
+    /// defined ending but the transport closing under it; the frozen spec
+    /// restored it for exactly this case — "sent only when the server tears
+    /// the subscription down". An *abrupt* close still carries no response, so
+    /// delivery is best-effort: a connection whose writer is already gone is
+    /// simply dropped.
+    pub(crate) async fn close_all(&self) {
+        // Take the targets and clear under the lock — it must not be held
+        // across an await, and a subscription being torn down must stop
+        // receiving notifications either way.
+        let targets: Vec<(String, RequestId)> = {
+            let mut live = self.lock();
+            let targets = live.keys().cloned().collect();
+            live.clear();
+            targets
+        };
+        for (connection, id) in targets {
+            let Some(writer) = outbound::writer(&connection) else {
+                continue;
+            };
+            let result = json!({
+                "resultType": turbomcp_protocol::neutral::result_type::COMPLETE,
+                "_meta": { meta::keys::SUBSCRIPTION_ID: subscription_id_value(&id) },
+            });
+            let _ = writer
+                .send(turbomcp_core::JsonRpcResponse::success(id, result).into())
+                .await;
+        }
     }
 
     fn lock(
@@ -428,7 +451,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_all_sends_nothing_and_clears() {
+    async fn close_all_answers_every_subscription_and_clears() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let _guard = outbound::register("close-conn", tx);
         let reg = Arc::new(SubscriptionRegistry::default());
@@ -439,11 +462,24 @@ mod tests {
             filter(true, &[]),
         );
 
-        reg.close_all();
+        reg.close_all().await;
 
-        // The RC subscriptions spec sends no closing response — teardown is
-        // closing the stream itself (the transport's job), never a message.
-        assert!(rx.try_recv().is_err(), "close_all must send nothing");
+        // Each listen request is answered with the frozen `2026-07-28` closing
+        // envelope: `resultType: complete` plus the subscription id, carried on
+        // a response to the listen request's own id.
+        let mut closed = Vec::new();
+        while let Ok(JsonRpcMessage::Response(r)) = rx.try_recv() {
+            let result = r.result.expect("a result");
+            assert_eq!(result["resultType"], "complete");
+            assert_eq!(
+                result["_meta"]["io.modelcontextprotocol/subscriptionId"],
+                subscription_id_value(&r.id)
+            );
+            closed.push(r.id);
+        }
+        assert_eq!(closed.len(), 2, "every live subscription is answered");
+        assert!(closed.contains(&RequestId::from(7i64)));
+        assert!(closed.contains(&RequestId::String("listen-a".into())));
 
         // The registry is empty: a publish reaches nobody.
         reg.publish(methods::notification::TOOLS_LIST_CHANGED, None, |_| true)

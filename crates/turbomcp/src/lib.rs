@@ -103,7 +103,7 @@
 pub use turbomcp_core::{
     Claims, Identity, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcNotification,
     JsonRpcRequest, JsonRpcResponse, LogLevel, McpError, McpResult, ProtocolVersion,
-    RequestContext, RequestId,
+    RequestContext, RequestId, codes,
 };
 
 /// Version-stable, handler-facing types (the surface user handlers speak).
@@ -316,15 +316,15 @@ pub mod http {
         async fn run_http(self, addr: SocketAddr, config: HttpConfig) -> Result<(), HttpError> {
             let dispatcher = self.build();
             let config = config.with_session_terminator(Arc::new(dispatcher.session_terminator()));
-            // Graceful teardown: when the shutdown token fires, drop the live
-            // `subscriptions/listen` registrations (the transport ends the
-            // listen SSE streams itself off the same token — the RC sends no
-            // closing response).
+            // Graceful teardown: when the shutdown token fires, end the live
+            // `subscriptions/listen` registrations — each gets the frozen
+            // `2026-07-28` closing envelope before the transport tears its
+            // listen SSE stream down off the same token.
             let closer = dispatcher.clone();
             let shutdown = config.shutdown_token();
             tokio::spawn(async move {
                 shutdown.cancelled().await;
-                closer.close_subscriptions();
+                closer.close_subscriptions().await;
             });
             serve_http(addr, dispatcher, config).await
         }

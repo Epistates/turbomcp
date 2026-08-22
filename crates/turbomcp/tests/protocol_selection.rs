@@ -11,7 +11,7 @@
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
 use turbomcp::prelude::*;
-use turbomcp::{JsonRpcMessage, JsonRpcRequest, McpServerCore, ProtocolVersion};
+use turbomcp::{JsonRpcMessage, JsonRpcRequest, McpServerCore, ProtocolVersion, codes};
 
 const DRAFT_META: &str = "2026-07-28";
 const LEGACY: &str = "2025-11-25";
@@ -155,7 +155,11 @@ fn protocols_accepts_every_supported_version() {
 async fn a_stable_only_server_refuses_the_draft() {
     let body = call(StableOnly.into_server().build(), tools_list(DRAFT_META)).await;
     let err = body.get("error").expect("draft must be refused");
-    assert_eq!(err["code"], -32004, "unsupported protocol version");
+    assert_eq!(
+        err["code"],
+        codes::UNSUPPORTED_PROTOCOL_VERSION,
+        "unsupported protocol version"
+    );
     // The error names what *is* served, so the client can re-issue.
     let supported = err["data"]["supported"]
         .as_array()
@@ -246,7 +250,11 @@ async fn a_previous_only_server_refuses_the_newer_revisions() {
         let err = body
             .get("error")
             .unwrap_or_else(|| panic!("{excluded} must be refused: {body}"));
-        assert_eq!(err["code"], -32004, "{excluded}: {body}");
+        assert_eq!(
+            err["code"],
+            codes::UNSUPPORTED_PROTOCOL_VERSION,
+            "{excluded}: {body}"
+        );
         assert_eq!(err["data"]["supported"], json!([PREVIOUS]));
     }
 

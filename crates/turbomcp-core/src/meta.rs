@@ -25,6 +25,12 @@ pub mod keys {
     pub const SUBSCRIPTION_ID: &str = "io.modelcontextprotocol/subscriptionId";
     /// Per-request client implementation info (draft stateless model).
     pub const CLIENT_INFO: &str = "io.modelcontextprotocol/clientInfo";
+    /// Server implementation info, carried in a *result's* `_meta` (the
+    /// `2026-07-28` stateless model, where there is no `initialize` result to
+    /// put it in). The 2026-07-28 RC had briefly promoted it back to a
+    /// first-class `DiscoverResult.serverInfo`; the frozen spec reverted that,
+    /// so identity travels here on every result a server chooses to sign.
+    pub const SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
     /// Per-request client capabilities (draft stateless model). Gates which
     /// MRTR input requests a server may send (SEP-2322 MUST).
     pub const CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";

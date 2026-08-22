@@ -1,12 +1,12 @@
 //! Dispatcher spec invariants the rest of the suite only reaches implicitly:
-//! modern-path version rejection (`-32004` with the supported list),
+//! modern-path version rejection (`-32022` with the supported list),
 //! capability-derivation *enforcement* (unadvertised capability → `-32601`),
 //! pagination-cursor plumbing, the malformed-params matrix (`-32602`), the
 //! dual-version `server/discover` list, and the unknown-method catch-all.
 
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
-use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult};
+use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult, codes};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext, ListResourcesContext,
@@ -176,12 +176,12 @@ where
 }
 
 /// PLAN §4.9: an unknown protocol version on a capability method answers
-/// `-32004` and names the versions this build supports — in the message and,
+/// `-32022` and names the versions this build supports — in the message and,
 /// as the RC requires, in `data: { supported, requested }` — so the client can
 /// re-issue with one of them. A capability request with no version at all is
 /// equally unsupported.
 #[tokio::test]
-async fn unknown_protocol_version_gets_32004_with_the_supported_list() {
+async fn unknown_protocol_version_is_refused_with_the_supported_list() {
     let mut svc = kitchen();
     let req = JsonRpcRequest::new(
         1,
@@ -191,7 +191,11 @@ async fn unknown_protocol_version_gets_32004_with_the_supported_list() {
         })),
     );
     let out = call(&mut svc, req).await;
-    assert_eq!(out["error"]["code"], -32004, "{out}");
+    assert_eq!(
+        out["error"]["code"],
+        codes::UNSUPPORTED_PROTOCOL_VERSION,
+        "{out}"
+    );
     let msg = out["error"]["message"].as_str().unwrap();
     assert!(msg.contains("1999-01-01"), "names the requested: {msg}");
     assert!(
@@ -208,7 +212,11 @@ async fn unknown_protocol_version_gets_32004_with_the_supported_list() {
     );
 
     let out = call(&mut svc, JsonRpcRequest::new(2, "tools/list", None)).await;
-    assert_eq!(out["error"]["code"], -32004, "absent version: {out}");
+    assert_eq!(
+        out["error"]["code"],
+        codes::UNSUPPORTED_PROTOCOL_VERSION,
+        "absent version: {out}"
+    );
 }
 
 /// The teeth of "capabilities are derived, not declared": a method whose
@@ -496,13 +504,13 @@ async fn legacy_only_methods_are_method_not_found_on_the_draft() {
     }
 }
 
-/// The same methods reach `-32004` — not `-32601` — for a version this build
+/// The same methods reach `-32022` — not `-32601` — for a version this build
 /// does not serve at all. The distinction matters to a client: "I don't have
 /// that method" is terminal, while "I don't speak that version" is something
 /// it can act on by re-issuing, which is why the RC requires the supported
 /// list to travel with the code.
 #[tokio::test]
-async fn legacy_only_methods_report_an_unsupported_version_as_32004() {
+async fn legacy_only_methods_report_an_unsupported_version_not_unknown_method() {
     for method in [
         "resources/subscribe",
         "resources/unsubscribe",
@@ -523,7 +531,11 @@ async fn legacy_only_methods_report_an_unsupported_version_as_32004() {
             ),
         )
         .await;
-        assert_eq!(out["error"]["code"], -32004, "{method}: {out}");
+        assert_eq!(
+            out["error"]["code"],
+            codes::UNSUPPORTED_PROTOCOL_VERSION,
+            "{method}: {out}"
+        );
         assert_eq!(out["error"]["data"]["requested"], "1999-01-01", "{method}");
     }
 }

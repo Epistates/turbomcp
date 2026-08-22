@@ -144,12 +144,12 @@ async fn listen_answers_sse_with_ack_first_then_events() {
     );
 }
 
-/// Graceful teardown (subscriptions spec, 2026-07-28 RC): the server sends
-/// **no** closing response — a subscription ends by the server closing the
-/// stream. Firing the configured shutdown token ends the listen SSE stream;
-/// `close_subscriptions` just drops the registry state.
+/// Graceful teardown (frozen `2026-07-28`): the server answers the listen
+/// request with a `SubscriptionsListenResult` envelope and then the stream
+/// ends. The RC had no such envelope — closing was the only signal — and the
+/// freeze restored it for server-initiated teardown.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shutdown_ends_the_listen_stream_without_a_response() {
+async fn shutdown_closes_the_listen_stream_with_a_result_envelope() {
     let dispatcher = VersionDispatcher::new(Watched, MethodRouter::new().with_tools());
     let closer = dispatcher.clone();
     let config = HttpConfig::new();
@@ -167,14 +167,24 @@ async fn shutdown_ends_the_listen_stream_without_a_response() {
     let ack = event_json(&next_sse_chunk(&mut body, &mut buffer).await);
     assert_eq!(ack["method"], "notifications/subscriptions/acknowledged");
 
-    shutdown.cancel();
-    closer.close_subscriptions();
+    closer.close_subscriptions().await;
 
-    // The stream ends with no further event — closing IS the signal.
+    // The closing envelope arrives on the listen stream, addressed to the
+    // listen request's own id.
+    let closed = event_json(&next_sse_chunk(&mut body, &mut buffer).await);
+    assert_eq!(closed["id"], 7);
+    assert_eq!(closed["result"]["resultType"], "complete");
+    assert_eq!(
+        closed["result"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+        7
+    );
+
+    // Then the transport tears the stream down off the same token.
+    shutdown.cancel();
     let end = tokio::time::timeout(Duration::from_secs(5), body.frame()).await;
     assert!(
         matches!(end, Ok(None)),
-        "stream should end on shutdown with no closing response, got {end:?}"
+        "stream should end after the closing envelope, got {end:?}"
     );
 }
 

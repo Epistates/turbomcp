@@ -11,6 +11,28 @@
 use alloc::string::{String, ToString};
 use core::fmt;
 
+/// The JSON-RPC error codes the MCP spec allocates by name, as opposed to the
+/// four JSON-RPC base codes and the `-32000` implementation-defined floor.
+///
+/// One definition each: these numbers appear on the wire from the dispatcher,
+/// the HTTP transport, and [`McpError::jsonrpc_code`], and they have already
+/// been reallocated once (the `2026-07-28` RC used `-32003`/`-32004`; the
+/// frozen spec moved the block to `-3202x`). Naming them keeps the next
+/// reallocation a one-line change instead of a grep.
+///
+/// All three are `2026-07-28` concepts — no earlier schema defines them.
+pub mod codes {
+    /// An HTTP header disagreed with the request body, or a required header is
+    /// missing or malformed (transports spec §Server Validation). HTTP 400.
+    pub const HEADER_MISMATCH: i32 = -32020;
+    /// The request needs a client capability that was never advertised
+    /// (SEP-2322 / SEP-2663). HTTP 400.
+    pub const MISSING_REQUIRED_CLIENT_CAPABILITY: i32 = -32021;
+    /// The requested protocol version is not supported; `data` carries
+    /// `{ supported, requested }`. HTTP 400.
+    pub const UNSUPPORTED_PROTOCOL_VERSION: i32 = -32022;
+}
+
 /// The result type returned by TurboMCP handlers and most fallible APIs.
 pub type McpResult<T> = Result<T, McpError>;
 
@@ -53,15 +75,15 @@ pub enum McpError {
     /// Transport-level failure (connection closed, I/O error). JSON-RPC
     /// `-32000`, HTTP 503. Retryable.
     Transport(String),
-    /// The requested protocol version is not supported. JSON-RPC `-32004`,
+    /// The requested protocol version is not supported. JSON-RPC `-32022`,
     /// HTTP 400. Carries the requested version (or `None` when absent).
     UnsupportedProtocolVersion(String),
     /// The request requires a client capability that was not advertised.
-    /// JSON-RPC `-32003`, HTTP 400.
+    /// JSON-RPC `-32021`, HTTP 400.
     MissingRequiredCapability(String),
     /// An HTTP header did not match the corresponding request-body value
     /// (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-*`).
-    /// JSON-RPC `-32001`, HTTP 400.
+    /// JSON-RPC `-32020`, HTTP 400.
     HeaderMismatch(String),
     /// MRTR abort sentinel (SEP-2322): a handler asked the client for input
     /// (`ctx.client.elicit(…)`) that the request didn't carry yet. It exists
@@ -134,10 +156,12 @@ impl McpError {
             | Self::PermissionDenied(_)
             | Self::Timeout(_)
             | Self::Transport(_) => -32000,
-            // Spec-allocated codes (2026-07-28 RC error-code allocation).
-            Self::HeaderMismatch(_) => -32001,
-            Self::MissingRequiredCapability(_) => -32003,
-            Self::UnsupportedProtocolVersion(_) => -32004,
+            // Spec-allocated codes (see [`codes`]). All three are
+            // `2026-07-28` concepts — no legacy schema defines them — so
+            // there is nothing to version-split here.
+            Self::HeaderMismatch(_) => codes::HEADER_MISMATCH,
+            Self::MissingRequiredCapability(_) => codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
+            Self::UnsupportedProtocolVersion(_) => codes::UNSUPPORTED_PROTOCOL_VERSION,
         }
     }
 
@@ -239,15 +263,17 @@ mod tests {
         assert_eq!(McpError::internal("x").jsonrpc_code(), -32603);
         assert_eq!(McpError::invalid_params("x").jsonrpc_code(), -32602);
         assert_eq!(McpError::method_not_found("x").jsonrpc_code(), -32601);
+        // The frozen `2026-07-28` allocation; the RC used -32004/-32003 and
+        // had no header-mismatch code at all.
         assert_eq!(
             McpError::UnsupportedProtocolVersion("x".into()).jsonrpc_code(),
-            -32004
+            -32022
         );
         assert_eq!(
             McpError::MissingRequiredCapability("x".into()).jsonrpc_code(),
-            -32003
+            -32021
         );
-        assert_eq!(McpError::HeaderMismatch("x".into()).jsonrpc_code(), -32001);
+        assert_eq!(McpError::HeaderMismatch("x".into()).jsonrpc_code(), -32020);
         assert_eq!(McpError::authentication("x").http_status(), 401);
         assert_eq!(McpError::permission_denied("x").http_status(), 403);
         assert_eq!(McpError::timeout("x").http_status(), 504);
@@ -287,8 +313,8 @@ mod tests {
 
     #[test]
     fn auth_group_maps_to_minus_32000() {
-        // `-32000` (implementation-defined floor) — NOT `-32001`, which the
-        // 2026-07-28 RC allocates to `HeaderMismatch`.
+        // `-32000` (implementation-defined floor). The spec's own allocations
+        // live up at `-3202x`, so this whole group stays clear of them.
         for e in [
             McpError::authentication("x"),
             McpError::permission_denied("x"),

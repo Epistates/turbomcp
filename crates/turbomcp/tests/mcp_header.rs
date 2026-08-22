@@ -1,7 +1,7 @@
 //! The `#[mcp_header]` round-trip (SEP-2243, current semantics). A tool
 //! parameter marked `#[mcp_header]` mirrors to an `Mcp-Param-*` HTTP header;
 //! the server **validates** the mirror against the body (never sources
-//! arguments from headers — a mismatch is `400` + `-32001`). Proven three
+//! arguments from headers — a mismatch is `400` + `-32020`). Proven three
 //! ways:
 //!  1. a raw client whose mirror header contradicts the body is rejected;
 //!  2. a raw client whose mirror header matches the body is served;
@@ -14,10 +14,10 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
-use turbomcp::CancellationToken;
 use turbomcp::client::{ClientBuilder, ConnectMode, connect_http};
 use turbomcp::http::{HttpConfig, ServeHttp};
 use turbomcp::prelude::*;
+use turbomcp::{CancellationToken, codes};
 
 #[derive(Clone)]
 struct Geo;
@@ -61,7 +61,7 @@ async fn server_validates_mirror_headers_against_the_body() {
     let http = reqwest::Client::new();
 
     // A mirror header contradicting the body argument is a HeaderMismatch:
-    // 400 + -32001. Headers are validation mirrors — never argument sources.
+    // 400 + -32020. Headers are validation mirrors — never argument sources.
     let resp = http
         .post(&url)
         .header("accept", "application/json, text/event-stream")
@@ -75,7 +75,7 @@ async fn server_validates_mirror_headers_against_the_body() {
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["error"]["code"], -32001);
+    assert_eq!(body["error"]["code"], codes::HEADER_MISMATCH);
 
     // A matching mirror is served normally.
     let resp = http
