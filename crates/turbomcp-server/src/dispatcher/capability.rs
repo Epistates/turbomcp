@@ -18,9 +18,9 @@ use turbomcp_core::{
     JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, ProtocolVersion, RequestContext,
     RequestId, meta,
 };
-use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
+use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_protocol::{methods, neutral};
 
 use crate::context::{
@@ -109,15 +109,15 @@ pub(super) struct DraftWire;
 
 impl WireFamily for DraftWire {
     const MRTR: bool = true;
-    const VERSION: ProtocolVersion = ProtocolVersion::Draft;
-    type ListTools = draft::ListToolsResult;
-    type CallTool = draft::CallToolResult;
-    type ListResources = draft::ListResourcesResult;
-    type ListResourceTemplates = draft::ListResourceTemplatesResult;
-    type ReadResource = draft::ReadResourceResult;
-    type ListPrompts = draft::ListPromptsResult;
-    type GetPrompt = draft::GetPromptResult;
-    type Complete = draft::CompleteResult;
+    const VERSION: ProtocolVersion = ProtocolVersion::V2026_07_28;
+    type ListTools = v0728::ListToolsResult;
+    type CallTool = v0728::CallToolResult;
+    type ListResources = v0728::ListResourcesResult;
+    type ListResourceTemplates = v0728::ListResourceTemplatesResult;
+    type ReadResource = v0728::ReadResourceResult;
+    type ListPrompts = v0728::ListPromptsResult;
+    type GetPrompt = v0728::GetPromptResult;
+    type Complete = v0728::CompleteResult;
 }
 
 /// `2025-11-25` (legacy, stateful).

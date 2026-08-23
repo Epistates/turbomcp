@@ -141,7 +141,7 @@ async fn exercise_named(client: &Client, server_name: &str) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn modern_mode_negotiates_draft() {
     let client = connect(ConnectMode::Modern).await;
-    assert_eq!(client.protocol_version(), &ProtocolVersion::Draft);
+    assert_eq!(client.protocol_version(), &ProtocolVersion::V2026_07_28);
     exercise(&client).await;
 }
 
@@ -156,7 +156,7 @@ async fn legacy_mode_negotiates_2025() {
 async fn auto_mode_resolves_to_modern_on_dual_stack() {
     let client = connect(ConnectMode::Auto).await;
     // A dual-stack server answers server/discover, so Auto lands on the draft.
-    assert_eq!(client.protocol_version(), &ProtocolVersion::Draft);
+    assert_eq!(client.protocol_version(), &ProtocolVersion::V2026_07_28);
     exercise(&client).await;
 }
 

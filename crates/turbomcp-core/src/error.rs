@@ -291,7 +291,7 @@ mod tests {
         // The RC renumbered it to Invalid Params; earlier revisions keep the
         // MCP-specific -32002 their spec text prescribes.
         assert_eq!(err.jsonrpc_code(), -32602, "version-agnostic = current");
-        assert_eq!(err.jsonrpc_code_for(&V::Draft), -32602);
+        assert_eq!(err.jsonrpc_code_for(&V::V2026_07_28), -32602);
         for legacy in [
             V::V2024_11_05,
             V::V2025_03_26,

@@ -112,7 +112,7 @@ fn the_default_serves_every_supported_revision() {
         &[
             ProtocolVersion::V2025_06_18,
             ProtocolVersion::V2025_11_25,
-            ProtocolVersion::Draft
+            ProtocolVersion::V2026_07_28
         ],
         "the macro's `protocols(…)` table must cover exactly this set"
     );
@@ -124,7 +124,10 @@ fn protocols_narrows_what_the_server_declares() {
         StableOnly.supported_versions(),
         &[ProtocolVersion::V2025_11_25]
     );
-    assert_eq!(DraftOnly.supported_versions(), &[ProtocolVersion::Draft]);
+    assert_eq!(
+        DraftOnly.supported_versions(),
+        &[ProtocolVersion::V2026_07_28]
+    );
     assert_eq!(
         PreviousOnly.supported_versions(),
         &[ProtocolVersion::V2025_06_18]

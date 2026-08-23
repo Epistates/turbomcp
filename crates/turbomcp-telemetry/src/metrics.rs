@@ -215,7 +215,7 @@ fn protocol_version_label(req: &JsonRpcMessage) -> &'static str {
     };
     match turbomcp_protocol_version(r.params.as_ref()) {
         Some(ProtocolVersion::V2025_11_25) => "2025-11-25",
-        Some(ProtocolVersion::Draft) => "2026-07-28",
+        Some(ProtocolVersion::V2026_07_28) => "2026-07-28",
         Some(_) => "other",
         None => "unknown",
     }

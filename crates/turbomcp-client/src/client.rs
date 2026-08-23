@@ -24,10 +24,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use turbomcp_core::meta::keys;
 use turbomcp_core::{Implementation, LogLevel, ProtocolVersion};
-use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::methods::{notification, request};
 use turbomcp_protocol::neutral;
 use turbomcp_protocol::v2025_11_25::types as legacy;
+use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_service::{Transport, mcp_headers};
 
 use crate::cache::ResponseCache;
@@ -504,7 +504,7 @@ impl Client {
             .cached_request(request::TOOLS_LIST, list_params(cursor), cursor)
             .await?;
         let mut result: neutral::ListToolsResult =
-            self.decode::<draft::ListToolsResult, legacy::ListToolsResult, _>(v)?;
+            self.decode::<v0728::ListToolsResult, legacy::ListToolsResult, _>(v)?;
         // Learn which params each tool marks `x-mcp-header` so `call_tool` can
         // mirror them transparently — and enforce the annotation constraints:
         // a tool whose annotations violate them MUST be rejected (excluded
@@ -621,7 +621,7 @@ impl Client {
             // The `task` augmentation is a 2025-11-25 request shape; the draft
             // moved task creation to the server side (SEP-2663 extension).
             if let Some(task) = task
-                && client.version != ProtocolVersion::Draft
+                && client.version != ProtocolVersion::V2026_07_28
             {
                 params.insert("task".into(), task.clone());
             }
@@ -671,7 +671,7 @@ impl Client {
         {
             v = self.drive_legacy_task(handle.clone()).await?;
         }
-        self.decode::<draft::CallToolResult, legacy::CallToolResult, _>(v)
+        self.decode::<v0728::CallToolResult, legacy::CallToolResult, _>(v)
     }
 
     /// Build `tools/call` params, attaching the `x-mcp-header` mirror signal
@@ -728,7 +728,7 @@ impl Client {
         let v = self
             .cached_request(request::RESOURCES_LIST, list_params(cursor), cursor)
             .await?;
-        self.decode::<draft::ListResourcesResult, legacy::ListResourcesResult, _>(v)
+        self.decode::<v0728::ListResourcesResult, legacy::ListResourcesResult, _>(v)
     }
 
     /// Every resource the server offers, following pagination to the last page.
@@ -762,7 +762,7 @@ impl Client {
         if let Some(cache) = &self.cache
             && let Some(hit) = cache.get(request::RESOURCES_READ, Some(&uri))
         {
-            return self.decode::<draft::ReadResourceResult, legacy::ReadResourceResult, _>(hit);
+            return self.decode::<v0728::ReadResourceResult, legacy::ReadResourceResult, _>(hit);
         }
         let mut params = Map::new();
         params.insert("uri".into(), json!(&uri));
@@ -770,7 +770,7 @@ impl Client {
         if let Some(cache) = &self.cache {
             cache.store(request::RESOURCES_READ, Some(&uri), &v);
         }
-        self.decode::<draft::ReadResourceResult, legacy::ReadResourceResult, _>(v)
+        self.decode::<v0728::ReadResourceResult, legacy::ReadResourceResult, _>(v)
     }
 
     /// List the server's resource templates (one page; pass a `cursor` to continue).
@@ -788,7 +788,7 @@ impl Client {
                 cursor,
             )
             .await?;
-        self.decode::<draft::ListResourceTemplatesResult, legacy::ListResourceTemplatesResult, _>(v)
+        self.decode::<v0728::ListResourceTemplatesResult, legacy::ListResourceTemplatesResult, _>(v)
     }
 
     /// Every resource template the server offers, following pagination to the
@@ -821,7 +821,7 @@ impl Client {
         let v = self
             .cached_request(request::PROMPTS_LIST, list_params(cursor), cursor)
             .await?;
-        self.decode::<draft::ListPromptsResult, legacy::ListPromptsResult, _>(v)
+        self.decode::<v0728::ListPromptsResult, legacy::ListPromptsResult, _>(v)
     }
 
     /// Every prompt the server offers, following pagination to the last page.
@@ -853,7 +853,7 @@ impl Client {
         params.insert("name".into(), json!(name.into()));
         params.insert("arguments".into(), Value::Object(arguments));
         let v = self.mrtr_request(request::PROMPTS_GET, params).await?;
-        self.decode::<draft::GetPromptResult, legacy::GetPromptResult, _>(v)
+        self.decode::<v0728::GetPromptResult, legacy::GetPromptResult, _>(v)
     }
 
     /// Request completion suggestions for a prompt/resource argument.
@@ -874,7 +874,7 @@ impl Client {
         let v = self
             .versioned_request(request::COMPLETION_COMPLETE, params)
             .await?;
-        self.decode::<draft::CompleteResult, legacy::CompleteResult, _>(v)
+        self.decode::<v0728::CompleteResult, legacy::CompleteResult, _>(v)
     }
 
     // ---- subscriptions ------------------------------------------------------
@@ -905,7 +905,7 @@ impl Client {
     /// Propagates RPC failures, and [`ClientError::Timeout`] if neither an
     /// acknowledgement nor an error arrives within the request timeout.
     pub async fn listen(&self, filter: neutral::SubscriptionFilter) -> ClientResult<Value> {
-        let wire: draft::SubscriptionFilter = filter.into();
+        let wire: v0728::SubscriptionFilter = filter.into();
         let mut params = Map::new();
         params.insert(
             "notifications".into(),
@@ -1292,7 +1292,7 @@ impl Client {
                 NEGOTIATED_VERSION_META_KEY.into(),
                 json!(self.version.as_str()),
             );
-            if self.version == ProtocolVersion::Draft {
+            if self.version == ProtocolVersion::V2026_07_28 {
                 // Merge the version envelope into any existing `_meta` (e.g. the
                 // `#[mcp_header]` mirror signal) rather than clobbering it.
                 for (key, value) in &self.request_meta {
@@ -1310,7 +1310,7 @@ impl Client {
         D: DeserializeOwned + Into<N>,
         L: DeserializeOwned + Into<N>,
     {
-        if self.version == ProtocolVersion::Draft {
+        if self.version == ProtocolVersion::V2026_07_28 {
             serde_json::from_value::<D>(value)
                 .map(Into::into)
                 .map_err(|e| ClientError::Decode(e.to_string()))

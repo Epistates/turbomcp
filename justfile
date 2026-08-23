@@ -22,7 +22,7 @@ coverage_dir := "coverage"
 # Excluded are the things line coverage cannot speak to — `@generated` wire types
 # (emitted Default/From/Display impls the conversions never call; proven instead by
 # the conformance suite and round-trip tests) and turbomcp-codegen, a build tool.
-coverage_ignore := '(tests?/|benches/|examples/|fuzz/|/(v2025_06_18|v2025_11_25|draft)/types\.rs|turbomcp-codegen/)'
+coverage_ignore := '(tests?/|benches/|examples/|fuzz/|/(v2025_06_18|v2025_11_25|v2026_07_28)/types\.rs|turbomcp-codegen/)'
 coverage_min := "85"
 
 # v4 codegen: root of the checked-out MCP schema (override with MCP_SCHEMA_ROOT)
@@ -66,7 +66,7 @@ codegen:
     crates/turbomcp-protocol/src/v2025_11_25/types.rs "MCP 2025-11-25"
   cargo run -q -p turbomcp-codegen -- \
     "${root}/2026-07-28/schema.json" \
-    crates/turbomcp-protocol/src/draft/types.rs "MCP 2026-07-28"
+    crates/turbomcp-protocol/src/v2026_07_28/types.rs "MCP 2026-07-28"
   cargo fmt -p turbomcp-protocol
   echo "Done. Review the diff before committing."
 

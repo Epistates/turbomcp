@@ -2,18 +2,15 @@
 //!
 //! Ground truth (verified against `reference/modelcontextprotocol/schema/`):
 //! the published versions are `2024-11-05`, `2025-03-26`, `2025-06-18`,
-//! `2025-11-25`, and the in-development draft. Upstream's
-//! `schema/draft/schema.ts` now pins `LATEST_PROTOCOL_VERSION = "2026-07-28"`,
-//! so that is the wire string real draft-tracking peers negotiate — even though
-//! the schema *content* still lives in `schema/draft/` until the dated directory
-//! freezes (scheduled ~2026-07-28).
+//! `2025-11-25`, and `2026-07-28`.
 //!
-//! The draft is modeled as a *channel* — [`ProtocolVersion::Draft`], not a dated
-//! variant — because the spec's release date can still slip. We keep a stable
-//! name and map only its wire string to the spec's current
-//! `LATEST_PROTOCOL_VERSION`. At freeze we add the dated `V2026_07_28` variant,
-//! repoint [`ProtocolVersion::LATEST`], and deprecate [`ProtocolVersion::Draft`]
-//! in favor of it.
+//! `2026-07-28` **froze** on 2026-07-28 (upstream tag `2026-07-28`, dated
+//! directory `schema/2026-07-28/`), so it is now a dated variant like every
+//! other revision: [`ProtocolVersion::V2026_07_28`]. Until then it was modeled
+//! as a slip-proof *channel* named `Draft`, which survives as a deprecated
+//! alias — same wire string, same dispatch — so existing code keeps compiling.
+//! `schema/draft/` currently holds a byte-identical copy of the frozen schema;
+//! when a genuinely new draft opens upstream, it gets its own channel again.
 
 use alloc::string::{String, ToString};
 
@@ -35,19 +32,27 @@ pub enum ProtocolVersion {
     V2025_06_18,
     /// `2025-11-25` — current stable; stateful, core Tasks, `initialize`/`ping`.
     V2025_11_25,
-    /// The in-development **draft** channel — stateless model (`server/discover`,
-    /// `subscriptions/listen`, MRTR). Its wire string tracks the draft's
-    /// `LATEST_PROTOCOL_VERSION` (currently `"2026-07-28"`); the variant is named
-    /// for the channel rather than the date so it survives a slip, and will be
-    /// deprecated in favor of a dated variant once the spec freezes.
-    Draft,
+    /// `2026-07-28` — stateless model (`server/discover`,
+    /// `subscriptions/listen`, MRTR), Tasks moved out to an extension.
+    /// Frozen 2026-07-28; before that this was the `Draft` channel.
+    V2026_07_28,
     /// Any version string this build does not recognize.
     Unknown(String),
 }
 
 impl ProtocolVersion {
+    /// The in-development draft channel, before `2026-07-28` froze.
+    ///
+    /// Kept as an alias so code written against the pre-freeze API still
+    /// compiles and dispatches identically. A future draft will get a new
+    /// channel constant rather than reusing this one, which is pinned to a
+    /// now-published revision.
+    #[deprecated(since = "4.0.0-alpha.2", note = "the draft froze: use V2026_07_28")]
+    #[allow(non_upper_case_globals, reason = "preserves the old variant spelling")]
+    pub const Draft: Self = Self::V2026_07_28;
+
     /// The latest version this build targets.
-    pub const LATEST: Self = Self::Draft;
+    pub const LATEST: Self = Self::V2026_07_28;
 
     /// Versions v4 actively supports as first-class (others may still be
     /// negotiated/named, but are not first-class dispatch targets).
@@ -55,7 +60,8 @@ impl ProtocolVersion {
     /// Chronological, which is also the order they are advertised in
     /// `server/discover` and in an unsupported-version error's `supported`
     /// list.
-    pub const SUPPORTED: &'static [Self] = &[Self::V2025_06_18, Self::V2025_11_25, Self::Draft];
+    pub const SUPPORTED: &'static [Self] =
+        &[Self::V2025_06_18, Self::V2025_11_25, Self::V2026_07_28];
 
     /// The stateful revisions: those that negotiate with an `initialize`
     /// handshake and carry per-session state, as opposed to the draft's
@@ -87,7 +93,7 @@ impl ProtocolVersion {
             Self::V2025_03_26 => "2025-03-26",
             Self::V2025_06_18 => "2025-06-18",
             Self::V2025_11_25 => "2025-11-25",
-            Self::Draft => "2026-07-28",
+            Self::V2026_07_28 => "2026-07-28",
             Self::Unknown(s) => s,
         }
     }
@@ -101,7 +107,7 @@ impl ProtocolVersion {
             "2025-03-26" => Self::V2025_03_26,
             "2025-06-18" => Self::V2025_06_18,
             "2025-11-25" => Self::V2025_11_25,
-            "2026-07-28" => Self::Draft,
+            "2026-07-28" => Self::V2026_07_28,
             other => Self::Unknown(other.to_string()),
         }
     }
@@ -140,7 +146,7 @@ impl From<String> for ProtocolVersion {
             "2025-03-26" => Self::V2025_03_26,
             "2025-06-18" => Self::V2025_06_18,
             "2025-11-25" => Self::V2025_11_25,
-            "2026-07-28" => Self::Draft,
+            "2026-07-28" => Self::V2026_07_28,
             _ => Self::Unknown(s),
         }
     }
@@ -164,7 +170,7 @@ mod tests {
     fn roundtrip_known_versions() {
         for v in [
             ProtocolVersion::V2025_11_25,
-            ProtocolVersion::Draft,
+            ProtocolVersion::V2026_07_28,
             ProtocolVersion::V2025_06_18,
         ] {
             let s = serde_json::to_string(&v).unwrap();
@@ -174,12 +180,21 @@ mod tests {
     }
 
     #[test]
-    fn draft_wire_string_is_correct() {
-        assert_eq!(ProtocolVersion::Draft.as_str(), "2026-07-28");
+    fn frozen_wire_string_is_correct() {
+        assert_eq!(ProtocolVersion::V2026_07_28.as_str(), "2026-07-28");
         assert_eq!(
-            serde_json::to_string(&ProtocolVersion::Draft).unwrap(),
+            serde_json::to_string(&ProtocolVersion::V2026_07_28).unwrap(),
             "\"2026-07-28\""
         );
+    }
+
+    /// The pre-freeze spelling still resolves, and to the same revision — code
+    /// written against `Draft` keeps compiling and dispatching identically.
+    #[test]
+    #[allow(deprecated, reason = "asserting the deprecated alias still works")]
+    fn draft_alias_still_names_the_frozen_revision() {
+        assert_eq!(ProtocolVersion::Draft, ProtocolVersion::V2026_07_28);
+        assert_eq!(ProtocolVersion::Draft.as_str(), "2026-07-28");
     }
 
     #[test]
@@ -191,7 +206,7 @@ mod tests {
 
     #[test]
     fn display_matches_wire_string() {
-        assert_eq!(ProtocolVersion::Draft.to_string(), "2026-07-28");
+        assert_eq!(ProtocolVersion::V2026_07_28.to_string(), "2026-07-28");
         assert_eq!(ProtocolVersion::V2025_11_25.to_string(), "2025-11-25");
         assert_eq!(
             ProtocolVersion::Unknown("2099-01-01".to_string()).to_string(),
@@ -202,7 +217,7 @@ mod tests {
     #[test]
     fn supported_set() {
         assert!(ProtocolVersion::V2025_11_25.is_supported());
-        assert!(ProtocolVersion::Draft.is_supported());
+        assert!(ProtocolVersion::V2026_07_28.is_supported());
         assert!(!ProtocolVersion::V2024_11_05.is_supported());
     }
 
@@ -214,7 +229,7 @@ mod tests {
         assert!(!ProtocolVersion::from_wire("2025-03-26").is_supported());
         // Supported implies recognized.
         assert!(ProtocolVersion::V2025_11_25.is_recognized());
-        assert!(ProtocolVersion::Draft.is_recognized());
+        assert!(ProtocolVersion::V2026_07_28.is_recognized());
         // A garbage string is neither.
         assert!(!ProtocolVersion::from_wire("nonsense").is_recognized());
     }

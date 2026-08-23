@@ -35,7 +35,7 @@ mod tests {
         });
         assert_eq!(
             request_protocol_version(Some(&params)),
-            Some(ProtocolVersion::Draft)
+            Some(ProtocolVersion::V2026_07_28)
         );
     }
 

@@ -11,10 +11,10 @@ use turbomcp_core::{
     Implementation, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, ProtocolVersion,
     RequestId,
 };
-use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::neutral;
 use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
+use turbomcp_protocol::v2026_07_28::types as v0728;
 
 use crate::extension::Extension;
 use crate::router::MethodRouter;
@@ -230,41 +230,41 @@ fn build_discover_result<S: McpServerCore>(
     router: &MethodRouter<S>,
     supported: &[ProtocolVersion],
     cache: neutral::CachePolicy,
-) -> draft::DiscoverResult {
+) -> v0728::DiscoverResult {
     // `listChanged`/`subscribe` are true: the subscription registry delivers
     // these for every registered capability (`subscriptions/listen`).
-    let capabilities = draft::ServerCapabilities {
+    let capabilities = v0728::ServerCapabilities {
         // `completions` is an opaque presence marker (an empty object when the
         // server supports argument autocompletion).
         completions: router
             .has_completions()
-            .then(|| draft::JsonObject(BTreeMap::new())),
+            .then(|| v0728::JsonObject(BTreeMap::new())),
         experimental: BTreeMap::new(),
         extensions: BTreeMap::new(),
         logging: router
             .has_logging()
-            .then(|| draft::JsonObject(BTreeMap::new())),
+            .then(|| v0728::JsonObject(BTreeMap::new())),
         prompts: router
             .has_prompts()
-            .then_some(draft::ServerCapabilitiesPrompts {
+            .then_some(v0728::ServerCapabilitiesPrompts {
                 list_changed: Some(true),
             }),
         resources: router
             .has_resources()
-            .then_some(draft::ServerCapabilitiesResources {
+            .then_some(v0728::ServerCapabilitiesResources {
                 list_changed: Some(true),
                 subscribe: Some(true),
             }),
         tools: router
             .has_tools()
-            .then_some(draft::ServerCapabilitiesTools {
+            .then_some(v0728::ServerCapabilitiesTools {
                 list_changed: Some(true),
             }),
     };
-    draft::DiscoverResult {
+    v0728::DiscoverResult {
         cache_scope: match cache.scope {
-            neutral::CacheScope::Private => draft::DiscoverResultCacheScope::Private,
-            neutral::CacheScope::Public => draft::DiscoverResultCacheScope::Public,
+            neutral::CacheScope::Private => v0728::DiscoverResultCacheScope::Private,
+            neutral::CacheScope::Public => v0728::DiscoverResultCacheScope::Public,
         },
         capabilities,
         instructions: server.instructions(),
@@ -272,7 +272,7 @@ fn build_discover_result<S: McpServerCore>(
         // briefly promoted it to a first-class `serverInfo` field; the frozen
         // spec reverted that, and `server/discover` has no other place to put
         // it — the stateless model has no `initialize` result.
-        meta: Some(draft::ResultMetaObject {
+        meta: Some(v0728::ResultMetaObject {
             io_modelcontextprotocol_server_info: Some(to_draft_impl(server.server_info())),
             extra: Map::new(),
         }),
@@ -282,8 +282,8 @@ fn build_discover_result<S: McpServerCore>(
     }
 }
 
-fn to_draft_impl(i: Implementation) -> draft::Implementation {
-    draft::Implementation {
+fn to_draft_impl(i: Implementation) -> v0728::Implementation {
+    v0728::Implementation {
         description: None,
         icons: Vec::new(),
         name: i.name,

@@ -11,8 +11,8 @@ use turbomcp_core::{
     CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, McpError, RequestContext,
     RequestId,
 };
-use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::methods;
+use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_service::mcp_to_jsonrpc_error;
 
 use crate::context::CallToolContext;
@@ -101,7 +101,7 @@ fn build_call_runner<S: McpServerCore>(
                 methods::request::TOOLS_CALL,
             ))),
             Some(f) => match f.await {
-                Ok(result) => serde_json::to_value(draft::CallToolResult::from(result))
+                Ok(result) => serde_json::to_value(v0728::CallToolResult::from(result))
                     .map_err(|e| mcp_to_jsonrpc_error(&McpError::internal(e.to_string()))),
                 Err(e) => Err(mcp_to_jsonrpc_error(&e)),
             },

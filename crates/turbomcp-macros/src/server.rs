@@ -308,7 +308,7 @@ fn protocol_variant(wire: &LitStr) -> syn::Result<proc_macro2::TokenStream> {
     match wire.value().as_str() {
         "2025-06-18" => Ok(quote! { ::turbomcp::ProtocolVersion::V2025_06_18 }),
         "2025-11-25" => Ok(quote! { ::turbomcp::ProtocolVersion::V2025_11_25 }),
-        "2026-07-28" => Ok(quote! { ::turbomcp::ProtocolVersion::Draft }),
+        "2026-07-28" => Ok(quote! { ::turbomcp::ProtocolVersion::V2026_07_28 }),
         other => Err(syn::Error::new(
             wire.span(),
             format!(

@@ -3,15 +3,15 @@
 //! These prove (a) the generated types deserialize/serialize real spec shapes,
 //! and (b) the codegen faithfully captured the per-version differences the
 //! ground-truth audit found (AUDIT_FINDINGS.md): Tasks is core in `2025-11-25`
-//! but replaced by `extensions` in the draft; `initialize`/discover differ.
+//! but replaced by `extensions` in `2026-07-28`; `initialize`/discover differ.
 
 use serde_json::json;
-use turbomcp_protocol::{draft, v2025_11_25};
+use turbomcp_protocol::{v2025_11_25, v2026_07_28};
 
 #[test]
 fn draft_implementation_roundtrips() {
     let value = json!({ "name": "srv", "version": "1.0.0", "title": "Server" });
-    let imp: draft::types::Implementation =
+    let imp: v2026_07_28::types::Implementation =
         serde_json::from_value(value).expect("deserialize Implementation");
     assert_eq!(imp.name, "srv");
     assert_eq!(imp.version, "1.0.0");
@@ -33,7 +33,7 @@ fn tasks_is_core_in_2025_but_extensions_in_draft() {
     assert!(back.get("tasks").is_some());
 
     // Draft replaces core Tasks with the generic `extensions` mechanism.
-    let caps_draft: draft::types::ServerCapabilities =
+    let caps_draft: v2026_07_28::types::ServerCapabilities =
         serde_json::from_value(json!({ "extensions": { "io.modelcontextprotocol/tasks": {} } }))
             .expect("draft ServerCapabilities");
     assert!(
@@ -50,5 +50,5 @@ fn tasks_is_core_in_2025_but_extensions_in_draft() {
 #[allow(dead_code)]
 fn _version_split_is_type_level() {
     let _initialize_is_2025_only: Option<v2025_11_25::types::InitializeRequestParams> = None;
-    let _discover_is_draft_only: Option<draft::types::DiscoverResult> = None;
+    let _discover_is_draft_only: Option<v2026_07_28::types::DiscoverResult> = None;
 }

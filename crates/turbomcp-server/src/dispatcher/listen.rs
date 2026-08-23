@@ -11,8 +11,8 @@ use turbomcp_core::{
     CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, McpError, ProtocolVersion, meta,
 };
-use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::methods;
+use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_service::ProtocolError;
 
 use crate::extension::{Extension, SubscribeOutcome};
@@ -30,7 +30,7 @@ use super::{
 
 #[derive(Deserialize)]
 struct RawListenParams {
-    notifications: draft::SubscriptionFilter,
+    notifications: v0728::SubscriptionFilter,
 }
 
 /// Open a subscription stream (subscriptions spec): validate the filter,
@@ -95,7 +95,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // Honor only what the server can actually emit; unsupported types are
     // omitted from the acknowledgment (spec §Acknowledgment).
     let wanted = requested.notifications;
-    let agreed = draft::SubscriptionFilter {
+    let agreed = v0728::SubscriptionFilter {
         tools_list_changed: (wanted.tools_list_changed == Some(true) && router.has_tools())
             .then_some(true),
         resources_list_changed: (wanted.resources_list_changed == Some(true)

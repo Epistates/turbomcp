@@ -21,9 +21,9 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde_json::{Map, Value};
 
-use crate::draft::types as draft;
 use crate::v2025_06_18::types as v06;
 use crate::v2025_11_25::types as legacy;
+use crate::v2026_07_28::types as v0728;
 
 /// Canonical draft `resultType` wire strings.
 ///
@@ -1498,16 +1498,16 @@ impl CompleteParams {
 
 // ---- neutral → 2026-07-28 wire conversions --------------------------------
 
-impl From<Content> for draft::ContentBlock {
+impl From<Content> for v0728::ContentBlock {
     fn from(c: Content) -> Self {
         match c {
             Content::Text {
                 text,
                 annotations,
                 meta,
-            } => draft::ContentBlock::TextContent(draft::TextContent {
+            } => v0728::ContentBlock::TextContent(v0728::TextContent {
                 annotations: annotations.map(Into::into),
-                meta: (!meta.is_empty()).then_some(draft::MetaObject(meta)),
+                meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                 text,
                 type_: "text".to_string(),
             }),
@@ -1516,10 +1516,10 @@ impl From<Content> for draft::ContentBlock {
                 mime_type,
                 annotations,
                 meta,
-            } => draft::ContentBlock::ImageContent(draft::ImageContent {
+            } => v0728::ContentBlock::ImageContent(v0728::ImageContent {
                 annotations: annotations.map(Into::into),
                 data,
-                meta: (!meta.is_empty()).then_some(draft::MetaObject(meta)),
+                meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                 mime_type,
                 type_: "image".to_string(),
             }),
@@ -1528,10 +1528,10 @@ impl From<Content> for draft::ContentBlock {
                 mime_type,
                 annotations,
                 meta,
-            } => draft::ContentBlock::AudioContent(draft::AudioContent {
+            } => v0728::ContentBlock::AudioContent(v0728::AudioContent {
                 annotations: annotations.map(Into::into),
                 data,
-                meta: (!meta.is_empty()).then_some(draft::MetaObject(meta)),
+                meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                 mime_type,
                 type_: "audio".to_string(),
             }),
@@ -1539,19 +1539,19 @@ impl From<Content> for draft::ContentBlock {
                 contents,
                 annotations,
                 meta,
-            } => draft::ContentBlock::EmbeddedResource(draft::EmbeddedResource {
+            } => v0728::ContentBlock::EmbeddedResource(v0728::EmbeddedResource {
                 annotations: annotations.map(Into::into),
-                meta: (!meta.is_empty()).then_some(draft::MetaObject(meta)),
+                meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                 resource: contents.into(),
                 type_: "resource".to_string(),
             }),
             Content::ResourceLink(r) => {
                 let r = *r;
-                draft::ContentBlock::ResourceLink(draft::ResourceLink {
+                v0728::ContentBlock::ResourceLink(v0728::ResourceLink {
                     annotations: r.annotations.map(Into::into),
                     description: r.description,
                     icons: r.icons.into_iter().map(Into::into).collect(),
-                    meta: (!r.meta.is_empty()).then_some(draft::MetaObject(r.meta)),
+                    meta: (!r.meta.is_empty()).then_some(v0728::MetaObject(r.meta)),
                     mime_type: r.mime_type,
                     name: r.name,
                     size: r.size.map(|s| i64::try_from(s).unwrap_or(i64::MAX)),
@@ -1564,23 +1564,23 @@ impl From<Content> for draft::ContentBlock {
     }
 }
 
-impl From<Tool> for draft::Tool {
+impl From<Tool> for v0728::Tool {
     fn from(t: Tool) -> Self {
         // The neutral `input_schema` is a JSON Schema object; deserialize it
         // into the typed wrapper. A non-object or schema-less value falls back
         // to an empty object schema rather than failing the conversion.
         let input_schema =
-            serde_json::from_value(t.input_schema).unwrap_or(draft::ToolInputSchema {
+            serde_json::from_value(t.input_schema).unwrap_or(v0728::ToolInputSchema {
                 schema: None,
                 type_: "object".to_string(),
                 extra: Map::new(),
             });
-        draft::Tool {
+        v0728::Tool {
             annotations: t.annotations.map(Into::into),
             description: t.description,
             icons: t.icons.into_iter().map(Into::into).collect(),
             input_schema,
-            meta: (!t.meta.is_empty()).then_some(draft::MetaObject(t.meta)),
+            meta: (!t.meta.is_empty()).then_some(v0728::MetaObject(t.meta)),
             name: t.name,
             // The draft `ToolOutputSchema` is a permissive bag ($schema + a
             // flattened `extra`), so any JSON Schema object deserializes into it.
@@ -1590,9 +1590,9 @@ impl From<Tool> for draft::Tool {
     }
 }
 
-impl From<ToolAnnotations> for draft::ToolAnnotations {
+impl From<ToolAnnotations> for v0728::ToolAnnotations {
     fn from(a: ToolAnnotations) -> Self {
-        draft::ToolAnnotations {
+        v0728::ToolAnnotations {
             destructive_hint: a.destructive_hint,
             idempotent_hint: a.idempotent_hint,
             open_world_hint: a.open_world_hint,
@@ -1602,26 +1602,26 @@ impl From<ToolAnnotations> for draft::ToolAnnotations {
     }
 }
 
-impl From<Icon> for draft::Icon {
+impl From<Icon> for v0728::Icon {
     fn from(i: Icon) -> Self {
-        draft::Icon {
+        v0728::Icon {
             mime_type: i.mime_type,
             sizes: i.sizes,
             src: i.src,
             theme: i.theme.map(|t| match t {
-                IconTheme::Light => draft::IconTheme::Light,
-                IconTheme::Dark => draft::IconTheme::Dark,
+                IconTheme::Light => v0728::IconTheme::Light,
+                IconTheme::Dark => v0728::IconTheme::Dark,
             }),
         }
     }
 }
 
-impl From<SubscriptionFilter> for draft::SubscriptionFilter {
+impl From<SubscriptionFilter> for v0728::SubscriptionFilter {
     fn from(f: SubscriptionFilter) -> Self {
         // The wire models each flag as `Option<bool>` where absent means "not
         // requested"; send `Some(true)` only for what was asked for, so the
         // filter on the wire says exactly what the caller meant.
-        draft::SubscriptionFilter {
+        v0728::SubscriptionFilter {
             tools_list_changed: f.tools_list_changed.then_some(true),
             resources_list_changed: f.resources_list_changed.then_some(true),
             prompts_list_changed: f.prompts_list_changed.then_some(true),
@@ -1630,8 +1630,8 @@ impl From<SubscriptionFilter> for draft::SubscriptionFilter {
     }
 }
 
-impl From<draft::SubscriptionFilter> for SubscriptionFilter {
-    fn from(f: draft::SubscriptionFilter) -> Self {
+impl From<v0728::SubscriptionFilter> for SubscriptionFilter {
+    fn from(f: v0728::SubscriptionFilter) -> Self {
         SubscriptionFilter {
             tools_list_changed: f.tools_list_changed.unwrap_or(false),
             resources_list_changed: f.resources_list_changed.unwrap_or(false),
@@ -1641,13 +1641,13 @@ impl From<draft::SubscriptionFilter> for SubscriptionFilter {
     }
 }
 
-impl From<ListToolsResult> for draft::ListToolsResult {
+impl From<ListToolsResult> for v0728::ListToolsResult {
     fn from(r: ListToolsResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
-        draft::ListToolsResult {
+        v0728::ListToolsResult {
             cache_scope: match cache.scope {
-                CacheScope::Public => draft::ListToolsResultCacheScope::Public,
-                CacheScope::Private => draft::ListToolsResultCacheScope::Private,
+                CacheScope::Public => v0728::ListToolsResultCacheScope::Public,
+                CacheScope::Private => v0728::ListToolsResultCacheScope::Private,
             },
             meta: None,
             next_cursor: r.next_cursor,
@@ -1658,9 +1658,9 @@ impl From<ListToolsResult> for draft::ListToolsResult {
     }
 }
 
-impl From<CallToolResult> for draft::CallToolResult {
+impl From<CallToolResult> for v0728::CallToolResult {
     fn from(r: CallToolResult) -> Self {
-        draft::CallToolResult {
+        v0728::CallToolResult {
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: Some(r.is_error),
             meta: None,
@@ -1672,13 +1672,13 @@ impl From<CallToolResult> for draft::CallToolResult {
 
 // resources
 
-impl From<Resource> for draft::Resource {
+impl From<Resource> for v0728::Resource {
     fn from(r: Resource) -> Self {
-        draft::Resource {
+        v0728::Resource {
             annotations: r.annotations.map(Into::into),
             description: r.description,
             icons: r.icons.into_iter().map(Into::into).collect(),
-            meta: (!r.meta.is_empty()).then_some(draft::MetaObject(r.meta)),
+            meta: (!r.meta.is_empty()).then_some(v0728::MetaObject(r.meta)),
             mime_type: r.mime_type,
             name: r.name,
             size: r.size.map(|s| i64::try_from(s).unwrap_or(i64::MAX)),
@@ -1688,9 +1688,9 @@ impl From<Resource> for draft::Resource {
     }
 }
 
-impl From<Annotations> for draft::Annotations {
+impl From<Annotations> for v0728::Annotations {
     fn from(a: Annotations) -> Self {
-        draft::Annotations {
+        v0728::Annotations {
             audience: a.audience.into_iter().map(Into::into).collect(),
             last_modified: a.last_modified,
             priority: a.priority,
@@ -1698,7 +1698,7 @@ impl From<Annotations> for draft::Annotations {
     }
 }
 
-impl From<ResourceContents> for draft::ReadResourceResultContentsItem {
+impl From<ResourceContents> for v0728::ReadResourceResultContentsItem {
     fn from(c: ResourceContents) -> Self {
         match c {
             ResourceContents::Text {
@@ -1706,9 +1706,9 @@ impl From<ResourceContents> for draft::ReadResourceResultContentsItem {
                 mime_type,
                 text,
                 meta,
-            } => draft::ReadResourceResultContentsItem::TextResourceContents(
-                draft::TextResourceContents {
-                    meta: (!meta.is_empty()).then_some(draft::MetaObject(meta)),
+            } => v0728::ReadResourceResultContentsItem::TextResourceContents(
+                v0728::TextResourceContents {
+                    meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                     mime_type,
                     text,
                     uri,
@@ -1719,10 +1719,10 @@ impl From<ResourceContents> for draft::ReadResourceResultContentsItem {
                 mime_type,
                 blob,
                 meta,
-            } => draft::ReadResourceResultContentsItem::BlobResourceContents(
-                draft::BlobResourceContents {
+            } => v0728::ReadResourceResultContentsItem::BlobResourceContents(
+                v0728::BlobResourceContents {
                     blob,
-                    meta: (!meta.is_empty()).then_some(draft::MetaObject(meta)),
+                    meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                     mime_type,
                     uri,
                 },
@@ -1731,7 +1731,7 @@ impl From<ResourceContents> for draft::ReadResourceResultContentsItem {
     }
 }
 
-impl From<ResourceContents> for draft::EmbeddedResourceResource {
+impl From<ResourceContents> for v0728::EmbeddedResourceResource {
     fn from(c: ResourceContents) -> Self {
         match c {
             ResourceContents::Text {
@@ -1740,8 +1740,8 @@ impl From<ResourceContents> for draft::EmbeddedResourceResource {
                 text,
                 meta,
             } => {
-                draft::EmbeddedResourceResource::TextResourceContents(draft::TextResourceContents {
-                    meta: (!meta.is_empty()).then_some(draft::MetaObject(meta)),
+                v0728::EmbeddedResourceResource::TextResourceContents(v0728::TextResourceContents {
+                    meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                     mime_type,
                     text,
                     uri,
@@ -1753,9 +1753,9 @@ impl From<ResourceContents> for draft::EmbeddedResourceResource {
                 blob,
                 meta,
             } => {
-                draft::EmbeddedResourceResource::BlobResourceContents(draft::BlobResourceContents {
+                v0728::EmbeddedResourceResource::BlobResourceContents(v0728::BlobResourceContents {
                     blob,
-                    meta: (!meta.is_empty()).then_some(draft::MetaObject(meta)),
+                    meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                     mime_type,
                     uri,
                 })
@@ -1764,13 +1764,13 @@ impl From<ResourceContents> for draft::EmbeddedResourceResource {
     }
 }
 
-impl From<ListResourcesResult> for draft::ListResourcesResult {
+impl From<ListResourcesResult> for v0728::ListResourcesResult {
     fn from(r: ListResourcesResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
-        draft::ListResourcesResult {
+        v0728::ListResourcesResult {
             cache_scope: match cache.scope {
-                CacheScope::Public => draft::ListResourcesResultCacheScope::Public,
-                CacheScope::Private => draft::ListResourcesResultCacheScope::Private,
+                CacheScope::Public => v0728::ListResourcesResultCacheScope::Public,
+                CacheScope::Private => v0728::ListResourcesResultCacheScope::Private,
             },
             meta: None,
             next_cursor: r.next_cursor,
@@ -1781,13 +1781,13 @@ impl From<ListResourcesResult> for draft::ListResourcesResult {
     }
 }
 
-impl From<ReadResourceResult> for draft::ReadResourceResult {
+impl From<ReadResourceResult> for v0728::ReadResourceResult {
     fn from(r: ReadResourceResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
-        draft::ReadResourceResult {
+        v0728::ReadResourceResult {
             cache_scope: match cache.scope {
-                CacheScope::Public => draft::ReadResourceResultCacheScope::Public,
-                CacheScope::Private => draft::ReadResourceResultCacheScope::Private,
+                CacheScope::Public => v0728::ReadResourceResultCacheScope::Public,
+                CacheScope::Private => v0728::ReadResourceResultCacheScope::Private,
             },
             contents: r.contents.into_iter().map(Into::into).collect(),
             meta: None,
@@ -1797,13 +1797,13 @@ impl From<ReadResourceResult> for draft::ReadResourceResult {
     }
 }
 
-impl From<ResourceTemplate> for draft::ResourceTemplate {
+impl From<ResourceTemplate> for v0728::ResourceTemplate {
     fn from(t: ResourceTemplate) -> Self {
-        draft::ResourceTemplate {
+        v0728::ResourceTemplate {
             annotations: t.annotations.map(Into::into),
             description: t.description,
             icons: t.icons.into_iter().map(Into::into).collect(),
-            meta: (!t.meta.is_empty()).then_some(draft::MetaObject(t.meta)),
+            meta: (!t.meta.is_empty()).then_some(v0728::MetaObject(t.meta)),
             mime_type: t.mime_type,
             name: t.name,
             title: t.title,
@@ -1812,13 +1812,13 @@ impl From<ResourceTemplate> for draft::ResourceTemplate {
     }
 }
 
-impl From<ListResourceTemplatesResult> for draft::ListResourceTemplatesResult {
+impl From<ListResourceTemplatesResult> for v0728::ListResourceTemplatesResult {
     fn from(r: ListResourceTemplatesResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
-        draft::ListResourceTemplatesResult {
+        v0728::ListResourceTemplatesResult {
             cache_scope: match cache.scope {
-                CacheScope::Public => draft::ListResourceTemplatesResultCacheScope::Public,
-                CacheScope::Private => draft::ListResourceTemplatesResultCacheScope::Private,
+                CacheScope::Public => v0728::ListResourceTemplatesResultCacheScope::Public,
+                CacheScope::Private => v0728::ListResourceTemplatesResultCacheScope::Private,
             },
             meta: None,
             next_cursor: r.next_cursor,
@@ -1831,18 +1831,18 @@ impl From<ListResourceTemplatesResult> for draft::ListResourceTemplatesResult {
 
 // prompts
 
-impl From<Role> for draft::Role {
+impl From<Role> for v0728::Role {
     fn from(r: Role) -> Self {
         match r {
-            Role::User => draft::Role::User,
-            Role::Assistant => draft::Role::Assistant,
+            Role::User => v0728::Role::User,
+            Role::Assistant => v0728::Role::Assistant,
         }
     }
 }
 
-impl From<PromptArgument> for draft::PromptArgument {
+impl From<PromptArgument> for v0728::PromptArgument {
     fn from(a: PromptArgument) -> Self {
-        draft::PromptArgument {
+        v0728::PromptArgument {
             description: a.description,
             name: a.name,
             required: Some(a.required),
@@ -1851,35 +1851,35 @@ impl From<PromptArgument> for draft::PromptArgument {
     }
 }
 
-impl From<Prompt> for draft::Prompt {
+impl From<Prompt> for v0728::Prompt {
     fn from(p: Prompt) -> Self {
-        draft::Prompt {
+        v0728::Prompt {
             arguments: p.arguments.into_iter().map(Into::into).collect(),
             description: p.description,
             icons: p.icons.into_iter().map(Into::into).collect(),
-            meta: (!p.meta.is_empty()).then_some(draft::MetaObject(p.meta)),
+            meta: (!p.meta.is_empty()).then_some(v0728::MetaObject(p.meta)),
             name: p.name,
             title: p.title,
         }
     }
 }
 
-impl From<PromptMessage> for draft::PromptMessage {
+impl From<PromptMessage> for v0728::PromptMessage {
     fn from(m: PromptMessage) -> Self {
-        draft::PromptMessage {
+        v0728::PromptMessage {
             content: m.content.into(),
             role: m.role.into(),
         }
     }
 }
 
-impl From<ListPromptsResult> for draft::ListPromptsResult {
+impl From<ListPromptsResult> for v0728::ListPromptsResult {
     fn from(r: ListPromptsResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
-        draft::ListPromptsResult {
+        v0728::ListPromptsResult {
             cache_scope: match cache.scope {
-                CacheScope::Public => draft::ListPromptsResultCacheScope::Public,
-                CacheScope::Private => draft::ListPromptsResultCacheScope::Private,
+                CacheScope::Public => v0728::ListPromptsResultCacheScope::Public,
+                CacheScope::Private => v0728::ListPromptsResultCacheScope::Private,
             },
             meta: None,
             next_cursor: r.next_cursor,
@@ -1890,9 +1890,9 @@ impl From<ListPromptsResult> for draft::ListPromptsResult {
     }
 }
 
-impl From<GetPromptResult> for draft::GetPromptResult {
+impl From<GetPromptResult> for v0728::GetPromptResult {
     fn from(r: GetPromptResult) -> Self {
-        draft::GetPromptResult {
+        v0728::GetPromptResult {
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
             meta: None,
@@ -1903,10 +1903,10 @@ impl From<GetPromptResult> for draft::GetPromptResult {
 
 // completions
 
-impl From<CompleteResult> for draft::CompleteResult {
+impl From<CompleteResult> for v0728::CompleteResult {
     fn from(r: CompleteResult) -> Self {
-        draft::CompleteResult {
-            completion: draft::CompleteResultCompletion {
+        v0728::CompleteResult {
+            completion: v0728::CompleteResultCompletion {
                 has_more: r.has_more,
                 total: r.total.map(i64::from),
                 values: r.values,
@@ -2334,38 +2334,38 @@ impl From<CompleteResult> for legacy::CompleteResult {
 // block kind — text, image, audio, embedded resource, and resource link — so
 // inbound conversion is total (no lossy JSON-text fallback).
 
-impl From<draft::ContentBlock> for Content {
-    fn from(c: draft::ContentBlock) -> Self {
+impl From<v0728::ContentBlock> for Content {
+    fn from(c: v0728::ContentBlock) -> Self {
         match c {
-            draft::ContentBlock::TextContent(t) => Content::Text {
+            v0728::ContentBlock::TextContent(t) => Content::Text {
                 text: t.text,
                 annotations: t.annotations.map(Into::into),
                 meta: t.meta.map(|m| m.0).unwrap_or_default(),
             },
-            draft::ContentBlock::ImageContent(i) => Content::Image {
+            v0728::ContentBlock::ImageContent(i) => Content::Image {
                 data: i.data,
                 mime_type: i.mime_type,
                 annotations: i.annotations.map(Into::into),
                 meta: i.meta.map(|m| m.0).unwrap_or_default(),
             },
-            draft::ContentBlock::AudioContent(a) => Content::Audio {
+            v0728::ContentBlock::AudioContent(a) => Content::Audio {
                 data: a.data,
                 mime_type: a.mime_type,
                 annotations: a.annotations.map(Into::into),
                 meta: a.meta.map(|m| m.0).unwrap_or_default(),
             },
-            draft::ContentBlock::EmbeddedResource(e) => Content::Resource {
+            v0728::ContentBlock::EmbeddedResource(e) => Content::Resource {
                 contents: e.resource.into(),
                 annotations: e.annotations.map(Into::into),
                 meta: e.meta.map(|m| m.0).unwrap_or_default(),
             },
-            draft::ContentBlock::ResourceLink(l) => Content::ResourceLink(Box::new(l.into())),
+            v0728::ContentBlock::ResourceLink(l) => Content::ResourceLink(Box::new(l.into())),
         }
     }
 }
 
-impl From<draft::Tool> for Tool {
-    fn from(t: draft::Tool) -> Self {
+impl From<v0728::Tool> for Tool {
+    fn from(t: v0728::Tool) -> Self {
         Tool {
             name: t.name,
             title: t.title,
@@ -2383,8 +2383,8 @@ impl From<draft::Tool> for Tool {
     }
 }
 
-impl From<draft::ToolAnnotations> for ToolAnnotations {
-    fn from(a: draft::ToolAnnotations) -> Self {
+impl From<v0728::ToolAnnotations> for ToolAnnotations {
+    fn from(a: v0728::ToolAnnotations) -> Self {
         ToolAnnotations {
             title: a.title,
             read_only_hint: a.read_only_hint,
@@ -2395,38 +2395,38 @@ impl From<draft::ToolAnnotations> for ToolAnnotations {
     }
 }
 
-impl From<draft::Icon> for Icon {
-    fn from(i: draft::Icon) -> Self {
+impl From<v0728::Icon> for Icon {
+    fn from(i: v0728::Icon) -> Self {
         Icon {
             src: i.src,
             mime_type: i.mime_type,
             sizes: i.sizes,
             theme: i.theme.map(|t| match t {
-                draft::IconTheme::Light => IconTheme::Light,
-                draft::IconTheme::Dark => IconTheme::Dark,
+                v0728::IconTheme::Light => IconTheme::Light,
+                v0728::IconTheme::Dark => IconTheme::Dark,
             }),
         }
     }
 }
 
-impl From<draft::ListToolsResult> for ListToolsResult {
-    fn from(r: draft::ListToolsResult) -> Self {
+impl From<v0728::ListToolsResult> for ListToolsResult {
+    fn from(r: v0728::ListToolsResult) -> Self {
         ListToolsResult {
             tools: r.tools.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: Some(CachePolicy::from_wire(
                 r.ttl_ms,
                 match r.cache_scope {
-                    draft::ListToolsResultCacheScope::Public => CacheScope::Public,
-                    draft::ListToolsResultCacheScope::Private => CacheScope::Private,
+                    v0728::ListToolsResultCacheScope::Public => CacheScope::Public,
+                    v0728::ListToolsResultCacheScope::Private => CacheScope::Private,
                 },
             )),
         }
     }
 }
 
-impl From<draft::CallToolResult> for CallToolResult {
-    fn from(r: draft::CallToolResult) -> Self {
+impl From<v0728::CallToolResult> for CallToolResult {
+    fn from(r: v0728::CallToolResult) -> Self {
         CallToolResult {
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: r.is_error.unwrap_or(false),
@@ -2435,8 +2435,8 @@ impl From<draft::CallToolResult> for CallToolResult {
     }
 }
 
-impl From<draft::Resource> for Resource {
-    fn from(r: draft::Resource) -> Self {
+impl From<v0728::Resource> for Resource {
+    fn from(r: v0728::Resource) -> Self {
         Resource {
             uri: r.uri,
             name: r.name,
@@ -2451,8 +2451,8 @@ impl From<draft::Resource> for Resource {
     }
 }
 
-impl From<draft::Annotations> for Annotations {
-    fn from(a: draft::Annotations) -> Self {
+impl From<v0728::Annotations> for Annotations {
+    fn from(a: v0728::Annotations) -> Self {
         Annotations {
             audience: a.audience.into_iter().map(Into::into).collect(),
             priority: a.priority,
@@ -2461,8 +2461,8 @@ impl From<draft::Annotations> for Annotations {
     }
 }
 
-impl From<draft::ResourceLink> for Resource {
-    fn from(l: draft::ResourceLink) -> Self {
+impl From<v0728::ResourceLink> for Resource {
+    fn from(l: v0728::ResourceLink) -> Self {
         Resource {
             uri: l.uri,
             name: l.name,
@@ -2477,16 +2477,16 @@ impl From<draft::ResourceLink> for Resource {
     }
 }
 
-impl From<draft::EmbeddedResourceResource> for ResourceContents {
-    fn from(r: draft::EmbeddedResourceResource) -> Self {
+impl From<v0728::EmbeddedResourceResource> for ResourceContents {
+    fn from(r: v0728::EmbeddedResourceResource) -> Self {
         match r {
-            draft::EmbeddedResourceResource::TextResourceContents(t) => ResourceContents::Text {
+            v0728::EmbeddedResourceResource::TextResourceContents(t) => ResourceContents::Text {
                 uri: t.uri,
                 mime_type: t.mime_type,
                 text: t.text,
                 meta: t.meta.map(|m| m.0).unwrap_or_default(),
             },
-            draft::EmbeddedResourceResource::BlobResourceContents(b) => ResourceContents::Blob {
+            v0728::EmbeddedResourceResource::BlobResourceContents(b) => ResourceContents::Blob {
                 uri: b.uri,
                 mime_type: b.mime_type,
                 blob: b.blob,
@@ -2496,10 +2496,10 @@ impl From<draft::EmbeddedResourceResource> for ResourceContents {
     }
 }
 
-impl From<draft::ReadResourceResultContentsItem> for ResourceContents {
-    fn from(c: draft::ReadResourceResultContentsItem) -> Self {
+impl From<v0728::ReadResourceResultContentsItem> for ResourceContents {
+    fn from(c: v0728::ReadResourceResultContentsItem) -> Self {
         match c {
-            draft::ReadResourceResultContentsItem::TextResourceContents(t) => {
+            v0728::ReadResourceResultContentsItem::TextResourceContents(t) => {
                 ResourceContents::Text {
                     uri: t.uri,
                     mime_type: t.mime_type,
@@ -2507,7 +2507,7 @@ impl From<draft::ReadResourceResultContentsItem> for ResourceContents {
                     meta: t.meta.map(|m| m.0).unwrap_or_default(),
                 }
             }
-            draft::ReadResourceResultContentsItem::BlobResourceContents(b) => {
+            v0728::ReadResourceResultContentsItem::BlobResourceContents(b) => {
                 ResourceContents::Blob {
                     uri: b.uri,
                     mime_type: b.mime_type,
@@ -2519,39 +2519,39 @@ impl From<draft::ReadResourceResultContentsItem> for ResourceContents {
     }
 }
 
-impl From<draft::ListResourcesResult> for ListResourcesResult {
-    fn from(r: draft::ListResourcesResult) -> Self {
+impl From<v0728::ListResourcesResult> for ListResourcesResult {
+    fn from(r: v0728::ListResourcesResult) -> Self {
         ListResourcesResult {
             resources: r.resources.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: Some(CachePolicy::from_wire(
                 r.ttl_ms,
                 match r.cache_scope {
-                    draft::ListResourcesResultCacheScope::Public => CacheScope::Public,
-                    draft::ListResourcesResultCacheScope::Private => CacheScope::Private,
+                    v0728::ListResourcesResultCacheScope::Public => CacheScope::Public,
+                    v0728::ListResourcesResultCacheScope::Private => CacheScope::Private,
                 },
             )),
         }
     }
 }
 
-impl From<draft::ReadResourceResult> for ReadResourceResult {
-    fn from(r: draft::ReadResourceResult) -> Self {
+impl From<v0728::ReadResourceResult> for ReadResourceResult {
+    fn from(r: v0728::ReadResourceResult) -> Self {
         ReadResourceResult {
             contents: r.contents.into_iter().map(Into::into).collect(),
             cache: Some(CachePolicy::from_wire(
                 r.ttl_ms,
                 match r.cache_scope {
-                    draft::ReadResourceResultCacheScope::Public => CacheScope::Public,
-                    draft::ReadResourceResultCacheScope::Private => CacheScope::Private,
+                    v0728::ReadResourceResultCacheScope::Public => CacheScope::Public,
+                    v0728::ReadResourceResultCacheScope::Private => CacheScope::Private,
                 },
             )),
         }
     }
 }
 
-impl From<draft::ResourceTemplate> for ResourceTemplate {
-    fn from(t: draft::ResourceTemplate) -> Self {
+impl From<v0728::ResourceTemplate> for ResourceTemplate {
+    fn from(t: v0728::ResourceTemplate) -> Self {
         ResourceTemplate {
             uri_template: t.uri_template,
             name: t.name,
@@ -2565,33 +2565,33 @@ impl From<draft::ResourceTemplate> for ResourceTemplate {
     }
 }
 
-impl From<draft::ListResourceTemplatesResult> for ListResourceTemplatesResult {
-    fn from(r: draft::ListResourceTemplatesResult) -> Self {
+impl From<v0728::ListResourceTemplatesResult> for ListResourceTemplatesResult {
+    fn from(r: v0728::ListResourceTemplatesResult) -> Self {
         ListResourceTemplatesResult {
             resource_templates: r.resource_templates.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: Some(CachePolicy::from_wire(
                 r.ttl_ms,
                 match r.cache_scope {
-                    draft::ListResourceTemplatesResultCacheScope::Public => CacheScope::Public,
-                    draft::ListResourceTemplatesResultCacheScope::Private => CacheScope::Private,
+                    v0728::ListResourceTemplatesResultCacheScope::Public => CacheScope::Public,
+                    v0728::ListResourceTemplatesResultCacheScope::Private => CacheScope::Private,
                 },
             )),
         }
     }
 }
 
-impl From<draft::Role> for Role {
-    fn from(r: draft::Role) -> Self {
+impl From<v0728::Role> for Role {
+    fn from(r: v0728::Role) -> Self {
         match r {
-            draft::Role::User => Role::User,
-            draft::Role::Assistant => Role::Assistant,
+            v0728::Role::User => Role::User,
+            v0728::Role::Assistant => Role::Assistant,
         }
     }
 }
 
-impl From<draft::PromptArgument> for PromptArgument {
-    fn from(a: draft::PromptArgument) -> Self {
+impl From<v0728::PromptArgument> for PromptArgument {
+    fn from(a: v0728::PromptArgument) -> Self {
         PromptArgument {
             name: a.name,
             title: a.title,
@@ -2601,8 +2601,8 @@ impl From<draft::PromptArgument> for PromptArgument {
     }
 }
 
-impl From<draft::Prompt> for Prompt {
-    fn from(p: draft::Prompt) -> Self {
+impl From<v0728::Prompt> for Prompt {
+    fn from(p: v0728::Prompt) -> Self {
         Prompt {
             name: p.name,
             title: p.title,
@@ -2614,8 +2614,8 @@ impl From<draft::Prompt> for Prompt {
     }
 }
 
-impl From<draft::PromptMessage> for PromptMessage {
-    fn from(m: draft::PromptMessage) -> Self {
+impl From<v0728::PromptMessage> for PromptMessage {
+    fn from(m: v0728::PromptMessage) -> Self {
         PromptMessage {
             role: m.role.into(),
             content: m.content.into(),
@@ -2623,24 +2623,24 @@ impl From<draft::PromptMessage> for PromptMessage {
     }
 }
 
-impl From<draft::ListPromptsResult> for ListPromptsResult {
-    fn from(r: draft::ListPromptsResult) -> Self {
+impl From<v0728::ListPromptsResult> for ListPromptsResult {
+    fn from(r: v0728::ListPromptsResult) -> Self {
         ListPromptsResult {
             prompts: r.prompts.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: Some(CachePolicy::from_wire(
                 r.ttl_ms,
                 match r.cache_scope {
-                    draft::ListPromptsResultCacheScope::Public => CacheScope::Public,
-                    draft::ListPromptsResultCacheScope::Private => CacheScope::Private,
+                    v0728::ListPromptsResultCacheScope::Public => CacheScope::Public,
+                    v0728::ListPromptsResultCacheScope::Private => CacheScope::Private,
                 },
             )),
         }
     }
 }
 
-impl From<draft::GetPromptResult> for GetPromptResult {
-    fn from(r: draft::GetPromptResult) -> Self {
+impl From<v0728::GetPromptResult> for GetPromptResult {
+    fn from(r: v0728::GetPromptResult) -> Self {
         GetPromptResult {
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
@@ -2648,8 +2648,8 @@ impl From<draft::GetPromptResult> for GetPromptResult {
     }
 }
 
-impl From<draft::CompleteResult> for CompleteResult {
-    fn from(r: draft::CompleteResult) -> Self {
+impl From<v0728::CompleteResult> for CompleteResult {
+    fn from(r: v0728::CompleteResult) -> Self {
         CompleteResult {
             values: r.completion.values,
             total: r
@@ -3020,7 +3020,7 @@ mod tests {
     fn tool_widens_to_draft_wire() {
         let neutral = Tool::new("echo", json!({"type": "object", "properties": {}}))
             .with_description("Echoes input");
-        let wire: draft::Tool = neutral.into();
+        let wire: v0728::Tool = neutral.into();
         assert_eq!(wire.name, "echo");
         assert_eq!(wire.input_schema.type_, "object");
         let v = serde_json::to_value(&wire).unwrap();
@@ -3030,7 +3030,7 @@ mod tests {
 
     #[test]
     fn call_result_carries_result_type_and_is_error() {
-        let wire: draft::CallToolResult = CallToolResult::error("boom").into();
+        let wire: v0728::CallToolResult = CallToolResult::error("boom").into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["resultType"], "complete");
         assert_eq!(v["isError"], true);
@@ -3040,7 +3040,7 @@ mod tests {
 
     #[test]
     fn list_result_fills_draft_required_fields() {
-        let wire: draft::ListToolsResult =
+        let wire: v0728::ListToolsResult =
             ListToolsResult::new(alloc::vec![Tool::new("a", json!({"type": "object"}))]).into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["resultType"], "complete");
@@ -3051,7 +3051,7 @@ mod tests {
 
     #[test]
     fn read_resource_text_widens_to_wire_union() {
-        let wire: draft::ReadResourceResult = ReadResourceResult::text("file://a", "hi").into();
+        let wire: v0728::ReadResourceResult = ReadResourceResult::text("file://a", "hi").into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["resultType"], "complete");
         assert_eq!(v["cacheScope"], "private");
@@ -3061,7 +3061,7 @@ mod tests {
 
     #[test]
     fn list_resources_and_templates_fill_required_fields() {
-        let res: draft::ListResourcesResult = ListResourcesResult::new(alloc::vec![
+        let res: v0728::ListResourcesResult = ListResourcesResult::new(alloc::vec![
             Resource::new("file://a", "a").with_mime_type("text/plain"),
         ])
         .into();
@@ -3069,7 +3069,7 @@ mod tests {
         assert_eq!(v["resultType"], "complete");
         assert_eq!(v["resources"][0]["mimeType"], "text/plain");
 
-        let templates: draft::ListResourceTemplatesResult = ListResourceTemplatesResult::new(
+        let templates: v0728::ListResourceTemplatesResult = ListResourceTemplatesResult::new(
             alloc::vec![ResourceTemplate::new("file://{path}", "files",)],
         )
         .into();
@@ -3080,7 +3080,7 @@ mod tests {
 
     #[test]
     fn prompt_get_widens_with_roles() {
-        let wire: draft::GetPromptResult = GetPromptResult::new(alloc::vec![
+        let wire: v0728::GetPromptResult = GetPromptResult::new(alloc::vec![
             PromptMessage::user_text("hello"),
             PromptMessage::assistant_text("hi there"),
         ])
@@ -3096,7 +3096,7 @@ mod tests {
 
     #[test]
     fn list_prompts_carries_arguments() {
-        let wire: draft::ListPromptsResult = ListPromptsResult::new(alloc::vec![
+        let wire: v0728::ListPromptsResult = ListPromptsResult::new(alloc::vec![
             Prompt::new("summarize")
                 .with_description("Summarize text")
                 .with_argument(PromptArgument::new("text").required(true)),
@@ -3110,7 +3110,7 @@ mod tests {
 
     #[test]
     fn complete_result_nests_completion() {
-        let wire: draft::CompleteResult = CompleteResult::new(alloc::vec!["foo".to_string()])
+        let wire: v0728::CompleteResult = CompleteResult::new(alloc::vec!["foo".to_string()])
             .with_total(1)
             .with_has_more(false)
             .into();
@@ -3223,7 +3223,7 @@ mod tests {
                 .with_title("Echo")
                 .with_description("Echoes input"),
         ]);
-        let wire: draft::ListToolsResult = original.into();
+        let wire: v0728::ListToolsResult = original.into();
         let back: ListToolsResult = wire.into();
         assert_eq!(back.tools.len(), 1);
         assert_eq!(back.tools[0].name, "echo");
@@ -3278,7 +3278,7 @@ mod tests {
 
     #[test]
     fn tool_annotations_icons_and_meta_round_trip_the_draft_wire() {
-        let wire: draft::Tool = metadata_tool().into();
+        let wire: v0728::Tool = metadata_tool().into();
         let v = serde_json::to_value(&wire).unwrap();
         // Exact spec wire names.
         assert_eq!(v["annotations"]["readOnlyHint"], json!(true));
@@ -3305,7 +3305,7 @@ mod tests {
 
     #[test]
     fn absent_tool_metadata_stays_absent_on_the_wire() {
-        let wire: draft::Tool = Tool::new("plain", json!({"type": "object"})).into();
+        let wire: v0728::Tool = Tool::new("plain", json!({"type": "object"})).into();
         let v = serde_json::to_value(&wire).unwrap();
         assert!(v.get("annotations").is_none(), "no annotations key: {v}");
         assert!(v.get("icons").is_none(), "no icons key: {v}");
@@ -3337,7 +3337,7 @@ mod tests {
 
     #[test]
     fn resource_metadata_round_trips_both_wires() {
-        let draft_wire: draft::Resource = metadata_resource().into();
+        let draft_wire: v0728::Resource = metadata_resource().into();
         let v = serde_json::to_value(&draft_wire).unwrap();
         assert_eq!(v["annotations"]["audience"], json!(["user"]));
         assert_eq!(v["annotations"]["priority"], json!(0.75));
@@ -3356,7 +3356,7 @@ mod tests {
         let template = ResourceTemplate::new("file://{path}", "files")
             .with_annotations(Annotations::new().for_audience(Role::Assistant))
             .with_meta_entry("com.example/kind", json!("fs"));
-        let draft_wire: draft::ResourceTemplate = template.clone().into();
+        let draft_wire: v0728::ResourceTemplate = template.clone().into();
         let back: ResourceTemplate = draft_wire.into();
         assert_eq!(
             back.annotations.as_ref().unwrap().audience,
@@ -3370,7 +3370,7 @@ mod tests {
         let prompt = Prompt::new("summarize")
             .with_icon(Icon::new("https://example.com/p.png"))
             .with_meta_entry("com.example/category", json!("text"));
-        let draft_wire: draft::Prompt = prompt.clone().into();
+        let draft_wire: v0728::Prompt = prompt.clone().into();
         let back: Prompt = draft_wire.into();
         assert_eq!(back.icons[0].src, "https://example.com/p.png");
         assert_eq!(back.meta["com.example/category"], json!("text"));
@@ -3382,7 +3382,7 @@ mod tests {
     #[test]
     fn resource_link_content_carries_metadata_both_wires() {
         let content = Content::ResourceLink(Box::new(metadata_resource()));
-        let wire: draft::ContentBlock = content.clone().into();
+        let wire: v0728::ContentBlock = content.clone().into();
         let back: Content = wire.into();
         let Content::ResourceLink(r) = back else {
             panic!("resource link survives");
@@ -3412,7 +3412,7 @@ mod tests {
                 .with_annotations(annotations.clone())
                 .with_meta_entry("com.example/source", json!("cache"));
 
-            let wire: draft::ContentBlock = content.clone().into();
+            let wire: v0728::ContentBlock = content.clone().into();
             let v = serde_json::to_value(&wire).unwrap();
             // Exact spec wire names on the block itself.
             assert_eq!(v["annotations"]["audience"], json!(["user"]), "{v}");
@@ -3442,7 +3442,7 @@ mod tests {
             .with_annotations(Annotations::new().for_audience(Role::User))
             .with_meta_entry("com.example/origin", json!("embedded"));
 
-        let wire: draft::ContentBlock = content.clone().into();
+        let wire: v0728::ContentBlock = content.clone().into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["_meta"]["com.example/origin"], json!("embedded"));
         assert_eq!(
@@ -3483,7 +3483,7 @@ mod tests {
             assert_eq!(bmeta["com.example/etag"], json!("def"));
         };
 
-        let wire: draft::ReadResourceResult = make().into();
+        let wire: v0728::ReadResourceResult = make().into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["contents"][0]["_meta"]["com.example/etag"], json!("abc"));
         let back: ReadResourceResult = wire.into();
@@ -3498,7 +3498,7 @@ mod tests {
 
     #[test]
     fn absent_content_metadata_stays_absent_on_the_wire() {
-        let wire: draft::ContentBlock = Content::text("plain").into();
+        let wire: v0728::ContentBlock = Content::text("plain").into();
         let v = serde_json::to_value(&wire).unwrap();
         assert!(v.get("annotations").is_none(), "no annotations key: {v}");
         assert!(v.get("_meta").is_none(), "no _meta key: {v}");
@@ -3508,7 +3508,7 @@ mod tests {
         assert!(v.get("annotations").is_none(), "no annotations key: {v}");
         assert!(v.get("_meta").is_none(), "no _meta key: {v}");
 
-        let wire: draft::ReadResourceResult = ReadResourceResult::text("file://a", "hi").into();
+        let wire: v0728::ReadResourceResult = ReadResourceResult::text("file://a", "hi").into();
         let v = serde_json::to_value(&wire).unwrap();
         assert!(v["contents"][0].get("_meta").is_none(), "no _meta key: {v}");
     }
@@ -3516,7 +3516,7 @@ mod tests {
     #[test]
     fn draft_call_result_round_trips_content_and_is_error() {
         let original = CallToolResult::error("boom");
-        let wire: draft::CallToolResult = original.into();
+        let wire: v0728::CallToolResult = original.into();
         let back: CallToolResult = wire.into();
         assert!(back.is_error);
         assert_eq!(back.content.len(), 1);
@@ -3539,7 +3539,7 @@ mod tests {
             ResourceContents::text("file://a", "hi").with_mime_type("text/plain"),
             ResourceContents::blob("file://b", "Zm9v"),
         ]);
-        let wire: draft::ReadResourceResult = original.into();
+        let wire: v0728::ReadResourceResult = original.into();
         let back: ReadResourceResult = wire.into();
         assert_eq!(back.contents.len(), 2);
         assert!(
@@ -3559,7 +3559,7 @@ mod tests {
                 .with_description("Summarize text")
                 .with_argument(PromptArgument::new("text").required(true)),
         ]);
-        let wire: draft::ListPromptsResult = prompts.into();
+        let wire: v0728::ListPromptsResult = prompts.into();
         let back: ListPromptsResult = wire.into();
         assert_eq!(back.prompts[0].name, "summarize");
         assert!(back.prompts[0].arguments[0].required);
@@ -3575,7 +3575,7 @@ mod tests {
         let complete = CompleteResult::new(alloc::vec!["foo".to_string()])
             .with_total(1)
             .with_has_more(false);
-        let wire: draft::CompleteResult = complete.into();
+        let wire: v0728::CompleteResult = complete.into();
         let back: CompleteResult = wire.into();
         assert_eq!(back.values, alloc::vec!["foo".to_string()]);
         assert_eq!(back.total, Some(1));
@@ -3589,7 +3589,7 @@ mod tests {
             Content::audio("YmFy", "audio/wav"),
         ] {
             // draft
-            let draft_block: draft::ContentBlock = content.clone().into();
+            let draft_block: v0728::ContentBlock = content.clone().into();
             assert_eq!(Content::from(draft_block), content);
             // legacy
             let legacy_block: legacy::ContentBlock = content.clone().into();
@@ -3613,7 +3613,7 @@ mod tests {
             ),
         ] {
             // draft
-            let draft_block: draft::ContentBlock = content.clone().into();
+            let draft_block: v0728::ContentBlock = content.clone().into();
             assert_eq!(Content::from(draft_block), content);
             // legacy
             let legacy_block: legacy::ContentBlock = content.clone().into();
@@ -3636,7 +3636,7 @@ mod tests {
             assert_eq!(back.task_support, Some(ts));
 
             // The draft models Tasks as an extension, not a per-tool wire field.
-            let wire: draft::Tool = make().into();
+            let wire: v0728::Tool = make().into();
             let v = serde_json::to_value(&wire).unwrap();
             assert!(v.get("execution").is_none(), "no draft execution key: {v}");
             let back: Tool = wire.into();
@@ -3655,7 +3655,7 @@ mod tests {
         for sc in [json!(7), json!([1, 2, 3]), json!("str"), json!(true)] {
             let mut r = CallToolResult::text("ok");
             r.structured_content = Some(sc.clone());
-            let wire: draft::CallToolResult = r.into();
+            let wire: v0728::CallToolResult = r.into();
             let v = serde_json::to_value(&wire).unwrap();
             assert_eq!(v["structuredContent"], sc);
             let back: CallToolResult = wire.into();
@@ -3668,7 +3668,7 @@ mod tests {
         // Outbound + inbound Public arm.
         let result = ListToolsResult::new(alloc::vec![])
             .with_cache(CachePolicy::public(core::time::Duration::from_secs(60)));
-        let wire: draft::ListToolsResult = result.into();
+        let wire: v0728::ListToolsResult = result.into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["ttlMs"], 60_000);
         assert_eq!(v["cacheScope"], "public");
@@ -3681,7 +3681,7 @@ mod tests {
         // resources/read carries the same envelope (Private arm).
         let rr = ReadResourceResult::text("file://a", "hi")
             .with_cache(CachePolicy::private(core::time::Duration::from_millis(500)));
-        let wire: draft::ReadResourceResult = rr.into();
+        let wire: v0728::ReadResourceResult = rr.into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["ttlMs"], 500);
         assert_eq!(v["cacheScope"], "private");
@@ -3701,7 +3701,7 @@ mod tests {
         // Pinned asymmetry: neutral `cache: None` re-enters from the draft
         // wire as the explicit conservative default (the wire always carries
         // the fields), never as None.
-        let wire: draft::ListToolsResult = ListToolsResult::new(alloc::vec![]).into();
+        let wire: v0728::ListToolsResult = ListToolsResult::new(alloc::vec![]).into();
         let back: ListToolsResult = wire.into();
         assert_eq!(back.cache, Some(CachePolicy::NO_CACHE));
     }
@@ -3742,12 +3742,12 @@ mod tests {
         let mut resource = Resource::new("file://big", "big");
         resource.size = Some(4096);
         for wire_v in [
-            serde_json::to_value(draft::Resource::from(resource.clone())).unwrap(),
+            serde_json::to_value(v0728::Resource::from(resource.clone())).unwrap(),
             serde_json::to_value(legacy::Resource::from(resource.clone())).unwrap(),
         ] {
             assert_eq!(wire_v["size"], 4096);
         }
-        let back: Resource = draft::Resource::from(resource.clone()).into();
+        let back: Resource = v0728::Resource::from(resource.clone()).into();
         assert_eq!(back.size, Some(4096));
         let back: Resource = legacy::Resource::from(resource.clone()).into();
         assert_eq!(back.size, Some(4096));
@@ -3755,11 +3755,11 @@ mod tests {
         // Documented clamp: the wire types `size` as i64, so a u64 beyond
         // i64::MAX saturates — identically on Resource…
         resource.size = Some(u64::MAX);
-        let back: Resource = draft::Resource::from(resource.clone()).into();
+        let back: Resource = v0728::Resource::from(resource.clone()).into();
         assert_eq!(back.size, Some(u64::try_from(i64::MAX).unwrap()));
         // …and on ResourceLink (the invariant is "never panic, never go
         // negative, never silently drop").
-        let wire: draft::ContentBlock = Content::resource_link(resource).into();
+        let wire: v0728::ContentBlock = Content::resource_link(resource).into();
         let Content::ResourceLink(r) = Content::from(wire) else {
             panic!("resource link survives");
         };
@@ -3774,7 +3774,7 @@ mod tests {
             sizes: alloc::vec![],
             theme: Some(IconTheme::Light),
         });
-        let wire: draft::Tool = tool.clone().into();
+        let wire: v0728::Tool = tool.clone().into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["icons"][0]["theme"], "light");
         let back: Tool = wire.into();
@@ -3791,13 +3791,13 @@ mod tests {
     fn empty_annotations_serialize_as_empty_object_not_empty_arrays() {
         let content = Content::text("hi").with_annotations(Annotations::new());
         for v in [
-            serde_json::to_value(draft::ContentBlock::from(content.clone())).unwrap(),
+            serde_json::to_value(v0728::ContentBlock::from(content.clone())).unwrap(),
             serde_json::to_value(legacy::ContentBlock::from(content.clone())).unwrap(),
         ] {
             // Present (the caller set it) but empty — never `"audience": []`.
             assert_eq!(v["annotations"], json!({}), "{v}");
         }
-        let wire: draft::ContentBlock = content.clone().into();
+        let wire: v0728::ContentBlock = content.clone().into();
         let back: Content = wire.into();
         assert_eq!(back, content);
     }

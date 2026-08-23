@@ -7,9 +7,10 @@
 //!
 //! - [`v2025_11_25`] — stateful model: `initialize`, `ping`, `resources/subscribe`,
 //!   and **core Tasks** (`tasks/get|list|cancel|result`).
-//! - [`draft`] — `2026-07-28`: stateless `server/discover`,
+//! - [`v2026_07_28`] — stateless model: `server/discover`,
 //!   `subscriptions/listen`, MRTR (`InputRequiredResult`); Tasks moves to the
-//!   `extensions` mechanism.
+//!   `extensions` mechanism. (Named `draft` until the spec froze on
+//!   2026-07-28; [`draft`] survives as a deprecated alias.)
 //!
 //! The cross-version [`neutral`] handler surface and the [`methods`]/[`version`]
 //! routing primitives live here; the `VersionDispatcher` that consumes them is
@@ -26,9 +27,18 @@ extern crate alloc;
 
 use turbomcp_core as _;
 
-pub mod draft;
 pub mod methods;
 pub mod neutral;
 pub mod v2025_06_18;
 pub mod v2025_11_25;
+pub mod v2026_07_28;
 pub mod version;
+
+/// The `2026-07-28` wire module under its pre-freeze name.
+///
+/// It was called `draft` while the revision was still in development. Kept as
+/// a deprecated re-export so `turbomcp_protocol::draft::types` keeps resolving;
+/// use [`v2026_07_28`] instead. A future draft will get its own `draft` module
+/// rather than reusing this alias.
+#[deprecated(since = "4.0.0-alpha.2", note = "the draft froze: use v2026_07_28")]
+pub use v2026_07_28 as draft;

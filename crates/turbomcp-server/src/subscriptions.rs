@@ -27,8 +27,8 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use turbomcp_core::{JsonRpcMessage, JsonRpcNotification, RequestId, meta};
-use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::methods;
+use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_service::outbound;
 
 /// How long a `*_list_changed` burst is allowed to accumulate before the one
@@ -60,7 +60,7 @@ impl ListChangedKind {
         }
     }
 
-    fn wants(self, filter: &draft::SubscriptionFilter) -> bool {
+    fn wants(self, filter: &v0728::SubscriptionFilter) -> bool {
         match self {
             Self::Tools => filter.tools_list_changed == Some(true),
             Self::Resources => filter.resources_list_changed == Some(true),
@@ -87,7 +87,7 @@ struct LegacyRoute {
 /// Shared map of live subscriptions; dispatcher clones share it via `Arc`.
 #[derive(Default)]
 pub(crate) struct SubscriptionRegistry {
-    inner: Mutex<HashMap<(String, RequestId), draft::SubscriptionFilter>>,
+    inner: Mutex<HashMap<(String, RequestId), v0728::SubscriptionFilter>>,
     /// Legacy (`2025-11-25`) per-session routes, keyed by session id.
     legacy: Mutex<HashMap<String, LegacyRoute>>,
     /// One pending-flush flag per [`ListChangedKind`] slot.
@@ -99,7 +99,7 @@ impl SubscriptionRegistry {
         &self,
         connection: &str,
         id: &RequestId,
-        filter: draft::SubscriptionFilter,
+        filter: v0728::SubscriptionFilter,
     ) {
         self.lock()
             .insert((connection.to_owned(), id.clone()), filter);
@@ -230,7 +230,7 @@ impl SubscriptionRegistry {
         &self,
         method: &str,
         extra: Option<(&str, Value)>,
-        wants: impl Fn(&draft::SubscriptionFilter) -> bool,
+        wants: impl Fn(&v0728::SubscriptionFilter) -> bool,
     ) {
         let targets: Vec<(String, RequestId)> = self
             .lock()
@@ -287,7 +287,7 @@ impl SubscriptionRegistry {
 
     fn lock(
         &self,
-    ) -> std::sync::MutexGuard<'_, HashMap<(String, RequestId), draft::SubscriptionFilter>> {
+    ) -> std::sync::MutexGuard<'_, HashMap<(String, RequestId), v0728::SubscriptionFilter>> {
         self.inner.lock().expect("subscription registry poisoned")
     }
 
@@ -401,8 +401,8 @@ impl ServerNotifier {
 mod tests {
     use super::*;
 
-    fn filter(tools: bool, uris: &[&str]) -> draft::SubscriptionFilter {
-        draft::SubscriptionFilter {
+    fn filter(tools: bool, uris: &[&str]) -> v0728::SubscriptionFilter {
+        v0728::SubscriptionFilter {
             tools_list_changed: tools.then_some(true),
             resources_list_changed: None,
             prompts_list_changed: None,

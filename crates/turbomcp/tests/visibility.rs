@@ -302,7 +302,8 @@ async fn a_hidden_resource_and_its_templates_uris_are_not_readable() {
         let error = r.error.unwrap_or_else(|| panic!("{uri} was readable"));
         assert_eq!(
             error.code,
-            McpError::resource_not_found("x").jsonrpc_code_for(&turbomcp::ProtocolVersion::Draft),
+            McpError::resource_not_found("x")
+                .jsonrpc_code_for(&turbomcp::ProtocolVersion::V2026_07_28),
             "reading {uri}"
         );
     }

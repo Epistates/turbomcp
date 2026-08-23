@@ -81,7 +81,7 @@ async fn modern_over_http() {
     )
     .await
     .expect("connect modern");
-    assert_eq!(client.protocol_version(), &ProtocolVersion::Draft);
+    assert_eq!(client.protocol_version(), &ProtocolVersion::V2026_07_28);
     exercise(&client).await;
     shutdown.cancel();
 }
@@ -106,7 +106,7 @@ async fn auto_over_http_resolves_to_modern() {
     let client = connect_http(ClientBuilder::new("c", "1.0.0"), &url)
         .await
         .expect("connect auto");
-    assert_eq!(client.protocol_version(), &ProtocolVersion::Draft);
+    assert_eq!(client.protocol_version(), &ProtocolVersion::V2026_07_28);
     exercise(&client).await;
     shutdown.cancel();
 }

@@ -248,7 +248,7 @@ mod tests {
         meta.insert(keys::PROTOCOL_VERSION.into(), json!("2026-07-28"));
         assert_eq!(
             extract_protocol_version(&meta),
-            Some(ProtocolVersion::Draft)
+            Some(ProtocolVersion::V2026_07_28)
         );
     }
 

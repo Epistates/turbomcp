@@ -185,7 +185,7 @@ async fn pump(shared: &Shared, mut msg: JsonRpcMessage) -> Result<(), String> {
     // define them.
     let is_draft = version
         .as_deref()
-        .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::Draft);
+        .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28);
     if is_draft && let JsonRpcMessage::Request(r) = &msg {
         req = req.header(mcp_headers::MCP_METHOD, &r.method);
         if let Some(field) = mcp_headers::name_field_for(&r.method)

@@ -173,7 +173,7 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
     // envelope) requires nothing further.
     let declared_draft = declared
         .as_deref()
-        .is_some_and(|d| ProtocolVersion::from_wire(d) == ProtocolVersion::Draft);
+        .is_some_and(|d| ProtocolVersion::from_wire(d) == ProtocolVersion::V2026_07_28);
     if !declared_draft {
         return None;
     }
@@ -691,7 +691,7 @@ where
     // Draft transport: an unimplemented RPC method answers HTTP 404 (with the
     // JSON-RPC `-32601` body) rather than 200.
     let method_not_found_404 = declared_version(&msg)
-        .is_some_and(|v| ProtocolVersion::from_wire(&v) == ProtocolVersion::Draft)
+        .is_some_and(|v| ProtocolVersion::from_wire(&v) == ProtocolVersion::V2026_07_28)
         && matches!(&msg, JsonRpcMessage::Request(_));
 
     let session_header = headers
@@ -852,7 +852,7 @@ where
     // draft dropped resumability ("Resumable SSE streams via `Last-Event-ID`
     // are not supported"), so draft streams are never primed.
     let primer = declared_version(&msg)
-        .is_none_or(|v| ProtocolVersion::from_wire(&v) != ProtocolVersion::Draft)
+        .is_none_or(|v| ProtocolVersion::from_wire(&v) != ProtocolVersion::V2026_07_28)
         .then(|| format!("{connection_id}-0"));
     let (tx, mut rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
     let registration = outbound::register(&connection_id, tx);
