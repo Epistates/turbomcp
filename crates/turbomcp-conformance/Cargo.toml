@@ -11,11 +11,12 @@ publish = false
 # Cargo.toml) so it never touches the main lockfile/gate. It carries its own
 # Cargo.lock and is run directly:
 #
-#     cd crates/turbomcp-conformance && cargo test
+#     just conformance                                    # from the repo root
+#     cd crates/turbomcp-conformance && cargo test        # skips without pnpm
 #
 # The test spawns the official Node conformance harness
-# (`npx @modelcontextprotocol/conformance server --url …`) against an in-process
-# TurboMCP Streamable-HTTP server. Node/npx must be on PATH.
+# (`pnpm dlx @modelcontextprotocol/conformance server --url …`) against an
+# in-process TurboMCP Streamable-HTTP server. `pnpm` must be on PATH.
 
 [dependencies]
 

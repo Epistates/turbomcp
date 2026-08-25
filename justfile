@@ -18,7 +18,9 @@ crates_dir := "crates"
 target_dir := "target"
 coverage_dir := "coverage"
 
-# Coverage: keep these in step with the `coverage` job in .github/workflows/test.yml.
+# Coverage. These two are the single source of truth: the `coverage` job in
+# .github/workflows/test.yml reads them back with `just --evaluate`, so a local
+# run and CI cannot disagree about what is measured or where the floor is.
 # Excluded are the things line coverage cannot speak to — `@generated` wire types
 # (emitted Default/From/Display impls the conversions never call; proven instead by
 # the conformance suite and round-trip tests) and turbomcp-codegen, a build tool.
@@ -239,6 +241,26 @@ test-examples:
   @echo "Building examples..."
   cargo build --examples
   @echo "Examples build completed"
+
+# Run the official MCP conformance suite against a live server (needs pnpm)
+[group: 'test']
+conformance:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  # Separate from `just test` on purpose: this crate is excluded from the
+  # workspace (own lockfile, spawns `pnpm dlx`), so the main gate never depends
+  # on a Node toolchain. CI runs it as its own job.
+  #
+  # STRICT makes a missing `pnpm` a failure rather than a skip — invoking this
+  # recipe is an explicit request for conformance results, and a silent skip
+  # here is indistinguishable from a pass.
+  cd crates/turbomcp-conformance
+  # Being outside the workspace also puts this crate outside `just test`'s fmt
+  # and clippy passes, which is how it accumulated drift unnoticed. Same bar as
+  # everything else, enforced here since nowhere else covers it.
+  cargo fmt -- --check
+  cargo clippy --all-targets -- -D warnings
+  TURBOMCP_CONFORMANCE_STRICT=1 cargo test --test conformance -- --nocapture
 
 # Run tests matching a pattern
 [group: 'test']

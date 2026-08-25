@@ -4,13 +4,19 @@
 //!
 //! The harness connects as an MCP client to `--url <addr>/mcp`, runs each
 //! *server* scenario, and reports per-check results. We stand the server up on
-//! an ephemeral port, then shell out to `npx @modelcontextprotocol/conformance
-//! server …`, parse its JSON, and assert against an expected-failures baseline
-//! checked in beside this test (`conformance-baseline.json`).
+//! an ephemeral port, then shell out to `pnpm dlx
+//! @modelcontextprotocol/conformance server …`, parse its JSON, and assert
+//! against an expected-failures baseline checked in beside this test
+//! (`conformance-baseline.json`).
 //!
-//! Requirements: Node/`npx` on `PATH`. If neither is available the test is
-//! skipped (logged), not failed — this crate is `exclude`d from the main gate
-//! precisely so a missing Node toolchain never breaks `just test`.
+//! Requirements: `pnpm` on `PATH`. If it is absent the test is skipped
+//! (logged), not failed — this crate is `exclude`d from the main gate precisely
+//! so a missing Node toolchain never breaks `just test`.
+//!
+//! That graceful skip is exactly how a gate comes to measure nothing, so it is
+//! opt-out: set [`STRICT_ENV`] and a missing toolchain is a failure instead. CI
+//! and `just conformance` both set it — the skip exists for a developer who
+//! ran the whole crate incidentally, not for a run that asked for conformance.
 //!
 //! Run: `cd crates/turbomcp-conformance && cargo test -- --nocapture`
 
@@ -25,10 +31,8 @@ use common::Everything;
 use turbomcp::CancellationToken;
 use turbomcp::http::{HttpConfig, ServeHttp};
 
-/// The conformance package + version this suite is pinned to. `npx` resolves
-/// (and caches) it; pinning keeps runs reproducible.
-/// The conformance package + version this suite is pinned to. `npx` resolves
-/// (and caches) it; pinning keeps runs reproducible.
+/// The conformance package + version this suite is pinned to. `pnpm dlx`
+/// resolves (and caches) it; pinning keeps runs reproducible.
 ///
 /// This is the `alpha` dist-tag, not `latest`. `latest` is still 0.1.16, which
 /// predates the `2026-07-28` freeze entirely and has no requirement set for it
@@ -44,13 +48,23 @@ const CONFORMANCE_PKG: &str = "@modelcontextprotocol/conformance@0.2.0-alpha.11"
 /// it is covered by `turbomcp-protocol`'s step-down conversion tests instead.
 const SPEC_VERSIONS: &[&str] = &["2025-11-25", "2026-07-28"];
 
+/// Set this to turn the "no Node toolchain" skip into a failure.
+const STRICT_ENV: &str = "TURBOMCP_CONFORMANCE_STRICT";
+
+/// Floor on passing checks per revision. Not a coverage target — a tripwire for
+/// the suite silently degrading to nothing, which is how this gate ran green
+/// against a harness that had no requirement set for the wire we serve as
+/// `LATEST`. Today: 80 on `2025-11-25`, 147 on `2026-07-28`. This only fires if
+/// a run collapses, and it is *not* to be lowered to make a red build green.
+const MIN_PASSING_PER_VERSION: usize = 60;
+
 fn baseline_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("conformance-baseline.json")
 }
 
-/// Is `npx` runnable? (Skip the suite gracefully if not.)
-fn npx_available() -> bool {
-    std::process::Command::new("npx")
+/// Is `pnpm` runnable? (Skip the suite gracefully if not.)
+fn pnpm_available() -> bool {
+    std::process::Command::new("pnpm")
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -131,8 +145,8 @@ async fn spawn_server() -> (String, CancellationToken, tokio::task::JoinHandle<(
 /// Run the harness against `url` at one spec version and return every check.
 async fn run_harness(url: &str, spec_version: &str) -> Vec<CheckResult> {
     let out_dir = tempdir();
-    let output = tokio::process::Command::new("npx")
-        .arg("--yes")
+    let output = tokio::process::Command::new("pnpm")
+        .arg("dlx")
         .arg(CONFORMANCE_PKG)
         .arg("server")
         .arg("--url")
@@ -146,7 +160,7 @@ async fn run_harness(url: &str, spec_version: &str) -> Vec<CheckResult> {
         .arg(&out_dir)
         .output()
         .await
-        .expect("spawn npx conformance");
+        .expect("spawn pnpm dlx conformance");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -276,9 +290,14 @@ fn load_baseline() -> BTreeSet<String> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn conformance_server_suite() {
-    if !npx_available() {
+    if !pnpm_available() {
+        assert!(
+            std::env::var_os(STRICT_ENV).is_none(),
+            "{STRICT_ENV} is set but `pnpm` is not on PATH — this run asked for conformance \
+             and cannot deliver it. Install pnpm, or unset {STRICT_ENV} to allow the skip.",
+        );
         eprintln!(
-            "SKIP conformance_server_suite: `npx` not found on PATH (Node toolchain required)."
+            "SKIP conformance_server_suite: `pnpm` not found on PATH (Node toolchain required)."
         );
         return;
     }
@@ -336,6 +355,15 @@ async fn conformance_server_suite() {
         stale.len(),
     );
 
+    // Per revision, because the totals hide a version that contributed nothing.
+    let per_version: Vec<(&&str, usize)> = SPEC_VERSIONS
+        .iter()
+        .map(|v| (v, passed.iter().filter(|c| c.spec_version == **v).count()))
+        .collect();
+    for (spec_version, n) in &per_version {
+        eprintln!("  {spec_version}: {n} passed (floor {MIN_PASSING_PER_VERSION})");
+    }
+
     if !failed.is_empty() {
         eprintln!("\n--- failing checks ---");
         for c in &failed {
@@ -363,4 +391,14 @@ async fn conformance_server_suite() {
         stale.is_empty(),
         "stale baseline entries (now passing — remove them): {stale:?}",
     );
+
+    // "Zero failures" is also what a suite that ran nothing reports. Every
+    // revision must have actually been exercised.
+    for (spec_version, n) in &per_version {
+        assert!(
+            *n >= MIN_PASSING_PER_VERSION,
+            "only {n} passing checks for {spec_version} (floor {MIN_PASSING_PER_VERSION}) — \
+             the harness ran but produced almost nothing, which is a broken run, not a pass",
+        );
+    }
 }

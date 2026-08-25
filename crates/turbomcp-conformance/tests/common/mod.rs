@@ -18,8 +18,7 @@ use serde_json::{Value, json};
 use turbomcp::prelude::*;
 
 /// A 1x1 transparent PNG, base64 (image tool / prompt / mixed content).
-pub const PNG_1X1: &str =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+pub const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 /// A tiny WAV (header + no samples), base64 (audio tool).
 pub const WAV_TINY: &str = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
@@ -220,13 +219,15 @@ impl Everything {
     /// A tool returning a single embedded-resource content block.
     #[tool(description = "Return embedded resource content")]
     async fn test_embedded_resource(&self) -> McpResult<neutral::CallToolResult> {
-        Ok(neutral::CallToolResult::new(vec![neutral::Content::resource(
-            neutral::ResourceContents::text(
-                "test://embedded-resource",
-                "embedded resource contents",
-            )
-            .with_mime_type("text/plain"),
-        )]))
+        Ok(neutral::CallToolResult::new(vec![
+            neutral::Content::resource(
+                neutral::ResourceContents::text(
+                    "test://embedded-resource",
+                    "embedded resource contents",
+                )
+                .with_mime_type("text/plain"),
+            ),
+        ]))
     }
 
     /// A tool returning multiple content blocks: text, image, and resource.
@@ -684,12 +685,12 @@ impl Everything {
         #[description("The resource URI to embed")] resource_uri: Option<String>,
     ) -> McpResult<neutral::GetPromptResult> {
         let uri = resource_uri.unwrap_or_else(|| "test://example-resource".to_string());
-        Ok(neutral::GetPromptResult::new(vec![neutral::PromptMessage::user(
-            neutral::Content::resource(
+        Ok(neutral::GetPromptResult::new(vec![
+            neutral::PromptMessage::user(neutral::Content::resource(
                 neutral::ResourceContents::text(uri, "embedded prompt resource")
                     .with_mime_type("text/plain"),
-            ),
-        )]))
+            )),
+        ]))
     }
 
     /// A prompt whose message carries an image content block.

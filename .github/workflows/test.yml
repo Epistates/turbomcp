@@ -296,6 +296,14 @@ jobs:
     - name: Install cargo-llvm-cov
       uses: taiki-e/install-action@cargo-llvm-cov
 
+    # The exclusion regex and the floor are read out of the justfile below, so
+    # `just coverage-text` locally and this job can never disagree about what is
+    # measured. They already had: the `draft` -> `v2026_07_28` module rename
+    # updated the justfile and left this workflow silently counting ~9k lines of
+    # @generated wire types.
+    - name: Install just
+      uses: taiki-e/install-action@just
+
     - name: Cache cargo registry
       uses: actions/cache@v5
       with:
@@ -319,9 +327,12 @@ jobs:
     - name: Generate coverage
       env:
         CARGO_TARGET_DIR: /tmp/cargo-coverage
-        IGNORE_RE: '(tests?/|benches/|examples/|fuzz/|/(v2025_06_18|v2025_11_25|draft)/types\.rs|turbomcp-codegen/)'
       run: |
         set -euo pipefail
+        IGNORE_RE=$(just --evaluate coverage_ignore)
+        MIN_COVERAGE=$(just --evaluate coverage_min)
+        echo "Excluding: ${IGNORE_RE}"
+
         cargo llvm-cov --workspace --all-features --all-targets \
           --lcov --output-path lcov.info --ignore-filename-regex "$IGNORE_RE"
 
@@ -339,7 +350,6 @@ jobs:
           exit 1
         fi
 
-        MIN_COVERAGE=85
         if awk -v c="$COVERAGE" -v m="$MIN_COVERAGE" 'BEGIN { exit !(c < m) }'; then
           echo "::error::Coverage ${COVERAGE}% is below minimum ${MIN_COVERAGE}%"
           exit 1
@@ -352,6 +362,73 @@ jobs:
         fail_ci_if_error: false
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # The official MCP conformance suite (`@modelcontextprotocol/conformance`, a
+  # Node CLI) driven against a live TurboMCP Streamable-HTTP server, once per
+  # advertised revision. Its own job because `turbomcp-conformance` is excluded
+  # from the workspace — own lockfile, own target dir, and a Node dependency the
+  # main gate must not acquire.
+  #
+  # This is the only check that reads our wire the way another implementation
+  # will. Nothing else in CI would notice, say, an error code moving.
+  conformance:
+    name: MCP conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10
+
+    # No `cache: pnpm` here: that keys off a pnpm-lock.yaml, and this suite has
+    # no Node project — it `pnpm dlx`es a pinned package straight from the
+    # registry. The step would fail looking for a lockfile that shouldn't exist.
+    - name: Install Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    # Keyed on this crate's own lockfile, and caching its own target dir — it
+    # shares neither with the workspace.
+    - name: Cache cargo registry & target
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          crates/turbomcp-conformance/target/
+        key: ${{ runner.os }}-cargo-conformance-${{ hashFiles('crates/turbomcp-conformance/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-conformance-
+
+    # Being outside the workspace also puts this crate outside the Lint & Test
+    # job's `--workspace` fmt and clippy passes. Nothing else covers it, so it
+    # is held to the same bar here.
+    - name: Check formatting
+      working-directory: crates/turbomcp-conformance
+      run: cargo fmt -- --check
+
+    - name: Clippy
+      working-directory: crates/turbomcp-conformance
+      run: cargo clippy --all-targets -- -D warnings
+
+    # STRICT turns the "no pnpm on PATH" skip into a failure. Without it a
+    # runner that lost its Node toolchain would report this job green having
+    # verified nothing — the precise failure mode this suite exists to catch.
+    - name: Run the conformance suite
+      working-directory: crates/turbomcp-conformance
+      env:
+        TURBOMCP_CONFORMANCE_STRICT: '1'
+      run: cargo test --test conformance -- --nocapture
 
   semver:
     name: SemVer (public API)
