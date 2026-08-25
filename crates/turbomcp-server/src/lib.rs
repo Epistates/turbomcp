@@ -99,6 +99,28 @@ pub mod __macro_support {
         v
     }
 
+    /// Merge the `#[tool(schema_extend = "…")]` keywords into a generated
+    /// `inputSchema`.
+    ///
+    /// Top-level keys only, and the caller's keys win — the point is to state
+    /// what a Rust signature can't (cross-field rules like `allOf` / `anyOf` /
+    /// `if` / `then` / `else`, or an `$anchor`), which SEP-2106 requires a
+    /// server to carry through untouched. The macro already parsed `extra` at
+    /// compile time, so a parse failure here is unreachable and leaves the
+    /// schema as-is rather than panicking in a handler's list path.
+    #[must_use]
+    pub fn extend_object_schema(mut v: Value, extra: &str) -> Value {
+        let (Some(obj), Ok(Value::Object(add))) =
+            (v.as_object_mut(), serde_json::from_str::<Value>(extra))
+        else {
+            return v;
+        };
+        for (key, value) in add {
+            obj.insert(key, value);
+        }
+        v
+    }
+
     /// Mark a property as an MCP header parameter (SEP-2243). The annotation
     /// value is the **name portion** of the mirrored `Mcp-Param-{name}` header
     /// (the transports spec made `x-mcp-header` a string; the earlier boolean
@@ -271,7 +293,10 @@ mod tests {
 
     /// Build draft `_meta` carrying the per-request protocol version.
     fn draft_meta() -> serde_json::Value {
-        json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" })
+        json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        })
     }
 
     async fn call(svc: &mut VersionDispatcher<Calculator>, req: JsonRpcRequest) -> JsonRpcMessage {
@@ -287,7 +312,11 @@ mod tests {
     #[tokio::test]
     async fn discover_advertises_tools_and_versions() {
         let mut svc = dispatcher();
-        let resp = call(&mut svc, JsonRpcRequest::new(1, "server/discover", None)).await;
+        let resp = call(
+            &mut svc,
+            JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() }))),
+        )
+        .await;
         let JsonRpcMessage::Response(r) = resp else {
             panic!("expected response")
         };
@@ -338,11 +367,38 @@ mod tests {
         assert_eq!(result["isError"], false);
     }
 
+    /// A request with no `_meta` is a malformed envelope, not a rejected
+    /// version: SEP-2575 marks the fields required, so their absence is
+    /// invalid params. The supported list still rides in `data`, so a client
+    /// that simply forgot can re-issue.
     #[tokio::test]
-    async fn missing_version_yields_unsupported_with_list() {
+    async fn missing_envelope_is_invalid_params_naming_the_field() {
         let mut svc = dispatcher();
         // tools/list without `_meta.protocolVersion`.
         let req = JsonRpcRequest::new(4, "tools/list", Some(json!({})));
+        let JsonRpcMessage::Response(r) = call(&mut svc, req).await else {
+            panic!()
+        };
+        let err = r.error.expect("should be an error");
+        assert_eq!(err.code, -32602);
+        let data = err.data.expect("names the missing field");
+        assert_eq!(
+            data["missingField"],
+            "io.modelcontextprotocol/protocolVersion"
+        );
+        assert!(data["supported"].is_array(), "{data}");
+    }
+
+    /// The version is *named* but not served: that is negotiation, not a
+    /// malformed request, and keeps the dedicated code.
+    #[tokio::test]
+    async fn unsupported_version_yields_its_own_code_with_the_list() {
+        let mut svc = dispatcher();
+        let meta = json!({
+            "io.modelcontextprotocol/protocolVersion": "1999-01-01",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        });
+        let req = JsonRpcRequest::new(4, "tools/list", Some(json!({ "_meta": meta })));
         let JsonRpcMessage::Response(r) = call(&mut svc, req).await else {
             panic!()
         };
@@ -402,7 +458,10 @@ mod tests {
             .ready()
             .await
             .unwrap()
-            .call(JsonRpcRequest::new(1, "server/discover", None).into())
+            .call(
+                JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() })))
+                    .into(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -433,7 +492,10 @@ mod tests {
             .ready()
             .await
             .unwrap()
-            .call(JsonRpcRequest::new(1, "server/discover", None).into())
+            .call(
+                JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() })))
+                    .into(),
+            )
             .await
             .unwrap()
             .unwrap()
@@ -555,8 +617,11 @@ mod tests {
     #[tokio::test]
     async fn discover_advertises_all_capabilities() {
         let mut svc = everything();
-        let result =
-            call_everything(&mut svc, JsonRpcRequest::new(1, "server/discover", None)).await;
+        let result = call_everything(
+            &mut svc,
+            JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() }))),
+        )
+        .await;
         let caps = &result["capabilities"];
         assert_eq!(caps["resources"]["listChanged"], true);
         assert_eq!(caps["resources"]["subscribe"], true);

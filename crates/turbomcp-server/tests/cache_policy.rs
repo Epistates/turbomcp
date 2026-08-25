@@ -150,7 +150,10 @@ async fn run(server: Catalog, cache: Option<CachePolicies>, frames: Vec<Value>) 
 fn draft_request(id: u64, method: &str, mut params: Value) -> Value {
     params.as_object_mut().expect("object params").insert(
         "_meta".into(),
-        json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" }),
+        json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }),
     );
     json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
 }

@@ -96,12 +96,21 @@ where
     }
 }
 
+/// The `_meta` envelope a request must carry, for `version`. Both fields are
+/// required on `2026-07-28` (SEP-2575); earlier revisions ignore the extra key.
+fn meta_for(version: &str) -> Value {
+    json!({
+        "io.modelcontextprotocol/protocolVersion": version,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
+}
+
+fn draft_meta() -> Value {
+    meta_for(DRAFT_META)
+}
+
 fn tools_list(version: &str) -> JsonRpcRequest {
-    JsonRpcRequest::new(
-        1,
-        "tools/list",
-        Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": version } })),
-    )
+    JsonRpcRequest::new(1, "tools/list", Some(json!({ "_meta": meta_for(version) })))
 }
 
 #[test]
@@ -219,7 +228,7 @@ async fn a_draft_only_server_refuses_the_legacy_handshake() {
 async fn discover_advertises_only_the_pinned_versions() {
     let body = call(
         DraftOnly.into_server().build(),
-        JsonRpcRequest::new(1, "server/discover", None),
+        JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() }))),
     )
     .await;
     let versions = body["result"]["supportedVersions"]
@@ -232,7 +241,7 @@ async fn discover_advertises_only_the_pinned_versions() {
 
     let body = call(
         DualStack.into_server().build(),
-        JsonRpcRequest::new(1, "server/discover", None),
+        JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() }))),
     )
     .await;
     let versions = body["result"]["supportedVersions"]

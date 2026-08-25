@@ -32,7 +32,10 @@ impl Files {
 }
 
 fn draft_meta() -> Value {
-    json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" })
+    json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
 }
 
 async fn call(svc: &mut turbomcp::VersionDispatcher<Files>, req: JsonRpcRequest) -> Value {

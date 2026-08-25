@@ -93,7 +93,10 @@ async fn run_one(request: Value) -> Vec<Value> {
 }
 
 fn draft_call(meta_extra: Value) -> Value {
-    let mut meta = json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" });
+    let mut meta = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    });
     if let (Some(m), Some(extra)) = (meta.as_object_mut(), meta_extra.as_object()) {
         for (k, v) in extra {
             m.insert(k.clone(), v.clone());

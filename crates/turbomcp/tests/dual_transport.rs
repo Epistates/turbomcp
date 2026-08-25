@@ -26,7 +26,7 @@ impl Demo {
     }
 }
 
-const META: &str = r#"{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}"#;
+const META: &str = r#"{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#;
 
 fn call_frame(id: u64, word: &str) -> String {
     format!(

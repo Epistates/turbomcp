@@ -148,7 +148,10 @@ impl WithTools for ToolsOnly {
 }
 
 fn draft_meta() -> Value {
-    json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" })
+    json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
 }
 
 async fn call<S>(svc: &mut S, req: JsonRpcRequest) -> Value
@@ -211,11 +214,21 @@ async fn unknown_protocol_version_is_refused_with_the_supported_list() {
         "{out}"
     );
 
+    // An *absent* version is a different failure: the envelope is malformed,
+    // not a version we decline to speak (SEP-2575 marks the field required),
+    // so it is invalid params — but the supported list still rides along, so a
+    // client that simply forgot can re-issue.
     let out = call(&mut svc, JsonRpcRequest::new(2, "tools/list", None)).await;
+    assert_eq!(out["error"]["code"], -32602, "absent version: {out}");
+    let data = &out["error"]["data"];
     assert_eq!(
-        out["error"]["code"],
-        codes::UNSUPPORTED_PROTOCOL_VERSION,
-        "absent version: {out}"
+        data["missingField"],
+        "io.modelcontextprotocol/protocolVersion"
+    );
+    assert_eq!(
+        data["supported"],
+        json!(["2025-06-18", "2025-11-25", "2026-07-28"]),
+        "{out}"
     );
 }
 
@@ -390,7 +403,11 @@ async fn malformed_params_get_invalid_params() {
 #[tokio::test]
 async fn discover_lists_both_supported_versions() {
     let mut svc = kitchen();
-    let out = call(&mut svc, JsonRpcRequest::new(1, "server/discover", None)).await;
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() }))),
+    )
+    .await;
     let versions = out["result"]["supportedVersions"]
         .as_array()
         .unwrap_or_else(|| panic!("supportedVersions array: {out}"));

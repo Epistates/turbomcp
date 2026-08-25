@@ -321,14 +321,25 @@ impl ClientHandle {
         state_in: Option<Value>,
         strict_keys: bool,
     ) -> Self {
+        // A retry carries only the answers to the round that just finished, so
+        // the framework carries the earlier ones forward inside the signed
+        // state. Without that, a handler asking two questions in sequence
+        // would re-ask the first one on every round and never finish — the
+        // client is not required to accumulate, and SEP-2322's conformance
+        // scenario proves it does not.
+        let (handler_state, carried) = StateEnvelope::split(state_in);
+        let mut merged = carried;
+        // This round's answers win: a client re-sending a key is answering
+        // again, not replaying.
+        merged.extend(responses);
         Self {
             inner: Arc::new(Inner {
                 mode: HandleMode::Mrtr,
                 connection: connection.to_owned(),
                 client_capabilities,
-                responses,
+                responses: merged,
                 collected: Mutex::new(BTreeMap::new()),
-                state_in,
+                state_in: handler_state,
                 state_out: Mutex::new(None),
                 strict_keys,
             }),
@@ -578,10 +589,13 @@ impl ClientHandle {
         if declared {
             Ok(())
         } else {
-            // SEP-2322 MUST NOT send input requests the client didn't declare.
-            Err(McpError::invalid_params(format!(
-                "client did not declare the `{capability}` capability"
-            )))
+            // SEP-2322: MUST NOT send input requests the client didn't
+            // declare. This is a protocol-level refusal, not a tool failure —
+            // the call was never valid to make — so it carries
+            // `MissingRequiredCapability` (`-32021`) and propagates past the
+            // `is_error` conversion, naming the capability so the client can
+            // re-declare and retry.
+            Err(McpError::MissingRequiredCapability(capability.to_owned()))
         }
     }
 
@@ -663,13 +677,84 @@ impl ClientHandle {
             .clone()
     }
 
-    /// The handler's outbound state, if it stored any.
+    /// The state to sign into this turn's `requestState`: the handler's own
+    /// value plus every answer known so far.
+    ///
+    /// `None` only when there is genuinely nothing to carry — the handler
+    /// stored nothing and no question has been answered yet — so a first-round
+    /// abort with no stored state still emits just `inputRequests`, as before.
     pub(crate) fn state_out(&self) -> Option<Value> {
-        self.inner
+        let handler = self
+            .inner
             .state_out
             .lock()
             .expect("state lock poisoned")
-            .clone()
+            .clone();
+        StateEnvelope::join(handler, &self.inner.responses)
+    }
+}
+
+/// How MRTR state is packed into the opaque, signed `requestState`.
+///
+/// Two things share it: whatever the handler stored via
+/// [`ClientHandle::store_state`], and the answers already collected in earlier
+/// rounds. They are kept in separate slots so a handler's own state shape is
+/// never disturbed by the bookkeeping, and [`ClientHandle::load_state`] still
+/// sees exactly what it stored.
+///
+/// The blob is opaque to clients (they echo it back verbatim), so its shape is
+/// not wire-visible; state minted before this envelope existed still loads,
+/// since anything that isn't a tagged envelope is read as bare handler state.
+struct StateEnvelope;
+
+impl StateEnvelope {
+    /// Marks an object as an envelope rather than bare handler state.
+    const TAG: &'static str = "io.turbomcp/mrtr";
+    const HANDLER: &'static str = "state";
+    const ANSWERS: &'static str = "answers";
+
+    /// Split verified inbound state into (handler state, carried answers).
+    fn split(state_in: Option<Value>) -> (Option<Value>, BTreeMap<String, Value>) {
+        let Some(value) = state_in else {
+            return (None, BTreeMap::new());
+        };
+        let is_envelope = value
+            .get(Self::TAG)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !is_envelope {
+            return (Some(value), BTreeMap::new());
+        }
+        let answers = value
+            .get(Self::ANSWERS)
+            .and_then(Value::as_object)
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        (value.get(Self::HANDLER).cloned(), answers)
+    }
+
+    /// Pack handler state and answers back together, or `None` if both empty.
+    fn join(handler: Option<Value>, answers: &BTreeMap<String, Value>) -> Option<Value> {
+        if handler.is_none() && answers.is_empty() {
+            return None;
+        }
+        let mut envelope = serde_json::Map::new();
+        envelope.insert(Self::TAG.to_owned(), Value::Bool(true));
+        if let Some(handler) = handler {
+            envelope.insert(Self::HANDLER.to_owned(), handler);
+        }
+        if !answers.is_empty() {
+            envelope.insert(
+                Self::ANSWERS.to_owned(),
+                Value::Object(
+                    answers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                ),
+            );
+        }
+        Some(Value::Object(envelope))
     }
 }
 
@@ -879,6 +964,10 @@ mod tests {
         ));
     }
 
+    /// An undeclared capability is `MissingRequiredCapability` (`-32021`), not
+    /// invalid params: SEP-2575 requires the refusal to name what the client
+    /// must declare so it can re-declare and retry, and a `-32602` carries no
+    /// such affordance.
     #[tokio::test]
     async fn elicit_without_declared_capability_is_an_error_not_an_abort() {
         let handle = ClientHandle::mrtr("", Some(json!({})), BTreeMap::new(), None, false);
@@ -886,7 +975,10 @@ mod tests {
             .elicit("k", neutral::ElicitParams::new("?", json!({})))
             .await
             .expect_err("must not send undeclared input requests");
-        assert!(matches!(err, McpError::InvalidParams(_)));
+        assert!(
+            matches!(&err, McpError::MissingRequiredCapability(c) if c == "elicitation"),
+            "got {err:?}"
+        );
         assert!(handle.collected().is_empty(), "nothing may be recorded");
     }
 
@@ -1481,7 +1573,7 @@ mod tests {
         );
         assert!(matches!(
             bare.create_message("s", json!({})).await,
-            Err(McpError::InvalidParams(_))
+            Err(McpError::MissingRequiredCapability(c)) if c == "sampling"
         ));
     }
 

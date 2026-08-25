@@ -23,6 +23,7 @@
 //! `_meta`→context extraction may still move to a `MetaExtractLayer` once
 //! Auth/RateLimit need to observe it between layers (Phase 6/7).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -101,6 +102,25 @@ struct Shared {
     /// Opt-in progressive disclosure: which components a given caller may see,
     /// and therefore reach. `None` (the default) shows everything.
     visibility: crate::visibility::Policy,
+    /// Tool name → the `x-mcp-header` mirrors its `inputSchema` declares
+    /// (SEP-2243), built once from `tools/list` on the first `tools/call` that
+    /// needs it.
+    ///
+    /// Cached because it is a property of the *catalogue*, not of a caller —
+    /// unlike visibility, which is per-request. A server that annotates
+    /// nothing caches an empty map and every later call short-circuits on a
+    /// single `is_empty`.
+    header_params: Arc<tokio::sync::OnceCell<HashMap<String, Vec<HeaderParam>>>>,
+}
+
+/// One `x-mcp-header` annotation: the `{name}` portion of the
+/// `Mcp-Param-{name}` header (lowercased for the case-insensitive comparison
+/// the spec requires) and the `properties` chain locating the argument it
+/// mirrors.
+#[derive(Clone, Debug)]
+struct HeaderParam {
+    header: String,
+    path: Vec<String>,
 }
 
 /// Per-capability cache defaults (SEP-2549) for the `2026-07-28` wire's
@@ -276,6 +296,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 strict_elicitation_keys: false,
                 cache: CachePolicies::default(),
                 visibility: None,
+                header_params: Arc::new(tokio::sync::OnceCell::new()),
             },
         }
     }
@@ -606,17 +627,34 @@ async fn handle_request<S: McpServerCore>(
             .await);
     }
 
+    // A method the stateless wire removed is unknown *on that wire*, however
+    // well we could answer it. Checked before the dispatch table so the two
+    // methods that skip version routing (`initialize`, `ping`) are covered too.
+    if REMOVED_IN_STATELESS.contains(&method.as_str())
+        && version::request_protocol_version(req.params.as_ref())
+            .is_some_and(|v| v == ProtocolVersion::V2026_07_28)
+    {
+        return Ok(error_response(id, &McpError::method_not_found(method)));
+    }
+
     match method.as_str() {
-        // Version-agnostic methods: a client may call these before it knows
-        // which version to pin (discovery) or merely to probe liveness.
-        methods::request::DISCOVER => Ok(discover_response(
-            id,
-            &server,
-            router,
-            supported,
-            &shared.extensions,
-            shared.cache.discover,
-        )),
+        // `server/discover` exists only on the stateless wire, so it carries
+        // that wire's request envelope (SEP-2575) — including on the very
+        // first call, where the client states the version it intends to use
+        // and the reply tells it what is actually served.
+        methods::request::DISCOVER => {
+            if let Some(field) = meta::missing_request_envelope_field(req.params.as_ref()) {
+                return Ok(invalid_envelope(id, field, supported));
+            }
+            Ok(discover_response(
+                id,
+                &server,
+                router,
+                supported,
+                &shared.extensions,
+                shared.cache.discover,
+            ))
+        }
         methods::request::PING => Ok(JsonRpcResponse::success(id, serde_json::json!({})).into()),
 
         // Stateful handshake (2025-11-25 and earlier).
@@ -729,6 +767,7 @@ async fn handle_request<S: McpServerCore>(
                 VersionRoute::Unsupported(requested) => {
                     Ok(unsupported_version(id, requested, supported))
                 }
+                VersionRoute::InvalidEnvelope(field) => Ok(invalid_envelope(id, field, supported)),
             }
         }
 
@@ -760,6 +799,7 @@ async fn handle_request<S: McpServerCore>(
                 VersionRoute::Unsupported(requested) => {
                     Ok(unsupported_version(id, requested, supported))
                 }
+                VersionRoute::InvalidEnvelope(field) => Ok(invalid_envelope(id, field, supported)),
             }
         }
 
@@ -787,6 +827,7 @@ async fn handle_request<S: McpServerCore>(
                 VersionRoute::Unsupported(requested) => {
                     Ok(unsupported_version(id, requested, supported))
                 }
+                VersionRoute::InvalidEnvelope(field) => Ok(invalid_envelope(id, field, supported)),
             }
         }
 
@@ -821,6 +862,7 @@ async fn handle_request<S: McpServerCore>(
                 VersionRoute::Unsupported(requested) => {
                     Ok(unsupported_version(id, requested, supported))
                 }
+                VersionRoute::InvalidEnvelope(field) => Ok(invalid_envelope(id, field, supported)),
             }
         }
 
@@ -833,8 +875,14 @@ async fn handle_request<S: McpServerCore>(
 enum VersionRoute {
     Modern,
     Legacy(LegacyRevision),
-    /// Requested version (or `None` if absent) is not supported.
+    /// Requested version is named but not supported.
     Unsupported(Option<String>),
+    /// SEP-2575: the `2026-07-28` request envelope is missing a required
+    /// `_meta` field (the name is carried so the error says which). Distinct
+    /// from [`Unsupported`](Self::Unsupported) because the request is
+    /// malformed rather than asking for a revision we decline to speak — the
+    /// schema marks both fields required, so their absence is invalid params.
+    InvalidEnvelope(&'static str),
 }
 
 /// Which stateful revision a legacy-routed request speaks.
@@ -871,13 +919,83 @@ fn classify_version(params: Option<&Value>, supported: &[ProtocolVersion]) -> Ve
         }
         Some(ProtocolVersion::V2025_06_18) => VersionRoute::Legacy(LegacyRevision::V2025_06_18),
         Some(ProtocolVersion::V2025_11_25) => VersionRoute::Legacy(LegacyRevision::V2025_11_25),
-        Some(_) => VersionRoute::Modern,
-        // Missing version on a stateless (modern) method: per PLAN §4.9 we treat
-        // absence as unsupported and return the server's version list, so a
-        // client that omitted `_meta` can re-issue with a known version.
-        None => VersionRoute::Unsupported(None),
+        // The stateless wire also requires `clientCapabilities` — it is what
+        // gates which input requests the server may send back (SEP-2322), so
+        // proceeding without it would mean guessing.
+        Some(_) => match meta::missing_request_envelope_field(params) {
+            Some(field) => VersionRoute::InvalidEnvelope(field),
+            None => VersionRoute::Modern,
+        },
+        // No version at all. A legacy session's requests are stamped by the
+        // transport before they reach here, so this is a stateless client that
+        // omitted a required field, not an un-negotiated legacy one.
+        None => VersionRoute::InvalidEnvelope(meta::keys::PROTOCOL_VERSION),
     }
 }
+
+/// Collect a tool `inputSchema`'s `x-mcp-header` annotations.
+///
+/// Only *statically reachable* properties count, which the spec defines as a
+/// chain consisting solely of `properties` keys: an annotation under `items`,
+/// a composition keyword (`oneOf`/`anyOf`/`allOf`/`not`), a conditional
+/// (`if`/`then`/`else`), or behind a `$ref` is invalid and is ignored here
+/// rather than half-honored. Recursing only through `properties` is what
+/// enforces that.
+fn collect_header_params(schema: &Value, path: &mut Vec<String>, out: &mut Vec<HeaderParam>) {
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    for (name, subschema) in properties {
+        path.push(name.clone());
+        if let Some(header) = subschema.get("x-mcp-header").and_then(Value::as_str)
+            && !header.is_empty()
+        {
+            out.push(HeaderParam {
+                header: header.to_ascii_lowercase(),
+                path: path.clone(),
+            });
+        }
+        collect_header_params(subschema, path, out);
+        path.pop();
+    }
+}
+
+/// Read the value a [`HeaderParam`] mirrors out of a call's `arguments`.
+fn argument_at<'a>(arguments: &'a Value, path: &[String]) -> Option<&'a Value> {
+    path.iter().try_fold(arguments, |v, key| v.get(key))
+}
+
+/// SEP-2575 `-32602` for a malformed `2026-07-28` request envelope, naming the
+/// missing field and — since a client that omitted the version usually needs
+/// it — the versions this build serves.
+fn invalid_envelope(id: RequestId, field: &str, supported: &[ProtocolVersion]) -> JsonRpcMessage {
+    let err = JsonRpcError {
+        // JSON-RPC's own Invalid Params, not an MCP-allocated code.
+        code: -32602,
+        message: format!("request `_meta` is missing the required field `{field}`"),
+        data: Some(serde_json::json!({
+            "missingField": field,
+            "supported": supported.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
+        })),
+    };
+    JsonRpcResponse::error(id, err).into()
+}
+
+/// Methods that earlier revisions define but `2026-07-28` removed. On the
+/// stateless wire they are simply unknown — the transports spec has the server
+/// answer `-32601` (and HTTP 404), not silently serve them, so a client cannot
+/// mistake a tolerated legacy call for a supported one.
+///
+/// `initialize` and `ping` are here rather than handled with the rest because
+/// they are answered before version routing: `initialize` opens a session and
+/// `ping` is pure liveness, so neither goes through `classify_version`.
+const REMOVED_IN_STATELESS: &[&str] = &[
+    methods::request::INITIALIZE,
+    methods::request::PING,
+    methods::request::LOGGING_SET_LEVEL,
+    methods::request::RESOURCES_SUBSCRIBE,
+    methods::request::RESOURCES_UNSUBSCRIBE,
+];
 
 // ---- transport-asserted identifiers --------------------------------------------
 

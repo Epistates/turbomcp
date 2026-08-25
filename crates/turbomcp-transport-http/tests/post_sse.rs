@@ -29,7 +29,10 @@ fn call_request(id: i64) -> Request<Body> {
         "params": {
             "name": "echo",
             "arguments": {},
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
         }
     });
     Request::builder()
@@ -133,6 +136,7 @@ fn call_with_token(id: i64) -> Request<Body> {
             "arguments": {},
             "_meta": {
                 "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
                 "progressToken": "tok-9",
             },
         }

@@ -381,6 +381,7 @@ impl MarkerKind {
                     | "task"
                     | "scopes"
                     | "tags"
+                    | "schema_extend"
                     | "read_only"
                     | "destructive"
                     | "idempotent"
@@ -398,7 +399,8 @@ impl MarkerKind {
         match self {
             Self::Tool => {
                 "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `task`, \
-                 `scopes(\"…\", …)`, `tags(\"…\", …)`, or a behavior hint \
+                 `scopes(\"…\", …)`, `tags(\"…\", …)`, `schema_extend = \"{…}\"`, \
+                 or a behavior hint \
                  (`read_only`, `destructive`, `idempotent`, `open_world`)"
             }
             Self::Prompt => {
@@ -438,6 +440,7 @@ enum ArgKind {
     Scopes(Vec<String>),
     Tags(Vec<String>),
     Hint(HintKind, bool),
+    SchemaExtend(LitStr),
     Unknown(String),
 }
 
@@ -454,6 +457,7 @@ impl ArgKind {
             Self::Scopes(_) => "scopes",
             Self::Tags(_) => "tags",
             Self::Hint(k, _) => k.key(),
+            Self::SchemaExtend(_) => "schema_extend",
             Self::Unknown(k) => k,
         }
     }
@@ -514,6 +518,7 @@ impl Parse for MarkerArg {
             "mime_type" => ArgKind::MimeType(name_value_str(&meta, &key)?),
             "scopes" => ArgKind::Scopes(string_list(&meta, &key)?),
             "tags" => ArgKind::Tags(nonempty_string_list(&meta, &key)?),
+            "schema_extend" => ArgKind::SchemaExtend(name_value_lit(&meta, &key)?),
             _ => match HintKind::from_key(&key) {
                 Some(hint) => ArgKind::Hint(hint, hint_value(&meta)?),
                 None => ArgKind::Unknown(key),
@@ -609,6 +614,29 @@ fn name_value_str(meta: &Meta, key: &str) -> syn::Result<String> {
     name_value_lit(meta, key).map(|s| s.value())
 }
 
+/// Reject a `schema_extend` payload that isn't a JSON object, at the literal.
+///
+/// Parsing it here rather than at runtime means a typo is a compile error on
+/// the offending string instead of a tool whose `inputSchema` is silently
+/// wrong. The keys are deliberately *not* validated against a JSON Schema
+/// vocabulary — SEP-2106's whole point is that a server passes through
+/// keywords it does not itself interpret.
+fn validate_schema_extend(lit: &LitStr) -> syn::Result<()> {
+    let text = lit.value();
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(serde_json::Value::Object(_)) => Ok(()),
+        Ok(_) => Err(syn::Error::new(
+            lit.span(),
+            "`schema_extend` must be a JSON object of schema keywords, e.g. \
+             `schema_extend = r#\"{\"allOf\": [...]}\"#`",
+        )),
+        Err(e) => Err(syn::Error::new(
+            lit.span(),
+            format!("`schema_extend` is not valid JSON: {e}"),
+        )),
+    }
+}
+
 /// Everything a marker attribute can declare. Which fields may be set is gated
 /// per marker by [`MarkerKind::accepts`], so one struct serves all three without
 /// letting `#[prompt(task)]` through.
@@ -627,6 +655,10 @@ struct MarkerArgs {
     scopes: Vec<String>,
     tags: Vec<String>,
     hints: ToolHints,
+    /// `schema_extend = "{…}"` — extra top-level JSON Schema keywords merged
+    /// into the generated `inputSchema`. Kept as a literal so a malformed
+    /// object is reported at the string.
+    schema_extend: Option<LitStr>,
 }
 
 impl MarkerArgs {
@@ -676,6 +708,10 @@ impl MarkerArgs {
                 ArgKind::Hint(HintKind::Destructive, v) => parsed.hints.destructive = Some(v),
                 ArgKind::Hint(HintKind::Idempotent, v) => parsed.hints.idempotent = Some(v),
                 ArgKind::Hint(HintKind::OpenWorld, v) => parsed.hints.open_world = Some(v),
+                ArgKind::SchemaExtend(s) => {
+                    validate_schema_extend(&s)?;
+                    parsed.schema_extend = Some(s);
+                }
                 // Unreachable: the gate above rejects unknown keys.
                 ArgKind::Unknown(_) => {}
             }
@@ -785,6 +821,9 @@ struct Handler {
     mime_type: Option<String>,
     /// `#[tool(read_only, …)]` behavior hints → `ToolAnnotations`. Tools only.
     hints: ToolHints,
+    /// `#[tool(schema_extend = "{…}")]`: extra top-level JSON Schema keywords
+    /// merged into the generated `inputSchema`. Tools only.
+    schema_extend: Option<LitStr>,
 }
 
 impl Handler {
@@ -798,6 +837,7 @@ impl Handler {
         self.scopes = args.scopes;
         self.tags = args.tags;
         self.hints = args.hints;
+        self.schema_extend = args.schema_extend;
     }
 
     /// `.with_meta_entry(TAGS, [...])`, or nothing when this handler declared no
@@ -922,6 +962,7 @@ impl Handler {
             title: None,
             mime_type: None,
             hints: ToolHints::default(),
+            schema_extend: None,
         })
     }
 
@@ -1124,6 +1165,12 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
     });
     let tags = t.tags_meta();
     let scopes = t.scopes_meta();
+    // `schema_extend` is applied last so an explicit keyword wins over the
+    // derived one (including `additionalProperties`).
+    let schema_extend = t
+        .schema_extend
+        .as_ref()
+        .map(|s| quote!(__schema = ::turbomcp::__macros::extend_object_schema(__schema, #s);));
     quote! {
         {
             let mut __schema = ::turbomcp::__macros::close_object_schema(
@@ -1135,6 +1182,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
                     ))
                 )
             );
+            #schema_extend
             #(#header_marks)*
             ::turbomcp::neutral::Tool::new(#name, __schema)
                 #desc #title #annotations #output_schema #task_support #tags #scopes

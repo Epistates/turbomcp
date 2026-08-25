@@ -151,6 +151,9 @@ fn declared_version(msg: &JsonRpcMessage) -> Option<String> {
 /// is gone; it let a header inject an argument the body omitted).
 fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option<Response> {
     let declared = declared_version(msg);
+    // Every rejection below echoes this, so the client can correlate it.
+    let id = request_id(msg);
+    let id = id.as_ref();
     let header_version = headers
         .get(&HEADER_PROTOCOL_VERSION)
         .and_then(|v| v.to_str().ok());
@@ -160,9 +163,10 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
     if let (Some(h), Some(d)) = (header_version, declared.as_deref())
         && h != d
     {
-        return Some(header_mismatch_rejection(&format!(
-            "MCP-Protocol-Version header ({h}) does not match the request body ({d})"
-        )));
+        return Some(header_mismatch_rejection(
+            id,
+            &format!("MCP-Protocol-Version header ({h}) does not match the request body ({d})"),
+        ));
     }
 
     // The remaining rules are the draft transport's: they apply when the body
@@ -181,6 +185,7 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
         // The draft requires the version header on every POST; this server
         // supports no pre-2025-06-18 clients, so absence is a rejection.
         return Some(header_mismatch_rejection(
+            id,
             "missing required MCP-Protocol-Version header",
         ));
     }
@@ -195,14 +200,18 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
     {
         None => {
             return Some(header_mismatch_rejection(
+                id,
                 "missing required Mcp-Method header",
             ));
         }
         Some(m) if m != req.method => {
-            return Some(header_mismatch_rejection(&format!(
-                "Mcp-Method header ({m}) does not match the request body ({})",
-                req.method
-            )));
+            return Some(header_mismatch_rejection(
+                id,
+                &format!(
+                    "Mcp-Method header ({m}) does not match the request body ({})",
+                    req.method
+                ),
+            ));
         }
         Some(_) => {}
     }
@@ -217,18 +226,21 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
             .and_then(serde_json::Value::as_str);
         let Some(raw) = headers.get(&HEADER_MCP_NAME).and_then(|v| v.to_str().ok()) else {
             return Some(header_mismatch_rejection(
+                id,
                 "missing required Mcp-Name header",
             ));
         };
         let Some(decoded) = mcp_headers::decode_value(raw) else {
             return Some(header_mismatch_rejection(
+                id,
                 "malformed Base64 sentinel in Mcp-Name header",
             ));
         };
         if body_value != Some(decoded.as_str()) {
-            return Some(header_mismatch_rejection(&format!(
-                "Mcp-Name header does not match the request body's `{field}`"
-            )));
+            return Some(header_mismatch_rejection(
+                id,
+                &format!("Mcp-Name header does not match the request body's `{field}`"),
+            ));
         }
     }
 
@@ -252,24 +264,28 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
                 continue;
             };
             let Ok(raw) = value.to_str() else {
-                return Some(header_mismatch_rejection(&format!(
-                    "Mcp-Param-{param} header contains invalid characters"
-                )));
+                return Some(header_mismatch_rejection(
+                    id,
+                    &format!("Mcp-Param-{param} header contains invalid characters"),
+                ));
             };
             let Some(decoded) = mcp_headers::decode_value(raw) else {
-                return Some(header_mismatch_rejection(&format!(
-                    "malformed Base64 sentinel in Mcp-Param-{param} header"
-                )));
+                return Some(header_mismatch_rejection(
+                    id,
+                    &format!("malformed Base64 sentinel in Mcp-Param-{param} header"),
+                ));
             };
             let Some(rendered) = mcp_headers::render_argument(body_value) else {
-                return Some(header_mismatch_rejection(&format!(
-                    "Mcp-Param-{param} mirrors a non-primitive body argument"
-                )));
+                return Some(header_mismatch_rejection(
+                    id,
+                    &format!("Mcp-Param-{param} mirrors a non-primitive body argument"),
+                ));
             };
             if decoded != rendered {
-                return Some(header_mismatch_rejection(&format!(
-                    "Mcp-Param-{param} header does not match the request body argument"
-                )));
+                return Some(header_mismatch_rejection(
+                    id,
+                    &format!("Mcp-Param-{param} header does not match the request body argument"),
+                ));
             }
         }
     }
@@ -678,7 +694,7 @@ where
     if let Some(v) = header_version
         && !ProtocolVersion::from_wire(v).is_recognized()
     {
-        return version_header_rejection(v);
+        return version_header_rejection(request_id(&msg).as_ref(), v);
     }
     // Header/body mirror validation (draft envelope): version header must
     // match a body-declared version; `Mcp-Method`/`Mcp-Name`/`Mcp-Param-*`
@@ -688,11 +704,44 @@ where
     if let Some(rejection) = validate_request_headers(&msg, &headers) {
         return rejection;
     }
-    // Draft transport: an unimplemented RPC method answers HTTP 404 (with the
-    // JSON-RPC `-32601` body) rather than 200.
-    let method_not_found_404 = declared_version(&msg)
-        .is_some_and(|v| ProtocolVersion::from_wire(&v) == ProtocolVersion::V2026_07_28)
-        && matches!(&msg, JsonRpcMessage::Request(_));
+    // Whether this request rides the stateless wire. The body's own `_meta`
+    // is the primary signal, but a request whose envelope is *missing* has no
+    // body signal to read — the header is what still identifies the wire, and
+    // rejecting such a request is the whole point (SEP-2575).
+    let stateless_request = matches!(&msg, JsonRpcMessage::Request(_))
+        && declared_version(&msg)
+            .as_deref()
+            .or(header_version)
+            .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28);
+
+    // SEP-2575: a stateless request MUST carry `protocolVersion` and
+    // `clientCapabilities` in `_meta`. The dispatcher rejects these too (every
+    // transport must), but the status code is the transport's to set: these
+    // are malformed requests, not application errors, so they are 400 rather
+    // than the usual 200-with-an-error-body.
+    if stateless_request
+        && let JsonRpcMessage::Request(r) = &msg
+        && let Some(field) = meta::missing_request_envelope_field(r.params.as_ref())
+    {
+        return envelope_rejection(&r.id, field);
+    }
+
+    // Tell the dispatcher which `Mcp-Param-*` mirrors arrived. It knows which
+    // arguments are annotated `x-mcp-header`; only we know which headers the
+    // client actually sent, and an *omitted* mirror is a validation failure
+    // (SEP-2243 §Server Validation) the body alone cannot reveal.
+    if stateless_request {
+        let observed: Vec<serde_json::Value> = headers
+            .keys()
+            .filter_map(|n| n.as_str().strip_prefix(MCP_PARAM_PREFIX))
+            .map(|p| serde_json::Value::String(p.to_ascii_lowercase()))
+            .collect();
+        meta::set_request_meta(
+            &mut msg,
+            meta::internal::OBSERVED_HEADER_PARAMS,
+            serde_json::Value::Array(observed),
+        );
+    }
 
     let session_header = headers
         .get(&HEADER_SESSION_ID)
@@ -732,7 +781,7 @@ where
     {
         // Declared-legacy request with no session and not initialize: the
         // stateful path requires a session (spec §Session Management).
-        return session_required_rejection();
+        return session_required_rejection(request_id(&msg).as_ref());
     }
 
     // A modern `subscriptions/listen` request answers with a long-lived SSE
@@ -748,7 +797,7 @@ where
     // the inline path below — its response must carry the minted session
     // header, and the handshake never streams.
     if !is_initialize && matches!(&msg, JsonRpcMessage::Request(_)) {
-        return request_post(&state, msg, method_not_found_404).await;
+        return request_post(&state, msg, stateless_request).await;
     }
 
     let mut svc = state.service.clone();
@@ -758,6 +807,10 @@ where
     match catch_handler_panic(request_id(&msg), svc.call(msg)).await {
         Ok(Some(reply)) => {
             let mut resp = encode_json_response(&state.codec, &reply);
+            // `initialize` reaches this inline path rather than `request_post`,
+            // so it needs the same 404 upgrade: on the stateless wire the
+            // method was removed, and the dispatcher answers `-32601`.
+            apply_stateless_error_status(&mut resp, &reply, stateless_request);
             // A successful initialize hands the minted session back to the
             // client as the Mcp-Session-Id header.
             if let Some(sid) = minted_session
@@ -770,6 +823,41 @@ where
         }
         Ok(None) => StatusCode::ACCEPTED.into_response(), // notification: no body
         Err(e) => protocol_error_response(&e),
+    }
+}
+
+/// Give a stateless-wire reply the HTTP status its JSON-RPC error code calls
+/// for (transports spec / SEP-2575). Two codes are not "the request was fine,
+/// the operation failed", so they do not get the usual `200`:
+///
+/// - `-32601` → `404`: on this wire the method does not exist, however well an
+///   earlier revision defined it.
+/// - `-32021` → `400`: the client did not declare a capability the call needs,
+///   so the request was never valid to send.
+/// - `-32020` → `400`: header/body validation failed. Most of these are caught
+///   in [`validate_request_headers`] before dispatch, but a *missing*
+///   `Mcp-Param-*` mirror is only detectable once the tool's schema is known,
+///   so that one comes back from the dispatcher and is mapped here.
+///
+/// Everything else stays `200` with the error in the body — including
+/// `-32602`, which a perfectly well-formed request earns by naming a missing
+/// resource or a bad tool argument.
+fn apply_stateless_error_status(resp: &mut Response, reply: &JsonRpcMessage, enabled: bool) {
+    if !enabled {
+        return;
+    }
+    let JsonRpcMessage::Response(r) = reply else {
+        return;
+    };
+    let Some(code) = r.error.as_ref().map(|e| e.code) else {
+        return;
+    };
+    if code == -32601 {
+        *resp.status_mut() = StatusCode::NOT_FOUND;
+    } else if code == turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY
+        || code == turbomcp_core::codes::HEADER_MISMATCH
+    {
+        *resp.status_mut() = StatusCode::BAD_REQUEST;
     }
 }
 
@@ -833,7 +921,7 @@ where
 async fn request_post<S>(
     state: &HttpState<S>,
     mut msg: JsonRpcMessage,
-    method_not_found_404: bool,
+    stateless_request: bool,
 ) -> Response
 where
     S: McpService + Clone + Sync,
@@ -881,14 +969,7 @@ where
             match result {
                 Ok(Some(reply)) if events.is_empty() => {
                     let mut resp = encode_json_response(&state.codec, &reply);
-                    // Draft transport: an unimplemented RPC method is HTTP 404
-                    // with the JSON-RPC `-32601` body.
-                    if method_not_found_404
-                        && let JsonRpcMessage::Response(r) = &reply
-                        && r.error.as_ref().is_some_and(|e| e.code == -32601)
-                    {
-                        *resp.status_mut() = StatusCode::NOT_FOUND;
-                    }
+                    apply_stateless_error_status(&mut resp, &reply, stateless_request);
                     resp
                 }
                 Ok(Some(reply)) => {
@@ -1407,52 +1488,83 @@ fn message_has_version(msg: &JsonRpcMessage) -> bool {
         .is_some()
 }
 
+/// A transport-level JSON-RPC error response, carrying the request's own id.
+///
+/// SEP-2575 requires every error response to echo the id, and a rejection the
+/// client cannot correlate is one it cannot act on — with several requests in
+/// flight it can't even tell which one failed. `None` is reserved for the
+/// cases where there genuinely is no id to echo: an unparseable body, or a
+/// check that runs before the body is read.
+fn transport_error(
+    status: StatusCode,
+    id: Option<&RequestId>,
+    code: i32,
+    message: String,
+    data: Option<serde_json::Value>,
+) -> Response {
+    let mut error = serde_json::json!({ "code": code, "message": message });
+    if let (Some(obj), Some(data)) = (error.as_object_mut(), data) {
+        obj.insert("data".into(), data);
+    }
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": error,
+    });
+    (status, Json(body)).into_response()
+}
+
 /// `400` + a `HeaderMismatch` JSON-RPC error: an HTTP header did not match the
 /// corresponding request-body value, or a required header is missing or
 /// malformed (transports spec §Server Validation).
-fn header_mismatch_rejection(detail: &str) -> Response {
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": null,
-        "error": {
-            "code": turbomcp_core::codes::HEADER_MISMATCH,
-            "message": format!("header mismatch: {detail}"),
-        },
-    });
-    (StatusCode::BAD_REQUEST, Json(body)).into_response()
+fn header_mismatch_rejection(id: Option<&RequestId>, detail: &str) -> Response {
+    transport_error(
+        StatusCode::BAD_REQUEST,
+        id,
+        turbomcp_core::codes::HEADER_MISMATCH,
+        format!("header mismatch: {detail}"),
+        None,
+    )
+}
+
+/// `400` + `-32602` for a stateless request whose `_meta` envelope is missing
+/// a field SEP-2575 requires.
+fn envelope_rejection(id: &RequestId, field: &str) -> Response {
+    transport_error(
+        StatusCode::BAD_REQUEST,
+        Some(id),
+        -32602,
+        format!("request `_meta` is missing the required field `{field}`"),
+        Some(serde_json::json!({ "missingField": field })),
+    )
 }
 
 /// `400` for an explicit but unsupported `MCP-Protocol-Version` header
 /// (`UnsupportedProtocolVersionError`, with the spec-required
 /// `data: { supported, requested }`).
-fn version_header_rejection(requested: &str) -> Response {
+fn version_header_rejection(id: Option<&RequestId>, requested: &str) -> Response {
     let supported: Vec<&str> = ProtocolVersion::SUPPORTED
         .iter()
         .map(ProtocolVersion::as_str)
         .collect();
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": null,
-        "error": {
-            "code": turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION,
-            "message": format!("unsupported MCP-Protocol-Version header: {requested}"),
-            "data": { "supported": supported, "requested": requested },
-        },
-    });
-    (StatusCode::BAD_REQUEST, Json(body)).into_response()
+    transport_error(
+        StatusCode::BAD_REQUEST,
+        id,
+        turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION,
+        format!("unsupported MCP-Protocol-Version header: {requested}"),
+        Some(serde_json::json!({ "supported": supported, "requested": requested })),
+    )
 }
 
 /// `400` for a declared-legacy request missing its `Mcp-Session-Id`.
-fn session_required_rejection() -> Response {
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": null,
-        "error": {
-            "code": -32002,
-            "message": "the 2025-11-25 path requires an Mcp-Session-Id header (initialize first)",
-        },
-    });
-    (StatusCode::BAD_REQUEST, Json(body)).into_response()
+fn session_required_rejection(id: Option<&RequestId>) -> Response {
+    transport_error(
+        StatusCode::BAD_REQUEST,
+        id,
+        -32002,
+        "the 2025-11-25 path requires an Mcp-Session-Id header (initialize first)".to_owned(),
+        None,
+    )
 }
 
 /// Whether the request's `Accept` header lists `required` as supported.

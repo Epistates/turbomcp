@@ -399,12 +399,24 @@ impl Client {
         &self.conn
     }
 
-    /// Liveness check (`ping`). Version-agnostic — answered before version
-    /// classification — so it carries no `_meta`.
+    /// Liveness check (`ping`).
+    ///
+    /// **`2025-11-25` and earlier only.** `2026-07-28` removed the method: the
+    /// stateless model has no session to keep alive, so there is nothing for a
+    /// ping to prove that the next real request would not. Calling it on that
+    /// wire is a client bug, not a server error, so it fails locally rather
+    /// than sending a request the server must answer `404`/`-32601`.
     ///
     /// # Errors
-    /// Propagates connection failure.
+    /// [`ClientError::Protocol`] on the stateless wire; otherwise propagates
+    /// connection failure.
     pub async fn ping(&self) -> ClientResult<()> {
+        if self.version == ProtocolVersion::V2026_07_28 {
+            return Err(ClientError::Protocol(format!(
+                "`ping` was removed in {}; it exists only through 2025-11-25",
+                self.version
+            )));
+        }
         // Routed through `versioned_request` so the HTTP transport can stamp
         // the required `MCP-Protocol-Version` header on the POST.
         self.versioned_request(request::PING, Map::new())

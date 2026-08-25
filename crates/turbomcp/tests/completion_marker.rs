@@ -31,7 +31,10 @@ impl Completer {
 }
 
 fn draft_meta() -> serde_json::Value {
-    json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" })
+    json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
 }
 
 async fn call(
@@ -50,9 +53,8 @@ async fn call(
 #[tokio::test]
 async fn completion_capability_is_advertised() {
     let mut svc = Completer.into_server().build();
-    let JsonRpcMessage::Response(r) =
-        call(&mut svc, JsonRpcRequest::new(1, "server/discover", None)).await
-    else {
+    let req = JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() })));
+    let JsonRpcMessage::Response(r) = call(&mut svc, req).await else {
         panic!("expected response")
     };
     let caps = &r.result.expect("result")["capabilities"];

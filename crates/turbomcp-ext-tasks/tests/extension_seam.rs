@@ -56,12 +56,16 @@ fn draft_meta(declare_tasks: bool) -> Value {
         "io.modelcontextprotocol/protocolVersion".into(),
         json!("2026-07-28"),
     );
-    if declare_tasks {
-        meta.insert(
-            "io.modelcontextprotocol/clientCapabilities".into(),
-            json!({ "extensions": { EXTENSION_ID: {} } }),
-        );
-    }
+    // Required on this wire either way (SEP-2575); declaring the extension is
+    // a matter of what goes *in* it, not whether it is present.
+    meta.insert(
+        "io.modelcontextprotocol/clientCapabilities".into(),
+        if declare_tasks {
+            json!({ "extensions": { EXTENSION_ID: {} } })
+        } else {
+            json!({})
+        },
+    );
     Value::Object(meta)
 }
 
@@ -86,7 +90,15 @@ async fn call(svc: &mut VersionDispatcher<Adder>, req: JsonRpcRequest) -> Value 
 #[tokio::test]
 async fn discover_advertises_the_tasks_extension() {
     let mut svc = dispatcher();
-    let out = call(&mut svc, JsonRpcRequest::new(1, "server/discover", None)).await;
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "server/discover",
+            Some(json!({ "_meta": draft_meta(true) })),
+        ),
+    )
+    .await;
     let exts = &out["result"]["capabilities"]["extensions"];
     assert!(
         exts.get(EXTENSION_ID).is_some(),

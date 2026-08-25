@@ -84,7 +84,10 @@ where
 fn draft(method: &str, mut params: Map<String, Value>) -> JsonRpcRequest {
     params.insert(
         "_meta".into(),
-        json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" }),
+        json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }),
     );
     JsonRpcRequest::new(1, method, Some(Value::Object(params)))
 }

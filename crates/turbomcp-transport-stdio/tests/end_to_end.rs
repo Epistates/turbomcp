@@ -53,7 +53,7 @@ impl WithTools for Calculator {
     }
 }
 
-const DRAFT_META: &str = r#"{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}"#;
+const DRAFT_META: &str = r#"{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#;
 
 #[tokio::test]
 async fn server_handles_discover_list_and_call_over_stdio_framing() {
@@ -77,7 +77,9 @@ async fn server_handles_discover_list_and_call_over_stdio_framing() {
 
     // Three requests, newline-framed.
     let requests = [
-        r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#.to_string(),
+        format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{{"_meta":{DRAFT_META}}}}}"#
+        ),
         format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{{"_meta":{DRAFT_META}}}}}"#
         ),

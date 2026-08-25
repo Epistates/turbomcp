@@ -23,7 +23,7 @@ use crate::traits::McpServerCore;
 use super::params::build_context;
 use super::{
     VersionRoute, classify_version, connection_id, context_declares_extension, error_response,
-    missing_capability_response, unsupported_version,
+    invalid_envelope, missing_capability_response, unsupported_version,
 };
 
 // ---- subscriptions (draft `subscriptions/listen`) ------------------------------
@@ -58,6 +58,9 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         }
         VersionRoute::Unsupported(requested) => {
             return Ok(Some(unsupported_version(id, requested, supported)));
+        }
+        VersionRoute::InvalidEnvelope(field) => {
+            return Ok(Some(invalid_envelope(id, field, supported)));
         }
     }
 

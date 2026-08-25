@@ -58,7 +58,7 @@ impl WithTools for Calculator {
     }
 }
 
-const DRAFT_META: &str = r#"{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}"#;
+const DRAFT_META: &str = r#"{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#;
 
 fn app(config: HttpConfig) -> axum::Router {
     let dispatcher = VersionDispatcher::new(Calculator, MethodRouter::new().with_tools());
@@ -98,10 +98,14 @@ async fn body_json(resp: axum::response::Response) -> Value {
 
 #[tokio::test]
 async fn discover_list_and_call_over_http() {
-    // discover (version-agnostic)
+    // discover — stateless-wire only, so it carries that wire's envelope
     let resp = app(HttpConfig::new())
-        .oneshot(post(
-            r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#,
+        .oneshot(draft_post(
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{{"_meta":{DRAFT_META}}}}}"#
+            ),
+            "server/discover",
+            None,
         ))
         .await
         .unwrap();

@@ -112,7 +112,22 @@ pub fn mcp_to_jsonrpc_error(err: &McpError) -> JsonRpcError {
     JsonRpcError {
         code: err.jsonrpc_code(),
         message: err.to_string(),
-        data: None,
+        data: error_data(err),
+    }
+}
+
+/// The spec-mandated `error.data` for the errors that carry one.
+///
+/// `MissingRequiredClientCapabilityError` must name what the client failed to
+/// declare, as a `ClientCapabilities` **object** of capability objects
+/// (`{ "sampling": {} }`) — not a list of names — so the client can merge it
+/// into its own declaration and retry.
+fn error_data(err: &McpError) -> Option<serde_json::Value> {
+    match err {
+        McpError::MissingRequiredCapability(capability) => Some(serde_json::json!({
+            "requiredCapabilities": { capability.as_str(): {} }
+        })),
+        _ => None,
     }
 }
 
@@ -125,6 +140,6 @@ pub fn mcp_to_jsonrpc_error_for(err: &McpError, version: &ProtocolVersion) -> Js
     JsonRpcError {
         code: err.jsonrpc_code_for(version),
         message: err.to_string(),
-        data: None,
+        data: error_data(err),
     }
 }

@@ -50,7 +50,10 @@ fn call_body(region: &str) -> Value {
         "params": {
             "name": "locate",
             "arguments": { "city": "SF", "region": region },
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
         }
     })
 }

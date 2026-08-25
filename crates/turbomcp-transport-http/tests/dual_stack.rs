@@ -213,7 +213,10 @@ async fn modern_stateless_requests_pass_through_unchanged() {
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {
             "name": "add", "arguments": { "a": 20, "b": 22 },
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
         }
     });
     // The draft transport requires the mirrored request-metadata headers.
@@ -239,7 +242,10 @@ async fn draft_request_without_required_headers_is_400() {
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {
             "name": "add", "arguments": { "a": 20, "b": 22 },
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
         }
     });
     for headers in [

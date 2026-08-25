@@ -93,7 +93,10 @@ fn listen(id: i64, notifications: Value) -> JsonRpcMessage {
         id,
         "subscriptions/listen",
         Some(json!({
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
             "notifications": notifications,
         })),
     )
@@ -293,7 +296,10 @@ async fn malformed_listen_filter_is_invalid_params() {
         1,
         "subscriptions/listen",
         Some(json!({
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
         })),
     )
     .into();

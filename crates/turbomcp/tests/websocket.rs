@@ -69,7 +69,10 @@ async fn websocket_round_trip() {
         Some(json!({
             "name": "echo",
             "arguments": { "msg": "hi" },
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
         })),
     );
     client.send(JsonRpcMessage::Request(req)).await.unwrap();

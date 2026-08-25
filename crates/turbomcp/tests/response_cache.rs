@@ -110,9 +110,13 @@ async fn unconfigured_server_and_legacy_path_are_never_cached() {
 // ---- scripted server: exact wire counts + notification invalidation ----------
 
 /// A hand-scripted draft server on the far end of the pipe: answers
-/// `server/discover`, `tools/list` (counting each), and `ping` — and, when
-/// armed, writes `notifications/tools/list_changed` *before* the next ping
-/// response, so `ping().await` is a deterministic invalidation barrier.
+/// `server/discover`, `tools/list` and `resources/read` (counting each), and
+/// `prompts/list` — and, when armed, writes an invalidating notification
+/// *before* the next `prompts/list` response, so `list_prompts().await` is a
+/// deterministic barrier.
+///
+/// `prompts/list` is the barrier because it is an uncounted request that
+/// exists on this wire; `ping` would be simpler but `2026-07-28` removed it.
 fn spawn_scripted_server(
     server_io: tokio::io::DuplexStream,
     list_hits: Arc<AtomicUsize>,
@@ -131,6 +135,7 @@ fn spawn_scripted_server(
                     "capabilities": {
                         "tools": { "listChanged": true },
                         "resources": { "listChanged": true },
+                        "prompts": { "listChanged": true },
                     },
                     "supportedVersions": ["2026-07-28"],
                     "resultType": "complete", "cacheScope": "private", "ttlMs": 0
@@ -151,7 +156,7 @@ fn spawn_scripted_server(
                         "cacheScope": "private", "ttlMs": 60_000
                     })
                 }
-                Some("ping") => {
+                Some("prompts/list") => {
                     if notify_on_ping.load(Ordering::SeqCst) > 0 {
                         notify_on_ping.fetch_sub(1, Ordering::SeqCst);
                         let note = json!({
@@ -169,7 +174,12 @@ fn spawn_scripted_server(
                         });
                         wr.write_all(format!("{note}\n").as_bytes()).await.unwrap();
                     }
-                    json!({})
+                    // Uncounted and uncached (`ttlMs: 0`) so the barrier never
+                    // perturbs what the test is measuring.
+                    json!({
+                        "prompts": [], "resultType": "complete",
+                        "cacheScope": "private", "ttlMs": 0
+                    })
                 }
                 other => panic!("unexpected method from client: {other:?}"),
             };
@@ -209,7 +219,7 @@ async fn cache_hits_skip_the_wire_and_list_changed_invalidates() {
     // Arm the notification; ping is the ordered barrier (the notification is
     // written before the ping response on the same pipe).
     notify_on_ping.store(1, Ordering::SeqCst);
-    client.ping().await.unwrap();
+    client.list_prompts(None).await.unwrap();
 
     client.list_tools(None).await.unwrap();
     assert_eq!(
@@ -280,7 +290,7 @@ async fn read_cache_is_per_uri_and_resources_updated_invalidates_only_that_uri()
 
     // `resources/updated { uri: mem://a }` drops ONLY that entry.
     *update_uri.lock().unwrap() = Some("mem://a".to_owned());
-    client.ping().await.unwrap();
+    client.list_prompts(None).await.unwrap();
 
     client.read_resource("mem://b").await.unwrap();
     assert_eq!(read_hits.load(Ordering::SeqCst), 2, "mem://b still cached");

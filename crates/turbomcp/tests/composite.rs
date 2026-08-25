@@ -106,6 +106,14 @@ async fn connect(composite: Composite) -> LegacySessionAdapter<VersionDispatcher
     svc
 }
 
+/// The `_meta` envelope every `2026-07-28` request must carry (SEP-2575).
+fn draft_meta() -> Value {
+    json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
+}
+
 async fn respond<S>(svc: &mut S, req: JsonRpcRequest) -> JsonRpcResponse
 where
     S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
@@ -292,7 +300,7 @@ async fn capabilities_come_from_what_the_mounts_actually_have() {
 
     let discovered = result(
         &mut svc,
-        JsonRpcRequest::new(2, "server/discover", Some(json!({}))),
+        JsonRpcRequest::new(2, "server/discover", Some(json!({ "_meta": draft_meta() }))),
     )
     .await;
     let caps = &discovered["capabilities"];
@@ -304,7 +312,7 @@ async fn capabilities_come_from_what_the_mounts_actually_have() {
     let mut svc = connect(gateway()).await;
     let discovered = result(
         &mut svc,
-        JsonRpcRequest::new(2, "server/discover", Some(json!({}))),
+        JsonRpcRequest::new(2, "server/discover", Some(json!({ "_meta": draft_meta() }))),
     )
     .await;
     let caps = &discovered["capabilities"];

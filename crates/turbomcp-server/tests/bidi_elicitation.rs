@@ -230,13 +230,20 @@ async fn undeclared_capability_refuses_to_elicit() {
 
     p.in_tx.send(call_frame(2)).await.unwrap();
     // No elicitation request may be sent; the call fails immediately with
-    // -32602 (the spec's code for undeclared-capability elicitation).
+    // `MissingRequiredClientCapabilityError`, whose `data` names the
+    // capability as a `ClientCapabilities` object so the client can merge it
+    // into its own declaration and retry.
     let JsonRpcMessage::Response(done) = recv(&mut p.out_rx).await else {
         panic!("expected the tools/call response, not a server request");
     };
     let err = done.error.expect("undeclared capability is an error");
-    assert_eq!(err.code, -32602);
+    assert_eq!(
+        err.code,
+        turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY
+    );
     assert!(err.message.contains("elicitation"), "got: {err:?}");
+    let data = err.data.expect("names the required capability");
+    assert_eq!(data["requiredCapabilities"], json!({ "elicitation": {} }));
 
     drop(p.in_tx);
     p.driver.await.unwrap().expect("clean shutdown");

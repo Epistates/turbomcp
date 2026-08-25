@@ -69,6 +69,7 @@ async fn call_with_meta(meta: Value) -> String {
 async fn draft_request_propagates_trace_context_to_handler() {
     let seen = call_with_meta(json!({
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
         "traceparent": TRACEPARENT,
         "tracestate": "vendor=abc",
     }))
@@ -80,6 +81,7 @@ async fn draft_request_propagates_trace_context_to_handler() {
 async fn request_without_traceparent_has_no_trace_context() {
     let seen = call_with_meta(json!({
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
     }))
     .await;
     assert_eq!(seen, "none");

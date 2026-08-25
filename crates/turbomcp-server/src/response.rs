@@ -143,9 +143,15 @@ impl<T: Serialize> IntoCallToolResult for Json<T> {
 }
 
 /// A fallible tool: an error becomes an `is_error` result (spec convention) —
-/// its text is the tool-failure message. The one exception is the MRTR abort
-/// sentinel, which must keep propagating so the dispatcher can answer an
-/// `InputRequiredResult` instead of a failed tool call.
+/// its text is the tool-failure message.
+///
+/// Two errors are *protocol*-level and keep propagating instead, because they
+/// say the call could not be made rather than that the tool ran and failed:
+/// the MRTR abort sentinel (the dispatcher answers an `InputRequiredResult`),
+/// and a missing client capability (SEP-2575 requires
+/// `MissingRequiredClientCapabilityError`, which a `CallToolResult` cannot
+/// express — a client that saw `isError` would have no way to learn it needs
+/// to re-declare and retry).
 impl<T> IntoCallToolResult for McpResult<T>
 where
     T: IntoCallToolResult,
@@ -153,7 +159,7 @@ where
     fn into_call_tool_result(self) -> McpResult<neutral::CallToolResult> {
         match self {
             Ok(v) => v.into_call_tool_result(),
-            Err(e @ McpError::InputRequired) => Err(e),
+            Err(e @ (McpError::InputRequired | McpError::MissingRequiredCapability(_))) => Err(e),
             Err(e) => Ok(neutral::CallToolResult::error(e.to_string())),
         }
     }

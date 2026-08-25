@@ -101,8 +101,13 @@ async fn exercise_named(client: &Client, server_name: &str) {
         Some(server_name)
     );
 
-    // ping
-    client.ping().await.expect("ping ok");
+    // ping — only through `2025-11-25`; `2026-07-28` removed the method.
+    match client.protocol_version() {
+        &ProtocolVersion::V2026_07_28 => {
+            client.ping().await.expect_err("ping is gone on 2026-07-28");
+        }
+        _ => client.ping().await.expect("ping ok"),
+    }
 
     // tools/list + tools/call
     let tools = client.list_tools(None).await.expect("list_tools");

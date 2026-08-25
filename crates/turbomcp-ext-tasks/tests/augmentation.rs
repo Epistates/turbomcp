@@ -203,7 +203,10 @@ async fn untasked_tool_runs_synchronously() {
 async fn non_declaring_client_never_gets_a_task() {
     let mut svc = dispatcher();
     // No clientCapabilities ⇒ the server must run synchronously (SEP-2663).
-    let meta = json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" });
+    let meta = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    });
     let out = call(
         &mut svc,
         JsonRpcRequest::new(

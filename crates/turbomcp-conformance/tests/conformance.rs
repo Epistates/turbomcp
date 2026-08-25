@@ -27,11 +27,22 @@ use turbomcp::http::{HttpConfig, ServeHttp};
 
 /// The conformance package + version this suite is pinned to. `npx` resolves
 /// (and caches) it; pinning keeps runs reproducible.
-const CONFORMANCE_PKG: &str = "@modelcontextprotocol/conformance@0.1.16";
+/// The conformance package + version this suite is pinned to. `npx` resolves
+/// (and caches) it; pinning keeps runs reproducible.
+///
+/// This is the `alpha` dist-tag, not `latest`. `latest` is still 0.1.16, which
+/// predates the `2026-07-28` freeze entirely and has no requirement set for it
+/// — pinning to it would mean the wire we actually serve as `LATEST` is the one
+/// wire nothing checks. Revisit when a stable 0.2.x ships.
+const CONFORMANCE_PKG: &str = "@modelcontextprotocol/conformance@0.2.0-alpha.11";
 
-/// Protocol version we target. TurboMCP's stable line is `2025-11-25`; the
-/// harness (0.1.16) offers `2025-06-18` and `2025-11-25` server scenarios.
-const SPEC_VERSION: &str = "2025-11-25";
+/// Every protocol revision we advertise gets its own full harness run — a
+/// server that answers three revisions has to be conformant on each of them,
+/// and a regression on one is invisible from the others.
+///
+/// `2025-06-18` is absent because the harness has no requirement set for it;
+/// it is covered by `turbomcp-protocol`'s step-down conversion tests instead.
+const SPEC_VERSIONS: &[&str] = &["2025-11-25", "2026-07-28"];
 
 fn baseline_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("conformance-baseline.json")
@@ -62,6 +73,7 @@ enum Disposition {
 /// One conformance check outcome, projected from the harness's JSON output.
 #[derive(Debug, Clone)]
 struct CheckResult {
+    spec_version: String,
     scenario: String,
     name: String,
     disposition: Disposition,
@@ -69,8 +81,10 @@ struct CheckResult {
 }
 
 impl CheckResult {
+    /// Baseline key. The spec version leads because the same check can be
+    /// legitimately N/A on one revision and required on another.
     fn id(&self) -> String {
-        format!("{}::{}", self.scenario, self.name)
+        format!("{}::{}::{}", self.spec_version, self.scenario, self.name)
     }
     fn is_fail(&self) -> bool {
         self.disposition == Disposition::Fail
@@ -114,8 +128,8 @@ async fn spawn_server() -> (String, CancellationToken, tokio::task::JoinHandle<(
     (format!("http://{addr}/mcp"), shutdown, handle)
 }
 
-/// Run the harness against `url` and return every check it reported.
-async fn run_harness(url: &str) -> Vec<CheckResult> {
+/// Run the harness against `url` at one spec version and return every check.
+async fn run_harness(url: &str, spec_version: &str) -> Vec<CheckResult> {
     let out_dir = tempdir();
     let output = tokio::process::Command::new("npx")
         .arg("--yes")
@@ -126,7 +140,7 @@ async fn run_harness(url: &str) -> Vec<CheckResult> {
         .arg("--suite")
         .arg("all")
         .arg("--spec-version")
-        .arg(SPEC_VERSION)
+        .arg(spec_version)
         .arg("--verbose")
         .arg("--output-dir")
         .arg(&out_dir)
@@ -137,11 +151,12 @@ async fn run_harness(url: &str) -> Vec<CheckResult> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let checks = parse_checks_from_dir(&out_dir);
+    let checks = parse_checks_from_dir(&out_dir, spec_version);
     if checks.is_empty() {
         // Surface the harness output so a wiring failure is diagnosable.
         panic!(
-            "conformance harness produced no check results.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+            "conformance harness produced no check results for {spec_version}.\n\
+             --- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
         );
     }
     checks
@@ -165,7 +180,7 @@ fn tempdir() -> PathBuf {
 
 /// Walk the harness `--output-dir`, reading every `checks.json` it wrote. The
 /// harness lays results out as `<dir>/server-<scenario>-<timestamp>/checks.json`.
-fn parse_checks_from_dir(dir: &PathBuf) -> Vec<CheckResult> {
+fn parse_checks_from_dir(dir: &PathBuf, spec_version: &str) -> Vec<CheckResult> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return out;
@@ -189,16 +204,21 @@ fn parse_checks_from_dir(dir: &PathBuf) -> Vec<CheckResult> {
             .and_then(|s| s.rsplit_once('-').map(|(head, _ts)| head))
             .unwrap_or(dir_name)
             .to_string();
-        collect_checks(&scenario, &value, &mut out);
+        collect_checks(spec_version, &scenario, &value, &mut out);
     }
     out
 }
 
-/// Extract check objects from a `checks.json` payload. The harness (0.1.16)
-/// writes a top-level JSON array of check objects, each with an uppercase
-/// `status` (`SUCCESS` / `FAILURE` / `INFO` / `WARNING`), an `id`/`name`, and an
+/// Extract check objects from a `checks.json` payload. The harness writes a
+/// top-level JSON array of check objects, each with an uppercase `status`
+/// (`SUCCESS` / `FAILURE` / `INFO` / `WARNING`), an `id`/`name`, and an
 /// optional `errorMessage`.
-fn collect_checks(scenario: &str, value: &serde_json::Value, out: &mut Vec<CheckResult>) {
+fn collect_checks(
+    spec_version: &str,
+    scenario: &str,
+    value: &serde_json::Value,
+    out: &mut Vec<CheckResult>,
+) {
     let array = if let Some(arr) = value.as_array() {
         arr.clone()
     } else if let Some(arr) = value.get("checks").and_then(|c| c.as_array()) {
@@ -235,6 +255,7 @@ fn collect_checks(scenario: &str, value: &serde_json::Value, out: &mut Vec<Check
             .map(|s| s.to_string());
 
         out.push(CheckResult {
+            spec_version: spec_version.to_string(),
             scenario: scenario.to_string(),
             name,
             disposition,
@@ -262,8 +283,13 @@ async fn conformance_server_suite() {
         return;
     }
 
+    // One server, every revision: the same dispatcher answers all of them, and
+    // running each suite against the same process is what proves that.
     let (url, shutdown, handle) = spawn_server().await;
-    let checks = run_harness(&url).await;
+    let mut checks = Vec::new();
+    for spec_version in SPEC_VERSIONS {
+        checks.extend(run_harness(&url, spec_version).await);
+    }
     shutdown.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
 
@@ -298,7 +324,8 @@ async fn conformance_server_suite() {
         .collect();
 
     eprintln!(
-        "\n=== TurboMCP conformance ({SPEC_VERSION}) ===\n  checks: {} total, {} passed, {} failed ({} expected, {} unexpected), {} info\n  baseline entries: {} ({} stale)",
+        "\n=== TurboMCP conformance ({}) ===\n  checks: {} total, {} passed, {} failed ({} expected, {} unexpected), {} info\n  baseline entries: {} ({} stale)",
+        SPEC_VERSIONS.join(" + "),
         checks.len(),
         passed.len(),
         failed.len(),

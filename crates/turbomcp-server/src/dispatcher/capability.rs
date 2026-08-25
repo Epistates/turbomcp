@@ -6,7 +6,7 @@
 //! the active wire. MRTR turn handling ([`mrtr_handle`]/[`finish_mrtr`],
 //! SEP-2322) lives here because it is part of that dispatch contract.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use futures::FutureExt;
@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use turbomcp_core::{
-    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, ProtocolVersion, RequestContext,
-    RequestId, meta,
+    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, McpResult, ProtocolVersion,
+    RequestContext, RequestId, meta,
 };
 use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
@@ -38,7 +38,10 @@ use super::params::{
     parse_call_tool_params, parse_complete_params, parse_get_prompt_params, parse_list_params,
     parse_read_resource_params,
 };
-use super::{Shared, connection_id, error_response_for, ok_value, session_id};
+use super::{
+    HeaderParam, Shared, argument_at, collect_header_params, connection_id, error_response_for,
+    ok_value, session_id,
+};
 
 /// Fill the server's configured default cache policy (SEP-2549) into a
 /// cacheable neutral result whose handler didn't set one. Applied on both wire
@@ -202,6 +205,84 @@ enum Component<'a> {
 /// A component no list mentions is **not** treated as hidden: the handler owns
 /// that answer, and it already produces the right unknown-tool /
 /// unknown-prompt / not-found reply.
+/// Enforce SEP-2243's mirror requirement for one `tools/call`: every
+/// `x-mcp-header` argument the tool declares, whose value is present in this
+/// call's `arguments`, must have arrived with its `Mcp-Param-*` header.
+///
+/// Skipped entirely unless the transport reported which mirrors it saw — only
+/// Streamable HTTP has headers, and on stdio the annotation is inert (the
+/// spec lets non-HTTP transports ignore it).
+async fn check_header_mirrors<S: McpServerCore>(
+    shared: &Shared,
+    router: &MethodRouter<S>,
+    server: &S,
+    ctx: &RequestContext,
+    req: &JsonRpcRequest,
+    params: &neutral::CallToolParams,
+) -> McpResult<()> {
+    let Some(observed) = req
+        .params
+        .as_ref()
+        .and_then(|p| p.get("_meta"))
+        .and_then(|m| m.get(meta::internal::OBSERVED_HEADER_PARAMS))
+        .and_then(Value::as_array)
+    else {
+        return Ok(());
+    };
+    let index = shared
+        .header_params
+        .get_or_init(|| build_header_param_index(router, server, ctx))
+        .await;
+    // The overwhelmingly common case: nothing is annotated.
+    let Some(declared) = index.get(params.name.as_str()).filter(|d| !d.is_empty()) else {
+        return Ok(());
+    };
+    let arguments = Value::Object(params.arguments.clone());
+    for param in declared {
+        if argument_at(&arguments, &param.path).is_none() {
+            continue; // no value at that path, so no header is expected
+        }
+        let sent = observed
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|h| h.eq_ignore_ascii_case(&param.header));
+        if !sent {
+            return Err(McpError::HeaderMismatch(format!(
+                "Mcp-Param-{} header is missing but `{}` is present in the request body",
+                param.header,
+                param.path.join(".")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Build the tool → `x-mcp-header` index from a single unfiltered
+/// `tools/list`. Runs at most once per dispatcher (see [`Shared`]).
+async fn build_header_param_index<S: McpServerCore>(
+    router: &MethodRouter<S>,
+    server: &S,
+    ctx: &RequestContext,
+) -> HashMap<String, Vec<HeaderParam>> {
+    let mut index = HashMap::new();
+    let Some(fut) = router.dispatch_list_tools(
+        server.clone(),
+        ListToolsContext::new(ctx.clone()),
+        neutral::ListParams::default(),
+    ) else {
+        return index;
+    };
+    let Ok(listed) = fut.await else { return index };
+    for tool in listed.tools {
+        let mut found = Vec::new();
+        collect_header_params(&tool.input_schema, &mut Vec::new(), &mut found);
+        if !found.is_empty() {
+            index.insert(tool.name, found);
+        }
+    }
+    index
+}
+
 async fn hidden<S: McpServerCore>(
     shared: &Shared,
     router: &MethodRouter<S>,
@@ -309,6 +390,17 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 Ok(p) => p,
                 Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
+            // SEP-2243: an argument the tool annotates `x-mcp-header` must
+            // arrive with its `Mcp-Param-*` mirror. A header that is present
+            // but disagrees is caught by the transport; one that is *absent*
+            // can only be caught here, and it is the same divergence — a
+            // gateway routing on a default while the server executes on the
+            // body.
+            if let Err(e) =
+                check_header_mirrors::<S>(shared, router, &server, &ctx, req, &params).await
+            {
+                return error_response_for(id, &W::VERSION, &e);
+            }
             // A hidden tool must be unreachable, not merely unlisted — and
             // refused exactly as an unknown one, or the refusal discloses what
             // the policy is hiding.

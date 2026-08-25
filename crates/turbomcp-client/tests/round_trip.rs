@@ -63,7 +63,10 @@ fn draft_params(extra: Value) -> Value {
     let mut obj = extra.as_object().cloned().unwrap_or_default();
     obj.insert(
         "_meta".into(),
-        json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" }),
+        json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }),
     );
     Value::Object(obj)
 }
@@ -126,16 +129,26 @@ async fn concurrent_requests_correlate_independently() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn server_error_surfaces_as_rpc_error() {
     let client = connected_client();
-    // Missing protocolVersion on a modern request → unsupported-version
-    // (PLAN §4.9).
+    // A request with no `_meta` at all is a malformed envelope, not a version
+    // negotiation failure: SEP-2575 marks `protocolVersion` and
+    // `clientCapabilities` required, so their absence is invalid params. The
+    // error still names the versions on offer, so a client that simply forgot
+    // can re-issue.
     let err = client
         .request("tools/list", Some(json!({})))
         .await
-        .expect_err("should error without version");
-    let expected = turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION;
+        .expect_err("should error without the request envelope");
     match err {
-        ClientError::Rpc(e) => assert_eq!(e.code, expected),
-        other => panic!("expected Rpc({expected}), got {other:?}"),
+        ClientError::Rpc(e) => {
+            assert_eq!(e.code, -32602, "{e:?}");
+            let data = e.data.expect("the error names what is missing");
+            assert_eq!(
+                data["missingField"],
+                "io.modelcontextprotocol/protocolVersion"
+            );
+            assert!(data["supported"].is_array(), "{data}");
+        }
+        other => panic!("expected Rpc(-32602), got {other:?}"),
     }
 }
 

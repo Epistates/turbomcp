@@ -136,7 +136,10 @@ fn call_tool(id: i64, name: &str) -> JsonRpcMessage {
         Some(json!({
             "name": name,
             "arguments": {},
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
         })),
     )
     .into()

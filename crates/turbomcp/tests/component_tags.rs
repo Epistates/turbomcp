@@ -185,7 +185,10 @@ async fn tags_survive_the_draft_wire() {
         JsonRpcRequest::new(
             1,
             request::TOOLS_LIST,
-            Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } })),
+            Some(json!({ "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            } })),
         ),
     )
     .await;

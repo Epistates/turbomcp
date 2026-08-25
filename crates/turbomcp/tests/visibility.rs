@@ -86,7 +86,10 @@ fn dispatcher(policy: Option<Arc<Visibility>>) -> VersionDispatcher<Catalog> {
 
 /// A request as `scopes` (space-separated; empty = anonymous).
 fn as_caller(id: i64, method: &str, params: Value, scopes: &str) -> JsonRpcRequest {
-    let mut meta = json!({ "io.modelcontextprotocol/protocolVersion": DRAFT });
+    let mut meta = json!({
+        "io.modelcontextprotocol/protocolVersion": DRAFT,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    });
     if !scopes.is_empty() {
         meta["io.turbomcp.internal/identity"] =
             json!({ "sub": "alice", "claims": { "scope": scopes } });

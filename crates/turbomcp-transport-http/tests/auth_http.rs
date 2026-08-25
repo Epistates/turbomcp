@@ -94,7 +94,10 @@ fn call_request(auth: Option<&str>) -> Request<Body> {
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {
             "name": "whoami", "arguments": {},
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
         }
     });
     let mut req = Request::builder()

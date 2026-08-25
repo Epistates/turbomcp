@@ -89,11 +89,56 @@ pub mod internal {
     /// forge an identity.
     pub const IDENTITY: &str = "io.turbomcp.internal/identity";
 
+    /// The `Mcp-Param-{name}` mirrors that actually arrived on this request,
+    /// as an array of the lowercased `{name}` portions. Injected by the HTTP
+    /// transport (other transports have no headers and omit it, which reads as
+    /// "no mirroring in effect").
+    ///
+    /// The dispatcher needs the *absence* of a mirror, not just a mismatch: a
+    /// tool argument annotated `x-mcp-header` whose header was omitted is the
+    /// case where a gateway routes on a default while the server executes on
+    /// the body — the divergence SEP-2243's validation exists to prevent. Only
+    /// the transport can observe that, and only the dispatcher knows which
+    /// arguments are annotated, so the fact has to cross the seam.
+    pub const OBSERVED_HEADER_PARAMS: &str = "io.turbomcp.internal/observedHeaderParams";
+
     /// Whether `key` is in the internal (in-process only) namespace.
     #[must_use]
     pub fn is_internal_key(key: &str) -> bool {
         key.starts_with("io.turbomcp.internal/")
     }
+}
+
+/// The first required `_meta` field a `2026-07-28` request is missing, or
+/// `None` if the envelope is complete.
+///
+/// SEP-2575 made the stateless model's `RequestMetaObject` carry the facts the
+/// `initialize` handshake used to establish, and the schema marks both
+/// `protocolVersion` and `clientCapabilities` **required** (`clientInfo` is
+/// only a SHOULD). A request missing either is malformed — invalid params —
+/// not a version-negotiation failure.
+///
+/// One definition, because two layers act on it: the dispatcher rejects the
+/// request, and the HTTP transport additionally answers `400` rather than the
+/// usual `200`-plus-error-body. Applies only to the stateless wire — earlier
+/// revisions establish these at `initialize` and carry no request envelope.
+#[must_use]
+pub fn missing_request_envelope_field(params: Option<&Value>) -> Option<&'static str> {
+    let meta = params
+        .and_then(|p| p.get("_meta"))
+        .and_then(Value::as_object);
+    let Some(meta) = meta else {
+        // No `_meta` at all: report the version, the field a client is most
+        // likely to have forgotten and the one that identifies the wire.
+        return Some(keys::PROTOCOL_VERSION);
+    };
+    if !meta.contains_key(keys::PROTOCOL_VERSION) {
+        return Some(keys::PROTOCOL_VERSION);
+    }
+    if !meta.contains_key(keys::CLIENT_CAPABILITIES) {
+        return Some(keys::CLIENT_CAPABILITIES);
+    }
+    None
 }
 
 /// Whether a `_meta` key is consumed by the framework (and therefore should not

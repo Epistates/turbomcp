@@ -252,7 +252,10 @@ async fn subscribe_without_session_or_on_modern_path_is_rejected() {
         "resources/subscribe",
         Some(json!({
             "uri": "file://a",
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
         })),
     );
     p.in_tx.send(req.into()).await.unwrap();
@@ -296,9 +299,12 @@ async fn one_publish_reaches_legacy_and_draft_subscribers_on_their_own_wires() {
                 7,
                 "subscriptions/listen",
                 Some(json!({
-                    "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
-                    "notifications": { "resourceSubscriptions": ["file://a"] },
-                })),
+                        "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+                        "notifications": { "resourceSubscriptions": ["file://a"] },
+                    })),
             )
             .into(),
         )

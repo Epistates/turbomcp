@@ -64,12 +64,16 @@ fn meta(conn: &str, declare: bool) -> Value {
         json!("2026-07-28"),
     );
     m.insert("io.turbomcp.internal/connectionId".into(), json!(conn));
-    if declare {
-        m.insert(
-            "io.modelcontextprotocol/clientCapabilities".into(),
-            json!({ "extensions": { EXTENSION_ID: {} } }),
-        );
-    }
+    // Required on this wire either way (SEP-2575); `declare` controls what
+    // goes in it, not whether it is present.
+    m.insert(
+        "io.modelcontextprotocol/clientCapabilities".into(),
+        if declare {
+            json!({ "extensions": { EXTENSION_ID: {} } })
+        } else {
+            json!({})
+        },
+    );
     Value::Object(m)
 }
 

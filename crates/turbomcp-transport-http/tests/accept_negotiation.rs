@@ -49,13 +49,17 @@ fn app() -> axum::Router {
     )
 }
 
-const DISCOVER: &str = r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#;
+const DISCOVER: &str = r#"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#;
 
 fn post(accept: Option<&str>) -> Request<Body> {
     let mut req = Request::builder()
         .method("POST")
         .uri("/mcp")
-        .header(header::CONTENT_TYPE, "application/json");
+        .header(header::CONTENT_TYPE, "application/json")
+        // The stateless wire requires these mirrors on every request; this
+        // test is about `Accept`, so everything else has to be valid.
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "server/discover");
     if let Some(accept) = accept {
         req = req.header(header::ACCEPT, accept);
     }

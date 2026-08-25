@@ -400,7 +400,8 @@ pub mod __macros {
     pub use turbomcp_core::{McpError, McpResult};
     pub use turbomcp_protocol::neutral;
     pub use turbomcp_server::__macro_support::{
-        close_object_schema, mark_mcp_header, match_uri_template, normalize_input_schema,
+        close_object_schema, extend_object_schema, mark_mcp_header, match_uri_template,
+        normalize_input_schema,
     };
 }
 

@@ -60,7 +60,10 @@ fn draft_call_frame(id: u64, word: &str) -> Value {
         "jsonrpc": "2.0", "id": id, "method": "tools/call",
         "params": {
             "name": "shout", "arguments": { "word": word },
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
         }
     })
 }

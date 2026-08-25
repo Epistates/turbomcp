@@ -82,7 +82,10 @@ async fn round_trip_and_graceful_shutdown_over_a_real_socket() {
             "params": {
                 "name": "shout",
                 "arguments": { "word": "hello" },
-                "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                }
             }
         }))
         .send()

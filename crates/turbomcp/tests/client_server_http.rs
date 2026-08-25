@@ -53,7 +53,13 @@ async fn spawn_server() -> (String, CancellationToken) {
 
 async fn exercise(client: &Client) {
     assert_eq!(client.server_info().map(|i| i.name.as_str()), Some("demo"));
-    client.ping().await.expect("ping");
+    // `ping` exists only through `2025-11-25`; `2026-07-28` removed it.
+    match client.protocol_version() {
+        &ProtocolVersion::V2026_07_28 => {
+            client.ping().await.expect_err("ping is gone on 2026-07-28");
+        }
+        _ => client.ping().await.expect("ping"),
+    }
 
     let tools = client.list_tools(None).await.expect("list_tools");
     assert!(tools.tools.iter().any(|t| t.name == "shout"));

@@ -3,6 +3,7 @@
 //! through the real `VersionDispatcher`, and its generated tool schemas are
 //! snapshot-tested with `insta`.
 
+use serde_json::json;
 use tower::{Service, ServiceExt};
 use turbomcp::prelude::*;
 use turbomcp::{JsonRpcMessage, JsonRpcRequest};
@@ -66,7 +67,10 @@ impl Demo {
 }
 
 fn draft_meta() -> serde_json::Value {
-    serde_json::json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" })
+    serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    })
 }
 
 async fn call(req: JsonRpcRequest) -> serde_json::Value {
@@ -91,7 +95,12 @@ async fn call(req: JsonRpcRequest) -> serde_json::Value {
 
 #[tokio::test]
 async fn discover_derives_capabilities_from_impls() {
-    let result = call(JsonRpcRequest::new(1, "server/discover", None)).await;
+    let result = call(JsonRpcRequest::new(
+        1,
+        "server/discover",
+        Some(json!({ "_meta": draft_meta() })),
+    ))
+    .await;
     // Server identity rides in the result's `_meta` on `2026-07-28`: the RC
     // had briefly promoted it to a first-class `serverInfo` field, and the
     // frozen spec reverted that. `server/discover` has nowhere else to put it
