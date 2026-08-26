@@ -669,7 +669,7 @@ where
     // forged identity can't survive. A rejected request never dispatches.
     let subject = match enforce_auth(&state, &headers, Some(&mut msg)).await {
         Ok(subject) => subject,
-        Err(rejection) => return rejection,
+        Err(rejection) => return *rejection,
     };
 
     // Rate limit (if configured) per identity: authenticated → per-subject,
@@ -1233,7 +1233,7 @@ where
     // The GET stream is part of the protected resource; require auth too.
     let subject = match enforce_auth(&state, &headers, None).await {
         Ok(subject) => subject,
-        Err(rejection) => return rejection,
+        Err(rejection) => return *rejection,
     };
     if let Some(rejection) = enforce_rate_limit(
         &state,
@@ -1282,7 +1282,7 @@ where
     }
     let subject = match enforce_auth(&state, &headers, None).await {
         Ok(subject) => subject,
-        Err(rejection) => return rejection,
+        Err(rejection) => return *rejection,
     };
     // Rate-limit termination like POST/GET — otherwise it's an unthrottled
     // endpoint even though it mutates session state.
@@ -1341,11 +1341,16 @@ where
 /// and — when a message is given — injecting the validated principal into its
 /// internal `_meta` so the dispatcher lifts it into the request's identity. A
 /// `None` authenticator is an open endpoint (allow, anonymous).
+///
+/// The rejection is boxed: an axum `Response` is 128 bytes against a 24-byte
+/// `Ok`, and this is awaited on the request path of three handlers, so the
+/// unboxed `Result` would widen each of their futures for a branch that only
+/// runs when auth fails. The allocation lands on the failure path alone.
 async fn enforce_auth<S>(
     state: &HttpState<S>,
     headers: &HeaderMap,
     msg: Option<&mut JsonRpcMessage>,
-) -> Result<Option<String>, Response> {
+) -> Result<Option<String>, Box<Response>> {
     let Some(authenticator) = state.authenticator.as_ref() else {
         return Ok(None);
     };
@@ -1366,7 +1371,7 @@ async fn enforce_auth<S>(
         AuthDecision::Challenge {
             status,
             www_authenticate,
-        } => Err(challenge_response(status, &www_authenticate)),
+        } => Err(Box::new(challenge_response(status, &www_authenticate))),
     }
 }
 
