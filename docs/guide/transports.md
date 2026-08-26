@@ -347,9 +347,9 @@ For fine-grained control, depend on individual crates:
 
 ```toml
 [dependencies]
-turbomcp-http = "3.1.6"
-turbomcp-websocket = "3.1.6"
-turbomcp-grpc = "3.1.6"
+turbomcp-http = "3.2.0"
+turbomcp-websocket = "3.2.0"
+turbomcp-grpc = "3.2.0"
 ```
 
 ```rust
@@ -469,7 +469,7 @@ or lower-level protocol codec configuration directly when you need explicit
 SIMD codec control:
 
 ```toml
-turbomcp-wire = { version = "3.1.6", features = ["simd"] }
+turbomcp-wire = { version = "3.2.0", features = ["simd"] }
 ```
 
 ## Next Steps

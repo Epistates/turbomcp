@@ -7,14 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.1.6] - 2026-08-05
+## [3.2.0] - 2026-08-26
 
-Patch release: Streamable HTTP correctness fixes (client response hang, CRLF
-SSE parsing, POST-stream primer events) and transport hot-path performance.
+Streamable HTTP correctness — a client response hang, CRLF SSE parsing,
+POST-stream primer events, a reconnect storm — plus transport hot-path
+performance and an interoperability fix for clients that recycle request ids.
+
 Most of this release was contributed by @ForrestThump (#14, #15, #16, #18,
-#19, #20, #21) — thank you!
+#19, #20, #21, #24) — thank you!
+
+**This is a minor, not a patch, release.** Two changes below alter the public
+API in ways a strict semver check calls breaking; both are called out under
+*Changed* with the one-line fix. Nothing else in the 3.x surface moved.
 
 ### Fixed
+
+- **A client that reuses JSON-RPC request ids is no longer locked out** — every
+  transport kept a per-session set of every id it had ever seen and answered a
+  repeat with `-32600 "Request ID already used in this session"`. The rule is
+  real but it binds the other party: the spec's "MUST NOT have been previously
+  used" constrains the *requestor*, whose purpose is correlating a response with
+  its request, while a receiver's only obligation is to echo the id back. So the
+  check bought the server nothing and made interop depend on a client's
+  id-allocation strategy; SEP-2567 re-scopes the constraint to ids that are
+  concurrently outstanding, and neither `rmcp` nor TurboMCP v4 enforces it. The
+  set was also unbounded, growing for the life of the session. Concurrent reuse
+  is still logged as a warning — two responses carrying one id are unmatchable —
+  but never refused. (#25)
+- **The SSE reconnect loop no longer hammers a server that closes idle
+  streams** — backoff was keyed on whether the GET was *accepted*, so a server
+  that accepted and then closed the stream was retried with zero delay
+  indefinitely (measured: 7,657 connections in 2s). Backoff is now keyed on how
+  long the stream actually stayed up. Separately, a routine reconnect was logged
+  at `error`/`warn`; a server closing an idle stream is behaving correctly and
+  the client reconnecting is it doing its job, so that is now `debug`. Measured
+  on the reporter's deployment: 61 SSE error/warn lines in a 90-second window
+  before, 0 after. (#24)
 
 - **Streamable HTTP client no longer hangs waiting for POST-response SSE
   streams to close** — `send()` used to block until the server ended the
@@ -37,6 +65,16 @@ Most of this release was contributed by @ForrestThump (#14, #15, #16, #18,
 
 ### Changed
 
+- **`StreamableHttpClientConfig` gained `sse_healthy_stream_threshold`**
+  (default 10s), which decides whether a closed SSE stream counts as a failure
+  worth backing off from. Keep it comfortably under your server's idle timeout.
+  *Breaking for exhaustive struct literals* — if you construct this config by
+  naming every field, add `..Default::default()`. (#24)
+- **`turbomcp_server::transport::http::SessionManager` is no longer public**
+  unless the non-public `internal-bench` feature is on. It was internal
+  plumbing that had been exposed unintentionally; it is now `pub(crate)` except
+  where the benchmarks need it. *Breaking if you named this type* — there is no
+  supported replacement, as it was never meant to be part of the API. (#20)
 - **Transport per-message overhead reduced** (#20, criterion-verified):
   HTTP client transport metrics moved from `RwLock` to the same lock-free
   `AtomicMetrics` the stdio transport uses; server SSE broadcast payloads are

@@ -16,7 +16,7 @@ Telemetry features include:
 
 ```toml
 [dependencies]
-turbomcp-telemetry = "3.1.6"
+turbomcp-telemetry = "3.2.0"
 ```
 
 ## Feature Flags

@@ -26,7 +26,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-turbomcp = "3.1.6"
+turbomcp = "3.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -48,7 +48,7 @@ TurboMCP v3 has a modular architecture with optional features for different use 
 ### Minimal (STDIO only)
 
 ```toml
-turbomcp = "3.1.6"
+turbomcp = "3.2.0"
 ```
 
 - Just STDIO transport
@@ -58,7 +58,7 @@ turbomcp = "3.1.6"
 ### Full Stack (All Transports + Auth)
 
 ```toml
-turbomcp = { version = "3.1.6", features = ["full", "auth"] }
+turbomcp = { version = "3.2.0", features = ["full", "auth"] }
 ```
 
 - All facade transports (STDIO, Streamable HTTP, WebSocket, TCP, Unix)
@@ -72,33 +72,33 @@ turbomcp = { version = "3.1.6", features = ["full", "auth"] }
 **For HTTP servers:**
 
 ```toml
-turbomcp = { version = "3.1.6", features = ["http", "websocket"] }
+turbomcp = { version = "3.2.0", features = ["http", "websocket"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
 **For gRPC transport:**
 
 ```toml
-turbomcp-grpc = "3.1.6"
+turbomcp-grpc = "3.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
 **For OAuth authentication:**
 
 ```toml
-turbomcp = { version = "3.1.6", features = ["http", "auth"] }
+turbomcp = { version = "3.2.0", features = ["http", "auth"] }
 ```
 
 **For DPoP token binding:**
 
 ```toml
-turbomcp = { version = "3.1.6", features = ["http", "auth", "dpop"] }
+turbomcp = { version = "3.2.0", features = ["http", "auth", "dpop"] }
 ```
 
 **For performance-critical applications:**
 
 ```toml
-turbomcp = { version = "3.1.6", features = ["full"] }
+turbomcp = { version = "3.2.0", features = ["full"] }
 ```
 
 SIMD JSON support is provided by lower-level protocol codecs; there is no `simd` feature on the `turbomcp` facade crate.
@@ -106,14 +106,14 @@ SIMD JSON support is provided by lower-level protocol codecs; there is no `simd`
 **For OpenTelemetry observability (v3):**
 
 ```toml
-turbomcp = { version = "3.1.6", features = ["http", "telemetry"] }
+turbomcp = { version = "3.2.0", features = ["http", "telemetry"] }
 ```
 
 **For WASM/browser clients (v3):**
 
 ```toml
 # In a separate crate targeting wasm32
-turbomcp-wasm = "3.1.6"
+turbomcp-wasm = "3.2.0"
 ```
 
 ## Feature Reference
@@ -170,7 +170,7 @@ Only experimental features require feature flags:
 
 ```toml
 # Experimental tasks API
-turbomcp = { version = "3.1.6", features = ["experimental-tasks"] }
+turbomcp = { version = "3.2.0", features = ["experimental-tasks"] }
 ```
 
 ## Using Individual Crates
@@ -180,25 +180,25 @@ For fine-grained control, you can depend on individual crates:
 ```toml
 [dependencies]
 # Core types (no_std compatible)
-turbomcp-core = "3.1.6"
+turbomcp-core = "3.2.0"
 
 # Protocol implementation
-turbomcp-protocol = "3.1.6"
+turbomcp-protocol = "3.2.0"
 
 # Just HTTP transport
-turbomcp-http = "3.1.6"
+turbomcp-http = "3.2.0"
 
 # Just gRPC transport
-turbomcp-grpc = "3.1.6"
+turbomcp-grpc = "3.2.0"
 
 # Wire codec abstraction
-turbomcp-wire = "3.1.6"
+turbomcp-wire = "3.2.0"
 
 # OpenTelemetry integration
-turbomcp-telemetry = "3.1.6"
+turbomcp-telemetry = "3.2.0"
 
 # WASM bindings (for browser targets)
-turbomcp-wasm = "3.1.6"
+turbomcp-wasm = "3.2.0"
 ```
 
 ## Verify Installation
@@ -212,7 +212,7 @@ cargo build
 You should see output like:
 
 ```
-   Compiling turbomcp v3.1.6
+   Compiling turbomcp v3.2.0
     Finished `dev` [unoptimized + debuginfo] target(s) in 12.34s
 ```
 
@@ -232,7 +232,7 @@ Make sure you have tokio in your dependencies:
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-turbomcp = "3.1.6"
+turbomcp = "3.2.0"
 ```
 
 ### `error: extern crate 'turbomcp' is unused`
@@ -245,10 +245,10 @@ TurboMCP has many optional features. If you only need STDIO, don't enable unnece
 
 ```toml
 # Fast compilation, minimal features
-turbomcp = "3.1.6"  # Just STDIO
+turbomcp = "3.2.0"  # Just STDIO
 
 # Slow compilation, all features
-turbomcp = { version = "3.1.6", features = ["full"] }
+turbomcp = { version = "3.2.0", features = ["full"] }
 ```
 
 ### `error: failed to resolve: use of undeclared crate or module 'McpResult'`

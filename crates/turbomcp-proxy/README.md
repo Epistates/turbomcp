@@ -495,7 +495,7 @@ Status: Command structure complete. Full implementation of REST and GraphQL adap
 
 ## Development Status
 
-**Current Version:** 3.1.6 (tracks the TurboMCP workspace)
+**Current Version:** 3.2.0 (tracks the TurboMCP workspace)
 **Status:** Production-ready for STDIO/HTTP/TCP/Unix/WebSocket proxying,
 code generation, and OpenAPI/GraphQL/Protobuf schema export. Protocol
 adapters (`adapter rest`, `adapter graphql`) are scaffolded — see

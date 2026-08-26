@@ -7,7 +7,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct DemoServer;
 
-#[server(name = "turbomcp-demo", version = "3.1.6")]
+#[server(name = "turbomcp-demo", version = "3.2.0")]
 impl DemoServer {
     /// Say hello to someone
     #[tool]

@@ -44,13 +44,13 @@ client transport layer.
 **Quick Start:**
 ```toml
 [dependencies]
-turbomcp-protocol = "3.1.6"
+turbomcp-protocol = "3.2.0"
 ```
 
 Only the experimental Tasks API (SEP-1686) requires a feature flag:
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.1.6", features = ["experimental-tasks"] }
+turbomcp-protocol = { version = "3.2.0", features = ["experimental-tasks"] }
 ```
 
 ## Key Features
@@ -480,7 +480,7 @@ All core MCP 2025-11-25 features are now always available - no feature flags nee
 
 ```toml
 [dependencies]
-turbomcp-protocol = "3.1.6"  # All core features included
+turbomcp-protocol = "3.2.0"  # All core features included
 ```
 
 ### Runtime Version Negotiation
@@ -530,7 +530,7 @@ turbomcp-protocol = { version = "2.x", features = ["mcp-url-elicitation", "mcp-i
 
 **After (v3.0):**
 ```toml
-turbomcp-protocol = "3.1.6"  # All features included by default
+turbomcp-protocol = "3.2.0"  # All features included by default
 ```
 
 **Example:**
@@ -615,31 +615,31 @@ primitives needed by the protocol layer itself (see
 **Minimal build (stable spec only):**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.1.6", default-features = false, features = ["std"] }
+turbomcp-protocol = { version = "3.2.0", default-features = false, features = ["std"] }
 ```
 
 **High-performance build:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.1.6", features = ["simd", "zero-copy", "lock-free"] }
+turbomcp-protocol = { version = "3.2.0", features = ["simd", "zero-copy", "lock-free"] }
 ```
 
 **Observable production build:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.1.6", features = ["simd", "tracing", "metrics"] }
+turbomcp-protocol = { version = "3.2.0", features = ["simd", "tracing", "metrics"] }
 ```
 
 **Full MCP 2025-11-25 support (default):**
 ```toml
 [dependencies]
-turbomcp-protocol = "3.1.6"  # All core features included
+turbomcp-protocol = "3.2.0"  # All core features included
 ```
 
 **With experimental Tasks API:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.1.6", features = ["experimental-tasks"] }
+turbomcp-protocol = { version = "3.2.0", features = ["experimental-tasks"] }
 ```
 
 ## Supported MCP Methods

@@ -11,16 +11,16 @@ Wire codecs handle encoding and decoding of MCP protocol messages. The crate sup
 ```toml
 [dependencies]
 # Default (JSON codec only)
-turbomcp-wire = "3.1.6"
+turbomcp-wire = "3.2.0"
 
 # With SIMD acceleration
-turbomcp-wire = { version = "3.1.6", features = ["simd"] }
+turbomcp-wire = { version = "3.2.0", features = ["simd"] }
 
 # With MessagePack
-turbomcp-wire = { version = "3.1.6", features = ["msgpack"] }
+turbomcp-wire = { version = "3.2.0", features = ["msgpack"] }
 
 # All codecs
-turbomcp-wire = { version = "3.1.6", features = ["full"] }
+turbomcp-wire = { version = "3.2.0", features = ["full"] }
 ```
 
 ## Feature Flags

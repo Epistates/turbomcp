@@ -126,7 +126,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-turbomcp-wasm = { version = "3.1.6", default-features = false, features = ["wasm-server"] }
+turbomcp-wasm = { version = "3.2.0", default-features = false, features = ["wasm-server"] }
 worker = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 schemars = "1.2"

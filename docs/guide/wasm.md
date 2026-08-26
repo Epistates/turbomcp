@@ -483,7 +483,7 @@ The `turbomcp-core` crate provides `no_std` compatible core types:
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "3.1.6", default-features = false }
+turbomcp-core = { version = "3.2.0", default-features = false }
 ```
 
 This enables:
@@ -610,7 +610,7 @@ The `wasm-server` feature enables building full MCP servers that run on edge pla
 
 ```toml
 [dependencies]
-turbomcp-wasm = { version = "3.1.6", default-features = false, features = ["wasm-server"] }
+turbomcp-wasm = { version = "3.2.0", default-features = false, features = ["wasm-server"] }
 worker = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 schemars = "1.2"
@@ -648,7 +648,7 @@ With the `macros` feature, you can define MCP servers with minimal code using pr
 
 ```toml
 [dependencies]
-turbomcp-wasm = { version = "3.1.6", default-features = false, features = ["macros"] }
+turbomcp-wasm = { version = "3.2.0", default-features = false, features = ["macros"] }
 worker = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 schemars = "1.2"

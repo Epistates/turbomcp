@@ -15,7 +15,7 @@
 
 ```toml
 [dependencies]
-turbomcp = "3.1.6"
+turbomcp = "3.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -99,13 +99,13 @@ TurboMCP uses feature flags for progressive enhancement. The default is `stdio` 
 
 ```toml
 # Production server with all transports and telemetry
-turbomcp = { version = "3.1.6", features = ["full"] }
+turbomcp = { version = "3.2.0", features = ["full"] }
 
 # Add authentication
-turbomcp = { version = "3.1.6", features = ["full", "auth"] }
+turbomcp = { version = "3.2.0", features = ["full", "auth"] }
 
 # Server + client for full-stack development
-turbomcp = { version = "3.1.6", features = ["full-stack"] }
+turbomcp = { version = "3.2.0", features = ["full-stack"] }
 ```
 
 ---
