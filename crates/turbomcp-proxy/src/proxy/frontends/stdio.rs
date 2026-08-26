@@ -254,7 +254,11 @@ impl StdioFrontend {
     }
 
     /// Write a JSON-RPC response to stdout
+    // Genuinely synchronous, but the trait it implements is async. Clippy 1.98
+    // split a dedicated lint out for the trait-impl case, so both names are
+    // needed until the MSRV clears 1.98.
     #[allow(clippy::unused_async)]
+    #[allow(unknown_lints, clippy::unused_async_trait_impl)]
     async fn write_response(&self, response: &JsonRpcResponse) -> ProxyResult<()> {
         let json = serde_json::to_string(response)?;
 
