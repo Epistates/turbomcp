@@ -274,7 +274,6 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     // initialize dispatch — the transport loop is blocked
                                     // here and cannot process the server-to-client
                                     // request, which would deadlock.
-                                    let initialize_request_id = request.id.clone();
                                     let ctx = ctx_factory();
                                     let response = router::route_request_with_config(
                                         &self.handler,
@@ -298,10 +297,7 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                             "Protocol version negotiated"
                                         );
                                         session_state = SessionState::Initialized(
-                                            super::InitializedSessionState::new(
-                                                version,
-                                                initialize_request_id.as_ref(),
-                                            ),
+                                            super::InitializedSessionState::new(version),
                                         );
                                         *session_handle.client_capabilities.write().await =
                                             Some(client_capabilities);
@@ -367,21 +363,6 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     let is_notification = request.id.is_none();
                                     let version = match &mut session_state {
                                         SessionState::Initialized(session) => {
-                                            if !session.register_request_id(request.id.as_ref()) {
-                                                if !is_notification {
-                                                    self.send_error(
-                                                        &mut writer,
-                                                        request.id.clone(),
-                                                        McpError::invalid_request(
-                                                            "Request ID already used in this session",
-                                                        ),
-                                                    )
-                                                    .await?;
-                                                }
-                                                line.clear();
-                                                continue;
-                                            }
-
                                             session.protocol_version().clone()
                                         }
                                         SessionState::Uninitialized => {
@@ -411,8 +392,20 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     let resp_tx = response_tx.clone();
                                     let token = CancellationToken::new();
                                     let cancel_key = request.id.as_ref().map(jsonrpc_id_key);
-                                    if let Some(ref key) = cancel_key {
-                                        pending_handlers.insert(key.clone(), token.clone());
+                                    if let Some(ref key) = cancel_key
+                                        && pending_handlers
+                                            .insert(key.clone(), token.clone())
+                                            .is_some()
+                                    {
+                                        // Sequential id reuse is fine and no longer rejected.
+                                        // *Concurrent* reuse is not: the client cannot match
+                                        // two responses carrying one id, and this overwrote the
+                                        // first handler's cancellation token. Report it rather
+                                        // than refusing to serve.
+                                        tracing::warn!(
+                                            request_id = %key,
+                                            "Request id reused while the first is still in flight",
+                                        );
                                     }
                                     let ctx = ctx_factory()
                                         .with_session(session)

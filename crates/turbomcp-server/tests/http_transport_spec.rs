@@ -1006,8 +1006,16 @@ async fn oversized_body_returns_413() {
     handle.abort();
 }
 
+/// Reusing a request id within a session is served, not refused — the exact
+/// shape reported in #25, where a client recycling ids was locked out of an
+/// otherwise working server after its first few calls.
+///
+/// The spec's "MUST NOT have been previously used" binds the **requestor**; a
+/// receiver's only obligation is to echo the id back, so there is nothing for
+/// the server to gain by policing it. The old per-session "every id ever seen"
+/// set also grew without bound for the life of the session.
 #[tokio::test]
-async fn duplicate_request_ids_are_rejected() {
+async fn a_reused_request_id_is_served_rather_than_refused() {
     let (base_url, handle) = spawn_server().await;
     let client = Client::new();
     let session_id = initialize_session(&client, &base_url).await;
@@ -1044,12 +1052,31 @@ async fn duplicate_request_ids_are_rejected() {
 
     assert_eq!(duplicate.status(), StatusCode::OK);
     let duplicate_body: serde_json::Value = duplicate.json().await.unwrap();
-    assert_eq!(duplicate_body["error"]["code"], -32600);
     assert!(
-        duplicate_body["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("already used"))
+        duplicate_body.get("error").is_none(),
+        "a reused id must not be refused, got: {duplicate_body}"
     );
+    assert_eq!(duplicate_body["id"], 7, "the id is echoed back verbatim");
+    assert_eq!(
+        duplicate_body["result"], first_body["result"],
+        "the repeat is served exactly as the first was"
+    );
+
+    // And it keeps working — the failure in #25 showed up as a session that
+    // died after a handful of calls, so one repeat is not enough to prove it.
+    for _ in 0..3 {
+        let again = client
+            .post(format!("{}/mcp", base_url))
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header("Mcp-Session-Id", &session_id)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        let body: serde_json::Value = again.json().await.unwrap();
+        assert!(body.get("result").is_some(), "got: {body}");
+    }
 
     handle.abort();
 }

@@ -347,7 +347,6 @@ async fn run_server_loop<H: McpHandler>(
                                     continue;
                                 }
 
-                                let initialize_request_id = request.id.clone();
                                 let ctx = RequestContext::channel();
                                 let response = router::route_request_with_config(
                                     &handler,
@@ -363,10 +362,7 @@ async fn run_server_loop<H: McpHandler>(
                                 {
                                     let version = ProtocolVersion::from(v);
                                     session_state = SessionState::Initialized(
-                                        super::InitializedSessionState::new(
-                                            version,
-                                            initialize_request_id.as_ref(),
-                                        ),
+                                        super::InitializedSessionState::new(version),
                                     );
                                     *session_handle.client_capabilities.write().await =
                                         Some(client_capabilities);
@@ -423,20 +419,6 @@ async fn run_server_loop<H: McpHandler>(
                                 let is_notification = request.id.is_none();
                                 let version = match &mut session_state {
                                     SessionState::Initialized(session) => {
-                                        if !session.register_request_id(request.id.as_ref()) {
-                                            if !is_notification {
-                                                send_error_msg(
-                                                    &outgoing,
-                                                    request.id.clone(),
-                                                    McpError::invalid_request(
-                                                        "Request ID already used in this session",
-                                                    ),
-                                                )
-                                                .await?;
-                                            }
-                                            continue;
-                                        }
-
                                         session.protocol_version().clone()
                                     }
                                     SessionState::Uninitialized => {
@@ -461,8 +443,18 @@ async fn run_server_loop<H: McpHandler>(
                                 let resp_tx = response_tx.clone();
                                 let token = CancellationToken::new();
                                 let cancel_key = request.id.as_ref().map(jsonrpc_id_key);
-                                if let Some(ref key) = cancel_key {
-                                    pending_handlers.insert(key.clone(), token.clone());
+                                if let Some(ref key) = cancel_key
+                                    && pending_handlers.insert(key.clone(), token.clone()).is_some()
+                                {
+                                    // Sequential id reuse is fine and no longer rejected.
+                                    // *Concurrent* reuse is not: the client cannot match
+                                    // two responses carrying one id, and this overwrote
+                                    // the first handler's cancellation token. Report it
+                                    // rather than refusing to serve.
+                                    tracing::warn!(
+                                        request_id = %key,
+                                        "Request id reused while the first is still in flight",
+                                    );
                                 }
                                 let ctx = RequestContext::channel()
                                     .with_session(session)
@@ -749,8 +741,17 @@ mod tests {
         let _ = server_handle.await;
     }
 
+    /// A request id reused *after* the first one was answered is served, not
+    /// refused.
+    ///
+    /// The spec's "MUST NOT have been previously used" binds the requestor; a
+    /// receiver's only obligation is to echo the id. This server used to keep a
+    /// per-session set of every id it had ever seen and reject repeats, which
+    /// locked out real clients that recycle ids over a long session and grew
+    /// without bound (#25). Concurrent reuse is still reported — see the
+    /// `pending_handlers` warning — but never rejected.
     #[tokio::test]
-    async fn test_channel_transport_rejects_duplicate_request_ids() {
+    async fn test_channel_transport_serves_a_reused_request_id() {
         let handler = TestHandler;
         let (transport, server_handle) = run_in_process(&handler).await.unwrap();
 
@@ -802,11 +803,14 @@ mod tests {
         let duplicate = transport.receive().await.unwrap().unwrap();
         let duplicate_value: serde_json::Value =
             serde_json::from_slice(&duplicate.payload).unwrap();
-        assert_eq!(duplicate_value["error"]["code"], -32600);
         assert!(
-            duplicate_value["error"]["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("already used"))
+            duplicate_value.get("error").is_none(),
+            "a reused id must not be refused, got: {duplicate_value}"
+        );
+        assert_eq!(duplicate_value["id"], 2, "the id is echoed back verbatim");
+        assert_eq!(
+            duplicate_value["result"], first_value["result"],
+            "the repeat is served exactly as the first was"
         );
 
         drop(transport);

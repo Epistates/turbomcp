@@ -20,7 +20,7 @@
 //! dispatched through [`router::route_request_versioned`], ensuring correct
 //! adapter filtering and method availability for the negotiated spec version.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -85,8 +85,6 @@ struct SessionData {
     protocol_version: Option<ProtocolVersion>,
     /// Client capabilities captured from the successful initialize request.
     client_capabilities: Option<ClientCapabilities>,
-    /// Request IDs already used by the client within this session.
-    seen_request_ids: HashSet<String>,
     /// Pending responses for server-initiated requests sent over SSE.
     pending_server_requests: PendingServerRequests,
     /// Monotonic server request counter. IDs are rendered as `s-{n}`.
@@ -142,13 +140,9 @@ impl SessionManager {
     #[allow(dead_code)]
     async fn create_session_inner(
         &self,
-        initialize_request_id: Option<&serde_json::Value>,
+        _initialize_request_id: Option<&serde_json::Value>,
     ) -> String {
         let session_id = Uuid::new_v4().to_string();
-        let mut seen_request_ids = HashSet::new();
-        if let Some(request_id) = initialize_request_id.and_then(super::request_id_key) {
-            seen_request_ids.insert(request_id);
-        }
 
         self.sessions.write().await.insert(
             session_id.clone(),
@@ -156,7 +150,6 @@ impl SessionManager {
                 subscribers: Vec::new(),
                 protocol_version: None,
                 client_capabilities: None,
-                seen_request_ids,
                 pending_server_requests: Arc::new(Mutex::new(HashMap::new())),
                 next_server_request_id: 1,
             },
@@ -378,23 +371,6 @@ impl SessionManager {
             .await
             .get(session_id)
             .and_then(|data| data.client_capabilities.clone())
-    }
-
-    /// Register a request ID for an existing session.
-    pub(crate) async fn register_request_id(
-        &self,
-        session_id: &str,
-        request_id: Option<&serde_json::Value>,
-    ) -> bool {
-        let Some(request_id) = request_id.and_then(super::request_id_key) else {
-            return true;
-        };
-
-        self.sessions
-            .write()
-            .await
-            .get_mut(session_id)
-            .is_some_and(|data| data.seen_request_ids.insert(request_id))
     }
 
     /// Register a pending server-to-client request and return its JSON-RPC id.
@@ -1216,20 +1192,11 @@ async fn handle_json_rpc<H: McpHandler>(
         Err(status) => return empty_response(status),
     };
 
-    if let Some(session_id) = session_id.as_deref()
-        && !state
-            .session_manager
-            .register_request_id(session_id, request.id.as_ref())
-            .await
-    {
-        return json_response(
-            StatusCode::OK,
-            JsonRpcOutgoing::error(
-                request.id.clone(),
-                McpError::invalid_request("Request ID already used in this session"),
-            ),
-        );
-    }
+    // No request-id uniqueness check here. The spec's "MUST NOT have been
+    // previously used" binds the *requestor*; a receiver's only obligation is
+    // to echo the id back, so rejecting a reused one bought nothing and cost an
+    // unbounded per-session set that never shrank. Real clients reuse ids
+    // across a long-lived session and were locked out (#25).
 
     let initialize_request_id = request.id.clone();
     let response = route_with_version_tracking(

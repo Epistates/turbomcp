@@ -18,7 +18,6 @@
 
 mod line;
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -68,46 +67,32 @@ impl Drop for PendingHandlerGuard {
 ///
 /// Requests arriving before successful initialization are rejected.
 /// Duplicate `initialize` requests after a successful handshake are rejected.
+///
+/// Request-id reuse is deliberately *not* tracked here. The spec's
+/// "MUST NOT have been previously used" binds the **requestor**; a receiver's
+/// only obligation is to echo the id back. Enforcing it server-side bought
+/// nothing, cost an unbounded per-session set, and rejected real clients — see
+/// the note on the transports' in-flight registries.
 #[derive(Debug, Clone)]
 pub(crate) enum SessionState {
     /// No successful `initialize` has been received yet.
     Uninitialized,
-    /// `initialize` succeeded; the negotiated version and used request IDs are stored.
+    /// `initialize` succeeded; the negotiated protocol version is stored.
     Initialized(InitializedSessionState),
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct InitializedSessionState {
     protocol_version: ProtocolVersion,
-    seen_request_ids: HashSet<String>,
 }
 
 impl InitializedSessionState {
-    pub(crate) fn new(
-        protocol_version: ProtocolVersion,
-        initialize_request_id: Option<&Value>,
-    ) -> Self {
-        let mut seen_request_ids = HashSet::new();
-        if let Some(request_id) = initialize_request_id.and_then(request_id_key) {
-            seen_request_ids.insert(request_id);
-        }
-
-        Self {
-            protocol_version,
-            seen_request_ids,
-        }
+    pub(crate) fn new(protocol_version: ProtocolVersion) -> Self {
+        Self { protocol_version }
     }
 
     pub(crate) fn protocol_version(&self) -> &ProtocolVersion {
         &self.protocol_version
-    }
-
-    pub(crate) fn register_request_id(&mut self, request_id: Option<&Value>) -> bool {
-        let Some(request_id) = request_id.and_then(request_id_key) else {
-            return true;
-        };
-
-        self.seen_request_ids.insert(request_id)
     }
 }
 

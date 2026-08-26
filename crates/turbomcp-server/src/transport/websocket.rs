@@ -343,7 +343,6 @@ async fn handle_websocket<H: McpHandler>(
                             McpError::invalid_request("Session already initialized"),
                         )
                     } else {
-                        let initialize_request_id = parsed.id.clone();
                         let resp = router::route_request_with_config(
                             &handler,
                             parsed,
@@ -362,10 +361,7 @@ async fn handle_websocket<H: McpHandler>(
                                 "Protocol version negotiated"
                             );
                             session_state = SessionState::Initialized(
-                                super::InitializedSessionState::new(
-                                    version,
-                                    initialize_request_id.as_ref(),
-                                ),
+                                super::InitializedSessionState::new(version),
                             );
                         }
                         resp
@@ -433,33 +429,12 @@ async fn handle_websocket<H: McpHandler>(
                     continue;
                 }
 
-                // All other methods: enforce post-init gating and id-uniqueness,
-                // then spawn the handler so the receive loop keeps draining
-                // (notably `notifications/cancelled` from the same client).
+                // All other methods: enforce post-init gating, then spawn the
+                // handler so the receive loop keeps draining (notably
+                // `notifications/cancelled` from the same client).
                 let is_notification = parsed.id.is_none();
                 let version = match &mut session_state {
-                    SessionState::Initialized(session) => {
-                        if !session.register_request_id(parsed.id.as_ref()) {
-                            if !is_notification {
-                                let error = JsonRpcOutgoing::error(
-                                    parsed.id.clone(),
-                                    McpError::invalid_request(
-                                        "Request ID already used in this session",
-                                    ),
-                                );
-                                if let Ok(error_str) = router::serialize_response(&error)
-                                    && sender
-                                        .send(Message::Text(error_str.into()))
-                                        .await
-                                        .is_err()
-                                {
-                                    break;
-                                }
-                            }
-                            continue;
-                        }
-                        session.protocol_version().clone()
-                    }
+                    SessionState::Initialized(session) => session.protocol_version().clone(),
                     SessionState::Uninitialized => {
                         if !is_notification {
                             let error = JsonRpcOutgoing::error(
@@ -485,8 +460,18 @@ async fn handle_websocket<H: McpHandler>(
                 let resp_tx = response_tx.clone();
                 let token = CancellationToken::new();
                 let cancel_key = parsed.id.as_ref().map(jsonrpc_id_key);
-                if let Some(ref key) = cancel_key {
-                    pending_handlers.insert(key.clone(), token.clone());
+                if let Some(ref key) = cancel_key
+                    && pending_handlers.insert(key.clone(), token.clone()).is_some()
+                {
+                    // Sequential id reuse is fine and no longer rejected.
+                    // *Concurrent* reuse is not: the client cannot match two
+                    // responses carrying one id, and this overwrote the first
+                    // handler's cancellation token. Report it rather than
+                    // refusing to serve.
+                    tracing::warn!(
+                        request_id = %key,
+                        "Request id reused while the first is still in flight",
+                    );
                 }
                 let ctx = RequestContext::websocket()
                     .with_cancellation_token(Arc::new(token) as Arc<dyn Cancellable>);
