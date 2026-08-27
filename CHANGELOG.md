@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.2.0] - 2026-08-26
+## [3.2.0] - 2026-08-27
 
 Streamable HTTP correctness — a client response hang, CRLF SSE parsing,
 POST-stream primer events, a reconnect storm — plus transport hot-path
