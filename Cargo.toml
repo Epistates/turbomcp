@@ -192,21 +192,21 @@ doc-comment = "0.3"
 # no_std/WASM foundation portable (their `default = ["std"]` is opt-in per
 # crate); on turbomcp-codec it keeps sonic-rs (`default = ["simd"]`) out of the
 # SDK's default build — the facade's `simd` feature is the opt-in.
-turbomcp = { version = "4.0.0-alpha.1", path = "crates/turbomcp" }
-turbomcp-core = { version = "4.0.0-alpha.1", path = "crates/turbomcp-core", default-features = false }
-turbomcp-protocol = { version = "4.0.0-alpha.1", path = "crates/turbomcp-protocol", default-features = false }
-turbomcp-codec = { version = "4.0.0-alpha.1", path = "crates/turbomcp-codec", default-features = false }
-turbomcp-service = { version = "4.0.0-alpha.1", path = "crates/turbomcp-service" }
-turbomcp-server = { version = "4.0.0-alpha.1", path = "crates/turbomcp-server" }
-turbomcp-client = { version = "4.0.0-alpha.1", path = "crates/turbomcp-client" }
-turbomcp-transport-stdio = { version = "4.0.0-alpha.1", path = "crates/turbomcp-transport-stdio" }
-turbomcp-transport-http = { version = "4.0.0-alpha.1", path = "crates/turbomcp-transport-http" }
-turbomcp-transport-ws = { version = "4.0.0-alpha.1", path = "crates/turbomcp-transport-ws" }
-turbomcp-macros = { version = "4.0.0-alpha.1", path = "crates/turbomcp-macros" }
-turbomcp-auth = { version = "4.0.0-alpha.1", path = "crates/turbomcp-auth" }
-turbomcp-telemetry = { version = "4.0.0-alpha.1", path = "crates/turbomcp-telemetry" }
-turbomcp-ext-tasks = { version = "4.0.0-alpha.1", path = "crates/turbomcp-ext-tasks" }
-turbomcp-ext-apps = { version = "4.0.0-alpha.1", path = "crates/turbomcp-ext-apps" }
+turbomcp = { version = "4.0.0-alpha.2", path = "crates/turbomcp" }
+turbomcp-core = { version = "4.0.0-alpha.2", path = "crates/turbomcp-core", default-features = false }
+turbomcp-protocol = { version = "4.0.0-alpha.2", path = "crates/turbomcp-protocol", default-features = false }
+turbomcp-codec = { version = "4.0.0-alpha.2", path = "crates/turbomcp-codec", default-features = false }
+turbomcp-service = { version = "4.0.0-alpha.2", path = "crates/turbomcp-service" }
+turbomcp-server = { version = "4.0.0-alpha.2", path = "crates/turbomcp-server" }
+turbomcp-client = { version = "4.0.0-alpha.2", path = "crates/turbomcp-client" }
+turbomcp-transport-stdio = { version = "4.0.0-alpha.2", path = "crates/turbomcp-transport-stdio" }
+turbomcp-transport-http = { version = "4.0.0-alpha.2", path = "crates/turbomcp-transport-http" }
+turbomcp-transport-ws = { version = "4.0.0-alpha.2", path = "crates/turbomcp-transport-ws" }
+turbomcp-macros = { version = "4.0.0-alpha.2", path = "crates/turbomcp-macros" }
+turbomcp-auth = { version = "4.0.0-alpha.2", path = "crates/turbomcp-auth" }
+turbomcp-telemetry = { version = "4.0.0-alpha.2", path = "crates/turbomcp-telemetry" }
+turbomcp-ext-tasks = { version = "4.0.0-alpha.2", path = "crates/turbomcp-ext-tasks" }
+turbomcp-ext-apps = { version = "4.0.0-alpha.2", path = "crates/turbomcp-ext-apps" }
 
 [profile.dev]
 opt-level = 1

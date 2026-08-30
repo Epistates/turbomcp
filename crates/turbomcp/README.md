@@ -4,14 +4,14 @@ A ground-up Rust SDK for the [Model Context Protocol](https://modelcontextprotoc
 both halves of the protocol — server **and** client — with a macro-driven,
 zero-boilerplate surface and strict spec compliance as a feature.
 
-> **Status: `4.0.0-alpha.1` — a prerelease for community testing.** A
+> **Status: `4.0.0-alpha.2` — a prerelease for community testing.** A
 > ground-up rewrite of `turbomcp` for the v4 major version; the stable line is
 > `3.x`. Edition 2024, MSRV 1.88. Passes the official MCP conformance suite
-> with zero failures and interoperates with the official Rust SDK (rmcp 2.x)
-> in both directions, verified in-repo. The draft protocol revision
-> (`2026-07-28`) is synced to the upstream `2026-07-28-RC` tag, and an RC is
-> not a freeze — draft wire details may still move. `2025-06-18` and
-> `2025-11-25` support is stable.
+> with zero failures on both scored revisions, and interoperates with the
+> official Rust SDK (rmcp 2.x) in both directions, verified in-repo. All three
+> advertised revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) are dated and
+> frozen; `2026-07-28` is generated from the released `schema/2026-07-28/`,
+> not the RC.
 
 ## What you get
 

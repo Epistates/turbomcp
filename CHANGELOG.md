@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0-alpha.2] - 2026-08-30
+
+Correctness against the frozen `2026-07-28` spec, which `4.0.0-alpha.1` claimed
+to speak and did not. Plus flat composition, and one live MRTR defect.
+
+### Fixed
+
+- **The `2026-07-28` wire is re-generated from the frozen schema.** alpha.1's
+  types came from the RC's `schema/draft/`, 195 insertions and 91 deletions
+  behind the release, so it advertised the wire string `2026-07-28` while
+  implementing something else. Four things the freeze reversed, each of which
+  alpha.1 had implemented the RC way: `serverInfo` moved back out of
+  `DiscoverResult` into the result's `_meta`; `ttlMs`/`cacheScope` became
+  *required* on `DiscoverResult`; `SubscriptionsListenResult` came back, giving
+  a listen stream a defined ending, so a graceful teardown is distinguishable
+  from a dropped connection; and `elicitationId` plus
+  `notifications/elicitation/complete` were deleted from the revision entirely,
+  making both `2025-11-25`-only. The spec-allocated error codes moved with it:
+  `-32003`/`-32004` became `-32021`/`-32022`, and header mismatch got `-32020`.
+
+- **A multi-round elicitation never finished.** A retry carried only the answers
+  from the round that just completed, so a handler asking two questions in
+  sequence re-asked the first one forever. The client is not obliged to
+  accumulate, and real ones don't. Answers are now carried forward inside the
+  signed request state. This was a live defect for any two-step elicitation,
+  not a spec technicality.
+
+- **The stateless request envelope is enforced** (SEP-2575). `protocolVersion`
+  and `clientCapabilities` are required in a request's `_meta`; a missing one is
+  a malformed envelope, so it answers `-32602` rather than `-32022` — an absent
+  required field is not a revision we decline to speak. The supported list still
+  rides in `data`, so a client that forgot can re-issue.
+
+- **Methods that don't exist on `2026-07-28` stop being served.** `initialize`,
+  `ping`, `logging/setLevel` and `resources/{subscribe,unsubscribe}` answer
+  `-32601` and HTTP 404.
+
+- **Error responses carry the request id.** Four transport-level rejections
+  hardcoded `id: null`, so a client with several requests in flight could not
+  tell which one had failed.
+
+- **A missing client capability is `-32021` + HTTP 400** and names what is
+  missing. It also stopped becoming a tool-level `isError`: the call was never
+  valid to make, and `isError` gives the client nothing to act on.
+
+- **An absent `x-mcp-header` mirror is rejected, not just a disagreeing one**
+  (SEP-2243). That absence is the exact divergence the validation exists to
+  stop, a gateway routing on a default while the server executes the body.
+
+- `Client::ping()` fails locally on `2026-07-28` instead of sending a request
+  the server is obliged to 404.
+
+- **RUSTSEC-2026-0258** — `h2` queued empty DATA frames without limit
+  (unbounded memory, or a panic on length overflow). Bumped to 0.4.19.
+
 ### Added
 
 - **`Composite::mount_flat`** — mount a server whose tools and prompts keep
@@ -37,8 +92,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different pages. It checks the catalogue as the identity in `request` sees it;
   a server using visibility policies should preflight each identity that matters.
 
+- **`#[tool(schema_extend = "{…}")]`** — SEP-2106 requires preserving JSON
+  Schema vocabulary the server does not interpret, and cross-field rules
+  (`allOf`/`anyOf`, `if`/`then`/`else`, `$anchor`) cannot be derived from a Rust
+  signature. Parsed at compile time, so a malformed object is an error on the
+  literal rather than a silently wrong `inputSchema`.
+
 ### Changed
 
+- **`ProtocolVersion::Draft` is now `ProtocolVersion::V2026_07_28`**, and the
+  `turbomcp_protocol::draft` module is now `v2026_07_28`. The draft was modeled
+  as a slip-proof channel because the date could move; it didn't. Keeping
+  "draft" in the name describes a published revision as in-development. **Both
+  old spellings still compile as deprecated aliases** and dispatch identically,
+  so this is not a breaking change; a future draft gets a fresh channel rather
+  than reusing them. `LATEST` repoints to `V2026_07_28`; same wire string, same
+  negotiation.
+- `CachePolicies` gained a `discover` surface, since `ttlMs`/`cacheScope` are
+  now required there. The default stays `NO_CACHE`, so nothing changes until
+  configured.
+- `VersionDispatcher::close_subscriptions` and `close_all` are async, now that
+  a listen stream is answered before it is cleared.
 - `Composite::mount` takes `impl AsRef<str>` for the prefix rather than `&str`,
   matching `instructions` and `Implementation::new`. Source-compatible.
 

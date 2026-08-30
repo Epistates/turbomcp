@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-conformance"
-version = "4.0.0-alpha.1"
+version = "4.0.0-alpha.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Runs the official MCP conformance suite (@modelcontextprotocol/conformance) against a TurboMCP HTTP server."
