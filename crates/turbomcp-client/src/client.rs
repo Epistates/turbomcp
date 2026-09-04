@@ -301,7 +301,23 @@ impl ClientBuilder {
 
         // Per the lifecycle spec, the client confirms readiness before issuing
         // further requests.
-        conn.notify(notification::INITIALIZED, None).await?;
+        //
+        // It carries the negotiated-version signal, which is the first frame
+        // able to: `initialize` itself has nothing to declare yet. The HTTP
+        // transport turns it into the `MCP-Protocol-Version` header the
+        // transports spec requires from the first post-`initialize` message
+        // onward — this notification is that message — and strips it from the
+        // body; other transports sanitize it at the server boundary. Learning
+        // the version here is also what lets the transport open its
+        // server→client stream now rather than waiting for a request the
+        // client may never make.
+        conn.notify(
+            notification::INITIALIZED,
+            Some(json!({
+                "_meta": { NEGOTIATED_VERSION_META_KEY: negotiated.as_str() },
+            })),
+        )
+        .await?;
         Ok(Handshake::from_result(negotiated, &result))
     }
 }

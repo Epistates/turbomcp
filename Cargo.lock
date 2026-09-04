@@ -3354,6 +3354,7 @@ version = "4.0.0-alpha.2"
 dependencies = [
  "axum",
  "criterion",
+ "futures",
  "http-body-util",
  "insta",
  "reqwest 0.13.4",

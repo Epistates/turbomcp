@@ -79,6 +79,10 @@ axum = { workspace = true }
 http-body-util = "0.1"
 reqwest = { workspace = true }
 turbomcp-transport-stdio = { workspace = true }
+# For hand-built SSE bodies in the mock servers that stand in for peers whose
+# behaviour TurboMCP's own server does not exhibit (see
+# `client_standalone_stream.rs`).
+futures = { workspace = true }
 
 [[example]]
 name = "hello_world"

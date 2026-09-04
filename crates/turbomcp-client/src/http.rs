@@ -20,6 +20,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use eventsource_stream::Eventsource;
@@ -43,6 +44,14 @@ pub enum HttpClientError {
 
 const SESSION_HEADER: &str = "mcp-session-id";
 
+/// How long to wait before re-opening the standalone stream when the server
+/// sends no `retry:` of its own.
+const DEFAULT_SSE_RETRY: Duration = Duration::from_secs(1);
+
+/// Ceiling on a server-supplied `retry:`, so a hostile or fat-fingered value
+/// can't park the only channel for server→client requests indefinitely.
+const MAX_SSE_RETRY: Duration = Duration::from_secs(30);
+
 /// Shared state for the spawned POST tasks: the HTTP client, target URL, the
 /// captured session id, the last negotiated protocol version, and the inbound
 /// delivery channel.
@@ -55,6 +64,9 @@ struct Shared {
     /// signal of their own (responses to server requests, notifications).
     version: Mutex<Option<String>>,
     inbound_tx: mpsc::Sender<JsonRpcMessage>,
+    /// Whether the standalone server→client stream ([`listen`]) has been
+    /// started. One per connection, however many POSTs race to trigger it.
+    listening: AtomicBool,
 }
 
 /// A Streamable HTTP transport to a single MCP endpoint URL.
@@ -80,6 +92,7 @@ impl HttpClientTransport {
                 session: Mutex::new(None),
                 version: Mutex::new(None),
                 inbound_tx,
+                listening: AtomicBool::new(false),
             }),
             inbound_rx,
         })
@@ -155,7 +168,7 @@ async fn post_and_pump(shared: Arc<Shared>, msg: JsonRpcMessage) {
 
 /// The fallible body of a POST + response pump. Errors are returned as a string
 /// for [`post_and_pump`] to route.
-async fn pump(shared: &Shared, mut msg: JsonRpcMessage) -> Result<(), String> {
+async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), String> {
     // Lift the transport signals out of the body before serialization so they
     // never reach the wire: the `x-mcp-header` mirror map and the negotiated
     // protocol version.
@@ -221,6 +234,20 @@ async fn pump(shared: &Shared, mut msg: JsonRpcMessage) -> Result<(), String> {
         return Err(format!("http status {status}"));
     }
 
+    // The standalone stream belongs to the stateful transport, so open it as
+    // soon as a negotiated stateful version proves we are on that path — see
+    // [`listen`]. The earliest frame carrying one is the handshake's
+    // `notifications/initialized`, so the stream is up before the client's
+    // first request rather than waiting on one it may never make.
+    if version
+        .as_deref()
+        .map(ProtocolVersion::from_wire)
+        .is_some_and(|v| v.is_stateful())
+        && !shared.listening.swap(true, Ordering::AcqRel)
+    {
+        tokio::spawn(listen(Arc::clone(shared)));
+    }
+
     let is_sse = resp
         .headers()
         .get(CONTENT_TYPE)
@@ -253,6 +280,96 @@ async fn pump(shared: &Shared, mut msg: JsonRpcMessage) -> Result<(), String> {
         let _ = shared.inbound_tx.send(frame).await;
     }
     Ok(())
+}
+
+/// Hold open the standalone server→client SSE stream: `GET` on the MCP
+/// endpoint, re-opened for as long as the connection lives.
+///
+/// Streamable HTTP gives a server two places to put a message it originates:
+/// inline on the SSE stream of whichever POST it is currently answering, or
+/// here. Which one it picks is the server's choice and nothing on the wire
+/// announces it — the reference TypeScript SDK uses this stream, while
+/// TurboMCP's own server answers inline. A client that never issues the `GET`
+/// therefore looks completely correct against some servers and silently hangs
+/// against others: every `elicitation/create`, `sampling/createMessage`, and
+/// `roots/list` delivered here would simply never arrive, and the server would
+/// wait out its own timeout.
+///
+/// Re-opening is not error recovery. The server is expected to end this stream
+/// and have the client come back (SEP-1699), so a graceful close is a reconnect
+/// signal; `Last-Event-ID` asks the server to resume from the last event it
+/// managed to deliver, and its `retry:` field sets the delay when it has an
+/// opinion.
+///
+/// Offering the stream is optional for a server. One that answers `405` (or
+/// `404`/`501`) is saying it has nothing to push, which is a complete answer,
+/// so the loop stops rather than reconnecting forever.
+async fn listen(shared: Arc<Shared>) {
+    let mut last_event_id: Option<String> = None;
+    let mut retry = DEFAULT_SSE_RETRY;
+
+    loop {
+        // The connection actor has gone; nobody is left to receive.
+        if shared.inbound_tx.is_closed() {
+            return;
+        }
+
+        let mut req = shared
+            .http
+            .get(&shared.url)
+            .header(ACCEPT, "text/event-stream");
+        if let Some(sid) = shared.session.lock().expect("session mutex").clone() {
+            req = req.header(SESSION_HEADER, sid);
+        }
+        if let Some(v) = shared.version.lock().expect("version mutex").clone() {
+            req = req.header(mcp_headers::PROTOCOL_VERSION, v);
+        }
+        if let Some(id) = &last_event_id {
+            req = req.header("last-event-id", id);
+        }
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let mut events = resp.bytes_stream().eventsource();
+                while let Some(event) = events.next().await {
+                    let Ok(event) = event else { break };
+                    if !event.id.is_empty() {
+                        last_event_id = Some(event.id.clone());
+                    }
+                    if let Some(server_retry) = event.retry {
+                        retry = server_retry.min(MAX_SSE_RETRY);
+                    }
+                    if event.data.is_empty() {
+                        continue; // keep-alive / priming event
+                    }
+                    match serde_json::from_str::<JsonRpcMessage>(&event.data) {
+                        // Closed receiver: the connection is gone for good.
+                        Ok(frame) => {
+                            if shared.inbound_tx.send(frame).await.is_err() {
+                                return;
+                            }
+                        }
+                        // One malformed frame is not a reason to abandon the
+                        // only channel the server has for reaching us.
+                        Err(e) => {
+                            tracing::debug!(error = %e, "standalone sse frame decode failed");
+                        }
+                    }
+                }
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                if matches!(status.as_u16(), 404 | 405 | 501) {
+                    tracing::debug!(%status, "server does not offer a standalone sse stream");
+                    return;
+                }
+                tracing::debug!(%status, "standalone sse stream rejected; retrying");
+            }
+            Err(e) => tracing::debug!(error = %e, "standalone sse stream failed; retrying"),
+        }
+
+        tokio::time::sleep(retry).await;
+    }
 }
 
 /// Pull the `x-mcp-header` mirror signal — a map of header-name portion →
@@ -450,6 +567,7 @@ mod tests {
             session: Mutex::new(None),
             version: Mutex::new(None),
             inbound_tx: mpsc::channel(1).0,
+            listening: AtomicBool::new(false),
         };
 
         // A legacy request carries only the internal signal — lifted,
