@@ -424,11 +424,23 @@ jobs:
     # STRICT turns the "no pnpm on PATH" skip into a failure. Without it a
     # runner that lost its Node toolchain would report this job green having
     # verified nothing — the precise failure mode this suite exists to catch.
-    - name: Run the conformance suite
+    #
+    # Both directions run. The server suite scores the server the harness
+    # connects to, the client suite scores the client it spawns, and passing
+    # one says nothing about the other: the client's missing standalone SSE
+    # stream survived every release precisely because only the server had ever
+    # been measured.
+    - name: Run the conformance suite (server)
       working-directory: crates/turbomcp-conformance
       env:
         TURBOMCP_CONFORMANCE_STRICT: '1'
-      run: cargo test --test conformance -- --nocapture
+      run: cargo test --test conformance_server -- --nocapture
+
+    - name: Run the conformance suite (client)
+      working-directory: crates/turbomcp-conformance
+      env:
+        TURBOMCP_CONFORMANCE_STRICT: '1'
+      run: cargo test --test conformance_client -- --nocapture
 
   semver:
     name: SemVer (public API)

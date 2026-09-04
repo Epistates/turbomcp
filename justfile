@@ -242,7 +242,7 @@ test-examples:
   cargo build --examples
   @echo "Examples build completed"
 
-# Run the official MCP conformance suite against a live server (needs pnpm)
+# Run both official MCP conformance suites, server and client (needs pnpm)
 [group: 'test']
 conformance:
   #!/usr/bin/env bash
@@ -260,7 +260,12 @@ conformance:
   # everything else, enforced here since nowhere else covers it.
   cargo fmt -- --check
   cargo clippy --all-targets -- -D warnings
-  TURBOMCP_CONFORMANCE_STRICT=1 cargo test --test conformance -- --nocapture
+  # Both directions. The server suite scores the server the harness connects
+  # to; the client suite scores the client it spawns. Passing one says nothing
+  # about the other — the client's missing standalone SSE stream survived
+  # precisely because only the server had ever been measured.
+  TURBOMCP_CONFORMANCE_STRICT=1 cargo test --test conformance_server -- --nocapture
+  TURBOMCP_CONFORMANCE_STRICT=1 cargo test --test conformance_client -- --nocapture
 
 # Run tests matching a pattern
 [group: 'test']

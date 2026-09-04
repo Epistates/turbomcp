@@ -3,7 +3,7 @@ name = "turbomcp-conformance"
 version = "4.0.0-alpha.2"
 edition = "2024"
 rust-version = "1.88"
-description = "Runs the official MCP conformance suite (@modelcontextprotocol/conformance) against a TurboMCP HTTP server."
+description = "Runs the official MCP conformance suite (@modelcontextprotocol/conformance) against TurboMCP's server and client."
 license = "MIT"
 publish = false
 
@@ -14,16 +14,30 @@ publish = false
 #     just conformance                                    # from the repo root
 #     cd crates/turbomcp-conformance && cargo test        # skips without pnpm
 #
-# The test spawns the official Node conformance harness
-# (`pnpm dlx @modelcontextprotocol/conformance server --url …`) against an
-# in-process TurboMCP Streamable-HTTP server. `pnpm` must be on PATH.
+# Two suites, opposite directions:
+#
+#   tests/conformance_server.rs — the harness is the client. It drives an
+#     in-process TurboMCP Streamable-HTTP server (`conformance server --url …`).
+#   tests/conformance_client.rs — the harness is the server. It stands up a
+#     mock server per scenario and runs the `conformance-client` binary below
+#     against it (`conformance client --command …`).
+#
+# `pnpm` must be on PATH for either.
+
+# Driven by the harness's `client` mode, one process per scenario. It is a real
+# binary rather than a test because the harness spawns it: the scenario name
+# arrives in `MCP_CONFORMANCE_SCENARIO` and the mock server's URL as argv[1].
+[[bin]]
+name = "conformance-client"
+path = "src/bin/conformance_client.rs"
 
 [dependencies]
-
-[dev-dependencies]
 turbomcp = { path = "../turbomcp", features = ["http", "client"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "net", "time", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "net", "time", "io-util"] }
 schemars = "1"
 base64 = "0.22"
