@@ -1,0 +1,46 @@
+version: 2
+
+updates:
+  # The workspace lockfile.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Patch and minor updates are reviewed as one PR: individually they are
+      # noise, and CI passing across the batch is the signal that matters.
+      # Majors stay separate — they are the ones that move MSRV or behaviour.
+      cargo-minor:
+        update-types: [minor, patch]
+
+  # The two suites excluded from the workspace carry their own lockfiles, so
+  # nothing above reaches them. Left ungrouped and low-volume: they are test
+  # surfaces, and an update that breaks one should be legible on its own.
+  - package-ecosystem: cargo
+    directory: /crates/turbomcp-conformance
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: cargo
+    directory: /crates/turbomcp-interop
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions:
+        patterns: ["*"]

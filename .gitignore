@@ -122,10 +122,18 @@ benchmark_results.md
 *.benchmark
 **/benchmark_results.md
 
+# Markdown is ignored by default so scratch notes and generated reports never
+# land in a commit. Every file the project actually publishes has to be listed
+# here — a new one that isn't will be silently untracked, which is how
+# SECURITY.md nearly got lost.
 *.md
 !README.md
 !CHANGELOG.md
 !SECURITY.md
+!CONTRIBUTING.md
+!VERSIONING.md
+!ROADMAP.md
+!DEPENDENCY_POLICY.md
 !docs/**/*.md
 !**/MIGRATION.md
 
