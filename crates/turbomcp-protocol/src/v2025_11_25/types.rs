@@ -3095,15 +3095,15 @@ impl ::core::convert::From<ElicitResultContentValueVariant1> for ElicitResultCon
 #[serde(untagged)]
 pub enum ElicitResultContentValueVariant1 {
     Boolean(bool),
-    String(::alloc::string::String),
     Integer(i64),
+    String(::alloc::string::String),
 }
 impl ::core::fmt::Display for ElicitResultContentValueVariant1 {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         match self {
             Self::Boolean(x) => x.fmt(f),
-            Self::String(x) => x.fmt(f),
             Self::Integer(x) => x.fmt(f),
+            Self::String(x) => x.fmt(f),
         }
     }
 }
@@ -6219,14 +6219,14 @@ pub struct ProgressNotificationParams {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ProgressToken {
-    String(::alloc::string::String),
     Integer(i64),
+    String(::alloc::string::String),
 }
 impl ::core::fmt::Display for ProgressToken {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         match self {
-            Self::String(x) => x.fmt(f),
             Self::Integer(x) => x.fmt(f),
+            Self::String(x) => x.fmt(f),
         }
     }
 }
@@ -6743,14 +6743,14 @@ pub struct Request {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum RequestId {
-    String(::alloc::string::String),
     Integer(i64),
+    String(::alloc::string::String),
 }
 impl ::core::fmt::Display for RequestId {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         match self {
-            Self::String(x) => x.fmt(f),
             Self::Integer(x) => x.fmt(f),
+            Self::String(x) => x.fmt(f),
         }
     }
 }

@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 # typify pulls its own schemars 0.8; we deserialize RootSchema with the matching
 # version. NOT `workspace = true` (the workspace pins schemars 1.x for runtime).
-typify = "0.6"
+typify = "0.7"
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 # preserve_order keeps generated output stable/reviewable across runs.
