@@ -10,6 +10,15 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
+      # The OpenTelemetry crates version in lockstep: `tracing-opentelemetry`
+      # 0.33 wants `opentelemetry` 0.32, which wants `opentelemetry_sdk` 0.32.
+      # Bumped one at a time they cannot compile, so this group has to come
+      # before the update-type groups below — the first match wins, and a
+      # 0.x bump would otherwise be swept up as "minor".
+      opentelemetry:
+        patterns:
+          - "opentelemetry*"
+          - "tracing-opentelemetry"
       # Patch and minor updates are reviewed as one PR: individually they are
       # noise, and CI passing across the batch is the signal that matters.
       # Majors stay separate — they are the ones that move MSRV or behaviour.
@@ -17,8 +26,10 @@ updates:
         update-types: [minor, patch]
 
   # The two suites excluded from the workspace carry their own lockfiles, so
-  # nothing above reaches them. Left ungrouped and low-volume: they are test
-  # surfaces, and an update that breaks one should be legible on its own.
+  # nothing above reaches them. Grouped per crate: these are test surfaces
+  # whose dependency bumps are almost never individually interesting, and the
+  # first run of this config proved the point by opening four separate PRs for
+  # four patch bumps.
   - package-ecosystem: cargo
     directory: /crates/turbomcp-conformance
     schedule:
@@ -26,6 +37,9 @@ updates:
     open-pull-requests-limit: 2
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      conformance:
+        patterns: ["*"]
 
   - package-ecosystem: cargo
     directory: /crates/turbomcp-interop
@@ -34,6 +48,9 @@ updates:
     open-pull-requests-limit: 2
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      interop:
+        patterns: ["*"]
 
   - package-ecosystem: github-actions
     directory: /
@@ -41,6 +58,16 @@ updates:
       interval: weekly
     commit-message:
       prefix: "ci(deps)"
+    ignore:
+      # `dtolnay/rust-toolchain@1.88` pins the *Rust* version to install, not a
+      # version of the action — the ref is the toolchain. Dependabot reads it as
+      # an action tag and "upgrades" it; the first run of this config proposed
+      # `@1.120`, which does not exist. The visible failure is the lucky case:
+      # had the ref resolved, the MSRV job would have quietly started testing
+      # against a newer compiler and the 1.88 guarantee would have rotted with
+      # a green tick. Bump this deliberately, alongside `rust-version` in the
+      # manifests, per VERSIONING.md.
+      - dependency-name: dtolnay/rust-toolchain
     groups:
       actions:
         patterns: ["*"]
