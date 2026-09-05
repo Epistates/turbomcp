@@ -143,7 +143,7 @@ uuid = { version = "1.23", features = ["v4", "serde"] }
 # OAuth 2.1 client flows (auth-code + PKCE + token exchange); HTTP is supplied
 # by our reqwest adapter, so no default features.
 oauth2 = { version = "5", default-features = false }
-jsonwebtoken = { version = "10.3", features = ["aws_lc_rs", "use_pem"] }
+jsonwebtoken = { version = "11.0", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling
 chrono = { version = "0.4.44", features = ["serde"] }
