@@ -93,9 +93,16 @@ CONTRIBUTING* text eol=lf
 *.rlib binary
 *.pdb binary
 
-# Generated files that should not have line ending conversion
+# Generated files that should not have line ending conversion.
+#
+# `binary` is shorthand for `-text -diff`, and the `text eol=lf` on the next
+# line only puts back the `text` half — so Cargo.lock kept `-diff` and every
+# lockfile change rendered as "Bin 103038 -> 103038 bytes" in `git diff`. A
+# lockfile nobody can read is a lockfile nobody reviews, which is how three
+# unreviewed major bumps reached a green CI run (see .github/dependabot.yml).
+# `diff` restores the textual diff; the lockfile stays LF-normalised.
 *.lock binary
-Cargo.lock text eol=lf
+Cargo.lock text eol=lf diff
 
 # Language specific settings
 *.rs diff=rust linguist-language=Rust
