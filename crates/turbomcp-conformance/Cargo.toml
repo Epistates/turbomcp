@@ -47,4 +47,4 @@ reqwest = { version = "0.13.3", default-features = false, features = ["json", "r
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "net", "time", "io-util"] }
 schemars = "1"
-base64 = "0.22"
+base64 = "0.23"
