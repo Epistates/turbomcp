@@ -32,10 +32,17 @@ name = "conformance-client"
 path = "src/bin/conformance_client.rs"
 
 [dependencies]
-turbomcp = { path = "../turbomcp", features = ["http", "client"] }
+turbomcp = { path = "../turbomcp", features = ["http", "client", "client-oauth"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The auth scenarios need the authorization redirect *without* following it:
+# the harness's mock authorization server auto-approves and 302s to our
+# redirect URI, and that Location header is the authorization response.
+#
+# Kept on the same version and TLS backend as the workspace's `reqwest`, since
+# the `OAuthClient` this hands its client to is built against that one.
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "net", "time", "io-util"] }

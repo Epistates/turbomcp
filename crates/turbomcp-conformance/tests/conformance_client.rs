@@ -14,20 +14,21 @@
 //!
 //! ## What is baselined, and why
 //!
-//! `conformance-baseline-client.json` holds 82 expected failures, in two
-//! groups. Both are "not built yet" or "deliberately not served", never a
-//! compliance bug we chose to tolerate:
+//! One entry: **`sse-retry`**. Its mock server hard-codes `protocolVersion:
+//! "2025-03-26"` in the initialize response. TurboMCP does not serve that
+//! revision, and the lifecycle spec says to disconnect rather than speak on in
+//! shapes the peer never agreed to — so the client refuses, correctly, and the
+//! scenario is unreachable by design rather than by defect. Serving
+//! `2025-03-26` is the only thing that would change this, and
+//! [`VERSIONING.md`] says we won't.
 //!
-//! - **81 auth checks.** The `conformance-client` binary does not yet run the
-//!   OAuth flows, so every `auth/*` scenario fails at the first step. TurboMCP
-//!   *has* a client OAuth 2.1 implementation (feature `client-oauth`); wiring
-//!   it into this runner is the next slice of work, and each entry that then
-//!   passes will surface here as a stale baseline entry to delete.
-//! - **`sse-retry`.** Its mock server hard-codes `protocolVersion:
-//!   "2025-03-26"` in the initialize response. TurboMCP does not serve that
-//!   revision, and the lifecycle spec says to disconnect rather than speak on
-//!   in shapes the peer never agreed to — so the client refuses, correctly, and
-//!   the scenario is unreachable by design rather than by defect.
+//! Everything else passes: 280 checks on `2025-11-25` and 442 on `2026-07-28`,
+//! including the full OAuth 2.1 surface — discovery and its metadata variants,
+//! dynamic registration, PKCE, the RFC 9207 `iss` table (positive *and*
+//! negative), scope step-up with union-on-reauth, the retry limit, and
+//! re-registration when the resource moves to a different authorization server.
+//!
+//! [`VERSIONING.md`]: https://github.com/Epistates/turbomcp/blob/main/VERSIONING.md
 //!
 //! Requirements: `pnpm` on `PATH`; skipped without it unless
 //! `TURBOMCP_CONFORMANCE_STRICT` is set. See `conformance_server.rs`.
@@ -47,10 +48,11 @@ const SPEC_VERSIONS: &[&str] = &["2025-11-25", "2026-07-28"];
 
 /// Floor on passing checks per revision — the same tripwire the server suite
 /// carries, for the same reason: "0 failures" is also what a run that never
-/// started reports. Today: 17 on `2025-11-25`, 56 on `2026-07-28`. The gap is
-/// real (the draft has the header and MRTR scenarios), so the floor is set
-/// below the smaller of the two and is *not* to be lowered to green a build.
-const MIN_PASSING_PER_VERSION: usize = 12;
+/// started reports. Today: 280 on `2025-11-25`, 442 on `2026-07-28`. The gap is
+/// real (the draft has the header and MRTR scenarios on top of the shared auth
+/// ones), so the floor sits below the smaller of the two with room for the
+/// suite to be re-cut upstream. It is *not* to be lowered to green a build.
+const MIN_PASSING_PER_VERSION: usize = 200;
 
 /// The client binary the harness spawns. Cargo builds it for us and hands over
 /// its path, so the suite can never score a stale binary — the failure mode of
