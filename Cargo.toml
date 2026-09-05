@@ -112,7 +112,7 @@ tracing-opentelemetry = "0.32.1"
 tracing-appender = "0.2"  # File-based logging with non-blocking I/O
 opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["tonic", "metrics", "logs"] }
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 metrics = "0.24.5"
 metrics-exporter-prometheus = "0.18.3"
 
