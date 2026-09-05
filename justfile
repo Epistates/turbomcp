@@ -267,6 +267,20 @@ conformance:
   TURBOMCP_CONFORMANCE_STRICT=1 cargo test --test conformance_server -- --nocapture
   TURBOMCP_CONFORMANCE_STRICT=1 cargo test --test conformance_client -- --nocapture
 
+# Run the cross-SDK interop suite against the official Rust SDK (rmcp)
+[group: 'test']
+interop:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  # Excluded from the workspace for rmcp's dependency tree, so `just test`
+  # never pays for it. CI runs it as its own job.
+  cd crates/turbomcp-interop
+  # Being outside the workspace puts this crate outside `just test`'s fmt and
+  # clippy too. Same bar, enforced here since nowhere else covers it.
+  cargo fmt -- --check
+  cargo clippy --all-targets -- -D warnings
+  cargo test -- --nocapture
+
 # Run tests matching a pattern
 [group: 'test']
 filter PATTERN:

@@ -442,6 +442,52 @@ jobs:
         TURBOMCP_CONFORMANCE_STRICT: '1'
       run: cargo test --test conformance_client -- --nocapture
 
+  interop:
+    name: Cross-SDK interop (rmcp)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Excluded from the workspace for its rmcp dependency tree, which is how it
+    # ended up running nowhere while both READMEs claimed it ran "on every
+    # change". Same shape of hole the conformance suite had, and the same fix.
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    # Keyed on this crate's own lockfile, and caching its own target dir — it
+    # shares neither with the workspace.
+    - name: Cache cargo registry & target
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          crates/turbomcp-interop/target/
+        key: ${{ runner.os }}-cargo-interop-${{ hashFiles('crates/turbomcp-interop/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-interop-
+
+    # Outside the workspace is also outside the Lint & Test job's `--workspace`
+    # fmt and clippy. Held to the same bar here, before it drifts.
+    - name: Check formatting
+      working-directory: crates/turbomcp-interop
+      run: cargo fmt -- --check
+
+    - name: Clippy
+      working-directory: crates/turbomcp-interop
+      run: cargo clippy --all-targets -- -D warnings
+
+    - name: Run the interop suite
+      working-directory: crates/turbomcp-interop
+      run: cargo test -- --nocapture
+
   semver:
     name: SemVer (public API)
     runs-on: ubuntu-latest
