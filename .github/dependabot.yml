@@ -25,46 +25,34 @@ updates:
       cargo-minor:
         update-types: [minor, patch]
 
-  # The two suites excluded from the workspace carry their own lockfiles, so
-  # nothing above reaches them. Grouped per crate: these are test surfaces
-  # whose dependency bumps are almost never individually interesting, and the
-  # first run of this config proved the point by opening four separate PRs for
-  # four patch bumps.
+  # turbomcp-conformance and turbomcp-interop are excluded from the workspace and
+  # carry their own lockfiles, so nothing above reaches them. Only `rmcp` is
+  # tracked here, and only by name.
   #
-  # `allow: direct` is load-bearing, not tidiness. Both crates depend on the
-  # workspace crates by *path*, so everything they pull in transitively resolves
-  # its version through the root `[workspace.dependencies]` table — and to move
-  # one of those, Dependabot edits the root manifest. Left unrestricted it opened
-  # PRs titled "bump the interop group" that carried `tower-http` 0.6→0.7,
-  # `base64` 0.22→0.23 and `jsonwebtoken` 10→11 across the whole workspace, with
-  # the root `Cargo.lock` untouched. Restricting these two to their own direct
-  # dependencies keeps workspace-wide bumps in the root ecosystem above, where
-  # they arrive with a matching lockfile and get reviewed as what they are.
-  - package-ecosystem: cargo
-    directory: /crates/turbomcp-conformance
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 2
-    commit-message:
-      prefix: "chore(deps)"
-    allow:
-      - dependency-type: direct
-    groups:
-      conformance:
-        patterns: ["*"]
-
+  # Both crates depend on the workspace crates by *path*, so Dependabot walks
+  # into the parent workspace and treats the root `[workspace.dependencies]`
+  # declarations as candidates too. Unrestricted, that produced PRs titled "bump
+  # the interop group" carrying tower-http 0.6->0.7, base64 0.22->0.23 and
+  # jsonwebtoken 10->11 across the whole workspace with the root Cargo.lock left
+  # stale (#36, #38). `dependency-type: direct` does not separate them, because
+  # those root declarations *are* direct, just in another manifest (#39, #40).
+  # An allowlist by name does.
+  #
+  # rmcp earns its place: it is the official Rust SDK the interop suite tests
+  # against, and a new release of it is the one dependency event here worth
+  # hearing about. Everything else in these two lockfiles is a test-only dep of a
+  # `publish = false` crate. Refresh those deliberately with `just refresh-locks`;
+  # CI's `lock-check` guarantees they stay consistent with their manifests either
+  # way.
   - package-ecosystem: cargo
     directory: /crates/turbomcp-interop
     schedule:
       interval: monthly
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     commit-message:
       prefix: "chore(deps)"
     allow:
-      - dependency-type: direct
-    groups:
-      interop:
-        patterns: ["*"]
+      - dependency-name: rmcp
 
   - package-ecosystem: github-actions
     directory: /

@@ -79,12 +79,12 @@ codegen:
   cargo fmt -p turbomcp-protocol
   echo "Done. Review the diff before committing."
 
-# Fail if the checked-in wire types no longer match what the generator produces.
-#
 # `types.rs` is `@generated` and CLAUDE.md says never to hand-edit it, but until
 # this recipe existed that was a convention with nothing behind it: an edit to a
 # generated file, or a codegen change landed without regenerating, sails through
 # every other job. The `drift` CI job runs this against the pinned schema ref.
+
+# Fail if the checked-in wire types no longer match what the generator produces.
 [group: 'v4']
 codegen-check:
   #!/usr/bin/env bash
@@ -113,12 +113,31 @@ codegen-check:
   fi
   echo "Wire types match the schema."
 
-# Fail if any lockfile has drifted from its manifest.
-#
-# Three of them: the workspace, and the two excluded crates that carry their own.
-# No other job builds `--locked`, so a manifest bump with a stale lockfile is
-# otherwise invisible — Dependabot shipped exactly that (see .github/dependabot.yml)
-# and every job went green.
+# Dependabot doesn't track these (see .github/dependabot.yml): they belong to
+# `publish = false` test crates, and because both depend on the workspace by
+# path, Dependabot cannot bump them without also rewriting the root manifest.
+# This is the deliberate alternative. Run it when a suite starts looking stale;
+# review the diff, then commit both lockfiles.
+
+# Refresh the excluded crates' lockfiles within their existing semver ranges.
+[group: 'quality']
+refresh-locks:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  for dir in crates/turbomcp-conformance crates/turbomcp-interop; do
+    echo "Refreshing ${dir}/Cargo.lock"
+    (cd "${dir}" && cargo update)
+  done
+  echo "Done. Review the diff, then run the suites before committing:"
+  echo "  just conformance"
+  echo "  just interop"
+
+# Three lockfiles: the workspace, and the two excluded crates that carry their
+# own. No other job builds `--locked`, so a manifest bump with a stale lockfile
+# is otherwise invisible — Dependabot shipped exactly that (see
+# .github/dependabot.yml) and every job went green.
+
+# Fail if any of the three lockfiles has drifted from its manifest.
 [group: 'quality']
 lock-check:
   #!/usr/bin/env bash
