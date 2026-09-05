@@ -22,6 +22,6 @@ schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 # preserve_order keeps generated output stable/reviewable across runs.
 serde_json = { version = "1", features = ["preserve_order"] }
-prettyplease = "0.2"
+prettyplease = "0.3"
 syn = { version = "2", features = ["full", "parsing"] }
 anyhow = { workspace = true }
