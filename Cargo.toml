@@ -93,7 +93,7 @@ eventsource-stream = "0.2.3"
 axum = { version = "0.8.9", features = ["ws", "tracing", "macros"] }
 mime = "0.3.17"
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
-tower-http = { version = "0.6.9", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
+tower-http = { version = "0.7.1", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
 hyper = { version = "1.9", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.20", features = ["tokio", "server-auto", "client-legacy"] }
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
