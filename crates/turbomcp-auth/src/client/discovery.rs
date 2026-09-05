@@ -45,6 +45,11 @@ pub struct AuthorizationServerMetadata {
     /// RFC 9207: the AS includes `iss` in authorization responses.
     #[serde(default)]
     pub authorization_response_iss_parameter_supported: Option<bool>,
+    /// How the AS accepts client credentials at the token endpoint
+    /// (`client_secret_basic`, `client_secret_post`, `none`, …). RFC 8414
+    /// §2: absent means `client_secret_basic`.
+    #[serde(default)]
+    pub token_endpoint_auth_methods_supported: Option<Vec<String>>,
     /// Scopes the AS can grant.
     #[serde(default)]
     pub scopes_supported: Option<Vec<String>>,
@@ -74,6 +79,24 @@ pub async fn discover_protected_resource(
                         "protected resource metadata at {candidate} lists no authorization_servers"
                     )));
                 }
+                // RFC 9728 §3.3: the `resource` in the document MUST be the
+                // resource the client is actually accessing. Skipping this
+                // check is what turns a hostile or hijacked metadata document
+                // into an account-takeover: it can name *any* authorization
+                // server, and a client that doesn't compare will happily go
+                // authorize against the attacker's and hand over the token it
+                // gets back. The `resource` parameter we send is taken from
+                // this document too, so an unchecked mismatch also requests a
+                // token audienced for something else entirely.
+                if !same_resource(&meta.resource, resource_url) {
+                    return Err(OAuthClientError::Discovery(format!(
+                        "protected resource metadata at {candidate} declares resource {:?}, \
+                         which is not the server being accessed ({resource_url}); refusing to \
+                         authorize against an authorization server chosen by a document that \
+                         is not about this resource",
+                        meta.resource,
+                    )));
+                }
                 return Ok(meta);
             }
             Err(e) => last_error = format!("{candidate}: {e}"),
@@ -82,6 +105,43 @@ pub async fn discover_protected_resource(
     Err(OAuthClientError::Discovery(format!(
         "protected resource metadata unavailable ({last_error})"
     )))
+}
+
+/// Whether a metadata document's `resource` covers the server at `url`.
+///
+/// Origin must match exactly — scheme, host, port — because that is what stops
+/// a document from pointing at somebody else's authorization server. The path
+/// is a *containment* check rather than equality: RFC 9728's fallback order
+/// tries the path-inserted well-known URL and then the root one, and the root
+/// document legitimately declares the origin (`https://host`) as the resource
+/// while the endpoint being accessed is `https://host/mcp`. Requiring equality
+/// there would reject a correctly configured server for using the fallback the
+/// RFC defines.
+///
+/// Containment is checked at a segment boundary, so a document for
+/// `https://host/mcp` does not vouch for `https://host/mcp-evil`.
+fn same_resource(declared: &str, url: &str) -> bool {
+    let (Ok(declared), Ok(url)) = (Url::parse(declared), Url::parse(url)) else {
+        // An unparseable identifier is not something to wave through.
+        return false;
+    };
+    let origin = |u: &Url| {
+        (
+            u.scheme().to_ascii_lowercase(),
+            u.host_str().unwrap_or_default().to_ascii_lowercase(),
+            u.port_or_known_default(),
+        )
+    };
+    if origin(&declared) != origin(&url) {
+        return false;
+    }
+    let declared_path = declared.path().trim_end_matches('/');
+    let url_path = url.path().trim_end_matches('/');
+    declared_path.is_empty()
+        || url_path == declared_path
+        || url_path
+            .strip_prefix(declared_path)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// The RFC 9728 well-known URLs for `resource_url`, in the spec's fallback

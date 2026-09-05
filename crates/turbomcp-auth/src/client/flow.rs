@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oauth2::basic::BasicClient;
 use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
+    AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
     PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
 };
 
@@ -476,9 +476,30 @@ fn build_oauth2_client(
             RedirectUrl::new(redirect_uri.to_owned()).map_err(|e| bad_url("redirect_uri", e))?,
         );
     if let Some(secret) = &credentials.client_secret {
-        client = client.set_client_secret(ClientSecret::new(secret.clone()));
+        client = client
+            .set_client_secret(ClientSecret::new(secret.clone()))
+            .set_auth_type(token_endpoint_auth_type(&discovered.server));
     }
     Ok(client)
+}
+
+/// Where to put the client secret at the token endpoint.
+///
+/// RFC 8414 §2 makes `client_secret_basic` the default when the AS advertises
+/// nothing, and `oauth2` defaults the same way — but an AS that supports *only*
+/// `client_secret_post` rejects a Basic header outright, so the advertised list
+/// has to be honoured when there is one. Basic stays preferred wherever both
+/// are offered, per OAuth 2.1's own preference.
+fn token_endpoint_auth_type(server: &AuthorizationServerMetadata) -> AuthType {
+    let Some(methods) = &server.token_endpoint_auth_methods_supported else {
+        return AuthType::BasicAuth;
+    };
+    let supports = |name: &str| methods.iter().any(|m| m == name);
+    if supports("client_secret_basic") || !supports("client_secret_post") {
+        AuthType::BasicAuth
+    } else {
+        AuthType::RequestBody
+    }
 }
 
 fn to_token_set(
