@@ -30,6 +30,16 @@ updates:
   # whose dependency bumps are almost never individually interesting, and the
   # first run of this config proved the point by opening four separate PRs for
   # four patch bumps.
+  #
+  # `allow: direct` is load-bearing, not tidiness. Both crates depend on the
+  # workspace crates by *path*, so everything they pull in transitively resolves
+  # its version through the root `[workspace.dependencies]` table — and to move
+  # one of those, Dependabot edits the root manifest. Left unrestricted it opened
+  # PRs titled "bump the interop group" that carried `tower-http` 0.6→0.7,
+  # `base64` 0.22→0.23 and `jsonwebtoken` 10→11 across the whole workspace, with
+  # the root `Cargo.lock` untouched. Restricting these two to their own direct
+  # dependencies keeps workspace-wide bumps in the root ecosystem above, where
+  # they arrive with a matching lockfile and get reviewed as what they are.
   - package-ecosystem: cargo
     directory: /crates/turbomcp-conformance
     schedule:
@@ -37,6 +47,8 @@ updates:
     open-pull-requests-limit: 2
     commit-message:
       prefix: "chore(deps)"
+    allow:
+      - dependency-type: direct
     groups:
       conformance:
         patterns: ["*"]
@@ -48,6 +60,8 @@ updates:
     open-pull-requests-limit: 2
     commit-message:
       prefix: "chore(deps)"
+    allow:
+      - dependency-type: direct
     groups:
       interop:
         patterns: ["*"]
