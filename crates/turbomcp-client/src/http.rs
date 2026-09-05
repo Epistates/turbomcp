@@ -52,6 +52,34 @@ const DEFAULT_SSE_RETRY: Duration = Duration::from_secs(1);
 /// can't park the only channel for server→client requests indefinitely.
 const MAX_SSE_RETRY: Duration = Duration::from_secs(30);
 
+/// Supplies the bearer token for each outbound request.
+///
+/// Consulted per request rather than captured once, because that is what OAuth
+/// needs: access tokens are short-lived by design, and a token refreshed out of
+/// band has to take effect on the next request without rebuilding the transport
+/// and re-running the handshake.
+#[async_trait::async_trait]
+pub trait BearerSource: Send + Sync + 'static {
+    /// The token to present, or `None` to send this request unauthenticated.
+    async fn bearer(&self) -> Option<String>;
+}
+
+/// A token that never changes.
+#[async_trait::async_trait]
+impl BearerSource for String {
+    async fn bearer(&self) -> Option<String> {
+        Some(self.clone())
+    }
+}
+
+/// A token that can be replaced in place — the shape a refresh loop wants.
+#[async_trait::async_trait]
+impl BearerSource for Mutex<Option<String>> {
+    async fn bearer(&self) -> Option<String> {
+        self.lock().expect("bearer mutex poisoned").clone()
+    }
+}
+
 /// Shared state for the spawned POST tasks: the HTTP client, target URL, the
 /// captured session id, the last negotiated protocol version, and the inbound
 /// delivery channel.
@@ -67,6 +95,21 @@ struct Shared {
     /// Whether the standalone server→client stream ([`listen`]) has been
     /// started. One per connection, however many POSTs race to trigger it.
     listening: AtomicBool,
+    /// Where the `Authorization` header comes from, when the server wants one.
+    bearer: Option<Arc<dyn BearerSource>>,
+}
+
+impl Shared {
+    /// Attach `Authorization: Bearer …` when a token is available.
+    async fn authorize(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.bearer {
+            Some(source) => match source.bearer().await {
+                Some(token) => req.bearer_auth(token),
+                None => req,
+            },
+            None => req,
+        }
+    }
 }
 
 /// A Streamable HTTP transport to a single MCP endpoint URL.
@@ -93,9 +136,37 @@ impl HttpClientTransport {
                 version: Mutex::new(None),
                 inbound_tx,
                 listening: AtomicBool::new(false),
+                bearer: None,
             }),
             inbound_rx,
         })
+    }
+
+    /// Present `token` as `Authorization: Bearer …` on every request.
+    ///
+    /// For a token that changes — the usual case, since OAuth access tokens
+    /// expire — use [`with_bearer_source`](Self::with_bearer_source) instead.
+    #[must_use]
+    pub fn with_bearer(self, token: impl Into<String>) -> Self {
+        self.with_bearer_source(Arc::new(token.into()))
+    }
+
+    /// Take the `Authorization` credential from `source`, which is consulted
+    /// once per request so a refreshed token applies without reconnecting.
+    ///
+    /// This is the seam between [`turbomcp-auth`'s client OAuth
+    /// flow](https://docs.rs/turbomcp-auth) and an authenticated session:
+    /// the flow yields a `TokenSet`, and a source over it is what actually
+    /// gets those tokens onto the wire.
+    ///
+    /// # Panics
+    /// If another transport clone is mid-request. Call this before connecting.
+    #[must_use]
+    pub fn with_bearer_source(mut self, source: Arc<dyn BearerSource>) -> Self {
+        Arc::get_mut(&mut self.shared)
+            .expect("with_bearer_source must be called before the transport is connected")
+            .bearer = Some(source);
+        self
     }
 }
 
@@ -120,14 +191,15 @@ impl Transport for HttpClientTransport {
         // Best-effort session termination (the spec's explicit DELETE).
         let sid = self.shared.session.lock().expect("session mutex").clone();
         if let Some(sid) = sid {
-            let _ = self
+            let req = self
                 .shared
                 .http
                 .delete(&self.shared.url)
                 .header(SESSION_HEADER, sid)
-                .timeout(Duration::from_secs(5))
-                .send()
-                .await;
+                .timeout(Duration::from_secs(5));
+            // Authenticated too: on a server that requires a bearer, an
+            // unauthenticated DELETE is a 401 and the session leaks.
+            let _ = self.shared.authorize(req).await.send().await;
         }
         Ok(())
     }
@@ -215,7 +287,9 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
         req = req.header(format!("{}{name}", mcp_headers::MCP_PARAM_PREFIX), value);
     }
 
-    let resp = req
+    let resp = shared
+        .authorize(req)
+        .await
         .send()
         .await
         .map_err(|e| format!("request failed: {e}"))?;
@@ -328,7 +402,7 @@ async fn listen(shared: Arc<Shared>) {
             req = req.header("last-event-id", id);
         }
 
-        match req.send().await {
+        match shared.authorize(req).await.send().await {
             Ok(resp) if resp.status().is_success() => {
                 let mut events = resp.bytes_stream().eventsource();
                 while let Some(event) = events.next().await {
@@ -568,6 +642,7 @@ mod tests {
             version: Mutex::new(None),
             inbound_tx: mpsc::channel(1).0,
             listening: AtomicBool::new(false),
+            bearer: None,
         };
 
         // A legacy request carries only the internal signal — lifted,
