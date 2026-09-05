@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Free up disk space
       run: |
@@ -37,7 +37,7 @@ jobs:
         components: rustfmt, clippy
 
     - name: Cache cargo registry & target
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/bin/
@@ -106,7 +106,7 @@ jobs:
         os: [windows-latest, macos-latest]
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -120,7 +120,7 @@ jobs:
         tool: protoc
 
     - name: Cache cargo registry & target
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/registry/index/
@@ -155,7 +155,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install system dependencies
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -169,7 +169,7 @@ jobs:
         tool: cargo-hack
 
     - name: Cache cargo registry & target
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/registry/index/
@@ -187,7 +187,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Free up disk space
       run: |
@@ -203,10 +203,10 @@ jobs:
     # API) would pass CI and break downstream consumers pinned to 1.88. This job
     # catches that.
     - name: Install Rust 1.88
-      uses: dtolnay/rust-toolchain@1.88
+      uses: dtolnay/rust-toolchain@1.120
 
     - name: Cache cargo registry
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/registry/index/
@@ -223,7 +223,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     # Advisories (RUSTSEC), license policy, banned/duplicate crates, and source
     # provenance — all governed by deny.toml. Fails the build on a new
@@ -238,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -246,7 +246,7 @@ jobs:
         targets: wasm32-unknown-unknown
 
     - name: Cache cargo registry
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/bin/
@@ -277,7 +277,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Free up disk space
       run: |
@@ -305,7 +305,7 @@ jobs:
       uses: taiki-e/install-action@just
 
     - name: Cache cargo registry
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/bin/
@@ -356,7 +356,7 @@ jobs:
         fi
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7
       with:
         files: lcov.info
         fail_ci_if_error: false
@@ -377,7 +377,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -385,7 +385,7 @@ jobs:
         components: rustfmt, clippy
 
     - name: Install pnpm
-      uses: pnpm/action-setup@v4
+      uses: pnpm/action-setup@v6
       with:
         version: 10
 
@@ -393,14 +393,14 @@ jobs:
     # no Node project — it `pnpm dlx`es a pinned package straight from the
     # registry. The step would fail looking for a lockfile that shouldn't exist.
     - name: Install Node
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: '22'
 
     # Keyed on this crate's own lockfile, and caching its own target dir — it
     # shares neither with the workspace.
     - name: Cache cargo registry & target
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: |
           ~/.cargo/registry/index/
@@ -450,7 +450,7 @@ jobs:
     # the step reports that and passes; the first 4.x release on crates.io turns
     # it into a real gate with no further edits.
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
