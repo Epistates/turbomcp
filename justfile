@@ -30,6 +30,13 @@ coverage_min := "85"
 # v4 codegen: root of the checked-out MCP schema (override with MCP_SCHEMA_ROOT)
 mcp_schema_root := env_var_or_default("MCP_SCHEMA_ROOT", "../reference/modelcontextprotocol/schema")
 
+# The upstream revision the checked-in wire types were generated from. All three
+# dated schemas are frozen, so one tag covers all three. The `drift` job in
+# .github/workflows/test.yml reads this back with `just --evaluate` and clones
+# that exact ref, so a local `just codegen` and CI cannot disagree about which
+# schema is authoritative. Bump it deliberately when adopting a new revision.
+mcp_schema_ref := "2026-07-28"
+
 # Set shell for both unix and Windows environments
 set shell := ["sh", "-euc"]
 set windows-shell := ["sh", "-euc", "--"] # Requires Git to be installed with `sh` in PATH if on Windows
@@ -71,6 +78,60 @@ codegen:
     crates/turbomcp-protocol/src/v2026_07_28/types.rs "MCP 2026-07-28"
   cargo fmt -p turbomcp-protocol
   echo "Done. Review the diff before committing."
+
+# Fail if the checked-in wire types no longer match what the generator produces.
+#
+# `types.rs` is `@generated` and CLAUDE.md says never to hand-edit it, but until
+# this recipe existed that was a convention with nothing behind it: an edit to a
+# generated file, or a codegen change landed without regenerating, sails through
+# every other job. The `drift` CI job runs this against the pinned schema ref.
+[group: 'v4']
+codegen-check:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  generated="crates/turbomcp-protocol/src/v2025_06_18/types.rs \
+             crates/turbomcp-protocol/src/v2025_11_25/types.rs \
+             crates/turbomcp-protocol/src/v2026_07_28/types.rs"
+  # Skipped rather than failed without the schema, so a contributor who hasn't
+  # checked out the sibling repo can still run `just test`. CI always clones it
+  # (see the `drift` job), so the check is never skipped where it counts.
+  if [ ! -d "{{mcp_schema_root}}" ]; then
+    echo "SKIP: no MCP schema at {{mcp_schema_root}}."
+    echo "      Clone modelcontextprotocol/modelcontextprotocol at tag {{mcp_schema_ref}}"
+    echo "      and point MCP_SCHEMA_ROOT at its schema/ directory to enable this check."
+    exit 0
+  fi
+  just codegen
+  if ! git diff --quiet -- ${generated}; then
+    echo >&2
+    echo "The checked-in wire types do not match the generator's output." >&2
+    echo "Either they were hand-edited, or the codegen/schema moved without a" >&2
+    echo "regeneration. Run 'just codegen' and commit the result." >&2
+    echo >&2
+    git --no-pager diff --stat -- ${generated} >&2
+    exit 1
+  fi
+  echo "Wire types match the schema."
+
+# Fail if any lockfile has drifted from its manifest.
+#
+# Three of them: the workspace, and the two excluded crates that carry their own.
+# No other job builds `--locked`, so a manifest bump with a stale lockfile is
+# otherwise invisible — Dependabot shipped exactly that (see .github/dependabot.yml)
+# and every job went green.
+[group: 'quality']
+lock-check:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  for dir in . crates/turbomcp-conformance crates/turbomcp-interop; do
+    if ! (cd "${dir}" && cargo metadata --locked --format-version 1 >/dev/null); then
+      echo >&2
+      echo "${dir}/Cargo.lock is out of date with its manifest." >&2
+      echo "Run 'cd ${dir} && cargo update --workspace' and commit the lockfile." >&2
+      exit 1
+    fi
+    echo "${dir}/Cargo.lock is in sync."
+  done
 
 # =============================================================================
 # Setup
@@ -167,21 +228,24 @@ build-all-features:
 [group: 'test']
 test:
   echo "Running comprehensive test suite..."
-  echo "Step 1/6: Running unit, integration, and doc tests (all features)..."
+  echo "Step 1/8: Running unit, integration, and doc tests (all features)..."
   cargo test --workspace --all-features
-  echo "Step 2/6: Running clippy on all crates, targets, and examples..."
+  echo "Step 2/8: Running clippy on all crates, targets, and examples..."
   cargo clippy {{workspace_flags}} --all-targets --all-features -- -D warnings
-  echo "Step 3/6: Verifying the no-default-features facade still lints..."
+  echo "Step 3/8: Verifying the no-default-features facade still lints..."
   cargo clippy -p turbomcp -- -D warnings
-  echo "Step 4/6: Testing non-default foundation configs (no_std core/protocol, no-simd codec)..."
+  echo "Step 4/8: Testing non-default foundation configs (no_std core/protocol, no-simd codec)..."
   cargo test -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features
-  echo "Step 5/7: Checking formatting on all code..."
+  echo "Step 5/8: Checking formatting on all code..."
   cargo fmt --all -- --check
-  echo "Step 6/7: Verifying wasm portability (no_std foundation, default + no-default)..."
+  echo "Step 6/8: Verifying wasm portability (no_std foundation, default + no-default)..."
   cargo build -p turbomcp-core -p turbomcp-protocol --target wasm32-unknown-unknown
   cargo build -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features --target wasm32-unknown-unknown
-  echo "Step 7/7: Building docs the way docs.rs does (nightly, --cfg docsrs)..."
+  echo "Step 7/8: Building docs the way docs.rs does (nightly, --cfg docsrs)..."
   just docs-rs
+  echo "Step 8/8: Checking generated artifacts still match their sources..."
+  just lock-check
+  just codegen-check
   echo "All tests, linting, and formatting checks passed!"
 
 # Run tests only (no linting/formatting)

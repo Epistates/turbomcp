@@ -233,6 +233,63 @@ jobs:
       with:
         command: check advisories bans licenses sources
 
+  drift:
+    name: Generated artifacts
+    runs-on: ubuntu-latest
+
+    # Two kinds of checked-in artifact have a generator, and nothing verified
+    # either still matched it. The wire types are `@generated` and CLAUDE.md says
+    # never to hand-edit them, but that was a convention with no enforcement
+    # behind it. The lockfiles are worse, because the failure already happened:
+    # Dependabot opened PRs that bumped the *workspace* manifest from an excluded
+    # crate's directory and left the root lockfile stale, and all ten jobs passed
+    # because none of them builds `--locked`.
+    steps:
+    - uses: actions/checkout@v7
+
+    # rustfmt because `just codegen` formats what it emits, and the checked-in
+    # types are formatted — without it every file would "differ".
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt
+
+    - name: Install just
+      uses: taiki-e/install-action@just
+
+    - name: Cache cargo registry
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-drift-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-drift-
+
+    # The justfile is the single source of truth for which upstream revision the
+    # wire types came from, so a local `just codegen` and this job cannot disagree
+    # about it. Same arrangement the coverage job uses for its thresholds.
+    - name: Resolve the pinned schema revision
+      id: schema
+      run: echo "ref=$(just --evaluate mcp_schema_ref)" >> "$GITHUB_OUTPUT"
+
+    - name: Check out the MCP schema
+      uses: actions/checkout@v7
+      with:
+        repository: modelcontextprotocol/modelcontextprotocol
+        ref: ${{ steps.schema.outputs.ref }}
+        path: mcp-schema
+        persist-credentials: false
+
+    - name: Wire types match the schema
+      env:
+        MCP_SCHEMA_ROOT: mcp-schema/schema
+      run: just codegen-check
+
+    - name: Lockfiles match the manifests
+      run: just lock-check
+
   wasm:
     name: WASM
     runs-on: ubuntu-latest
