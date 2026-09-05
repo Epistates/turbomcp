@@ -23,5 +23,5 @@ serde = { version = "1", features = ["derive"] }
 # preserve_order keeps generated output stable/reviewable across runs.
 serde_json = { version = "1", features = ["preserve_order"] }
 prettyplease = "0.2"
-syn = { version = "2", features = ["full", "parsing"] }
+syn = { version = "3", features = ["full", "parsing"] }
 anyhow = { workspace = true }
