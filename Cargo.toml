@@ -108,7 +108,7 @@ color-eyre = "0.6.5"
 # Observability and monitoring
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "tracing-log"] }
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 tracing-appender = "0.2"  # File-based logging with non-blocking I/O
 opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["tonic", "metrics", "logs"] }
