@@ -4,7 +4,7 @@ Where TurboMCP is going, and what it is deliberately not doing. No dates —
 this is maintained around a day job, and a date I can't keep is worse than none.
 Order within a section is roughly the order things will be picked up.
 
-Current release: **`4.0.0-alpha.2`**. The stable line is `3.x`.
+Current release: **`4.0.0-alpha.3`**. The stable line is `3.x`.
 
 ## Shipped
 

@@ -3371,7 +3371,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "axum",
  "criterion",
@@ -3402,7 +3402,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-auth"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "axum",
  "base64",
@@ -3423,7 +3423,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-client"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "async-trait",
  "eventsource-stream",
@@ -3444,7 +3444,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-codec"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "bytes",
  "serde",
@@ -3456,7 +3456,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-codegen"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -3469,7 +3469,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-core"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "hashbrown 0.17.1",
  "serde",
@@ -3479,14 +3479,14 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-ext-apps"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "turbomcp-core",
 ]
 
 [[package]]
 name = "turbomcp-ext-tasks"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "async-trait",
  "futures",
@@ -3505,7 +3505,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-macros"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3515,7 +3515,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-protocol"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3524,7 +3524,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-server"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "async-trait",
  "base64",
@@ -3547,7 +3547,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-service"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "base64",
  "futures",
@@ -3564,7 +3564,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-telemetry"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "futures",
  "opentelemetry",
@@ -3584,7 +3584,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-http"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "axum",
  "base64",
@@ -3611,7 +3611,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-stdio"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "serde_json",
  "thiserror 2.0.20",
@@ -3626,7 +3626,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-ws"
-version = "4.0.0-alpha.2"
+version = "4.0.0-alpha.3"
 dependencies = [
  "futures",
  "serde_json",

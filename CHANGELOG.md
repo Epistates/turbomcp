@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0-alpha.3] - 2026-09-07
+
+The client had never been measured. Scoring it against the official conformance
+suite found four defects, one of which broke every server-initiated request over
+HTTP against the reference implementation.
+
+### Fixed
+
+- **The client never opened the standalone server→client SSE stream.**
+  Streamable HTTP lets a server deliver messages it originates either inline on a
+  POST's stream or on the standalone `GET`. TurboMCP's server always does the
+  former, so every in-repo test passed; against a server that uses the standalone
+  stream, which is what the reference TypeScript SDK does, **every
+  `elicitation/create`, `sampling/createMessage` and `roots/list` over HTTP hung
+  until it timed out.** Testing both halves of one SDK against each other cannot
+  catch this by construction. The client now opens the stream as soon as a
+  stateful revision is negotiated, honours a server's `retry:` (capped), resumes
+  with `Last-Event-ID`, and stops permanently on 404/405/501.
+
+- **`notifications/initialized` went out without `MCP-Protocol-Version`.** The
+  transports spec requires it from the first post-`initialize` message onward.
+
+- **Protected Resource Metadata's `resource` was never validated** (RFC 9728
+  §3.3). The document names the authorization server, so anyone able to serve or
+  tamper with one chose where the client would authorize: a token-exfiltration
+  path. The declared `resource` must now cover the endpoint being used.
+
+- **The token endpoint always used `client_secret_basic`.** An authorization
+  server advertising only `client_secret_post` rejected the exchange outright.
+  The method is now chosen from `token_endpoint_auth_methods_supported`.
+
+- **Generated wire types no longer depend on where the schema sits on disk.**
+  The `@generated` header recorded the schema's path at generation time, so the
+  checked-in files were a function of the generating machine's directory layout.
+
+### Added
+
+- **`BearerSource`, and `HttpClientTransport::with_bearer` /
+  `with_bearer_source`.** `turbomcp-auth` has shipped the OAuth 2.1 client flow
+  since the enterprise track, and the HTTP transport had no way to send the token
+  it produced. The source is consulted per request rather than captured once,
+  because access tokens are short-lived by design and one refreshed out of band
+  has to take effect without rebuilding the transport and re-running the
+  handshake.
+
+- **The client half of the conformance suite**, scored in CI: 731 passing across
+  both revisions, including discovery and its metadata variants, dynamic
+  registration, PKCE, the RFC 9207 `iss` table both ways, scope step-up with
+  union-on-reauth, and re-registration when the resource moves to a different
+  authorization server.
+
+- **Cross-SDK interop on `2026-07-28`**, in both directions. The suite had only
+  ever run the legacy path, so the stateless revision was verified by nothing but
+  our own code on both ends.
+
+- **CI checks that generated artifacts still match their generators** — the wire
+  types against the pinned upstream schema, and the workspace lockfile against
+  its manifests. Both were conventions with nothing enforcing them.
+
+### Changed
+
+- **Dependency majors:** `tower-http` 0.7, `jsonwebtoken` 11, `syn` 3,
+  `prettyplease` 0.3, `typify` 0.7, and the OpenTelemetry crates to 0.32. No
+  public API moved. MSRV stays 1.88.
+
 ## [4.0.0-alpha.2] - 2026-08-30
 
 Correctness against the frozen `2026-07-28` spec, which `4.0.0-alpha.1` claimed

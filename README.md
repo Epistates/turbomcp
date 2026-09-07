@@ -8,7 +8,7 @@ A ground-up Rust SDK for the [Model Context Protocol](https://modelcontextprotoc
 both halves of the protocol, server **and** client — with a macro-driven,
 zero-boilerplate surface and strict spec compliance as a feature.
 
-> **Status: `4.0.0-alpha.2` — a prerelease for community testing.** v4 is a
+> **Status: `4.0.0-alpha.3` — a prerelease for community testing.** v4 is a
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
 > MSRV 1.88. It interoperates with the official Rust SDK in both directions, on
 > both revisions, and both halves are scored against the official MCP conformance
@@ -137,16 +137,19 @@ users need, so a typical dependency is just `turbomcp`.
 
 Compliance is tested, not asserted:
 
-- **Official conformance suite** — the vendored
-  `@modelcontextprotocol/conformance` harness drives a full-featured TurboMCP
-  server over Streamable HTTP: on the pinned stable harness (0.1.16),
-  **47 checks — 43 pass, 0 fail, 4 informational**; the next-generation
-  `0.2.0-alpha` harness (52 checks) also passes clean
+- **Official conformance suite, both halves** — the
+  `@modelcontextprotocol/conformance` harness runs in both directions on both
+  scored revisions. As the *server*, it drives a full-featured TurboMCP server
+  over Streamable HTTP: **236 checks, 227 pass, 0 fail, 9 informational**. As the
+  *client*, it stands up a deliberately awkward mock server per scenario and
+  referees what our client did on the wire: **731 pass, 0 unexpected failures**,
+  including the whole OAuth 2.1 surface. One baselined failure remains, an
+  upstream defect already fixed on their `main` but not yet released
   (`crates/turbomcp-conformance`).
 - **Cross-SDK interop** — a TurboMCP client drives an official-Rust-SDK
-  (rmcp 2.2) server and vice-versa, in-process
-  (`crates/turbomcp-interop`).
-- **≈520 tests across the workspace** (plus 86 more re-run against the
+  (rmcp 3.2) server and vice-versa, in-process, on `2025-11-25` *and* the
+  stateless `2026-07-28` (`crates/turbomcp-interop`).
+- **673 tests across the workspace** (plus 93 more re-run against the
   `no_std` foundation configs) — dual-version dispatch, transport hardening
   (Origin/auth/size caps/idle reaping), handler-panic containment, MRTR
   elicitation, tasks (including in-execution input), subscriptions, pagination,
