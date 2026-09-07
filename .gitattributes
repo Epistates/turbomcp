@@ -133,5 +133,16 @@ Cargo.lock text eol=lf diff
 *.yaml diff=yaml
 
 # Merge conflict resolution
-*.rs merge=ours
+#
+# There is deliberately no `merge` attribute for *.rs. It used to say
+# `merge=ours`, which resolves any conflict by keeping our side and silently
+# discarding theirs — on a repo that takes outside contributions, that quietly
+# drops a contributor's work mid-merge. It happened to be inert, because `ours`
+# is not a built-in driver and nothing here defines `merge.ours.driver`, so git
+# fell back to a normal text merge; anyone who defined that driver would have
+# armed it. Conflicts in source should be resolved by a person reading both
+# sides.
+#
+# Cargo.lock is the opposite case: line-merging two lockfiles produces a file
+# that resolves to neither input, so take the conflict and regenerate.
 Cargo.lock merge=binary
