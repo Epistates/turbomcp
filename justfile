@@ -132,24 +132,38 @@ refresh-locks:
   echo "  just conformance"
   echo "  just interop"
 
-# Three lockfiles: the workspace, and the two excluded crates that carry their
-# own. No other job builds `--locked`, so a manifest bump with a stale lockfile
-# is otherwise invisible — Dependabot shipped exactly that (see
-# .github/dependabot.yml) and every job went green.
+# Only the workspace lockfile is a hard gate, and the asymmetry is deliberate.
+#
+# It is a source artifact: it pins what we publish and what every job builds, and
+# leaving it stale behind a manifest bump is the exact failure this was written
+# for (see .github/dependabot.yml). No other job builds `--locked`, so nothing
+# else would notice.
+#
+# The two excluded crates' lockfiles are *derived*. Both crates depend on the
+# workspace by path, so any root dependency bump invalidates them by
+# construction, and Dependabot cannot fix them from the root ecosystem. Cargo
+# also re-resolves them on the next build, which is how both suites already run.
+# Gating them would turn every shared-dependency bump into a two-commit chore for
+# no safety, so they warn and point at `just refresh-locks`.
 
-# Fail if any of the three lockfiles has drifted from its manifest.
+# Fail if the workspace lockfile has drifted; warn for the excluded crates.
 [group: 'quality']
 lock-check:
   #!/usr/bin/env bash
   set -euo pipefail
-  for dir in . crates/turbomcp-conformance crates/turbomcp-interop; do
-    if ! (cd "${dir}" && cargo metadata --locked --format-version 1 >/dev/null); then
-      echo >&2
-      echo "${dir}/Cargo.lock is out of date with its manifest." >&2
-      echo "Run 'cd ${dir} && cargo update --workspace' and commit the lockfile." >&2
-      exit 1
+  if ! cargo metadata --locked --format-version 1 >/dev/null; then
+    echo >&2
+    echo "Cargo.lock is out of date with the workspace manifests." >&2
+    echo "Run 'cargo update --workspace' and commit the lockfile." >&2
+    exit 1
+  fi
+  echo "Cargo.lock is in sync."
+  for dir in crates/turbomcp-conformance crates/turbomcp-interop; do
+    if (cd "${dir}" && cargo metadata --locked --format-version 1 >/dev/null 2>&1); then
+      echo "${dir}/Cargo.lock is in sync."
+    else
+      echo "note: ${dir}/Cargo.lock trails its manifest. Refresh with 'just refresh-locks'."
     fi
-    echo "${dir}/Cargo.lock is in sync."
   done
 
 # =============================================================================
