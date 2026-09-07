@@ -14,13 +14,26 @@
 //!
 //! ## What is baselined, and why
 //!
-//! One entry: **`sse-retry`**. Its mock server hard-codes `protocolVersion:
-//! "2025-03-26"` in the initialize response. TurboMCP does not serve that
-//! revision, and the lifecycle spec says to disconnect rather than speak on in
-//! shapes the peer never agreed to — so the client refuses, correctly, and the
-//! scenario is unreachable by design rather than by defect. Serving
-//! `2025-03-26` is the only thing that would change this, and
-//! [`VERSIONING.md`] says we won't.
+//! One entry: **`sse-retry`**, and it is an upstream defect that upstream has
+//! already fixed.
+//!
+//! The scenario registers itself `introducedIn: "2025-11-25"`, but its mock
+//! answers `initialize` with `protocolVersion: "2025-03-26"`. TurboMCP does not
+//! serve that revision, and the lifecycle spec says to disconnect rather than
+//! speak on in shapes the peer never agreed to, so the client refuses. Only the
+//! `initialize` POST ever reaches the mock, and `client-sse-graceful-reconnect`
+//! then reports that we never reconnected. Any client that dropped `2025-03-26`
+//! is in the same position; the harness's own reference client passes because
+//! the TypeScript SDK still speaks it.
+//!
+//! This is the same defect as [conformance#412], which was fixed for the
+//! *server* runner. `src/scenarios/client/sse-retry.ts` on upstream `main` now
+//! sends `2025-11-25`, but no release carries it yet: `0.2.0-alpha.11` is the
+//! newest published and still sends `2025-03-26`. **When [`CONFORMANCE_PKG`] is
+//! bumped past it, drop this baseline entry** — the suite fails on a stale
+//! baseline, so a forgotten entry is caught rather than silently tolerated.
+//!
+//! [conformance#412]: https://github.com/modelcontextprotocol/conformance/issues/412
 //!
 //! Everything else passes: 280 checks on `2025-11-25` and 451 on `2026-07-28`,
 //! including the full OAuth 2.1 surface — discovery and its metadata variants,
@@ -41,8 +54,6 @@
 //! wants to see `Mcp-Method` on `initialize` and `notifications/initialized`,
 //! and `2026-07-28` has neither: it replaced that handshake with a stateless
 //! `server/discover`. Nothing this runner does can produce them.
-//!
-//! [`VERSIONING.md`]: https://github.com/Epistates/turbomcp/blob/main/VERSIONING.md
 //!
 //! Requirements: `pnpm` on `PATH`; skipped without it unless
 //! `TURBOMCP_CONFORMANCE_STRICT` is set. See `conformance_server.rs`.

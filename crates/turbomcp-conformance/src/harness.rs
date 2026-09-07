@@ -17,6 +17,11 @@ use std::path::{Path, PathBuf};
 /// predates the `2026-07-28` freeze entirely and has no requirement set for it
 /// — pinning to it would mean the wire we actually serve as `LATEST` is the one
 /// wire nothing checks. Revisit when a stable 0.2.x ships.
+///
+/// When bumping this, also try deleting the one entry in
+/// `conformance-baseline-client.json`: it baselines an upstream defect that is
+/// already fixed on their `main` but not in any published version. See the
+/// module docs on `tests/conformance_client.rs`.
 pub const CONFORMANCE_PKG: &str = "@modelcontextprotocol/conformance@0.2.0-alpha.11";
 
 /// Set this to turn the "no Node toolchain" skip into a failure.
