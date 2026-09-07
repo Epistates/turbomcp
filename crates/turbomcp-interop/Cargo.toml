@@ -21,7 +21,7 @@ turbomcp-core = { path = "../turbomcp-core", features = ["std"] }
 # The official Rust MCP SDK, from crates.io — interop is tested against the real
 # released SDK, not a local checkout. rmcp's LATEST is 2025-11-25, which is
 # turbomcp's legacy path; interop runs there.
-rmcp = { version = "2.2", features = ["client", "server", "macros"] }
+rmcp = { version = "3.2", features = ["client", "server", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
