@@ -10,10 +10,10 @@ zero-boilerplate surface and strict spec compliance as a feature.
 
 > **Status: `4.0.0-alpha.2` — a prerelease for community testing.** v4 is a
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
-> MSRV 1.88. It interoperates with the official Rust SDK in both directions,
-> and passes the official MCP conformance suite on **both** revisions it is
-> scored against — 236 checks, 227 pass, 0 fail, 9 informational, run against
-> one live server. All three advertised revisions (`2025-06-18`, `2025-11-25`,
+> MSRV 1.88. It interoperates with the official Rust SDK in both directions, on
+> both revisions, and both halves are scored against the official MCP conformance
+> suite: the server at 236 checks, 227 pass, 0 fail, and the client at 731 pass,
+> 0 unexpected fail. All three advertised revisions (`2025-06-18`, `2025-11-25`,
 > `2026-07-28`) are dated and frozen; `2026-07-28` is generated from the
 > released `schema/2026-07-28/`, not the RC.
 > **Found something broken or unergonomic? Please open an issue.**
