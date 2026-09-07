@@ -173,7 +173,30 @@ fn strip_run_suffix(dir_name: &str) -> &str {
     let body = dir_name.strip_prefix("server-").unwrap_or(dir_name);
     // `<scenario>-<ISO timestamp>`; the timestamp's own dashes mean splitting
     // from the right on the first `-` that starts a 4-digit year.
-    body.rsplit_once("-20").map_or(body, |(head, _ts)| head)
+    // `<scenario>-<YYYY-MM-DD>T<HH-MM-SS>-<mmm>Z`, anchored on the year.
+    //
+    // This used to split on the last literal `-20`, which the timestamp's own
+    // later fields can also contain: a `-20x` millisecond, a 20th minute or a
+    // 20th second. When that happened the split landed inside the timestamp and
+    // the scenario kept most of it, so the check id changed shape from one run
+    // to the next and no baseline entry could match it. A baselined expected
+    // failure then reports as an unexpected one, which reads as a flaky suite
+    // rather than as this.
+    //
+    // Scanning from the right matters: scenario names carry year-shaped runs of
+    // their own (`json-schema-2020-12-preservation`, `sep-2243-...`), and only
+    // the last one is the timestamp.
+    body.char_indices()
+        .rev()
+        .find(|&(i, c)| c == '-' && starts_with_year(body, i + 1))
+        .map_or(body, |(i, _)| &body[..i])
+}
+
+/// Does `s` read `YYYY-` at `start`? Four ASCII digits then a dash.
+fn starts_with_year(s: &str, start: usize) -> bool {
+    s.as_bytes()
+        .get(start..start + 5)
+        .is_some_and(|w| w[..4].iter().all(u8::is_ascii_digit) && w[4] == b'-')
 }
 
 /// Extract check objects from a `checks.json` payload. The harness writes a
@@ -329,5 +352,48 @@ pub fn assert_conformance(
             "only {n} passing {suite} checks for {spec_version} (floor {floor}) — \
              the harness ran but produced almost nothing, which is a broken run, not a pass",
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_run_suffix;
+
+    #[test]
+    fn strips_the_run_timestamp() {
+        assert_eq!(
+            strip_run_suffix("http-standard-headers-2026-09-07T19-24-24-390Z"),
+            "http-standard-headers"
+        );
+        assert_eq!(
+            strip_run_suffix("server-tools_call-2026-09-07T19-24-24-390Z"),
+            "tools_call"
+        );
+    }
+
+    #[test]
+    fn strips_it_when_the_timestamp_also_contains_a_year_prefix() {
+        // The cases the previous `rsplit_once("-20")` split in the wrong place,
+        // leaving most of the timestamp attached and the baseline key unmatchable.
+        for dir in [
+            "http-standard-headers-2026-09-07T19-29-08-204Z", // `-20x` milliseconds
+            "http-standard-headers-2026-09-07T19-20-08-390Z", // 20th minute
+            "http-standard-headers-2026-09-07T19-29-20-390Z", // 20th second
+        ] {
+            assert_eq!(strip_run_suffix(dir), "http-standard-headers", "{dir}");
+        }
+    }
+
+    #[test]
+    fn keeps_year_shaped_runs_inside_the_scenario_name() {
+        assert_eq!(
+            strip_run_suffix("json-schema-2020-12-preservation-2026-09-07T19-24-24-390Z"),
+            "json-schema-2020-12-preservation"
+        );
+    }
+
+    #[test]
+    fn leaves_a_name_without_a_timestamp_alone() {
+        assert_eq!(strip_run_suffix("initialize"), "initialize");
     }
 }
