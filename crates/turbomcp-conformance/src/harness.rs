@@ -65,7 +65,16 @@ pub enum Disposition {
     Pass,
     /// `FAILURE` — a failing assertion (counts against us unless baselined).
     Fail,
-    /// `INFO` / `WARNING` — informational; neither pass nor fail.
+    /// `SKIPPED` — the harness had nothing to assert against, almost always
+    /// because our runner never exercised the path the check watches.
+    ///
+    /// Kept apart from [`Info`](Disposition::Info) deliberately. A skip is not a
+    /// pass, and folding the two hid eleven unscored checks behind a summary
+    /// that read "0 failed": the SEP-2243 header mirror was only ever measured
+    /// on tools methods, and three SEP-2575 capability checks never ran at all.
+    Skip,
+    /// `INFO` / `WARNING` — informational; neither pass nor fail. Mostly the
+    /// harness's own wire trace (`incoming-request` / `outgoing-response`).
     Info,
 }
 
@@ -102,6 +111,12 @@ impl CheckResult {
     #[must_use]
     pub fn is_pass(&self) -> bool {
         self.disposition == Disposition::Pass
+    }
+
+    /// Did the harness skip this check for want of anything to assert against?
+    #[must_use]
+    pub fn is_skip(&self) -> bool {
+        self.disposition == Disposition::Skip
     }
 }
 
@@ -233,6 +248,7 @@ fn collect_checks(
         let disposition = match status.as_str() {
             "SUCCESS" | "PASS" | "PASSED" | "OK" => Disposition::Pass,
             "FAILURE" | "FAIL" | "FAILED" | "ERROR" => Disposition::Fail,
+            "SKIPPED" | "SKIP" => Disposition::Skip,
             _ => Disposition::Info, // INFO / WARNING / anything else: not scored.
         };
 
@@ -284,7 +300,8 @@ pub fn assert_conformance(
 ) {
     let passed: Vec<&CheckResult> = checks.iter().filter(|c| c.is_pass()).collect();
     let failed: Vec<&CheckResult> = checks.iter().filter(|c| c.is_fail()).collect();
-    let info = checks.len() - passed.len() - failed.len();
+    let skipped: Vec<&CheckResult> = checks.iter().filter(|c| c.is_skip()).collect();
+    let info = checks.len() - passed.len() - failed.len() - skipped.len();
 
     let unexpected: Vec<&&CheckResult> = failed
         .iter()
@@ -299,13 +316,14 @@ pub fn assert_conformance(
         .collect();
 
     eprintln!(
-        "\n=== TurboMCP {suite} ({}) ===\n  checks: {} total, {} passed, {} failed ({} expected, {} unexpected), {info} info\n  baseline entries: {} ({} stale)",
+        "\n=== TurboMCP {suite} ({}) ===\n  checks: {} total, {} passed, {} failed ({} expected, {} unexpected), {} skipped, {info} info\n  baseline entries: {} ({} stale)",
         spec_versions.join(" + "),
         checks.len(),
         passed.len(),
         failed.len(),
         failed.len() - unexpected.len(),
         unexpected.len(),
+        skipped.len(),
         baseline.len(),
         stale.len(),
     );
@@ -317,6 +335,23 @@ pub fn assert_conformance(
         .collect();
     for (spec_version, n) in &per_version {
         eprintln!("  {spec_version}: {n} passed (floor {floor})");
+    }
+
+    // Listed, not just counted. A skip means the runner never drove the path the
+    // check watches, so the fix is on our side and invisible unless named.
+    //
+    // Keyed on the message too, not just the id: one check id skips once per
+    // method it could not observe, and collapsing on the id alone would show one
+    // of them and silently drop the rest.
+    if !skipped.is_empty() {
+        eprintln!("\n--- skipped checks (runner never exercised these) ---");
+        let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+        for c in &skipped {
+            let message = c.message.clone().unwrap_or_default();
+            if seen.insert((c.id(), message.clone())) {
+                eprintln!("  {}  {message}", c.id());
+            }
+        }
     }
 
     if !failed.is_empty() {

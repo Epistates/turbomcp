@@ -84,6 +84,10 @@ impl ClientHandler for Basic {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
     }
+
+    async fn create_message(&self, _params: Value) -> turbomcp::client::ClientResult<Value> {
+        Ok(sample_message())
+    }
 }
 
 /// Accepts every elicitation, filling the requested form from its own schema.
@@ -111,13 +115,42 @@ impl ClientHandler for AutoAnswer {
         }
         neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
     }
+
+    async fn create_message(&self, _params: Value) -> turbomcp::client::ClientResult<Value> {
+        Ok(sample_message())
+    }
 }
 
-/// The capability set a client must advertise to be *offered* elicitation at
-/// all. `formats: ["form"]` is the form-mode declaration both wires use.
-fn elicitation_capabilities() -> Value {
+/// The capability set this client advertises.
+///
+/// All three of elicitation, roots and sampling. `formats: ["form"]` is the
+/// form-mode elicitation declaration both wires use.
+///
+/// Roots and sampling are here because SEP-2575 scores whether a client
+/// *declares* what it can service, and a capability we stay quiet about is a
+/// check the harness skips rather than grades — three of them, invisible behind
+/// a summary that read "0 failed". Each is backed by a real answer:
+/// [`list_roots`](ClientHandler::list_roots) defaults to an empty list, and
+/// [`sample_message`] answers `sampling/createMessage`. Declaring one we could
+/// not service would trade a skip for a lie.
+fn client_capabilities() -> Value {
     serde_json::json!({
-        "elicitation": { "formats": ["form"] }
+        "elicitation": { "formats": ["form"] },
+        "roots": {},
+        "sampling": {}
+    })
+}
+
+/// A fixed, obviously synthetic completion for `sampling/createMessage`.
+///
+/// The scenarios score that we answered and the shape we answered in, not the
+/// text, so there is nothing to gain from pretending to have a model here.
+fn sample_message() -> Value {
+    serde_json::json!({
+        "role": "assistant",
+        "content": { "type": "text", "text": "conformance-client sampling stub" },
+        "model": "turbomcp-conformance-stub",
+        "stopReason": "endTurn"
     })
 }
 
@@ -166,7 +199,10 @@ async fn connect(url: &str, handler: impl ClientHandler, capabilities: Option<Va
 /// we *didn't* do something while listing (`json-schema-ref-no-deref` passes
 /// when we never fetch the network `$ref` in a tool's schema).
 async fn run_handshake_only(url: &str) {
-    let client = connect(url, Basic, None).await;
+    // Capabilities are declared even here, where nothing will exercise them:
+    // `request-metadata` scores the *declaration* itself (SEP-2575), and with
+    // `None` those three checks were skipped rather than graded.
+    let client = connect(url, Basic, Some(client_capabilities())).await;
     report_tools(&client).await;
     close(client).await;
 }
@@ -179,11 +215,11 @@ async fn run_handshake_only(url: &str) {
 /// `MCP_CONFORMANCE_CONTEXT` only for scenarios that ask for something
 /// specific, so a scenario refereeing a plain `tools/call` (`add_numbers`
 /// wants two *numbers*) is unreachable with empty arguments.
-async fn run_tool_calls(url: &str, context: &ScenarioContext) {
+async fn run_tool_calls(url: &str, context: &ScenarioContext, all_methods: bool) {
     // Elicitation is advertised unconditionally: a tool call is exactly where a
     // server asks the client something back, and the MRTR scenarios only reach
     // their checks if we are eligible to be asked.
-    let client = connect(url, AutoAnswer, Some(elicitation_capabilities())).await;
+    let client = connect(url, AutoAnswer, Some(client_capabilities())).await;
 
     // Always list first, even when the scenario dictates the calls: listing is
     // what teaches the client which arguments a tool marks `x-mcp-header`, and
@@ -208,7 +244,55 @@ async fn run_tool_calls(url: &str, context: &ScenarioContext) {
         }
     }
 
+    if all_methods {
+        exercise_prompts_and_resources(&client).await;
+    }
+
     close(client).await;
+}
+
+/// Drive `prompts/list`, `prompts/get`, `resources/list` and `resources/read`
+/// once each.
+///
+/// SEP-2243 requires `Mcp-Method` on every request and `Mcp-Name` on the ones
+/// that name a thing, and the harness checks that per method. It can only check
+/// the methods it saw, so while this binary only ever called tools, eight of
+/// those checks reported `SKIPPED` and were counted as "info" — the header
+/// mirror was verified for `tools/*` and assumed for everything else.
+///
+/// Failures are logged, not fatal: a scenario's mock server is free to serve no
+/// prompts or no resources, and that is not this binary misbehaving.
+async fn exercise_prompts_and_resources(client: &Client) {
+    match client.list_all_prompts().await {
+        Ok(prompts) => {
+            eprintln!("prompts: {}", prompts.len());
+            if let Some(prompt) = prompts.first() {
+                let arguments: Map<String, Value> = prompt
+                    .arguments
+                    .iter()
+                    .map(|a| (a.name.clone(), Value::String("conformance".into())))
+                    .collect();
+                match client.get_prompt(&prompt.name, arguments).await {
+                    Ok(_) => eprintln!("got prompt {}", prompt.name),
+                    Err(err) => eprintln!("get_prompt {} failed: {err}", prompt.name),
+                }
+            }
+        }
+        Err(err) => eprintln!("list_prompts failed: {err}"),
+    }
+
+    match client.list_all_resources().await {
+        Ok(resources) => {
+            eprintln!("resources: {}", resources.len());
+            if let Some(resource) = resources.first() {
+                match client.read_resource(&resource.uri).await {
+                    Ok(_) => eprintln!("read resource {}", resource.uri),
+                    Err(err) => eprintln!("read_resource {} failed: {err}", resource.uri),
+                }
+            }
+        }
+        Err(err) => eprintln!("list_resources failed: {err}"),
+    }
 }
 
 /// List tools, then hand one tool's `inputSchema` straight back to the server
@@ -519,7 +603,7 @@ async fn session(url: &str, access_token: &str) -> Result<(), Refusal> {
     let client = ClientBuilder::new("turbomcp-conformance-client", env!("CARGO_PKG_VERSION"))
         .with_handler(AutoAnswer)
         .with_connect_mode(connect_mode())
-        .with_capabilities(elicitation_capabilities())
+        .with_capabilities(client_capabilities())
         .connect(transport)
         .await
         .map_err(|e| Refusal {
@@ -759,12 +843,16 @@ async fn main() -> ExitCode {
         // Scenarios that need a `tools/call` on the wire to referee — including
         // the MRTR ones, whose whole subject is what the client does with an
         // `input_required` result it gets back from one.
-        "tools_call"
-        | "elicitation-sep1034-client-defaults"
-        | "sep-2322-client-request-state"
-        | "http-standard-headers"
-        | "http-custom-headers"
-        | "http-invalid-tool-headers" => run_tool_calls(&url, &context).await,
+        "tools_call" | "elicitation-sep1034-client-defaults" | "sep-2322-client-request-state" => {
+            run_tool_calls(&url, &context, false).await
+        }
+
+        // The header scenarios referee SEP-2243 per method, so they need more
+        // than `tools/*` on the wire or the prompts and resources checks have
+        // nothing to look at and report `SKIPPED`.
+        "http-standard-headers" | "http-custom-headers" | "http-invalid-tool-headers" => {
+            run_tool_calls(&url, &context, true).await;
+        }
 
         "sse-retry" => run_sse_retry(&url).await,
 

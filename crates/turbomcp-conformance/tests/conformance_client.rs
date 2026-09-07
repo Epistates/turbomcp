@@ -22,11 +22,25 @@
 //! `2025-03-26` is the only thing that would change this, and
 //! [`VERSIONING.md`] says we won't.
 //!
-//! Everything else passes: 280 checks on `2025-11-25` and 442 on `2026-07-28`,
+//! Everything else passes: 280 checks on `2025-11-25` and 451 on `2026-07-28`,
 //! including the full OAuth 2.1 surface — discovery and its metadata variants,
 //! dynamic registration, PKCE, the RFC 9207 `iss` table (positive *and*
 //! negative), scope step-up with union-on-reauth, the retry limit, and
 //! re-registration when the resource moves to a different authorization server.
+//!
+//! ## What is skipped, and why that number matters
+//!
+//! A skipped check is one the harness had nothing to assert against, because
+//! this runner never drove the path it watches. It is not a pass, and it used to
+//! be counted as "info" — which hid eleven of them behind a summary reading
+//! "0 failed". Closing that gap is what took the `2026-07-28` count from 442 to
+//! 451: the SEP-2243 header mirror had only ever been measured on `tools/*`, and
+//! three SEP-2575 capability declarations were never made at all.
+//!
+//! Two skips remain, both structural. `sep-2243-client-includes-standard-headers`
+//! wants to see `Mcp-Method` on `initialize` and `notifications/initialized`,
+//! and `2026-07-28` has neither: it replaced that handshake with a stateless
+//! `server/discover`. Nothing this runner does can produce them.
 //!
 //! [`VERSIONING.md`]: https://github.com/Epistates/turbomcp/blob/main/VERSIONING.md
 //!
