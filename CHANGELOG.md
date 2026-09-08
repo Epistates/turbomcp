@@ -42,6 +42,15 @@ implemented its half, and the client had never implemented the other.
   so a client that installed no handler at all still answers, and a busy handler
   cannot delay the one message whose entire purpose is measuring liveness.
 
+- **Subscriptions from departed clients accumulated without bound.** Both
+  registries — the core one and the Tasks extension's — reclaimed a dead
+  connection only when something was published to it. A server whose resources
+  never change, or a task that never changes status, never publishes, so every
+  client that subscribed and went away left an entry behind for the life of the
+  process. Pruning now also runs when a subscription is recorded, which is the
+  moment the map grows. A missing writer is what "dead" means here, so a live
+  subscription is never disturbed.
+
 - **The client never opened the standalone server→client SSE stream.**
   Streamable HTTP lets a server deliver messages it originates either inline on a
   POST's stream or on the standalone `GET`. TurboMCP's server always does the

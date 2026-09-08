@@ -8,7 +8,9 @@
 //! originating subscription's id verbatim in
 //! `_meta["io.modelcontextprotocol/subscriptionId"]` (a spec MUST for
 //! notifications delivered via a `subscriptions/listen` stream). A connection
-//! whose writer is gone is pruned on the spot.
+//! whose writer is gone is pruned on the spot — both when a push finds it
+//! missing and when a new subscription is recorded, since a task that never
+//! changes status is never pushed to and so never revisited.
 //!
 //! Task-status notifications are spec-**optional** — clients MUST be able to
 //! poll `tasks/get` regardless — so a missing subscription simply means no push.
@@ -58,6 +60,16 @@ impl TaskSubscriptions {
             subscription_id: subscription_id.clone(),
         };
         let mut map = self.lock();
+        // Reclaim subscribers whose connection has since closed. `push_status`
+        // does this too, but only for tasks that actually change: a subscriber
+        // to a task that then goes quiet is never revisited, so without this a
+        // server accumulates one entry per client that ever subscribed and went
+        // away. A missing writer is what dead means, so a live subscriber is
+        // never disturbed.
+        map.retain(|_, subs| {
+            subs.retain(|s| outbound::writer(&s.connection).is_some());
+            !subs.is_empty()
+        });
         for task_id in task_ids {
             let subs = map.entry(task_id.clone()).or_default();
             if !subs.contains(&subscriber) {
@@ -139,4 +151,70 @@ fn stamp_subscription_id(mut params: Value, id: &RequestId) -> Value {
         params = json!({ "_meta": { SUBSCRIPTION_ID_KEY: id_value } });
     }
     params
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task_ids(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("task-{i}")).collect()
+    }
+
+    /// Pruning only when a task's status changes leaves subscribers to a task
+    /// that then goes quiet with nothing to reclaim on. Subscribing is where
+    /// the map grows, so it is where the departed are cleared.
+    #[test]
+    fn subscribing_reclaims_the_connections_that_have_since_gone() {
+        let subs = TaskSubscriptions::default();
+        for i in 0..25 {
+            subs.subscribe(
+                &format!("gone-{i}"),
+                &RequestId::from(i64::from(i)),
+                &task_ids(2),
+            );
+        }
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let _guard = outbound::register("tasks-still-here", tx);
+        subs.subscribe("tasks-still-here", &RequestId::from(99i64), &task_ids(1));
+
+        let map = subs.lock();
+        assert_eq!(
+            map.values().flatten().count(),
+            1,
+            "subscribers whose writers are gone must not outlive them"
+        );
+        assert_eq!(map["task-0"][0].connection, "tasks-still-here");
+    }
+
+    /// The same subscriber listening twice is recorded once, so a client that
+    /// re-subscribes cannot inflate the fan-out for a task.
+    #[test]
+    fn subscribing_twice_records_one_subscriber() {
+        let subs = TaskSubscriptions::default();
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let _guard = outbound::register("tasks-dup", tx);
+
+        subs.subscribe("tasks-dup", &RequestId::from(1i64), &task_ids(1));
+        subs.subscribe("tasks-dup", &RequestId::from(1i64), &task_ids(1));
+
+        assert_eq!(subs.subscribers("task-0").len(), 1);
+    }
+
+    #[test]
+    fn dropping_a_connection_reclaims_its_empty_tasks() {
+        let subs = TaskSubscriptions::default();
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let _guard = outbound::register("tasks-drop", tx);
+
+        subs.subscribe("tasks-drop", &RequestId::from(1i64), &task_ids(3));
+        assert_eq!(subs.lock().len(), 3);
+
+        subs.drop_connection("tasks-drop");
+        assert!(
+            subs.lock().is_empty(),
+            "a task with no subscribers left keeps no entry"
+        );
+    }
 }

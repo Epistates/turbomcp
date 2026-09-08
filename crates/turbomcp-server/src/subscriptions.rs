@@ -6,7 +6,10 @@
 //! client didn't opt in to). Delivery resolves the connection's ordered writer
 //! lazily via [`turbomcp_service::outbound`] — a missing writer means the
 //! connection closed, and the subscription is pruned on the spot (on stdio the
-//! server holds no subscription state across reconnections, per spec).
+//! server holds no subscription state across reconnections, per spec). Pruning
+//! also runs when a *new* subscription is recorded, because a server whose data
+//! never changes never publishes and would otherwise keep every subscription
+//! any departed client ever opened.
 //!
 //! **Legacy (`2025-11-25`):** subscriptions are per *session* —
 //! `resources/subscribe` adds a URI; `*_list_changed` goes to every live
@@ -101,8 +104,16 @@ impl SubscriptionRegistry {
         id: &RequestId,
         filter: v0728::SubscriptionFilter,
     ) {
-        self.lock()
-            .insert((connection.to_owned(), id.clone()), filter);
+        let mut live = self.lock();
+        // Reclaim subscriptions whose connection has since closed. `publish`
+        // does this too, but a server whose data never changes never publishes,
+        // and would otherwise accumulate one entry per client that ever
+        // subscribed and went away. Subscribing is where the map grows, so it
+        // is also where it shrinks; a missing writer *is* what dead means, so
+        // this can never disturb a live subscription. O(n) under a lock, but n
+        // is the number of open subscriptions and a listen is a rare event.
+        live.retain(|(conn, _), _| outbound::writer(conn).is_some());
+        live.insert((connection.to_owned(), id.clone()), filter);
     }
 
     /// Drop the subscription opened by `(connection, id)`, if any. Wired to
@@ -500,6 +511,38 @@ mod tests {
         assert!(
             !reg.remove("never-registered", &RequestId::from(1i64)),
             "publish should have pruned the dead subscription"
+        );
+    }
+
+    /// Pruning only on publish leaves a server whose data never changes with
+    /// nothing to reclaim on: clients that subscribe and vanish accumulate.
+    /// Subscribing is itself the moment the map grows, so it is also where the
+    /// dead entries go — no live subscription is ever disturbed, because a
+    /// writer that is gone is what "dead" means here.
+    #[tokio::test]
+    async fn subscribing_reclaims_the_connections_that_have_since_gone() {
+        let reg = Arc::new(SubscriptionRegistry::default());
+        for i in 0..50 {
+            reg.insert(
+                &format!("gone-{i}"),
+                &RequestId::from(i64::from(i)),
+                filter(true, &[]),
+            );
+        }
+
+        // One live subscriber, arriving after the others have gone.
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let _guard = outbound::register("still-here", tx);
+        reg.insert("still-here", &RequestId::from(99i64), filter(true, &[]));
+
+        assert_eq!(
+            reg.lock().len(),
+            1,
+            "50 subscriptions whose writers are gone must not outlive them"
+        );
+        assert!(
+            reg.remove("still-here", &RequestId::from(99i64)),
+            "the live subscription survives the sweep"
         );
     }
 
