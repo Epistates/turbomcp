@@ -128,6 +128,13 @@ impl ClientBuilder {
     }
 
     /// Set the per-request timeout (default 60s).
+    ///
+    /// Elapsing cancels the request on the server as well as failing it here,
+    /// so a handler stops working rather than finishing an answer no one will
+    /// read. Dropping a call's future does the same, which makes racing one
+    /// against your own deadline safe. The transport decides the mechanism:
+    /// `notifications/cancelled` on stdio and WebSocket, closing the request's
+    /// response stream on HTTP.
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;

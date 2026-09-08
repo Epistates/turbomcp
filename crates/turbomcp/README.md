@@ -32,7 +32,11 @@ zero-boilerplate surface and strict spec compliance as a feature.
 - **The client too.** A typed `Client` runs the handshake, negotiates the
   version, and speaks the same neutral API — interoperating with the official
   Rust SDK (rmcp) both directions. `call_tool` transparently drives task-shaped
-  results (including mid-task `input_required`) to completion.
+  results (including mid-task `input_required`) to completion. Giving up on a
+  call — `with_timeout(…)` elapsing, or your own `select!` dropping the future —
+  cancels it on the server rather than only locally, in whichever way the
+  transport defines: `notifications/cancelled` on stdio and WebSocket, closing
+  the request's stream on HTTP.
 - **Progressive disclosure.** `with_visibility(…)` decides per caller which
   components exist — by tag, by the scopes a tool declares, or by any closure
   you write. Hidden means *unreachable*, not merely unlisted, and refused
