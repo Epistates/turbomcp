@@ -3,6 +3,10 @@
 //! silent server yields `Timeout`, a response bearing an unknown id is ignored
 //! without disturbing correlation, and a garbage frame ends the connection
 //! (pending requests again fail `Closed`).
+//!
+//! Abandoning a request is also a wire event, not just a local one: whether the
+//! client gave up on its own timeout or its caller dropped the future, the
+//! server is told with `notifications/cancelled` so it can stop working.
 
 #![cfg(feature = "client")]
 
@@ -10,6 +14,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
+use tokio::sync::mpsc;
 use turbomcp::SerdeJsonCodec;
 use turbomcp::client::{Client, ClientBuilder, ClientError, ConnectMode};
 use turbomcp_transport_stdio::LineTransport;
@@ -25,16 +30,31 @@ enum OnList {
     UnknownIdFirst,
     /// Write a non-JSON line.
     Garbage,
+    /// Send the client a `ping` request before answering, then answer.
+    PingFirst,
 }
 
 /// A hand-scripted draft server: answers `server/discover`, then applies
-/// `behavior` to the first `tools/list`.
-fn spawn_scripted_server(server_io: tokio::io::DuplexStream, behavior: OnList) {
+/// `behavior` to the first `tools/list`. Every frame the client sends is
+/// mirrored to `seen`, so a test can assert on what went *out* as well as on
+/// what the call returned.
+fn spawn_scripted_server(
+    server_io: tokio::io::DuplexStream,
+    behavior: OnList,
+    seen: Option<mpsc::UnboundedSender<Value>>,
+) {
     tokio::spawn(async move {
         let (rd, mut wr) = split(server_io);
         let mut lines = BufReader::new(rd).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             let frame: Value = serde_json::from_str(&line).expect("valid json from client");
+            if let Some(seen) = &seen {
+                let _ = seen.send(frame.clone());
+            }
+            // Notifications carry no id and expect no answer.
+            if frame.get("id").is_none() {
+                continue;
+            }
             let id = frame.get("id").cloned().unwrap_or(Value::Null);
             let result = match frame.get("method").and_then(Value::as_str) {
                 Some("server/discover") => json!({
@@ -42,7 +62,19 @@ fn spawn_scripted_server(server_io: tokio::io::DuplexStream, behavior: OnList) {
                     "supportedVersions": ["2026-07-28"],
                     "resultType": "complete", "cacheScope": "private", "ttlMs": 0
                 }),
+                // The stateful handshake, for the revisions that have one.
+                Some("initialize") => json!({
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "robustness-mock", "version": "1.0.0" },
+                }),
                 Some("tools/list") => match behavior {
+                    OnList::PingFirst => {
+                        let ping =
+                            json!({ "jsonrpc": "2.0", "id": "srv-ping-1", "method": "ping" });
+                        wr.write_all(format!("{ping}\n").as_bytes()).await.unwrap();
+                        json!({ "tools": [] })
+                    }
                     OnList::DropPipe => return, // drops rd + wr: EOF on both halves
                     OnList::StaySilent => continue,
                     OnList::Garbage => {
@@ -68,17 +100,55 @@ fn spawn_scripted_server(server_io: tokio::io::DuplexStream, behavior: OnList) {
 }
 
 async fn connect(behavior: OnList, request_timeout: Duration) -> Client {
+    connect_observed(behavior, ConnectMode::Modern, request_timeout)
+        .await
+        .0
+}
+
+/// [`connect`], plus the stream of frames the client put on the wire.
+async fn connect_observed(
+    behavior: OnList,
+    mode: ConnectMode,
+    request_timeout: Duration,
+) -> (Client, mpsc::UnboundedReceiver<Value>) {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-    spawn_scripted_server(server_io, behavior);
+    let (seen_tx, seen_rx) = mpsc::unbounded_channel();
+    spawn_scripted_server(server_io, behavior, Some(seen_tx));
 
     let (c_rd, c_wr) = split(client_io);
     let transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
-    ClientBuilder::new("robustness", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+    let client = ClientBuilder::new("robustness", "1.0.0")
+        .with_connect_mode(mode)
         .with_timeout(request_timeout)
         .connect(transport)
         .await
-        .expect("handshake succeeds")
+        .expect("handshake succeeds");
+    (client, seen_rx)
+}
+
+/// Drain `seen` for the `notifications/cancelled` naming `method`'s request id,
+/// waiting up to a second for it to arrive.
+async fn await_cancellation_of(
+    seen: &mut mpsc::UnboundedReceiver<Value>,
+    method: &str,
+) -> Option<Value> {
+    let mut ids = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        let frame = tokio::time::timeout_at(deadline, seen.recv())
+            .await
+            .ok()??;
+        match frame.get("method").and_then(Value::as_str) {
+            Some(m) if m == method => ids.push(frame.get("id").cloned().unwrap_or(Value::Null)),
+            Some("notifications/cancelled") => {
+                let params = frame.get("params").cloned().unwrap_or(Value::Null);
+                if ids.contains(&params["requestId"]) {
+                    return Some(params);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The whole point of the actor's exit-drain: a caller blocked on a request
@@ -132,4 +202,92 @@ async fn garbage_frame_ends_the_connection_and_fails_pending() {
     // The client object itself stays safe to use: further calls fail cleanly.
     let again = client.request("tools/list", Map::new()).await;
     assert!(again.is_err());
+}
+
+/// Giving up locally is only half of it. The server is still working on a
+/// request whose answer nobody will ever read, and the only way it learns
+/// otherwise is `notifications/cancelled` (cancellation spec: receivers SHOULD
+/// stop processing and free resources).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn timing_out_tells_the_server_to_stop() {
+    let (client, mut seen) = connect_observed(
+        OnList::StaySilent,
+        ConnectMode::Modern,
+        Duration::from_millis(150),
+    )
+    .await;
+    let result = client.list_tools(None).await;
+    assert!(
+        matches!(result, Err(ClientError::Timeout)),
+        "expected Timeout, got {result:?}"
+    );
+
+    let params = await_cancellation_of(&mut seen, "tools/list")
+        .await
+        .expect("the abandoned tools/list must be cancelled on the wire");
+    assert_eq!(
+        params["reason"], "the client's request timeout elapsed",
+        "the reason is for the server's log; say which side gave up and why"
+    );
+}
+
+/// The same obligation, reached the other way: a caller that races `request`
+/// against its own timeout (or a `select!`) drops the future without any error
+/// ever surfacing. The request is just as abandoned, so it is cancelled just
+/// the same — and the pending entry has to go with it, or a long-lived client
+/// leaks one per abandoned call.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropping_the_request_future_tells_the_server_to_stop() {
+    let (client, mut seen) = connect_observed(
+        OnList::StaySilent,
+        ConnectMode::Modern,
+        Duration::from_secs(60),
+    )
+    .await;
+
+    // The caller's own deadline fires long before the client's 60s timeout, so
+    // the future is dropped mid-flight rather than resolving to `Timeout`.
+    let abandoned = tokio::time::timeout(Duration::from_millis(150), client.list_tools(None)).await;
+    assert!(
+        abandoned.is_err(),
+        "the caller's deadline should fire first"
+    );
+
+    let params = await_cancellation_of(&mut seen, "tools/list")
+        .await
+        .expect("a dropped request future must still be cancelled on the wire");
+    assert_eq!(params["reason"], "the caller dropped the request");
+}
+
+/// Ping is bidirectional and mandatory in both directions: "the receiver MUST
+/// respond promptly with an empty response". It is also the one server→client
+/// request that has nothing to do with the application, so it must be answered
+/// by a client that installed no [`ClientHandler`] at all — which is exactly
+/// the client this test builds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_inbound_ping_is_answered_without_a_handler() {
+    let (client, mut seen) = connect_observed(
+        OnList::PingFirst,
+        ConnectMode::Legacy,
+        Duration::from_secs(5),
+    )
+    .await;
+
+    let tools = client.list_tools(None).await.expect("the list is answered");
+    assert!(tools.tools.is_empty());
+
+    // Find the client's reply to the server's ping among its outbound frames.
+    let mut answered = None;
+    while let Ok(frame) = seen.try_recv() {
+        if frame.get("id").and_then(Value::as_str) == Some("srv-ping-1") {
+            answered = Some(frame);
+            break;
+        }
+    }
+    let reply = answered.expect("the client must answer the server's ping");
+    assert_eq!(
+        reply["result"],
+        json!({}),
+        "ping is answered with an empty result, not an error: {reply}"
+    );
 }

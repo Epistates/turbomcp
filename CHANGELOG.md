@@ -11,9 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The client had never been measured. Scoring it against the official conformance
 suite found four defects, one of which broke every server-initiated request over
-HTTP against the reference implementation.
+HTTP against the reference implementation. A follow-up pass over the two-way
+obligations found three more, all on the same seam: the server had long
+implemented its half, and the client had never implemented the other.
 
 ### Fixed
+
+- **An abandoned request never told the server to stop.** When the client's
+  timeout elapsed, or its caller dropped the request future, the client cleaned
+  up locally and returned. The server went on computing an answer nobody would
+  ever read, for as long as the handler took. The client now sends
+  `notifications/cancelled` on both paths, with the two carve-outs the spec makes
+  MUST NOTs (`initialize`, and task-augmented requests, which use `tasks/cancel`).
+  Dropping the future also leaked its entry in the pending table, so a
+  long-running client that raced requests against its own deadlines grew one
+  entry per abandoned call.
+
+- **Streamable HTTP ignored that cancellation.** A server scopes an in-flight
+  request to the POST that carried it, so a `notifications/cancelled` arriving on
+  a POST of its own can never name it. HTTP's designated signal is closing the
+  request's response stream, and the client transport never closed anything. The
+  transport now spends the cancellation locally, dropping the named request's
+  POST, which is the disconnect a server MUST read as cancellation. Two comments
+  claiming HTTP requests were never registered for cancellation were wrong, and
+  were what kept this invisible.
+
+- **The client answered a server's `ping` with `-32601`.** Ping is bidirectional
+  and mandatory in both directions ("the receiver MUST respond promptly with an
+  empty response"). It is now answered inline, before the handler is consulted,
+  so a client that installed no handler at all still answers, and a busy handler
+  cannot delay the one message whose entire purpose is measuring liveness.
 
 - **The client never opened the standalone server→client SSE stream.**
   Streamable HTTP lets a server deliver messages it originates either inline on a

@@ -17,7 +17,20 @@
 //! HTTP status, decode) synthesizes a JSON-RPC error *response* for the
 //! request's id rather than tearing down the whole connection — only the one
 //! waiting caller sees the error.
+//!
+//! ## Cancellation is the disconnect
+//!
+//! On this transport, `notifications/cancelled` alone cannot stop a server: it
+//! travels on a POST of its own, and a server scopes an in-flight request to
+//! the POST that carried it. What the transports spec designates instead is
+//! closing the request's response stream ("the server **MUST** treat a client
+//! disconnect as cancellation of that request"), which for us means dropping
+//! the POST task. So [`send`](Transport::send) reads the cancellations passing
+//! through it and aborts the task it names — turning the portable signal the
+//! [`Connection`](crate::Connection) emits into the one HTTP actually listens
+//! for.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,7 +40,10 @@ use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use tokio::sync::mpsc;
-use turbomcp_core::{JsonRpcError, JsonRpcMessage, JsonRpcResponse, ProtocolVersion};
+use turbomcp_core::{
+    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcResponse, ProtocolVersion, RequestId,
+};
+use turbomcp_protocol::methods::notification;
 use turbomcp_service::{Transport, mcp_headers};
 
 use crate::client::{Client, ClientBuilder};
@@ -97,9 +113,28 @@ struct Shared {
     listening: AtomicBool,
     /// Where the `Authorization` header comes from, when the server wants one.
     bearer: Option<Arc<dyn BearerSource>>,
+    /// The POST behind each in-flight request, so a cancellation can drop the
+    /// one it names. Every task clears its own entry on the way out, so this
+    /// holds only genuinely in-flight requests.
+    posts: Mutex<HashMap<RequestId, CancellationToken>>,
 }
 
 impl Shared {
+    /// Drop the POST carrying `id`, closing its response stream. That is what a
+    /// server reads as cancellation on this transport. A request that already
+    /// finished has no entry, which is the "cancelled too late" race the spec
+    /// requires both sides to tolerate.
+    fn abort_post(&self, id: &RequestId) {
+        if let Some(token) = self.posts.lock().expect("posts mutex poisoned").remove(id) {
+            token.cancel();
+        }
+    }
+
+    /// Deregister a finished POST.
+    fn finish_post(&self, id: &RequestId) {
+        self.posts.lock().expect("posts mutex poisoned").remove(id);
+    }
+
     /// Attach `Authorization: Bearer …` when a token is available.
     async fn authorize(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.bearer {
@@ -137,6 +172,7 @@ impl HttpClientTransport {
                 inbound_tx,
                 listening: AtomicBool::new(false),
                 bearer: None,
+                posts: Mutex::new(HashMap::new()),
             }),
             inbound_rx,
         })
@@ -174,10 +210,37 @@ impl Transport for HttpClientTransport {
     type Error = HttpClientError;
 
     async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
+        // A cancellation is spent here rather than POSTed: closing the named
+        // request's stream *is* how this transport cancels, and a server keys
+        // in-flight work to the POST it arrived on, so forwarding the
+        // notification on a fresh POST would reach nothing.
+        if let JsonRpcMessage::Notification(n) = &msg
+            && n.method == notification::CANCELLED
+            && let Some(id) = cancelled_request_id(n.params.as_ref())
+        {
+            self.shared.abort_post(&id);
+            return Ok(());
+        }
+
         // POST and pump the response in the background so the driver can keep
         // sending; HTTP requests are independent and may run concurrently.
         let shared = Arc::clone(&self.shared);
-        tokio::spawn(post_and_pump(shared, msg));
+        // Registered *before* the task exists, so a POST that finishes
+        // instantly cannot have its entry outlive it — the task clears the
+        // entry itself, and can only run after this insert.
+        let cancel = match &msg {
+            JsonRpcMessage::Request(r) => {
+                let token = CancellationToken::new();
+                shared
+                    .posts
+                    .lock()
+                    .expect("posts mutex poisoned")
+                    .insert(r.id.clone(), token.clone());
+                Some((r.id.clone(), token))
+            }
+            _ => None,
+        };
+        tokio::spawn(post_and_pump(shared, msg, cancel));
         Ok(())
     }
 
@@ -206,7 +269,16 @@ impl Transport for HttpClientTransport {
 }
 
 /// POST `msg` and feed whatever comes back into the inbound channel.
-async fn post_and_pump(shared: Arc<Shared>, msg: JsonRpcMessage) {
+///
+/// `cancel` is present for requests: its token fires when the caller abandons
+/// the request, which drops the `pump` future and with it the response stream —
+/// the disconnect a server reads as cancellation. The registration is cleared
+/// on every exit path, so the map holds only in-flight POSTs.
+async fn post_and_pump(
+    shared: Arc<Shared>,
+    msg: JsonRpcMessage,
+    cancel: Option<(RequestId, CancellationToken)>,
+) {
     // The request id (if this is a request) so a failure can be reported to just
     // this caller as an error response rather than killing the connection.
     let request_id = match &msg {
@@ -214,7 +286,22 @@ async fn post_and_pump(shared: Arc<Shared>, msg: JsonRpcMessage) {
         _ => None,
     };
 
-    if let Err(err) = pump(&shared, msg).await {
+    let outcome = match &cancel {
+        Some((_, token)) => tokio::select! {
+            // Abandoned: drop the POST without synthesizing an answer. The
+            // caller has already stopped waiting, and `Connection` has taken
+            // its pending entry.
+            () = token.cancelled() => None,
+            result = pump(&shared, msg) => Some(result),
+        },
+        None => Some(pump(&shared, msg).await),
+    };
+    if let Some((id, _)) = &cancel {
+        shared.finish_post(id);
+    }
+    let Some(result) = outcome else { return };
+
+    if let Err(err) = result {
         match request_id {
             Some(id) => {
                 // Surface the failure to the one waiting caller. This is a
@@ -236,6 +323,12 @@ async fn post_and_pump(shared: Arc<Shared>, msg: JsonRpcMessage) {
             None => tracing::debug!(error = %err, "http client POST failed (no waiter)"),
         }
     }
+}
+
+/// The `requestId` a `notifications/cancelled` names, as a [`RequestId`].
+/// A malformed notification names nothing and cancels nothing.
+fn cancelled_request_id(params: Option<&serde_json::Value>) -> Option<RequestId> {
+    serde_json::from_value(params?.get("requestId")?.clone()).ok()
 }
 
 /// The fallible body of a POST + response pump. Errors are returned as a string
@@ -643,6 +736,7 @@ mod tests {
             inbound_tx: mpsc::channel(1).0,
             listening: AtomicBool::new(false),
             bearer: None,
+            posts: Mutex::new(HashMap::new()),
         };
 
         // A legacy request carries only the internal signal — lifted,
@@ -675,6 +769,31 @@ mod tests {
         assert_eq!(
             extract_protocol_version(&mut response, &shared).as_deref(),
             Some("2025-11-25")
+        );
+    }
+
+    /// Both JSON-RPC id forms round-trip, since which one a cancellation names
+    /// decides whether the right POST is dropped.
+    #[test]
+    fn a_cancellation_names_its_request_in_either_id_form() {
+        assert_eq!(
+            cancelled_request_id(Some(&json!({ "requestId": 7 }))),
+            Some(RequestId::from(7))
+        );
+        assert_eq!(
+            cancelled_request_id(Some(&json!({ "requestId": "abc" }))),
+            Some(RequestId::from("abc"))
+        );
+    }
+
+    /// A malformed cancellation must cancel nothing rather than guess.
+    #[test]
+    fn a_malformed_cancellation_names_nothing() {
+        assert_eq!(cancelled_request_id(None), None);
+        assert_eq!(cancelled_request_id(Some(&json!({}))), None);
+        assert_eq!(
+            cancelled_request_id(Some(&json!({ "requestId": { "not": "an id" } }))),
+            None
         );
     }
 }

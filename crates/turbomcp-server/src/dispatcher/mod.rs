@@ -481,8 +481,9 @@ async fn handle<S: McpServerCore>(
     match msg {
         JsonRpcMessage::Request(req) => {
             // Track the request for `notifications/cancelled` while it
-            // dispatches — but only on an identified connection (the serve
-            // driver injects the id; HTTP cancels by closing the stream).
+            // dispatches, on any connection the transport identified. On HTTP
+            // that id is per-POST, so the notification never matches and the
+            // disconnect does the cancelling instead (see `inflight`).
             let cancel = CancellationToken::new();
             let _guard = connection_id(req.params.as_ref())
                 .map(|conn| shared.inflight.register(conn, &req.id, cancel.clone()));

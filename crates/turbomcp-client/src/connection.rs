@@ -15,10 +15,15 @@
 //!   borrow across the select.
 //! - **Inbound:** `transport.recv()` *is* a selected future. A `Response` is
 //!   matched to its waiting request via the [`Pending`] table; a `Notification`
-//!   is (for now) logged and dropped; a server→client `Request` is dispatched to
-//!   the [`ClientHandler`] (elicit/sample/roots) on a spawned task whose reply
-//!   is sent back through a [`WeakSender`](mpsc::WeakSender) — or, with no
-//!   handler, answered `-32601` inline.
+//!   invalidates whatever it obsoletes in the [`ResponseCache`] and then reaches
+//!   the [`ClientHandler`]; a server→client `Request` is dispatched to that same
+//!   handler (elicit/sample/roots) on a spawned task whose reply is sent back
+//!   through a [`WeakSender`](mpsc::WeakSender) — or, with no handler, answered
+//!   `-32601` inline.
+//!
+//! A request that is abandoned rather than answered — the timeout in
+//! [`Connection::request`] firing, or its caller dropping the future — leaves
+//! the `Pending` table *and* the server's queue: see [`AbandonGuard`].
 //!
 //! The actor holds **no strong** outbound `Sender` (only a [`WeakSender`] for
 //! replies), so when every [`Connection`] handle drops, the channel closes, the
@@ -36,7 +41,7 @@ use tokio::sync::{mpsc, oneshot};
 use turbomcp_core::{
     JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId, meta,
 };
-use turbomcp_protocol::methods::notification;
+use turbomcp_protocol::methods::{notification, request};
 use turbomcp_service::Transport;
 
 use crate::cache::ResponseCache;
@@ -161,22 +166,40 @@ impl Connection {
             .expect("pending mutex poisoned")
             .insert(id.clone(), reply_tx);
 
+        let method = method.into();
+        let notify_on_abandon = cancellable(&method, params.as_ref());
         let msg = JsonRpcMessage::Request(JsonRpcRequest::new(id.clone(), method, params));
         if self.inner.outbound.send(msg).await.is_err() {
             self.forget(&id);
             return Err(ClientError::Closed);
         }
 
-        match tokio::time::timeout(self.inner.request_timeout, reply_rx).await {
+        // Armed from here until the request resolves. Both ways a caller can
+        // stop waiting run through its `Drop`: the timeout arm below returns
+        // while it is still armed, and a caller that drops this future outright
+        // (a `select!` losing its race, its own deadline firing) never reaches
+        // the disarm at all.
+        let mut abandon = AbandonGuard {
+            conn: self,
+            id: id.clone(),
+            reason: Some("the caller dropped the request"),
+            notify: notify_on_abandon,
+        };
+
+        let outcome = match tokio::time::timeout(self.inner.request_timeout, reply_rx).await {
             Ok(Ok(Ok(value))) => Ok(value),
             Ok(Ok(Err(err))) => Err(ClientError::Rpc(err)),
             // The actor dropped the sender (connection closed) before replying.
             Ok(Err(_recv)) => Err(ClientError::Closed),
             Err(_elapsed) => {
-                self.forget(&id);
-                Err(ClientError::Timeout)
+                abandon.reason = Some("the client's request timeout elapsed");
+                return Err(ClientError::Timeout);
             }
-        }
+        };
+        // Answered: `complete_pending` already took the entry, and there is
+        // nothing for the server to stop doing.
+        abandon.reason = None;
+        outcome
     }
 
     /// Send a fire-and-forget notification (no response is expected).
@@ -218,6 +241,68 @@ impl Connection {
             .lock()
             .expect("pending mutex poisoned")
             .remove(id);
+    }
+
+    /// Tell the server to stop working on `id` (cancellation spec: receivers
+    /// SHOULD stop processing, free resources, and send no response).
+    ///
+    /// Synchronous and best-effort by necessity — this runs from a `Drop`,
+    /// which cannot await. A full outbound buffer means the connection is
+    /// already backed up past the point where one more frame helps, and a
+    /// closed one means the server has stopped listening anyway.
+    fn cancel_on_wire(&self, id: &RequestId, reason: &str) {
+        let params = serde_json::json!({ "requestId": id, "reason": reason });
+        let msg = JsonRpcMessage::Notification(turbomcp_core::JsonRpcNotification::new(
+            notification::CANCELLED,
+            Some(params),
+        ));
+        if self.inner.outbound.try_send(msg).is_err() {
+            tracing::debug!(request_id = ?id, "could not send notifications/cancelled");
+        }
+    }
+}
+
+/// May a client abandoning `method` say so with `notifications/cancelled`?
+///
+/// Two requests are carved out by the cancellation spec, and both are MUST NOT
+/// rather than a preference.
+fn cancellable(method: &str, params: Option<&Value>) -> bool {
+    // "The `initialize` request MUST NOT be cancelled by clients." Its draft
+    // counterpart is a plain request with no session to unwind, so cancelling
+    // it says nothing the disconnect does not.
+    if method == request::INITIALIZE || method == request::DISCOVER {
+        return false;
+    }
+    // "For task-augmented requests, the `tasks/cancel` request MUST be used
+    // instead of the `notifications/cancelled` notification." The `task` field
+    // is what augments the request, so its presence is the test. A draft task
+    // is server-initiated and has no such field: until the server hands back a
+    // handle there is no task to cancel, and the notification is all we have.
+    !params.is_some_and(|p| p.get("task").is_some())
+}
+
+/// Retracts an abandoned request unless disarmed, covering both ways a caller
+/// stops waiting: our own request timeout, and the future being dropped
+/// mid-flight. Either way the entry has to leave `pending` (or a long-lived
+/// client leaks one per abandoned call) and the server has to be told, or it
+/// keeps working on an answer no one will read.
+struct AbandonGuard<'a> {
+    conn: &'a Connection,
+    id: RequestId,
+    /// Why the request was abandoned; `None` once it resolved, which disarms.
+    reason: Option<&'static str>,
+    /// Cleared for the requests [`cancellable`] rules out. The pending entry is
+    /// still retracted; only the notification is withheld.
+    notify: bool,
+}
+
+impl Drop for AbandonGuard<'_> {
+    fn drop(&mut self) {
+        let Some(reason) = self.reason else { return };
+        self.conn.forget(&self.id);
+        if self.notify {
+            self.conn.cancel_on_wire(&self.id, reason);
+        }
     }
 }
 
@@ -286,8 +371,9 @@ async fn actor<T>(
 }
 
 /// Route one inbound frame. Returns `Some(reply)` for an *inline* reply the
-/// actor must write (only the no-handler `-32601` case); handled server→client
-/// requests are dispatched on a spawned task that replies via `weak_out`.
+/// actor must write (`ping`, and the no-handler `-32601` case); handled
+/// server→client requests are dispatched on a spawned task that replies via
+/// `weak_out`.
 fn route_inbound(
     msg: JsonRpcMessage,
     pending: &Arc<Pending>,
@@ -339,6 +425,16 @@ fn route_inbound(
                 }
             }
             None
+        }
+        // Liveness is a protocol obligation rather than an application one:
+        // "the receiver MUST respond promptly with an empty response" (ping
+        // spec), so it is answered here, inline, whether or not this client
+        // installed a handler — and without queueing behind one that is busy
+        // asking a human something, which would defeat the point of a ping.
+        // `2026-07-28` dropped `ping`; answering a server that sends it anyway
+        // costs nothing and beats claiming the method does not exist.
+        JsonRpcMessage::Request(req) if req.method == request::PING => {
+            Some(JsonRpcResponse::success(req.id, serde_json::json!({})).into())
         }
         JsonRpcMessage::Request(req) => match handler {
             // Dispatch on a task so a slow handler (user interaction) doesn't
@@ -411,4 +507,36 @@ fn complete_pending(resp: JsonRpcResponse, pending: &Arc<Pending>) {
     };
     // The caller may have timed out and dropped the receiver — that's fine.
     let _ = waiter.send(outcome);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The two carve-outs are MUST NOTs, and neither is reachable from an
+    /// integration test: the handshake completes before a caller holds a client
+    /// to abandon it with, and a task-augmented call is answered promptly with
+    /// a handle rather than left in flight.
+    #[test]
+    fn the_handshake_is_never_cancelled() {
+        assert!(!cancellable(request::INITIALIZE, None));
+        assert!(!cancellable(request::DISCOVER, None));
+    }
+
+    #[test]
+    fn a_task_augmented_request_defers_to_tasks_cancel() {
+        let augmented = json!({ "name": "slow", "task": { "ttl": 1000 } });
+        assert!(!cancellable("tools/call", Some(&augmented)));
+    }
+
+    #[test]
+    fn an_ordinary_request_is_cancellable() {
+        assert!(cancellable("tools/list", None));
+        // A draft task is server-initiated, so a `tools/call` with no `task`
+        // field is exactly the case where the notification is all we have.
+        assert!(cancellable("tools/call", Some(&json!({ "name": "slow" }))));
+        // Including the task methods themselves.
+        assert!(cancellable("tasks/get", Some(&json!({ "taskId": "t1" }))));
+    }
 }

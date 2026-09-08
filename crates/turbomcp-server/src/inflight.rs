@@ -8,9 +8,17 @@
 //! spec: "stop processing … not send a response").
 //!
 //! Keys are `(connection, request id)`, so one client can never cancel
-//! another's work. HTTP requests carry no connection id and are never
-//! registered — there, closing the response stream is the cancellation signal
-//! and future-drop does the work.
+//! another's work.
+//!
+//! On Streamable HTTP that scoping makes the notification unreachable by
+//! construction: every POST is its own connection, so a `notifications/cancelled`
+//! arriving on a POST of its own can never name a request registered under a
+//! different one. That is by design rather than a gap — HTTP's cancellation
+//! signal is the client closing the request's response stream, which drops the
+//! call future directly (transports spec: "the server MUST treat a client
+//! disconnect as cancellation of that request"), and our HTTP *client*
+//! transport turns an abandoned request into exactly that disconnect. Entries
+//! are still registered on HTTP, and still deregistered when dispatch ends.
 //!
 //! Size is bounded by the serve driver's `max_in_flight` semaphore per
 //! connection (entries live exactly as long as their dispatch), so the
