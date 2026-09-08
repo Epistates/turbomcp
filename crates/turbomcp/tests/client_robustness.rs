@@ -51,24 +51,29 @@ fn spawn_scripted_server(
             if let Some(seen) = &seen {
                 let _ = seen.send(frame.clone());
             }
-            // Notifications carry no id and expect no answer.
+            // Only requests are answered. A notification carries no id, and a
+            // *response* (the client answering something we asked) carries an
+            // id but no method — neither wants a reply.
+            let Some(method) = frame.get("method").and_then(Value::as_str) else {
+                continue;
+            };
             if frame.get("id").is_none() {
                 continue;
             }
             let id = frame.get("id").cloned().unwrap_or(Value::Null);
-            let result = match frame.get("method").and_then(Value::as_str) {
-                Some("server/discover") => json!({
+            let result = match method {
+                "server/discover" => json!({
                     "capabilities": { "tools": {} },
                     "supportedVersions": ["2026-07-28"],
                     "resultType": "complete", "cacheScope": "private", "ttlMs": 0
                 }),
                 // The stateful handshake, for the revisions that have one.
-                Some("initialize") => json!({
+                "initialize" => json!({
                     "protocolVersion": "2025-11-25",
                     "capabilities": { "tools": {} },
                     "serverInfo": { "name": "robustness-mock", "version": "1.0.0" },
                 }),
-                Some("tools/list") => match behavior {
+                "tools/list" => match behavior {
                     OnList::PingFirst => {
                         let ping =
                             json!({ "jsonrpc": "2.0", "id": "srv-ping-1", "method": "ping" });
@@ -126,29 +131,45 @@ async fn connect_observed(
     (client, seen_rx)
 }
 
-/// Drain `seen` for the `notifications/cancelled` naming `method`'s request id,
-/// waiting up to a second for it to arrive.
+/// The next frame the client puts on the wire that satisfies `want`, or `None`
+/// if none arrives in time. Outbound frames are produced independently of the
+/// call a test just awaited, so they have to be waited for rather than drained
+/// — draining is a race, and it is a race that only loses on a slow machine.
+async fn await_frame(
+    seen: &mut mpsc::UnboundedReceiver<Value>,
+    mut want: impl FnMut(&Value) -> bool,
+) -> Option<Value> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let frame = tokio::time::timeout_at(deadline, seen.recv())
+            .await
+            .ok()??;
+        if want(&frame) {
+            return Some(frame);
+        }
+    }
+}
+
+/// The params of the `notifications/cancelled` naming a request the client
+/// issued for `method`.
 async fn await_cancellation_of(
     seen: &mut mpsc::UnboundedReceiver<Value>,
     method: &str,
 ) -> Option<Value> {
     let mut ids = Vec::new();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
-    loop {
-        let frame = tokio::time::timeout_at(deadline, seen.recv())
-            .await
-            .ok()??;
-        match frame.get("method").and_then(Value::as_str) {
-            Some(m) if m == method => ids.push(frame.get("id").cloned().unwrap_or(Value::Null)),
-            Some("notifications/cancelled") => {
-                let params = frame.get("params").cloned().unwrap_or(Value::Null);
-                if ids.contains(&params["requestId"]) {
-                    return Some(params);
-                }
+    let frame = await_frame(seen, |f| {
+        match f.get("method").and_then(Value::as_str) {
+            // Remember the id, so the cancellation can be tied back to it.
+            Some(m) if m == method => {
+                ids.push(f.get("id").cloned().unwrap_or(Value::Null));
+                false
             }
-            _ => {}
+            Some("notifications/cancelled") => ids.contains(&f["params"]["requestId"]),
+            _ => false,
         }
-    }
+    })
+    .await?;
+    Some(frame.get("params").cloned().unwrap_or(Value::Null))
 }
 
 /// The whole point of the actor's exit-drain: a caller blocked on a request
@@ -276,15 +297,13 @@ async fn an_inbound_ping_is_answered_without_a_handler() {
     let tools = client.list_tools(None).await.expect("the list is answered");
     assert!(tools.tools.is_empty());
 
-    // Find the client's reply to the server's ping among its outbound frames.
-    let mut answered = None;
-    while let Ok(frame) = seen.try_recv() {
-        if frame.get("id").and_then(Value::as_str) == Some("srv-ping-1") {
-            answered = Some(frame);
-            break;
-        }
-    }
-    let reply = answered.expect("the client must answer the server's ping");
+    // The reply is written independently of the `tools/list` answer, so wait
+    // for it rather than draining whatever has arrived by now.
+    let reply = await_frame(&mut seen, |f| {
+        f.get("id").and_then(Value::as_str) == Some("srv-ping-1")
+    })
+    .await
+    .expect("the client must answer the server's ping");
     assert_eq!(
         reply["result"],
         json!({}),

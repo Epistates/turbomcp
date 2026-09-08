@@ -100,9 +100,16 @@ async fn connect(mode: ConnectMode, request_timeout: Duration) -> (Client, Arc<M
     (client, marks)
 }
 
-/// Give the notification a moment to cross the pipe and unwind the handler.
+/// How long a caller waits before giving up. Generous next to the microseconds
+/// a duplex pipe actually needs, because the assertions below require the tool
+/// to have *started* — under a loaded or instrumented CI runner a tight budget
+/// races the dispatch itself, and the margin costs nothing when things pass.
+const GIVE_UP_AFTER: Duration = Duration::from_millis(500);
+
+/// Give the cancellation time to cross the wire and unwind the handler.
+/// Returns as soon as it has, so the budget is only ever paid by a failure.
 async fn settle(marks: &Marks) {
-    for _ in 0..100 {
+    for _ in 0..250 {
         if marks.dropped() {
             return;
         }
@@ -126,7 +133,7 @@ async fn assert_cancelled_server_side(marks: &Marks) {
 /// The client's own timeout elapses: it gives up *and* says so.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn client_timeout_stops_the_server_handler() {
-    let (client, marks) = connect(ConnectMode::Modern, Duration::from_millis(200)).await;
+    let (client, marks) = connect(ConnectMode::Modern, GIVE_UP_AFTER).await;
     let result = client.call_tool("block", Map::new()).await;
     assert!(
         matches!(result, Err(ClientError::Timeout)),
@@ -140,11 +147,8 @@ async fn client_timeout_stops_the_server_handler() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropped_call_stops_the_server_handler() {
     let (client, marks) = connect(ConnectMode::Modern, Duration::from_secs(60)).await;
-    let abandoned = tokio::time::timeout(
-        Duration::from_millis(200),
-        client.call_tool("block", Map::new()),
-    )
-    .await;
+    let abandoned =
+        tokio::time::timeout(GIVE_UP_AFTER, client.call_tool("block", Map::new())).await;
     assert!(
         abandoned.is_err(),
         "the caller's deadline should fire first"
@@ -156,7 +160,7 @@ async fn dropped_call_stops_the_server_handler() {
 /// reaches the same in-flight registry.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancellation_works_on_the_legacy_path_too() {
-    let (client, marks) = connect(ConnectMode::Legacy, Duration::from_millis(200)).await;
+    let (client, marks) = connect(ConnectMode::Legacy, GIVE_UP_AFTER).await;
     let result = client.call_tool("block", Map::new()).await;
     assert!(
         matches!(result, Err(ClientError::Timeout)),
@@ -170,7 +174,7 @@ async fn cancellation_works_on_the_legacy_path_too() {
 /// the abandoned one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancelled_request_is_never_answered() {
-    let (client, marks) = connect(ConnectMode::Modern, Duration::from_millis(200)).await;
+    let (client, marks) = connect(ConnectMode::Modern, GIVE_UP_AFTER).await;
     assert!(client.call_tool("block", Map::new()).await.is_err());
     assert_cancelled_server_side(&marks).await;
 
@@ -245,7 +249,7 @@ async fn an_http_disconnect_cancels_the_request() {
 
     // Abandon the POST mid-flight: hyper drops the connection, which is the
     // signal. Nothing is sent to say so.
-    let abandoned = tokio::time::timeout(Duration::from_millis(400), call).await;
+    let abandoned = tokio::time::timeout(GIVE_UP_AFTER, call).await;
     if let Ok(resp) = abandoned {
         let resp = resp.expect("request sent");
         let status = resp.status();
@@ -300,7 +304,7 @@ async fn a_typed_http_client_timing_out_stops_the_server_handler() {
     let client = connect_http(
         ClientBuilder::new("canceller", "1.0.0")
             .with_connect_mode(ConnectMode::Modern)
-            .with_timeout(Duration::from_millis(300)),
+            .with_timeout(GIVE_UP_AFTER),
         &format!("http://{addr}/mcp"),
     )
     .await
