@@ -973,7 +973,8 @@ mod tests {
             assert!(cargo_toml.contains(&format!("version = \"{}\"", SDK_VERSION)));
             assert!(cargo_toml.contains(&format!("worker = \"{}\"", WORKER_VERSION)));
             assert!(cargo_toml.contains("console_error_panic_hook = \"0.1\""));
-            assert!(!cargo_toml.contains("3.0"));
+            // The scaffolds once hardcoded `"3.0"`; make sure it never comes back.
+            assert!(!cargo_toml.contains("\"3.0\""));
         }
     }
 }
