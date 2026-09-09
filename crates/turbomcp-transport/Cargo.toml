@@ -38,7 +38,7 @@ anyhow = { workspace = true }
 
 # Compression (optional)
 flate2 = { version = "1.1", optional = true }
-brotli = { version = "8.0.2", optional = true }
+brotli = { version = "8.0.4", optional = true }
 lz4_flex = { version = "0.13", optional = true }
 
 # TLS support (optional)
@@ -52,7 +52,7 @@ metrics = { workspace = true, optional = true }
 subtle = { workspace = true }
 sha2 = { workspace = true }
 # Wipe API keys from memory on Drop
-zeroize = "1.8"
+zeroize = "1.9"
 
 # Utilities
 uuid = { workspace = true }

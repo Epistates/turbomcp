@@ -38,13 +38,13 @@ thiserror = { workspace = true }
 bytes = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
-dashmap = "6.1"
+dashmap = "6.2"
 
 # HTTP dependencies (optional - for http/websocket features)
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
-http = { version = "1.4", optional = true }
+http = { version = "1.5", optional = true }
 async-stream = { version = "0.3", optional = true }
 
 # Schema generation

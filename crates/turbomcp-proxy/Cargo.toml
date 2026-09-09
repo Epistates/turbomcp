@@ -33,7 +33,7 @@ tokio = { workspace = true }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-bytes = "1.11"
+bytes = "1.12"
 
 # CLI (optional)
 clap = { version = "4.6", features = ["derive", "cargo", "env"], optional = true }
@@ -71,11 +71,11 @@ proc-macro2 = { version = "1", optional = true }
 schemars = { version = "1.2", optional = true }
 
 # Concurrency
-dashmap = "6.1"
+dashmap = "6.2"
 parking_lot = "0.12"
 
 # Utilities
-uuid = { version = "1.23", features = ["v4"] }
+uuid = { version = "1.26", features = ["v4"] }
 tracing = "0.1"
 thiserror = "2.0"
 url = "2.5"

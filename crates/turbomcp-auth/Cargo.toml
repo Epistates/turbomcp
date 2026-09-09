@@ -40,7 +40,7 @@ urlencoding = "2.1"
 url = "2.5"
 
 # HTTP types
-http = "1.4"
+http = "1.5"
 
 # Tower integration (optional)
 tower = { workspace = true, optional = true }

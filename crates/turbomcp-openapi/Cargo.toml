@@ -38,7 +38,7 @@ thiserror = { workspace = true }
 url = "2.5"
 
 # Regex for route pattern matching
-regex = "1.12"
+regex = "1.13"
 
 # IP address validation for SSRF protection
 ipnetwork = "0.21"

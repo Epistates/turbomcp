@@ -33,7 +33,7 @@ tower = { workspace = true }
 
 # Schema generation (always required by macros)
 schemars = { version = "1.2", features = ["chrono04", "uuid1"] }
-uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.26", features = ["v4", "v7", "serde"] }
 
 # Internal dependencies
 turbomcp-core = { workspace = true }
@@ -54,7 +54,7 @@ tokio-test = "0.4"
 criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3.27"
 proptest = "1.11"
-serial_test = "3.4"
+serial_test = "3.5"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = "0.4"
 

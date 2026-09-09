@@ -37,7 +37,7 @@ futures-util = { version = "0.3", optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 
 # HTTP types
-http = "1.4"
+http = "1.5"
 
 # Async runtime
 tokio = { workspace = true }

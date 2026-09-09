@@ -35,11 +35,11 @@ sha2 = { workspace = true }
 ring = { workspace = true }
 p256 = { version = "0.13", features = ["ecdsa"] }
 hex = "0.4"
-zeroize = "1.8"
+zeroize = "1.9"
 subtle = "2.6"
 
 # HTTP types for DPoP proof generation
-http = "1.4"
+http = "1.5"
 url = "2.5"
 
 # Time handling
@@ -49,10 +49,10 @@ chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v7", "serde"] }
 
 # Builder pattern for ergonomic API
-bon = "3.9"
+bon = "3.10"
 
 # Redis storage (optional)
-redis = { version = "1.2.1", features = ["aio", "tokio-comp"], optional = true }
+redis = { version = "1.7.0", features = ["aio", "tokio-comp"], optional = true }
 
 # HSM support - PKCS#11 (optional)
 cryptoki = { version = "0.12", optional = true }

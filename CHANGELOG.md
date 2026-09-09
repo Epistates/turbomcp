@@ -11,7 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 One fix: `#[tool]` schemas for parameters with nested types were not valid
 JSON Schema documents, and strict clients rejected every tool on the server
-because of it. No API change.
+because of it. Plus a dependency refresh that clears six open advisories and
+one yanked crate from the lockfile. No API change.
+
+### Security
+
+- **Six RUSTSEC advisories cleared from `Cargo.lock`** — `h2` 0.4.14 → 0.4.19
+  (RUSTSEC-2026-0258, unbounded empty DATA frames; reachable on every HTTP/2
+  path through `hyper`, `axum`, `reqwest`, and `tonic`), `rkyv` 0.8.16 → 0.8.18
+  (RUSTSEC-2026-0233/0234/0235, archive validation; reached from
+  `turbomcp-core`), `crossbeam-epoch` 0.9.18 → 0.9.21 (RUSTSEC-2026-0204), and
+  `quinn-proto` 0.11.14 → 0.11.17 (RUSTSEC-2026-0185; in the lockfile through
+  `reqwest`'s optional HTTP/3 support, which no TurboMCP feature enables). The
+  four unsound warnings (`anyhow`, `event-listener`, `memmap2`, `scc`) resolve
+  with the same refresh; `cargo audit` and `cargo deny check` are both clean.
+
+### Changed
+
+- **Declared dependencies refreshed to the latest compatible releases** — the
+  workspace and per-crate manifests move every direct dependency to its current
+  semver-compatible version, notably `metrics` 0.24.5 → 0.24.6 (0.24.5 was
+  yanked), `redis` 1.2 → 1.7, `hyper` 1.9 → 1.11, `tokio` 1.52 → 1.53,
+  `reqwest` 0.13.3 → 0.13.5, `uuid` 1.23 → 1.26, `time` 0.3.47 → 0.3.55, and
+  `wasm-bindgen`/`js-sys`/`web-sys` to 0.2.128/0.3.105. Majors with a newer
+  incompatible line (`opentelemetry` 0.32, `jsonschema` 0.55, `tower-http` 0.7,
+  `tokio-tungstenite` 0.30, `jsonwebtoken` 11, `syn` 3) are deliberately left
+  where they are: several of them are part of the public API, so they wait for
+  a minor release. MSRV stays 1.89.0.
 
 ### Fixed
 
