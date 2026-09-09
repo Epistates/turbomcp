@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`#[tool]` input schemas no longer carry dangling `$ref`s** — any parameter
+  whose type needs a JSON Schema definition (`Vec<T>`, `Option<Vec<T>>`, a
+  struct with a struct field) produced `"$ref": "#/$defs/T"` next to a `$defs`
+  block nested *inside the property*, where a root-relative pointer cannot find
+  it. The macro ran `schema_for!` once per parameter and inserted each *root*
+  schema under `properties.<name>` whole, so every property also declared its
+  own `$schema` and a `title` holding the Rust type name. Validating clients
+  reject the whole request over one such tool: llama.cpp's `llama-server`
+  answers HTTP 400 with `Error resolving ref #/$defs/T: $defs not in {...}`,
+  taking the server's entire catalog offline for that host; non-validating
+  hosts lose grammar-constrained argument generation for the tool. All
+  parameters are now rendered through one shared `SchemaGenerator`, so a tool
+  schema is a single document: properties keep the parameter type inlined as
+  before, definitions land in one root `$defs`, `$schema`/`title` leave the
+  properties, two parameter types that share a name get distinct definitions
+  instead of one overwriting the other, and a self-referential type points at
+  `#/$defs/T` rather than `"$ref": "#"` (which resolved to the tool schema, not
+  the type). Reported with a repro in Epistates/turbovault#51; 4.x builds one
+  args struct per tool and was never affected.
+
 ## [3.2.0] - 2026-08-27
 
 Streamable HTTP correctness — a client response hang, CRLF SSE parsing,

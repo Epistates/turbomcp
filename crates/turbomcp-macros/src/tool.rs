@@ -524,6 +524,17 @@ fn is_option_type(ty: &Type) -> bool {
 /// This function generates code that produces a `ToolInputSchema` at runtime.
 /// All types use schemars for consistent, accurate schema generation.
 ///
+/// Every parameter is rendered through one shared `SchemaGenerator`, so the
+/// tool schema is a single JSON Schema document: each property is the
+/// parameter type's own (inlined) schema, and every definition those types
+/// pull in lands in one root `$defs` that the `#/$defs/...` pointers actually
+/// resolve against. Running `schema_for!` per parameter instead produces a
+/// *root* schema per property — `$schema`, a `title` holding the Rust type
+/// name, and a private `$defs` nested one level too deep — which validating
+/// clients reject. Sharing the generator also lets schemars disambiguate two
+/// parameter types that share a name, and turns a self-reference into
+/// `#/$defs/T` rather than `"$ref": "#"` (the tool schema, not the type).
+///
 /// The `krate` parameter is the resolved path to the turbomcp crate
 /// (e.g., `::turbomcp` or `::turbomcp_server`).
 pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -> TokenStream {
@@ -542,39 +553,34 @@ pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -
 
         // Generate the parameter's JSON Schema fragment via schemars.
         //
-        // schemars sometimes emits a non-object root schema (e.g., for `bool` it
-        // emits `{"type":"boolean"}`, or for `Option<T>` it may emit
-        // `{"anyOf":[..., {"type":"null"}]}` at the top level). The previous
-        // fallback collapsed any non-object root to `{"type":"object"}`, which
-        // erased the parameter's actual type from the tool input schema and made
-        // LLM clients send wrong-typed values. Now we wrap a non-object root as
-        // a single-key object so the schema correctly describes the property.
+        // `JsonSchema::json_schema` (rather than `subschema_for`) keeps the
+        // parameter's own type inlined — a bare struct or enum parameter stays
+        // `{"type":"object", ...}` / `{"enum": [...]}` instead of collapsing to
+        // a `$ref`, which naive clients don't follow. Nested types are still
+        // registered on the shared generator and referenced by `$ref`.
+        //
+        // schemars sometimes emits a non-object schema (`true`/`false` for
+        // types like `serde_json::Value`). The previous fallback collapsed
+        // those to `{"type":"object"}`, which erased the parameter's actual
+        // type from the tool input schema and made LLM clients send
+        // wrong-typed values. Now we wrap a non-object schema as a single-key
+        // object so the schema correctly describes the property.
         let schema_code = quote! {
             {
-                let schema = #krate::__macro_support::schemars::schema_for!(#ty);
-                match #krate::__macro_support::serde_json::to_value(&schema) {
-                    Ok(#krate::__macro_support::serde_json::Value::Object(map)) => map,
-                    Ok(other) => {
-                        // Non-object root (scalar / null / array / boolean schema).
-                        // Treat it as an inline schema fragment by wrapping in an
-                        // object whose only entry is the actual schema. JSON Schema
-                        // permits a sub-schema to be any JSON value; placing it
-                        // under `allOf` keeps validators happy and preserves the
-                        // type information that would otherwise be lost.
+                let schema = <#ty as #krate::__macro_support::schemars::JsonSchema>::json_schema(&mut generator);
+                match schema.to_value() {
+                    #krate::__macro_support::serde_json::Value::Object(map) => map,
+                    other => {
+                        // Non-object schema (boolean schema). Treat it as an
+                        // inline schema fragment by wrapping in an object whose
+                        // only entry is the actual schema. JSON Schema permits a
+                        // sub-schema to be any JSON value; placing it under
+                        // `allOf` keeps validators happy and preserves the type
+                        // information that would otherwise be lost.
                         let mut m = #krate::__macro_support::serde_json::Map::new();
                         m.insert(
                             "allOf".to_string(),
                             #krate::__macro_support::serde_json::Value::Array(vec![other]),
-                        );
-                        m
-                    }
-                    Err(_) => {
-                        // True conversion failure (extremely rare). Fall back to a
-                        // permissive object schema rather than lying about the type.
-                        let mut m = #krate::__macro_support::serde_json::Map::new();
-                        m.insert(
-                            "type".to_string(),
-                            #krate::__macro_support::serde_json::Value::String("object".to_string()),
                         );
                         m
                     }
@@ -605,6 +611,12 @@ pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -
 
     quote! {
         {
+            // Pinned to the dialect the root `$schema` below declares, with
+            // definitions at `#/$defs`. (`schema_for!` uses the crate default,
+            // which schemars documents as liable to change.)
+            let mut generator = #krate::__macro_support::schemars::SchemaGenerator::new(
+                #krate::__macro_support::schemars::generate::SchemaSettings::draft2020_12(),
+            );
             let mut properties = #krate::__macro_support::serde_json::Map::new();
             #(#prop_code)*
 
@@ -620,6 +632,17 @@ pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -
                     #krate::__macro_support::turbomcp_types::JSON_SCHEMA_DIALECT_2020_12.to_string(),
                 ),
             );
+
+            // Every definition the parameter types pulled in, at the root
+            // where their `#/$defs/...` pointers resolve. Omitted entirely
+            // when nothing was registered.
+            let definitions = generator.take_definitions(true);
+            if !definitions.is_empty() {
+                extras.insert(
+                    "$defs".to_string(),
+                    #krate::__macro_support::serde_json::Value::Object(definitions),
+                );
+            }
 
             #krate::__macro_support::turbomcp_types::ToolInputSchema {
                 schema_type: Some("object".into()),
