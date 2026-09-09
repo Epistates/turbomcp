@@ -96,6 +96,7 @@ impl InitializedSessionState {
     }
 }
 
+#[cfg(feature = "http")]
 pub(crate) fn request_id_key(id: &Value) -> Option<String> {
     serde_json::to_string(id).ok()
 }

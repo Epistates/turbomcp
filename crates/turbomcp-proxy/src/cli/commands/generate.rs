@@ -195,6 +195,7 @@ impl GenerateCommand {
     /// Returns `ProxyError` indicating that the codegen feature is not enabled.
     #[cfg(not(feature = "codegen"))]
     #[allow(clippy::unused_async)]
+    #[allow(unknown_lints, clippy::unused_async_trait_impl)]
     pub async fn execute(self) -> ProxyResult<()> {
         Err(ProxyError::configuration(
             "Code generation requires the 'codegen' feature to be enabled. \
