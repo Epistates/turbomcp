@@ -103,21 +103,21 @@ serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.151", features = ["raw_value", "preserve_order"] }
 msgpacker = { version = "0.7", features = ["derive"] }  # MessagePack for binary efficiency
 sonic-rs = "0.5.8"   # High-performance JSON
-simd-json = "0.17" # SIMD-accelerated JSON parsing
+simd-json = "0.18" # SIMD-accelerated JSON parsing
 ciborium = "0.2"
 
 # Schema validation and generation
 schemars = { version = "1.2.2", features = ["chrono04", "uuid1"] }
-jsonschema = { version = "0.46", default-features = false }
+jsonschema = { version = "0.55", default-features = false }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
 axum = { version = "0.8.9", features = ["ws", "tracing", "macros"] }
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
-tower-http = { version = "0.6.11", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
+tower-http = { version = "0.7.1", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
 hyper = { version = "1.11", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.20", features = ["tokio", "server-auto", "client-legacy"] }
-tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 
 # Error handling and diagnostics
 thiserror = "2.0.20"
@@ -128,11 +128,11 @@ color-eyre = "0.6.5"
 # Observability and monitoring
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "tracing-log"] }
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 tracing-appender = "0.2"  # File-based logging with non-blocking I/O
-opentelemetry = "0.31"
-opentelemetry-otlp = { version = "0.31", features = ["tonic", "metrics", "logs"] }
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry = "0.32"
+opentelemetry-otlp = { version = "0.32", features = ["tonic", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 metrics = "0.24.6"
 metrics-exporter-prometheus = "0.18.3"
 
@@ -156,10 +156,10 @@ clap_complete = "4.6"
 # Security and authentication
 ring = "0.17.14"
 subtle = "2.6"  # Constant-time comparison for secret values
-base64 = "0.22.1"
+base64 = "0.23.1"
 percent-encoding = "2.3.2"  # URL percent encoding/decoding (RFC 3986)
 uuid = { version = "1.26", features = ["v4", "serde"] }
-jsonwebtoken = { version = "10.4", features = ["aws_lc_rs", "use_pem"] }
+jsonwebtoken = { version = "11.0", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -168,7 +168,7 @@ time = { version = "0.3.55", features = ["serde", "macros"] }
 # Memory and performance optimizations
 bytes = "1.12.1"
 smallvec = { version = "1.16", features = ["serde"] }
-compact_str = { version = "0.9", features = ["serde"] }
+compact_str = { version = "0.10", features = ["serde"] }
 ahash = "0.8.12"
 arc-swap = "1.9"
 
@@ -193,7 +193,7 @@ pretty_assertions = "1.4.1"
 insta = { version = "1.48", features = ["json", "redactions"] }
 # Pinned to 0.9 (not 0.10) to match governor and tungstenite — keeps a single
 # rand/rand_core/getrandom generation in the build. Revisit when those move to 0.10.
-rand = "0.9"
+rand = "0.10"
 quickcheck = "1.1"
 quickcheck_macros = "1.2"
 mock_instant = "0.6"
@@ -201,8 +201,8 @@ serial_test = "3.5"
 # Pinned to 0.10 (not 0.11) to match the digest-0.10 stack used by p256 and oauth2 —
 # avoids compiling two copies of sha2/digest/block-buffer/crypto-common.
 # Upgrade to 0.11 when p256 (RustCrypto) and oauth2 move to digest 0.11.
-sha2 = "0.10"
-testcontainers = "0.27"
+sha2 = "0.11"
+testcontainers = "0.28"
 
 # Documentation
 doc-comment = "0.3"

@@ -9,7 +9,7 @@
 use super::{DpopAlgorithm, DpopKeyPair, NonceStorage, Result, StorageStats};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use p256::ecdsa::{SigningKey, VerifyingKey};
-use p256::elliptic_curve::rand_core::OsRng;
+use p256::elliptic_curve::Generate as _;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -93,11 +93,11 @@ impl MockKeyManager {
         match algorithm {
             DpopAlgorithm::ES256 => {
                 // Generate ECDSA P-256 key pair using p256 crate
-                let signing_key = SigningKey::random(&mut OsRng);
+                let signing_key = SigningKey::generate();
                 let verifying_key = VerifyingKey::from(&signing_key);
 
                 let private_key = signing_key.to_bytes().to_vec();
-                let public_key_bytes = verifying_key.to_encoded_point(false).as_bytes().to_vec();
+                let public_key_bytes = verifying_key.to_sec1_point(false).as_bytes().to_vec();
 
                 // Generate JWK thumbprint for key identification
                 let thumbprint = self.generate_jwk_thumbprint(&public_key_bytes, &algorithm)?;

@@ -45,12 +45,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-service = { version = "0.3", optional = true }
-tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
+tower-http = { version = "0.7", features = ["cors", "trace"], optional = true }
 futures-util = { version = "0.3", optional = true }
 reqwest = { workspace = true, optional = true }
 
 # WebSocket (optional)
-tokio-tungstenite = { version = "0.29", optional = true, features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.30", optional = true, features = ["rustls-tls-native-roots"] }
 
 # REST API & OpenAPI (optional)
 utoipa = { version = "5.5", features = ["axum_extras", "macros"], optional = true }
@@ -62,9 +62,9 @@ utoipa-swagger-ui = { version = "9.0", features = ["axum"], optional = true }
 
 # Code generation (optional)
 handlebars = { version = "6.4", optional = true }
-convert_case = { version = "0.11", optional = true }
+convert_case = { version = "0.12", optional = true }
 chrono = { version = "0.4", optional = true }
-syn = { version = "2", features = ["parsing", "full"], optional = true }
+syn = { version = "3", features = ["parsing", "full"], optional = true }
 proc-macro2 = { version = "1", optional = true }
 
 # Schema generation (optional)

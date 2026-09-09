@@ -21,10 +21,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 
 # OpenTelemetry core (optional)
-opentelemetry = { version = "0.31", default-features = false, optional = true, features = ["trace", "metrics"] }
-opentelemetry_sdk = { version = "0.31", default-features = false, optional = true, features = ["trace", "metrics", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.31", default-features = false, optional = true, features = ["trace", "metrics", "http-proto", "reqwest-blocking-client"] }
-tracing-opentelemetry = { version = "0.32", optional = true }
+opentelemetry = { version = "0.32", default-features = false, optional = true, features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, optional = true, features = ["trace", "metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, optional = true, features = ["trace", "metrics", "http-proto", "reqwest-blocking-client"] }
+tracing-opentelemetry = { version = "0.33", optional = true }
 
 # Prometheus metrics (alternative to OTLP)
 metrics = { version = "0.24", optional = true }

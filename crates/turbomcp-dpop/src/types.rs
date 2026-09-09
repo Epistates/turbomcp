@@ -123,10 +123,10 @@ impl DpopKeyPair {
     /// Returns error if key generation fails
     pub fn generate_p256() -> Result<Self, crate::errors::DpopError> {
         use p256::ecdsa::{SigningKey, VerifyingKey};
-        use p256::elliptic_curve::rand_core::OsRng;
+        use p256::elliptic_curve::Generate as _;
         use sha2::{Digest, Sha256};
 
-        let signing_key = SigningKey::random(&mut OsRng);
+        let signing_key = SigningKey::generate();
         let verifying_key = VerifyingKey::from(&signing_key);
 
         // Get private key bytes
@@ -135,7 +135,7 @@ impl DpopKeyPair {
         key_bytes.copy_from_slice(private_bytes.as_ref());
 
         // Extract x and y coordinates from the public key
-        let public_point = verifying_key.to_encoded_point(false);
+        let public_point = verifying_key.to_sec1_point(false);
         let x_bytes =
             public_point
                 .x()

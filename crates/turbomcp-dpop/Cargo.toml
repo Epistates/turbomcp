@@ -33,7 +33,7 @@ jsonwebtoken = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
 ring = { workspace = true }
-p256 = { version = "0.13", features = ["ecdsa"] }
+p256 = { version = "0.14", features = ["ecdsa"] }
 hex = "0.4"
 zeroize = "1.9"
 subtle = "2.6"

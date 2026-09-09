@@ -2,10 +2,13 @@
 
 use crate::cli::OutputFormat;
 use crate::error::{CliError, CliResult};
-use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
+use comfy_table::{Table, TableStyle, presets::UTF8_FULL};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 use turbomcp_protocol::types::*;
+
+/// Border style shared by every table the CLI renders.
+const TABLE_STYLE: TableStyle = UTF8_FULL.with_rounded_corners();
 
 /// Format and display output based on format preference
 pub struct Formatter {
@@ -48,10 +51,11 @@ impl Formatter {
             }
             OutputFormat::Table => {
                 let mut table = Table::new();
-                table
-                    .load_preset(UTF8_FULL)
-                    .apply_modifier(UTF8_ROUND_CORNERS)
-                    .set_header(vec!["Name", "Description", "Input Schema"]);
+                table.load_style(TABLE_STYLE).set_header(vec![
+                    "Name",
+                    "Description",
+                    "Input Schema",
+                ]);
 
                 for tool in tools {
                     let schema_summary = format_schema_summary(&tool.input_schema);
@@ -88,10 +92,12 @@ impl Formatter {
             }
             OutputFormat::Table => {
                 let mut table = Table::new();
-                table
-                    .load_preset(UTF8_FULL)
-                    .apply_modifier(UTF8_ROUND_CORNERS)
-                    .set_header(vec!["URI", "Name", "Description", "MIME Type"]);
+                table.load_style(TABLE_STYLE).set_header(vec![
+                    "URI",
+                    "Name",
+                    "Description",
+                    "MIME Type",
+                ]);
 
                 for resource in resources {
                     let mime_str = resource
@@ -134,8 +140,7 @@ impl Formatter {
             OutputFormat::Table => {
                 let mut table = Table::new();
                 table
-                    .load_preset(UTF8_FULL)
-                    .apply_modifier(UTF8_ROUND_CORNERS)
+                    .load_style(TABLE_STYLE)
                     .set_header(vec!["Name", "Description", "Arguments"]);
 
                 for prompt in prompts {

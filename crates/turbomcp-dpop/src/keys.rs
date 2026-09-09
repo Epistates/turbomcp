@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use p256::elliptic_curve::rand_core::OsRng;
+use p256::elliptic_curve::Generate as _;
 use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -410,8 +410,8 @@ impl Default for MemoryKeyStorage {
 fn generate_es256_key_pair() -> Result<(DpopPrivateKey, DpopPublicKey)> {
     use p256::ecdsa::{SigningKey, VerifyingKey};
 
-    // Generate random signing key
-    let signing_key = SigningKey::random(&mut OsRng);
+    // Generate random signing key from the system CSPRNG
+    let signing_key = SigningKey::generate();
     let verifying_key = VerifyingKey::from(&signing_key);
 
     // Extract private key bytes
@@ -421,7 +421,7 @@ fn generate_es256_key_pair() -> Result<(DpopPrivateKey, DpopPublicKey)> {
     };
 
     // Extract public key coordinates
-    let public_point = verifying_key.to_encoded_point(false); // Uncompressed format
+    let public_point = verifying_key.to_sec1_point(false); // Uncompressed format
     let x_coord = public_point
         .x()
         .ok_or_else(|| DpopError::CryptographicError {

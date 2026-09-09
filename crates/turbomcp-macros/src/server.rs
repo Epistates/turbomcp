@@ -211,6 +211,7 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
                     let item_fn = syn::ItemFn {
                         attrs: method.attrs.clone(),
                         vis: method.vis.clone(),
+                        modifiers: method.modifiers.clone(),
                         sig: method.sig.clone(),
                         block: Box::new(syn::parse_quote!({})),
                     };

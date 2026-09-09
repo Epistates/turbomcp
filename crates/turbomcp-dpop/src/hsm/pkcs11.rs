@@ -171,8 +171,8 @@ impl Pkcs11HsmManager {
             // Compressed point format - decompress using p256 library
             match p256::PublicKey::from_sec1_bytes(der_bytes) {
                 Ok(pub_key) => {
-                    use p256::elliptic_curve::sec1::ToEncodedPoint;
-                    let uncompressed = pub_key.to_encoded_point(false);
+                    use p256::elliptic_curve::sec1::ToSec1Point;
+                    let uncompressed = pub_key.to_sec1_point(false);
                     uncompressed.as_bytes().to_vec()
                 }
                 Err(e) => {

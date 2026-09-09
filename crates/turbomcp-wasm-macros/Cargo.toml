@@ -25,7 +25,7 @@ default = []
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = { version = "2.0", features = ["full", "parsing", "extra-traits"] }
+syn = { version = "3.0", features = ["full", "parsing", "extra-traits"] }
 
 [dev-dependencies]
 trybuild = "1.0"

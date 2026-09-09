@@ -37,7 +37,7 @@ tokio-tungstenite = { workspace = true }
 futures = { workspace = true }
 
 # Output formatting
-comfy-table = "7.2"
+comfy-table = "8.0"
 owo-colors = "4.4"
 indicatif = "0.18"
 
@@ -47,7 +47,7 @@ thiserror = { workspace = true }
 
 # Config
 config = { workspace = true }
-dirs = "6.0"
+dirs = "7.0"
 
 # Honor shell quoting / escaping when splitting `--command` into argv
 shell-words = "1.1"
