@@ -40,7 +40,7 @@ use std::time::Duration;
 use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use turbomcp_core::{
     CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcResponse, ProtocolVersion, RequestId,
 };
@@ -68,6 +68,11 @@ const DEFAULT_SSE_RETRY: Duration = Duration::from_secs(1);
 /// Ceiling on a server-supplied `retry:`, so a hostile or fat-fingered value
 /// can't park the only channel for server→client requests indefinitely.
 const MAX_SSE_RETRY: Duration = Duration::from_secs(30);
+
+/// How long the handshake waits for the standalone stream to be established
+/// before giving up on it and proceeding. Generous next to a loopback round
+/// trip, and only ever paid once per connection.
+const STREAM_READY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Supplies the bearer token for each outbound request.
 ///
@@ -118,6 +123,10 @@ struct Shared {
     /// one it names. Every task clears its own entry on the way out, so this
     /// holds only genuinely in-flight requests.
     posts: Mutex<HashMap<RequestId, CancellationToken>>,
+    /// Flips true once [`listen`] has an answer from the server. The handshake
+    /// waits on it so a caller never holds a client whose server has nowhere to
+    /// push (see [`await_stream_ready`]).
+    stream_ready: watch::Sender<bool>,
 }
 
 impl Shared {
@@ -199,6 +208,7 @@ impl HttpClientTransport {
                 listening: AtomicBool::new(false),
                 bearer: None,
                 posts: Mutex::new(HashMap::new()),
+                stream_ready: watch::channel(false).0,
             }),
             inbound_rx,
         })
@@ -432,13 +442,21 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
     // [`listen`]. The earliest frame carrying one is the handshake's
     // `notifications/initialized`, so the stream is up before the client's
     // first request rather than waiting on one it may never make.
-    if version
+    // Either signal means this is a stateful connection: an outbound version
+    // we have already negotiated, or the server minting a session id. The
+    // second is what lets the *handshake itself* trigger this — a client has no
+    // negotiated version yet when it POSTs `initialize`, so keying only on the
+    // first opened the stream a POST too late.
+    let stateful = version
         .as_deref()
         .map(ProtocolVersion::from_wire)
         .is_some_and(|v| v.is_stateful())
-        && !shared.listening.swap(true, Ordering::AcqRel)
-    {
+        || shared.session.lock().expect("session mutex").is_some();
+    if stateful && !shared.listening.swap(true, Ordering::AcqRel) {
         tokio::spawn(listen(Arc::clone(shared)));
+        // Held here, before this response reaches the caller, so that a client
+        // handed back from the handshake always has a stream behind it.
+        await_stream_ready(shared).await;
     }
 
     let is_sse = resp
@@ -521,7 +539,13 @@ async fn listen(shared: Arc<Shared>) {
             req = req.header("last-event-id", id);
         }
 
-        match shared.authorize(req).await.send().await {
+        let outcome = shared.authorize(req).await.send().await;
+        // The server has answered the GET, one way or another: the stream is
+        // up, or it has said it offers none. Either resolves what
+        // [`connect_http`] is waiting on. Setting it repeatedly on reconnects
+        // is harmless — it is already `true`.
+        let _ = shared.stream_ready.send(true);
+        match outcome {
             Ok(resp) if resp.status().is_success() => {
                 let mut events = resp.bytes_stream().eventsource();
                 while let Some(event) = events.next().await {
@@ -654,6 +678,43 @@ pub async fn connect_http(builder: ClientBuilder, url: impl Into<String>) -> Cli
     builder.connect(transport).await
 }
 
+/// Hold the handshake response until the standalone server→client stream has
+/// been established (or the server has said it offers none).
+///
+/// Opening the stream is not the same as having opened it. It runs in a spawned
+/// task, so without this the caller gets its client first and the stream races
+/// to catch up. A server that pushes only on the standalone stream has nowhere
+/// to deliver during that window, and the reference implementation does not
+/// wait for us — it fails the request with `-32000 Connection closed`. Being a
+/// race, it surfaces as an intermittent.
+///
+/// This lives in the transport rather than in [`connect_http`] because
+/// attaching a bearer token means building the transport yourself and calling
+/// [`ClientBuilder::connect`] directly, which is exactly the shape an
+/// authenticated production client has — a check the common path skips is not
+/// much of a check.
+///
+/// Bounded and never fatal. A server that will not answer the `GET` until the
+/// handshake POST is fully drained would otherwise deadlock, and one that is
+/// merely slow should not fail a connection that is otherwise fine — in both
+/// cases the timeout leaves behaviour exactly as it was before this wait
+/// existed.
+async fn await_stream_ready(shared: &Arc<Shared>) {
+    let mut ready = shared.stream_ready.subscribe();
+    if *ready.borrow() {
+        return;
+    }
+    match tokio::time::timeout(STREAM_READY_TIMEOUT, ready.changed()).await {
+        Ok(Ok(())) => {}
+        // The sender is gone, so no stream is coming; nothing to wait for.
+        Ok(Err(_closed)) => {}
+        Err(_elapsed) => tracing::debug!(
+            "standalone sse stream not established within {STREAM_READY_TIMEOUT:?}; \
+             continuing without it"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,6 +824,7 @@ mod tests {
             listening: AtomicBool::new(false),
             bearer: None,
             posts: Mutex::new(HashMap::new()),
+            stream_ready: watch::channel(false).0,
         };
 
         // A legacy request carries only the internal signal — lifted,

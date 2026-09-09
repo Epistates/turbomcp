@@ -19,6 +19,24 @@ found the stdio cancel-safety bug below.
 
 ### Fixed
 
+- **The standalone SSE stream opened a POST too late.** alpha.3 fixed the
+  client never opening it; this fixes it not being open in time. The stream is
+  triggered off a POST and established in a spawned task, so a caller got its
+  client back first and the stream raced to catch up. A server that pushes only
+  on the standalone stream has nowhere to deliver during that window, and the
+  reference implementation does not wait — it fails the request with `-32000
+  Connection closed`. The handshake response is now held until the stream is up
+  or the server has said it offers none, bounded and never fatal. The wait lives
+  in the transport rather than in `connect_http`, because attaching a bearer
+  token means building the transport yourself, which is exactly the shape an
+  authenticated production client has.
+
+  This also closes the last baselined conformance failure. `sse-retry` had been
+  attributed to an upstream harness defect; that was wrong, and the check
+  started passing as soon as the stream came up on time. **Both suites now run
+  with an empty baseline**: 732 client checks pass, 227 server checks pass, zero
+  failures on either side.
+
 - **The OAuth client would authorize over plaintext HTTP.** Nothing checked a
   URL's scheme, and the authorization spec makes it a MUST twice: authorization
   server endpoints MUST be HTTPS, and redirect URIs MUST be `localhost` or

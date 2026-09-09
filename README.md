@@ -12,8 +12,8 @@ zero-boilerplate surface and strict spec compliance as a feature.
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
 > MSRV 1.88. It interoperates with the official Rust SDK in both directions, on
 > both revisions, and both halves are scored against the official MCP conformance
-> suite: the server at 236 checks, 227 pass, 0 fail, and the client at 731 pass,
-> 0 unexpected fail. All three advertised revisions (`2025-06-18`, `2025-11-25`,
+> suite: the server at 236 checks, 227 pass, 0 fail, and the client at 732 pass,
+> 0 fail, with nothing baselined on either side. All three advertised revisions (`2025-06-18`, `2025-11-25`,
 > `2026-07-28`) are dated and frozen; `2026-07-28` is generated from the
 > released `schema/2026-07-28/`, not the RC.
 > **Found something broken or unergonomic? Please open an issue.**
@@ -142,9 +142,8 @@ Compliance is tested, not asserted:
   scored revisions. As the *server*, it drives a full-featured TurboMCP server
   over Streamable HTTP: **236 checks, 227 pass, 0 fail, 9 informational**. As the
   *client*, it stands up a deliberately awkward mock server per scenario and
-  referees what our client did on the wire: **731 pass, 0 unexpected failures**,
-  including the whole OAuth 2.1 surface. One baselined failure remains, an
-  upstream defect already fixed on their `main` but not yet released
+  referees what our client did on the wire: **732 pass, 0 fail**, including the
+  whole OAuth 2.1 surface. Nothing is baselined on either side
   (`crates/turbomcp-conformance`).
 - **Cross-SDK interop** — a TurboMCP client drives an official-Rust-SDK
   (rmcp 3.2) server and vice-versa, in-process, on `2025-11-25` *and* the

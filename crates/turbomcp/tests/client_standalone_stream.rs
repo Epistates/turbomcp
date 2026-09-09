@@ -50,6 +50,10 @@ struct Mock {
     outbound: Mutex<Option<mpsc::Receiver<String>>>,
     /// Sends the client's elicitation *response* back to the test body.
     answered: Mutex<Option<oneshot::Sender<Value>>>,
+    /// Set when the standalone `GET` is actually established. A real server
+    /// that only pushes on this stream has nothing to push *through* until
+    /// then, which is what makes the timing observable.
+    get_open: std::sync::atomic::AtomicBool,
 }
 
 /// `POST /mcp` — the handshake, plus whatever the client sends back.
@@ -92,6 +96,8 @@ async fn mcp_post(State(mock): State<Arc<Mock>>, Json(body): Json<Value>) -> Res
 
 /// `GET /mcp` — the standalone stream, carrying a server→client request.
 async fn mcp_get(State(mock): State<Arc<Mock>>) -> Response {
+    mock.get_open
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let Some(rx) = mock.outbound.lock().await.take() else {
         // Only the first GET carries the scripted traffic; a reconnect after it
         // gets an empty stream rather than a duplicate request.
@@ -125,6 +131,7 @@ async fn a_server_request_on_the_standalone_stream_is_answered() {
     let mock = Arc::new(Mock {
         outbound: Mutex::new(Some(frames_rx)),
         answered: Mutex::new(Some(answered_tx)),
+        get_open: std::sync::atomic::AtomicBool::new(false),
     });
 
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -181,6 +188,57 @@ async fn a_server_request_on_the_standalone_stream_is_answered() {
     assert_eq!(answer["id"], "elicit-1");
     assert_eq!(answer["result"]["action"], "accept");
     assert_eq!(answer["result"]["content"]["ok"], true);
+
+    drop(client);
+    server.abort();
+}
+
+/// Opening the stream is not enough — it has to be open by the time the caller
+/// can act on the connection.
+///
+/// The stream is opened off the back of the handshake POST, which is the right
+/// trigger, but the caller gets its client the moment that POST resolves. A
+/// server that only pushes on the standalone stream has nowhere to push during
+/// the gap, and the reference implementation reports exactly that: an
+/// `elicitation/create` fails `-32000 Connection closed` because no stream
+/// exists yet. It is a race, so it shows up as an intermittent — this asserts
+/// the invariant instead of the symptom.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_standalone_stream_is_open_before_connect_returns() {
+    let (_frames_tx, frames_rx) = mpsc::channel::<String>(4);
+    let (answered_tx, _answered_rx) = oneshot::channel::<Value>();
+    let mock = Arc::new(Mock {
+        outbound: Mutex::new(Some(frames_rx)),
+        answered: Mutex::new(Some(answered_tx)),
+        get_open: std::sync::atomic::AtomicBool::new(false),
+    });
+
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind ephemeral port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route("/mcp", post(mcp_post).get(mcp_get))
+        .with_state(Arc::clone(&mock));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let client = connect_http(
+        ClientBuilder::new("standalone-stream-test", "1.0.0")
+            .with_handler(Confirming)
+            .with_connect_mode(ConnectMode::Legacy)
+            .with_capabilities(json!({ "elicitation": { "formats": ["form"] } })),
+        format!("http://{addr}/mcp"),
+    )
+    .await
+    .expect("handshake");
+
+    assert!(
+        mock.get_open.load(std::sync::atomic::Ordering::SeqCst),
+        "connect returned before the standalone GET was established; a server that \
+         pushes only on that stream has nowhere to deliver the first request"
+    );
 
     drop(client);
     server.abort();

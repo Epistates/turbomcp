@@ -12,30 +12,21 @@
 //! while hanging against any server that uses the standalone stream instead,
 //! which is what the reference TypeScript SDK does.
 //!
-//! ## What is baselined, and why
+//! ## Nothing is baselined
 //!
-//! One entry: **`sse-retry`**, and it is an upstream defect that upstream has
-//! already fixed.
+//! The baseline is empty and every check either passes or is informational.
 //!
-//! The scenario registers itself `introducedIn: "2025-11-25"`, but its mock
-//! answers `initialize` with `protocolVersion: "2025-03-26"`. TurboMCP does not
-//! serve that revision, and the lifecycle spec says to disconnect rather than
-//! speak on in shapes the peer never agreed to, so the client refuses. Only the
-//! `initialize` POST ever reaches the mock, and `client-sse-graceful-reconnect`
-//! then reports that we never reconnected. Any client that dropped `2025-03-26`
-//! is in the same position; the harness's own reference client passes because
-//! the TypeScript SDK still speaks it.
+//! It held one entry for a while — `sse-retry`'s
+//! `client-sse-graceful-reconnect` — attributed to an upstream defect, since
+//! the scenario registers itself `introducedIn: "2025-11-25"` while its mock
+//! answers `initialize` with `protocolVersion: "2025-03-26"`, which TurboMCP
+//! does not serve. That reading was wrong, or at least incomplete: the check
+//! started passing the moment the client stopped opening the standalone stream
+//! a POST too late. Blaming the harness was the comfortable explanation and it
+//! cost a real fix, which is the argument for keeping this baseline empty
+//! rather than letting entries accumulate behind rationales.
 //!
-//! This is the same defect as [conformance#412], which was fixed for the
-//! *server* runner. `src/scenarios/client/sse-retry.ts` on upstream `main` now
-//! sends `2025-11-25`, but no release carries it yet: `0.2.0-alpha.11` is the
-//! newest published and still sends `2025-03-26`. **When [`CONFORMANCE_PKG`] is
-//! bumped past it, drop this baseline entry** — the suite fails on a stale
-//! baseline, so a forgotten entry is caught rather than silently tolerated.
-//!
-//! [conformance#412]: https://github.com/modelcontextprotocol/conformance/issues/412
-//!
-//! Everything else passes: 280 checks on `2025-11-25` and 451 on `2026-07-28`,
+//! Everything passes: 281 checks on `2025-11-25` and 451 on `2026-07-28`,
 //! including the full OAuth 2.1 surface — discovery and its metadata variants,
 //! dynamic registration, PKCE, the RFC 9207 `iss` table (positive *and*
 //! negative), scope step-up with union-on-reauth, the retry limit, and
@@ -73,7 +64,7 @@ const SPEC_VERSIONS: &[&str] = &["2025-11-25", "2026-07-28"];
 
 /// Floor on passing checks per revision — the same tripwire the server suite
 /// carries, for the same reason: "0 failures" is also what a run that never
-/// started reports. Today: 280 on `2025-11-25`, 442 on `2026-07-28`. The gap is
+/// started reports. Today: 281 on `2025-11-25`, 451 on `2026-07-28`. The gap is
 /// real (the draft has the header and MRTR scenarios on top of the shared auth
 /// ones), so the floor sits below the smaller of the two with room for the
 /// suite to be re-cut upstream. It is *not* to be lowered to green a build.
