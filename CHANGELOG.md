@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Internal
+
+- **22 unused `[workspace.dependencies]` entries dropped** — 16 were referenced
+  by no crate at all (`jsonschema`, `testcontainers`, `insta`, `quickcheck`,
+  `quickcheck_macros`, `mock_instant`, `doc-comment`, `color-eyre`, `flume`,
+  `tracing-appender`, `clap_complete`, `time`, `hyper`, `hyper-util`,
+  `walkdir`, `crossbeam-channel`); the other six (`ciborium`, `tokio-stream`,
+  `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`,
+  `metrics-exporter-prometheus`) had one consumer that already declares the
+  dependency directly with its own feature set, so the workspace copy
+  described features nobody built with. `Cargo.lock` is unchanged and no
+  published manifest moved. The `rand`/`sha2` comments in the same table
+  still read "pinned to 0.9" / "pinned to 0.10" after 3.3.0 moved them to
+  0.10 / 0.11; they now say which third parties keep the older generation in
+  the lockfile.
+
 ## [3.3.0] - 2026-09-09
 
 One fix: `#[tool]` schemas for parameters with nested types were not valid

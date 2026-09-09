@@ -95,7 +95,6 @@ futures = "0.3.34"
 pin-project-lite = "0.2.17"
 
 # Test utilities
-walkdir = "2.5"
 tempfile = "3.27"
 
 # Serialization with performance focus
@@ -104,45 +103,35 @@ serde_json = { version = "1.0.151", features = ["raw_value", "preserve_order"] }
 msgpacker = { version = "0.7", features = ["derive"] }  # MessagePack for binary efficiency
 sonic-rs = "0.5.8"   # High-performance JSON
 simd-json = "0.18" # SIMD-accelerated JSON parsing
-ciborium = "0.2"
 
-# Schema validation and generation
+# Schema generation
 schemars = { version = "1.2.2", features = ["chrono04", "uuid1"] }
-jsonschema = { version = "0.55", default-features = false }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
 axum = { version = "0.8.9", features = ["ws", "tracing", "macros"] }
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
 tower-http = { version = "0.7.1", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
-hyper = { version = "1.11", features = ["http1", "http2", "server", "client"] }
-hyper-util = { version = "0.1.20", features = ["tokio", "server-auto", "client-legacy"] }
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 
 # Error handling and diagnostics
 thiserror = "2.0.20"
 anyhow = "1.0.104"
 miette = { version = "7.6", features = ["fancy"] }
-color-eyre = "0.6.5"
 
 # Observability and monitoring
+# The OpenTelemetry / Prometheus exporter stack lives in turbomcp-telemetry's own
+# manifest: it is the only consumer and needs default-features = false plus
+# per-feature gating that a workspace entry can't express.
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "tracing-log"] }
 tracing-opentelemetry = "0.33.0"
-tracing-appender = "0.2"  # File-based logging with non-blocking I/O
-opentelemetry = "0.32"
-opentelemetry-otlp = { version = "0.32", features = ["tonic", "metrics", "logs"] }
-opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 metrics = "0.24.6"
-metrics-exporter-prometheus = "0.18.3"
 
 # Concurrency and synchronization
 parking_lot = "0.12.5"
 dashmap = "6.2.1"
 crossbeam = "0.8.5"
-crossbeam-channel = "0.5"
-flume = "0.12"
-tokio-stream = "0.1"
 
 # URL and random utilities
 url = "2.5.8"
@@ -151,7 +140,6 @@ fastrand = "2.5"
 # Configuration and CLI
 config = "0.15"
 clap = { version = "4.6.6", features = ["derive", "env", "color"] }
-clap_complete = "4.6"
 
 # Security and authentication
 ring = "0.17.14"
@@ -163,7 +151,6 @@ jsonwebtoken = { version = "11.0", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling
 chrono = { version = "0.4.45", features = ["serde"] }
-time = { version = "0.3.55", features = ["serde", "macros"] }
 
 # Memory and performance optimizations
 bytes = "1.12.1"
@@ -190,22 +177,14 @@ proptest = "1.11"
 tokio-test = "0.4"
 wiremock = "0.6.5"
 pretty_assertions = "1.4.1"
-insta = { version = "1.48", features = ["json", "redactions"] }
-# Pinned to 0.9 (not 0.10) to match governor and tungstenite — keeps a single
-# rand/rand_core/getrandom generation in the build. Revisit when those move to 0.10.
+# governor, proptest and axum's pinned tokio-tungstenite 0.29 are still on rand 0.9
+# and oauth2 on 0.8, so the build carries three rand/rand_core/getrandom generations
+# until they catch up.
 rand = "0.10"
-quickcheck = "1.1"
-quickcheck_macros = "1.2"
-mock_instant = "0.6"
 serial_test = "3.5"
-# Pinned to 0.10 (not 0.11) to match the digest-0.10 stack used by p256 and oauth2 —
-# avoids compiling two copies of sha2/digest/block-buffer/crypto-common.
-# Upgrade to 0.11 when p256 (RustCrypto) and oauth2 move to digest 0.11.
+# oauth2 is still on the digest-0.10 stack, so sha2 0.10 is compiled alongside 0.11
+# until it moves.
 sha2 = "0.11"
-testcontainers = "0.28"
-
-# Documentation
-doc-comment = "0.3"
 
 # Workspace dependencies are defined below
 # Internal workspace crate dependencies
