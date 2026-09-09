@@ -132,6 +132,15 @@ pub struct TaskStore {
     capacity: usize,
 }
 
+impl core::fmt::Debug for TaskStore {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TaskStore")
+            .field("capacity", &self.capacity)
+            .field("live", &self.inner.lock().map(|m| m.len()).unwrap_or(0))
+            .finish()
+    }
+}
+
 impl TaskStore {
     /// Retention when the client doesn't request a `ttl`, in milliseconds.
     pub const DEFAULT_TTL_MS: i64 = 300_000; // 5 minutes

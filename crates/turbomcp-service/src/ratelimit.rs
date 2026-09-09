@@ -64,6 +64,18 @@ pub struct GovernorRateLimiter {
     checks: AtomicUsize,
 }
 
+impl core::fmt::Debug for GovernorRateLimiter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GovernorRateLimiter")
+            .field("tracked_keys", &self.inner.len())
+            .field(
+                "checks",
+                &self.checks.load(core::sync::atomic::Ordering::Relaxed),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 impl GovernorRateLimiter {
     /// A limiter from an explicit [`Quota`] (full control over rate, burst, and
     /// replenish period).

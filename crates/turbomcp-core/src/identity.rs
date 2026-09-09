@@ -158,6 +158,15 @@ impl fmt::Debug for Identity {
 #[derive(Clone, Copy)]
 pub struct RedactedSubject<'a>(pub &'a Identity);
 
+impl fmt::Debug for RedactedSubject<'_> {
+    /// Delegates to [`Display`](fmt::Display) rather than exposing the inner
+    /// [`Identity`]. Deriving here would print the raw subject and defeat the
+    /// entire point of the wrapper.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RedactedSubject({self})")
+    }
+}
+
 impl fmt::Display for RedactedSubject<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0.subject() {
@@ -195,6 +204,36 @@ mod tests {
         assert!(dbg.contains("user-1"));
         assert!(dbg.contains("email")); // key shown
         assert!(!dbg.contains("secret@example.com")); // value hidden
+    }
+
+    /// `RedactedSubject` exists to keep the subject out of telemetry, so its
+    /// `Debug` has to redact too. A `#[derive(Debug)]` here would print the
+    /// wrapped `Identity` — subject and all — and quietly undo the wrapper.
+    #[test]
+    fn redacted_subject_debug_redacts_like_its_display() {
+        let id = Identity::Bearer {
+            sub: "user-1".into(),
+            claims: Claims::new(),
+        };
+        let wrapped = RedactedSubject(&id);
+        let shown = format!("{wrapped:?}");
+        assert!(
+            !shown.contains("user-1"),
+            "the raw subject must not appear: {shown}"
+        );
+        assert!(
+            shown.contains(&format!("{wrapped}")),
+            "delegates to Display"
+        );
+    }
+
+    #[test]
+    fn anonymous_redacted_subject_says_so() {
+        let id = Identity::Anonymous;
+        assert_eq!(
+            format!("{:?}", RedactedSubject(&id)),
+            "RedactedSubject(anonymous)"
+        );
     }
 
     #[test]

@@ -381,6 +381,14 @@ pub struct ServerNotifier {
     subs: Arc<SubscriptionRegistry>,
 }
 
+impl core::fmt::Debug for ServerNotifier {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ServerNotifier")
+            .field("subscriptions", &self.subs.lock().len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl ServerNotifier {
     pub(crate) fn new(subs: Arc<SubscriptionRegistry>) -> Self {
         Self { subs }

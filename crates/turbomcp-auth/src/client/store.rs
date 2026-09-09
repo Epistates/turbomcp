@@ -54,6 +54,21 @@ pub struct MemoryCredentialStore {
     tokens: Mutex<HashMap<(String, String), TokenSet>>,
 }
 
+impl core::fmt::Debug for MemoryCredentialStore {
+    /// Counts only. Every value in here is a credential — client secrets and
+    /// access/refresh tokens — and the issuer keys say who the user talks to,
+    /// so none of it belongs in a log line.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MemoryCredentialStore")
+            .field(
+                "clients",
+                &self.clients.lock().map(|c| c.len()).unwrap_or(0),
+            )
+            .field("tokens", &self.tokens.lock().map(|t| t.len()).unwrap_or(0))
+            .finish()
+    }
+}
+
 impl CredentialStore for MemoryCredentialStore {
     fn load_client<'a>(&'a self, issuer: &'a str) -> BoxFuture<'a, Option<ClientCredentials>> {
         Box::pin(async move {
@@ -117,5 +132,38 @@ impl CredentialStore for MemoryCredentialStore {
                 .expect("credential store lock poisoned")
                 .retain(|(iss, _), _| iss != issuer);
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Everything in this store is a credential. `Debug` reports counts, and a
+    /// `#[derive(Debug)]` added here later would print access and refresh
+    /// tokens into whatever log touched it.
+    #[tokio::test]
+    async fn debug_reports_counts_and_never_credentials() {
+        let store = MemoryCredentialStore::default();
+        store
+            .store_tokens(
+                "https://issuer.example",
+                "https://mcp.example",
+                &TokenSet {
+                    access_token: "at-super-secret".into(),
+                    refresh_token: Some("rt-super-secret".into()),
+                    expires_at_epoch_secs: None,
+                    scopes: vec!["mcp:read".into()],
+                },
+            )
+            .await;
+
+        let shown = format!("{store:?}");
+        assert!(!shown.contains("at-super-secret"), "leaked access: {shown}");
+        assert!(
+            !shown.contains("rt-super-secret"),
+            "leaked refresh: {shown}"
+        );
+        assert!(shown.contains("tokens: 1"), "reports the count: {shown}");
     }
 }

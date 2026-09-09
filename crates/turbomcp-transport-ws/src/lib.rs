@@ -242,6 +242,18 @@ pub struct WebSocketTransport<S, C = DefaultCodec> {
     max_idle_pings: Option<u32>,
 }
 
+impl<S, C> core::fmt::Debug for WebSocketTransport<S, C> {
+    /// Deliberately unbounded in `S`/`C`: a derive would demand `Debug` of
+    /// whichever socket and codec the user plugged in, so a struct holding a
+    /// transport could not derive its own.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WebSocketTransport")
+            .field("ping_interval", &self.ping_interval)
+            .field("max_idle_pings", &self.max_idle_pings)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<S, C: Codec> WebSocketTransport<S, C> {
     /// Wrap an established [`WebSocketStream`] with the given codec.
     pub fn new(stream: WebSocketStream<S>, codec: C) -> Self {

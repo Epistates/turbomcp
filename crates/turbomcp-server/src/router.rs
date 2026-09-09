@@ -88,6 +88,36 @@ handler_slot!(
     neutral::CompleteResult
 );
 
+/// Lists the capabilities actually registered, which is the question worth
+/// asking of a router. Unbounded in `S` on purpose: requiring `Debug` of the
+/// user's server type would stop anything holding a router from deriving its
+/// own.
+impl<S> core::fmt::Debug for MethodRouter<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut registered: Vec<&str> = Vec::new();
+        for (name, present) in [
+            ("list_tools", self.list_tools.is_some()),
+            ("call_tool", self.call_tool.is_some()),
+            ("list_resources", self.list_resources.is_some()),
+            ("read_resource", self.read_resource.is_some()),
+            (
+                "list_resource_templates",
+                self.list_resource_templates.is_some(),
+            ),
+            ("list_prompts", self.list_prompts.is_some()),
+            ("get_prompt", self.get_prompt.is_some()),
+            ("complete", self.complete.is_some()),
+        ] {
+            if present {
+                registered.push(name);
+            }
+        }
+        f.debug_struct("MethodRouter")
+            .field("registered", &registered)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Per-method handler table, generic over the server type `S`.
 pub struct MethodRouter<S> {
     list_tools: Option<ListToolsHandler<S>>,

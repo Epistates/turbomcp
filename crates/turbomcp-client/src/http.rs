@@ -31,6 +31,7 @@
 //! for.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -151,6 +152,31 @@ impl Shared {
 pub struct HttpClientTransport {
     shared: Arc<Shared>,
     inbound_rx: mpsc::Receiver<JsonRpcMessage>,
+}
+
+impl fmt::Debug for HttpClientTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Never the bearer token, and never the session id: one is a
+        // credential outright and the other is a bearer-equivalent handle to
+        // an authenticated session (transports spec: session ids MUST be
+        // treated as secrets).
+        f.debug_struct("HttpClientTransport")
+            .field("url", &self.shared.url)
+            .field("authenticated", &self.shared.bearer.is_some())
+            .field(
+                "session",
+                &self
+                    .shared
+                    .session
+                    .lock()
+                    .map_or("<poisoned>", |s| if s.is_some() { "<set>" } else { "none" }),
+            )
+            .field(
+                "in_flight_posts",
+                &self.shared.posts.lock().map(|p| p.len()).unwrap_or(0),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl HttpClientTransport {

@@ -45,6 +45,17 @@ pub struct LegacySessionAdapter<S> {
     session: Arc<Mutex<Option<Session>>>,
 }
 
+impl<S> core::fmt::Debug for LegacySessionAdapter<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LegacySessionAdapter")
+            .field(
+                "handshaken",
+                &self.session.lock().is_ok_and(|s| s.is_some()),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 /// What a completed handshake established for this connection.
 #[derive(Clone)]
 struct Session {

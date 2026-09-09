@@ -57,6 +57,12 @@ pub struct TelemetryGuard {
     meter_provider: SdkMeterProvider,
 }
 
+impl core::fmt::Debug for TelemetryGuard {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TelemetryGuard").finish_non_exhaustive()
+    }
+}
+
 impl Drop for TelemetryGuard {
     fn drop(&mut self) {
         // Best-effort flush; nothing actionable if the collector is already gone.

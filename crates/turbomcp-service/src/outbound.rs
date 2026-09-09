@@ -31,6 +31,7 @@ fn table() -> &'static Mutex<HashMap<String, mpsc::Sender<JsonRpcMessage>>> {
 
 /// Unregisters its connection's writer when dropped.
 #[must_use = "dropping the guard immediately unregisters the writer"]
+#[derive(Debug)]
 pub struct WriterGuard {
     connection_id: String,
 }

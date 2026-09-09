@@ -65,6 +65,18 @@ pub struct LineTransport<R, W, C = DefaultCodec> {
     max_line_bytes: usize,
 }
 
+impl<R, W, C> core::fmt::Debug for LineTransport<R, W, C> {
+    /// Deliberately unbounded in `R`/`W`/`C`: a derive would demand `Debug` of
+    /// whichever byte streams the user plugged in, so a struct holding a
+    /// transport could not derive its own.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LineTransport")
+            .field("max_line_bytes", &self.max_line_bytes)
+            .field("buffered", &self.buf.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<R, W, C: Codec> LineTransport<R, W, C> {
     /// Build a transport over `reader`/`writer` with the given codec and the
     /// default per-line cap ([`DEFAULT_MAX_LINE_BYTES`]).
@@ -152,22 +164,37 @@ where
         Ok(())
     }
 
+    /// # Cancel safety
+    /// Safe to drop part-way through a line. `self.buf` is the *resumable*
+    /// accumulator rather than per-call scratch, which is what makes that true:
+    /// both drivers poll this as one branch of a `select!` in a loop, so the
+    /// future is dropped every time another branch wins, and `read_line_capped`
+    /// has already consumed those bytes from the reader. Clearing on entry
+    /// would discard them and hand the next call a truncated line — which
+    /// decodes as garbage and takes the whole connection down with it.
     async fn recv(&mut self) -> Result<Option<JsonRpcMessage>, Self::Error> {
         loop {
-            self.buf.clear();
             match read_line_capped(&mut self.reader, &mut self.buf, self.max_line_bytes).await? {
                 LineRead::Eof => return Ok(None),
                 LineRead::TooLong => {
+                    self.buf.clear();
                     return Err(StdioError::LineTooLong {
                         max: self.max_line_bytes,
                     });
                 }
                 LineRead::Line => {
-                    let trimmed = self.buf.trim_ascii();
-                    if trimmed.is_empty() {
-                        continue; // tolerate blank keep-alive lines
+                    // Decode before clearing, so the line leaves the buffer on
+                    // every path out of here and the accumulator keeps its
+                    // allocation for the next one.
+                    let decoded = match self.buf.trim_ascii() {
+                        [] => None, // tolerate blank keep-alive lines
+                        trimmed => Some(self.codec.decode(trimmed)),
+                    };
+                    self.buf.clear();
+                    match decoded {
+                        None => continue,
+                        Some(result) => return Ok(Some(result?)),
                     }
-                    return Ok(Some(self.codec.decode(trimmed)?));
                 }
             }
         }
@@ -223,6 +250,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn transport(
@@ -288,5 +317,39 @@ mod tests {
             t.recv().await.unwrap(),
             Some(JsonRpcMessage::Request(_))
         ));
+    }
+
+    /// `recv` must be cancel safe, because both drivers poll it as one branch
+    /// of a `select!` in a loop: every time another branch wins, this future is
+    /// dropped part-way through a line. The bytes it already took are gone from
+    /// the reader, so they have to survive in the transport and the next call
+    /// has to resume on top of them.
+    #[tokio::test]
+    async fn a_partly_read_line_survives_the_future_being_dropped() {
+        let (mut peer, io) = tokio::io::duplex(64);
+        let mut t = LineTransport::new(BufReader::new(io), Vec::new(), DefaultCodec::default());
+
+        // Half a frame, no newline: `recv` consumes it and then waits.
+        peer.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"me")
+            .await
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), t.recv())
+                .await
+                .is_err(),
+            "the frame is incomplete, so recv should still be waiting"
+        );
+
+        // The rest arrives after the dropped future would have discarded it.
+        peer.write_all(b"thod\":\"ping\"}\n").await.unwrap();
+        let msg = t
+            .recv()
+            .await
+            .expect("the resumed read must not see a truncated line")
+            .expect("a frame");
+        let JsonRpcMessage::Request(req) = msg else {
+            panic!("expected a request");
+        };
+        assert_eq!(req.method, "ping");
     }
 }

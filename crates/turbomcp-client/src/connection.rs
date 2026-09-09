@@ -81,6 +81,19 @@ pub struct Connection {
     inner: Arc<Inner>,
 }
 
+impl core::fmt::Debug for Connection {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Connection")
+            .field("request_timeout", &self.inner.request_timeout)
+            .field("closed", &self.inner.outbound.is_closed())
+            .field(
+                "in_flight",
+                &self.inner.pending.lock().map(|p| p.len()).unwrap_or(0),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 impl Connection {
     /// Spawn the connection actor over `transport` with the default timeout and
     /// no client-serving handler.
@@ -246,18 +259,44 @@ impl Connection {
     /// Tell the server to stop working on `id` (cancellation spec: receivers
     /// SHOULD stop processing, free resources, and send no response).
     ///
-    /// Synchronous and best-effort by necessity — this runs from a `Drop`,
-    /// which cannot await. A full outbound buffer means the connection is
-    /// already backed up past the point where one more frame helps, and a
-    /// closed one means the server has stopped listening anyway.
+    /// This runs from a `Drop`, which cannot await, so the fast path is
+    /// [`try_send`](mpsc::Sender::try_send). A full channel is the interesting
+    /// case: dropping the frame there would silently restore the very bug this
+    /// exists to fix, and "the client was busy" is exactly when a server is
+    /// most worth telling. So a full channel hands the blocking send to a task
+    /// instead — on the *same* channel, because a cancellation overtaking the
+    /// request it names would reference something the server has never seen
+    /// ("cancellation notifications MUST only reference requests that … are
+    /// believed to still be in-progress").
+    ///
+    /// Two cases genuinely have nothing to do: a closed channel means the
+    /// connection is gone and the server has stopped listening, and no runtime
+    /// means this future was dropped somewhere that cannot spawn.
     fn cancel_on_wire(&self, id: &RequestId, reason: &str) {
         let params = serde_json::json!({ "requestId": id, "reason": reason });
         let msg = JsonRpcMessage::Notification(turbomcp_core::JsonRpcNotification::new(
             notification::CANCELLED,
             Some(params),
         ));
-        if self.inner.outbound.try_send(msg).is_err() {
-            tracing::debug!(request_id = ?id, "could not send notifications/cancelled");
+        match self.inner.outbound.try_send(msg) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(msg)) => {
+                match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => {
+                        let outbound = self.inner.outbound.clone();
+                        handle.spawn(async move {
+                            let _ = outbound.send(msg).await;
+                        });
+                    }
+                    Err(_) => tracing::debug!(
+                        request_id = ?id,
+                        "dropped outside a runtime; notifications/cancelled not sent"
+                    ),
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::debug!(request_id = ?id, "connection closed; nothing to cancel");
+            }
         }
     }
 }

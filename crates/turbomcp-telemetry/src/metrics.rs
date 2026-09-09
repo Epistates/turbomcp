@@ -105,6 +105,12 @@ pub struct Metrics<S> {
     instruments: Arc<Instruments>,
 }
 
+impl<S> core::fmt::Debug for Metrics<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Metrics").finish_non_exhaustive()
+    }
+}
+
 impl<S, E> Service<JsonRpcMessage> for Metrics<S>
 where
     S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = E>,

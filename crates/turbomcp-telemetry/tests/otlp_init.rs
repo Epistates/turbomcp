@@ -55,3 +55,16 @@ async fn init_installs_once_and_reports_a_second_attempt() {
     // though nothing is listening on the endpoint.
     drop(guard);
 }
+
+/// The obligations this crate's public types owe callers (C-GOOD-ERR,
+/// C-COMMON-TRAITS). Asserted here rather than in the facade's matching test
+/// because `TelemetryError` is gated on this crate's `otlp` feature, which the
+/// facade's `telemetry` feature does not turn on.
+#[test]
+fn public_types_satisfy_the_guideline_bounds() {
+    const fn assert_error<E: std::error::Error + Send + Sync + 'static>() {}
+    const fn assert_debug<T: std::fmt::Debug>() {}
+
+    assert_error::<TelemetryError>();
+    assert_debug::<turbomcp_telemetry::TelemetryGuard>();
+}

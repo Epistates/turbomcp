@@ -33,6 +33,7 @@ use turbomcp_core::{
 /// version-gated it to the modern path and verified the client declared the
 /// extension capability, so a handler can trust both.
 #[non_exhaustive]
+#[derive(Debug)]
 pub struct ExtensionRequest {
     /// The raw JSON-RPC request; its method is one of [`Extension::methods`].
     pub request: JsonRpcRequest,
@@ -83,6 +84,14 @@ pub struct CallRunner {
     future: BoxFuture<'static, Result<Value, JsonRpcError>>,
     cancel: CancellationToken,
     input_slot: TaskInputSlot,
+}
+
+impl core::fmt::Debug for CallRunner {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CallRunner")
+            .field("cancelled", &self.cancel.is_cancelled())
+            .finish_non_exhaustive()
+    }
 }
 
 impl CallRunner {
@@ -136,6 +145,7 @@ impl CallRunner {
 /// returning a `CreateTaskResult` honors SEP-2663's "MUST NOT task a
 /// non-declaring client".
 #[non_exhaustive]
+#[derive(Debug)]
 pub struct CallAugmentRequest {
     /// The `tools/call` request.
     pub request: JsonRpcRequest,
@@ -149,6 +159,7 @@ pub struct CallAugmentRequest {
 
 /// The result of offering a `subscriptions/listen` request to an extension
 /// (SEP-2663 task-status notifications ride this stream).
+#[derive(Debug)]
 pub enum SubscribeOutcome {
     /// The listen request doesn't reference this extension's notifications.
     NotApplicable,

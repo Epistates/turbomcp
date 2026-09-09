@@ -52,6 +52,29 @@ use turbomcp_core::JsonRpcMessage;
 ///
 /// `recv` returns `Ok(None)` on a clean end-of-stream (peer closed); `Err` is
 /// reserved for genuine I/O failure. `close` consumes the transport.
+///
+/// # Cancel safety
+///
+/// **[`recv`](Transport::recv) must be cancel safe.** Both drivers — the
+/// server's `serve` loop and the client's connection actor — poll it as one
+/// branch of a [`tokio::select!`] inside a loop, racing it against outbound
+/// writes, handler completions, and the shutdown signal. Every time another
+/// branch wins, the `recv` future is dropped part-way through and a fresh one
+/// is created on the next turn. Dropping it must therefore lose nothing: any
+/// bytes already taken from the underlying source have to live in the transport
+/// so the next call resumes on top of them.
+///
+/// The practical rule is that the future may borrow state but must not *own*
+/// any that matters. A partial frame kept in a local is gone when the future is
+/// dropped; the same partial frame kept in `&mut self` survives. Getting this
+/// wrong does not fail loudly — it silently truncates one frame, which then
+/// fails to decode and takes the whole connection down with it, under load and
+/// only under load.
+///
+/// The bundled transports satisfy this by construction: the stdio line reader
+/// accumulates into a field, the WebSocket transport defers to `StreamExt::next`
+/// on the underlying stream, and the HTTP client transport reads from an
+/// `mpsc::Receiver`.
 pub trait Transport: Send + 'static {
     /// Transport-specific failure (I/O, protocol framing).
     type Error: core::error::Error + Send + Sync + 'static;
@@ -61,6 +84,8 @@ pub trait Transport: Send + 'static {
     -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     /// Receive the next frame, or `None` at clean end-of-stream.
+    ///
+    /// Must be cancel safe — see the [trait docs](Transport#cancel-safety).
     fn recv(&mut self) -> impl Future<Output = Result<Option<JsonRpcMessage>, Self::Error>> + Send;
 
     /// Close the transport, flushing anything pending.

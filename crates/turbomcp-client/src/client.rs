@@ -17,6 +17,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -87,6 +88,21 @@ pub struct ClientBuilder {
     request_timeout: Duration,
     handler: Option<Arc<dyn ClientHandler>>,
     response_cache: bool,
+}
+
+impl fmt::Debug for ClientBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientBuilder")
+            .field("client_info", &self.client_info)
+            .field("capabilities", &self.capabilities)
+            .field("connect_mode", &self.connect_mode)
+            .field("request_timeout", &self.request_timeout)
+            // A handler is a user trait object; whether one is installed is the
+            // part that explains behaviour.
+            .field("handler", &self.handler.is_some())
+            .field("response_cache", &self.response_cache)
+            .finish()
+    }
 }
 
 impl ClientBuilder {
@@ -389,6 +405,22 @@ pub struct Client {
     /// The SEP-2549 response cache (`None` = disabled at build time). Shared
     /// with the connection actor, which invalidates on notifications.
     cache: Option<Arc<ResponseCache>>,
+}
+
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // `request_meta` is deliberately absent: it carries this client's
+        // declared capabilities and whatever `_meta` the caller stamped, which
+        // is the one field here that could hold something sensitive.
+        f.debug_struct("Client")
+            .field("version", &self.version)
+            .field("server_info", &self.server_info)
+            .field("server_capabilities", &self.server_capabilities)
+            .field("instructions", &self.instructions)
+            .field("handler", &self.handler.is_some())
+            .field("response_cache", &self.cache.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Client {

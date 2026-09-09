@@ -78,6 +78,16 @@ pub struct VersionDispatcher<S> {
     shared: Shared,
 }
 
+impl<S> core::fmt::Debug for VersionDispatcher<S> {
+    /// Unbounded in `S`: requiring `Debug` of the user's server type would stop
+    /// anything holding a dispatcher from deriving its own.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VersionDispatcher")
+            .field("supported", &self.supported)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The dispatcher's shared per-server state — one `Arc` per store, grouped so
 /// the deep handler call chain threads a single value instead of six (and so
 /// cross-store coordination, like session-termination tearing down a session's
@@ -256,6 +266,13 @@ impl Shared {
 #[derive(Clone)]
 pub struct DispatcherSessionTerminator {
     shared: Shared,
+}
+
+impl core::fmt::Debug for DispatcherSessionTerminator {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DispatcherSessionTerminator")
+            .finish_non_exhaustive()
+    }
 }
 
 impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {

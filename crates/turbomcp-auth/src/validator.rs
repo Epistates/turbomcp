@@ -41,6 +41,7 @@ pub trait BearerValidator: Send + Sync {
 
 /// A JWT resource-server validator: signature (via JWKS) + `aud` binding +
 /// `iss` + `exp`, per the MCP authorization spec.
+#[derive(Debug)]
 pub struct JwtValidator<S> {
     source: S,
     audiences: Vec<String>,

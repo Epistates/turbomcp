@@ -106,6 +106,18 @@ pub struct TasksExtension {
     poll_interval_ms: Option<i64>,
 }
 
+impl core::fmt::Debug for TasksExtension {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TasksExtension")
+            // The decider is a user closure; whether one is installed is what
+            // explains why a call did or did not become a task.
+            .field("taskify", &self.taskify.is_some())
+            .field("ttl_ms", &self.ttl_ms)
+            .field("poll_interval_ms", &self.poll_interval_ms)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for TasksExtension {
     fn default() -> Self {
         Self {

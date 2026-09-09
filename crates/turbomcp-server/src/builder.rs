@@ -25,6 +25,26 @@ use crate::session::SessionBackend;
 use crate::tasks::TaskBackend;
 use crate::traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
 
+/// Unbounded in `S`, and reports which seams have been overridden rather than
+/// the trait objects behind them.
+impl<S> core::fmt::Debug for ServerBuilder<S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ServerBuilder")
+            .field("router", &self.router)
+            .field("tasks", &self.tasks)
+            .field("strict_elicitation_keys", &self.strict_elicitation_keys)
+            .field("session_idle_timeout", &self.session_idle_timeout)
+            .field("custom_session_backend", &self.session_backend.is_some())
+            .field("custom_task_backend", &self.task_backend.is_some())
+            .field("extensions", &self.extensions.len())
+            .field("response_cache", &self.cache.is_some())
+            // Never the key itself: it signs resumable MRTR state.
+            .field("state_key", &self.state_key.is_some())
+            .field("visibility_policy", &self.visibility.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Assembles a server and its [`MethodRouter`] into a [`VersionDispatcher`].
 pub struct ServerBuilder<S> {
     server: S,

@@ -13,9 +13,30 @@ The client had never been measured. Scoring it against the official conformance
 suite found four defects, one of which broke every server-initiated request over
 HTTP against the reference implementation. A follow-up pass over the two-way
 obligations found three more, all on the same seam: the server had long
-implemented its half, and the client had never implemented the other.
+implemented its half, and the client had never implemented the other. A third
+pass, against idiomatic-Rust and API-guideline references rather than the spec,
+found the stdio cancel-safety bug below.
 
 ### Fixed
+
+- **The stdio transport lost part of a frame under concurrency.** `recv` cleared
+  its accumulator on entry, but both drivers poll it as one branch of a
+  `select!` in a loop, so the future is dropped whenever another branch wins —
+  after `read_line_capped` has already consumed those bytes from the reader.
+  Clearing discarded them, and the next call decoded a truncated line, which
+  fails and takes the whole connection down. It needed a concurrent send and a
+  frame split across reads to trigger, so it never showed up in a test that
+  drives one message at a time. The buffer is now the resumable accumulator it
+  always needed to be, and [`Transport`] documents cancel safety as a
+  requirement on implementors rather than leaving it to be rediscovered. The
+  WebSocket and HTTP client transports were already correct.
+
+- **A cancellation could be dropped exactly when it mattered most.** The
+  notification is sent from a `Drop`, which cannot await, so a full outbound
+  channel silently discarded it — restoring the very bug it exists to fix, at
+  the moment a client is busiest. A full channel now hands the send to a task,
+  on the same channel, since a cancellation that overtook the request it names
+  would reference something the server has never seen.
 
 - **An abandoned request never told the server to stop.** When the client's
   timeout elapsed, or its caller dropped the request future, the client cleaned
@@ -107,6 +128,20 @@ implemented its half, and the client had never implemented the other.
 - **Dependency majors:** `tower-http` 0.7, `jsonwebtoken` 11, `syn` 3,
   `prettyplease` 0.3, `typify` 0.7, and the OpenTelemetry crates to 0.32. No
   public API moved. MSRV stays 1.88.
+
+- **Every public type now implements `Debug`** (Rust API Guidelines
+  C-COMMON-TRAITS). Twenty-nine did not, including `Client`, `ClientBuilder`,
+  `ServerBuilder`, `VersionDispatcher`, `MethodRouter`, and all three
+  transports — so a user could not `#[derive(Debug)]` on any struct holding
+  one, and the error named *their* type rather than ours. The generic wrappers
+  are implemented without bounding their parameter, since a derive there would
+  have demanded `Debug` of the user's own server type and merely moved the
+  problem. Types holding credentials redact: the OAuth credential store reports
+  counts, the HTTP transport reports whether it is authenticated rather than
+  with what, and `SessionStore` reports a count because session ids are
+  bearer-equivalent. `RedactedSubject` delegates to its hashing `Display`, since
+  a derive there would have printed the subject it exists to hide. Tests assert
+  both the trait bounds and the redaction, so neither can regress quietly.
 
 ## [4.0.0-alpha.2] - 2026-08-30
 

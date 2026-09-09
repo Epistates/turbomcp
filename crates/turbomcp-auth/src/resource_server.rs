@@ -20,6 +20,7 @@ use crate::validator::BearerValidator;
 /// Construct one with a [`BearerValidator`] and the resource's
 /// [`ResourceMetadata`], then hand it to the HTTP transport
 /// (`HttpConfig::with_authenticator`).
+#[derive(Debug)]
 pub struct ResourceServer<V> {
     validator: V,
     metadata: ResourceMetadata,

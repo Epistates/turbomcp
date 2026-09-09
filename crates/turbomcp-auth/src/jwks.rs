@@ -27,6 +27,14 @@ pub struct StaticJwks {
     set: JwkSet,
 }
 
+impl core::fmt::Debug for StaticJwks {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StaticJwks")
+            .field("keys", &self.set.keys.len())
+            .finish()
+    }
+}
+
 impl StaticJwks {
     /// Parse a JWKS JSON document (`{ "keys": [ … ] }`).
     ///
@@ -94,6 +102,24 @@ mod http {
         ttl: Duration,
         refresh_cooldown: Duration,
         cache: RwLock<Option<Cached>>,
+    }
+
+    impl core::fmt::Debug for HttpJwks {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("HttpJwks")
+                .field("jwks_uri", &self.jwks_uri)
+                .field("ttl", &self.ttl)
+                .field("refresh_cooldown", &self.refresh_cooldown)
+                .field(
+                    "cached_keys",
+                    &self
+                        .cache
+                        .read()
+                        .ok()
+                        .and_then(|c| c.as_ref().map(|c| c.set.keys.len())),
+                )
+                .finish_non_exhaustive()
+        }
     }
 
     struct Cached {

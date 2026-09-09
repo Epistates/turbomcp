@@ -124,7 +124,7 @@ codegen-check:
 refresh-locks:
   #!/usr/bin/env bash
   set -euo pipefail
-  for dir in crates/turbomcp-conformance crates/turbomcp-interop; do
+  for dir in crates/turbomcp-conformance crates/turbomcp-interop fuzz; do
     echo "Refreshing ${dir}/Cargo.lock"
     (cd "${dir}" && cargo update)
   done
@@ -158,7 +158,7 @@ lock-check:
     exit 1
   fi
   echo "Cargo.lock is in sync."
-  for dir in crates/turbomcp-conformance crates/turbomcp-interop; do
+  for dir in crates/turbomcp-conformance crates/turbomcp-interop fuzz; do
     if (cd "${dir}" && cargo metadata --locked --format-version 1 >/dev/null 2>&1); then
       echo "${dir}/Cargo.lock is in sync."
     else

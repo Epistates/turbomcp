@@ -62,6 +62,18 @@ pub struct SessionStore {
     idle_timeout: Option<Duration>,
 }
 
+impl core::fmt::Debug for SessionStore {
+    /// Counts, never ids: a session id is a bearer-equivalent handle that the
+    /// transports spec requires be treated as a secret.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SessionStore")
+            .field("capacity", &self.capacity)
+            .field("idle_timeout", &self.idle_timeout)
+            .field("live", &self.inner.read().map(|m| m.len()).unwrap_or(0))
+            .finish()
+    }
+}
+
 impl SessionStore {
     /// Default maximum number of live sessions.
     pub const DEFAULT_CAPACITY: usize = 4096;
