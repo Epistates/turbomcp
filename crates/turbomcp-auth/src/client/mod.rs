@@ -93,6 +93,17 @@ pub enum OAuthClientError {
     /// (`code_challenge_methods_supported`) — MCP clients MUST refuse.
     #[error("authorization server does not advertise PKCE support; refusing to proceed")]
     PkceUnsupported,
+    /// A URL the flow would have used is plaintext `http://` to a non-loopback
+    /// host (authorization security §Communication Security: authorization
+    /// server endpoints MUST be HTTPS, and redirect URIs MUST be `localhost`
+    /// or HTTPS).
+    #[error("{what} must use https (or a loopback host); refusing plaintext {url}")]
+    InsecureUrl {
+        /// Which URL this is — the issuer, an endpoint name, the redirect URI.
+        what: String,
+        /// The offending URL.
+        url: String,
+    },
     /// Client registration failed or no mechanism applies to this AS.
     #[error("client registration failed: {0}")]
     Registration(String),

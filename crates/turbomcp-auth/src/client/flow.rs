@@ -25,7 +25,7 @@ use oauth2::{
 use super::challenge::BearerChallenge;
 use super::discovery::{
     AuthorizationServerMetadata, ProtectedResourceMetadata, discover_authorization_server,
-    discover_protected_resource,
+    discover_protected_resource, require_secure_url,
 };
 use super::registration::{ClientCredentials, RegistrationStrategy, obtain_credentials};
 use super::store::{CredentialStore, MemoryCredentialStore};
@@ -463,6 +463,10 @@ fn build_oauth2_client(
 > {
     let bad_url =
         |what: &str, e: url::ParseError| OAuthClientError::Discovery(format!("{what}: {e}"));
+    // The redirect URI is the caller's, so it never passed through discovery's
+    // checks. It is where the authorization code lands, and the spec names it
+    // directly: redirect URIs MUST be `localhost` or HTTPS.
+    require_secure_url(redirect_uri, "the redirect URI")?;
     let mut client = BasicClient::new(ClientId::new(credentials.client_id.clone()))
         .set_auth_uri(
             AuthUrl::new(discovered.server.authorization_endpoint.clone())

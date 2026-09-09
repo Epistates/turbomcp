@@ -97,6 +97,12 @@ pub async fn discover_protected_resource(
                         meta.resource,
                     )));
                 }
+                // The document names where the user will be sent to authorize.
+                // A plaintext entry here is refused now, so the caller never
+                // gets a metadata document it might act on.
+                for issuer in &meta.authorization_servers {
+                    require_secure_url(issuer, "an advertised authorization server")?;
+                }
                 return Ok(meta);
             }
             Err(e) => last_error = format!("{candidate}: {e}"),
@@ -105,6 +111,50 @@ pub async fn discover_protected_resource(
     Err(OAuthClientError::Discovery(format!(
         "protected resource metadata unavailable ({last_error})"
     )))
+}
+
+/// Refuse a URL the flow would carry credentials over unless it is HTTPS, or
+/// plaintext to a loopback host.
+///
+/// The authorization spec makes this a MUST twice over: "all authorization
+/// server endpoints MUST be served over HTTPS", and "all redirect URIs MUST be
+/// either `localhost` or use HTTPS". Without it, a hostile or hijacked metadata
+/// document can name a plaintext authorization server and the whole exchange —
+/// the authorization request, the PKCE verifier, the code, the client secret,
+/// and the issued token — crosses the network in the clear.
+///
+/// **Loopback is the one deviation**, and it is deliberate. The spec grants it
+/// for redirect URIs, RFC 8252 builds native-app flows on it, and every local
+/// authorization server (including the conformance harness's) is plaintext
+/// `127.0.0.1`. Extending it to the endpoint rules keeps development and
+/// testing working while remote plaintext stays refused, which is where the
+/// attack actually lives.
+pub(crate) fn require_secure_url(url: &str, what: &str) -> Result<(), OAuthClientError> {
+    let insecure = || OAuthClientError::InsecureUrl {
+        what: what.to_owned(),
+        url: url.to_owned(),
+    };
+    let parsed = Url::parse(url).map_err(|_| insecure())?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if is_loopback(&parsed) => Ok(()),
+        _ => Err(insecure()),
+    }
+}
+
+/// Whether `url`'s host is the loopback interface. `localhost` and anything
+/// under it are reserved for loopback by RFC 6761, alongside the literal
+/// addresses.
+fn is_loopback(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 /// Whether a metadata document's `resource` covers the server at `url`.
@@ -183,6 +233,10 @@ pub async fn discover_authorization_server(
     http: &reqwest::Client,
     issuer: &str,
 ) -> Result<AuthorizationServerMetadata, OAuthClientError> {
+    // Before anything is fetched: an issuer we would talk to in the clear is
+    // refused outright, rather than after its metadata has been read and
+    // trusted.
+    require_secure_url(issuer, "the authorization server issuer")?;
     let candidates = authorization_server_wellknown_candidates(issuer)?;
     let mut last_error = String::from("no candidate URLs");
     for candidate in &candidates {
@@ -194,6 +248,14 @@ pub async fn discover_authorization_server(
                         "authorization server metadata issuer mismatch: document says {}, expected {issuer}",
                         meta.issuer
                     )));
+                }
+                // An HTTPS issuer can still hand back plaintext endpoints, and
+                // those are where the credentials actually go — so each is
+                // checked on its own rather than inferred from the issuer.
+                require_secure_url(&meta.authorization_endpoint, "the authorization endpoint")?;
+                require_secure_url(&meta.token_endpoint, "the token endpoint")?;
+                if let Some(registration) = &meta.registration_endpoint {
+                    require_secure_url(registration, "the registration endpoint")?;
                 }
                 // MCP MUST: no advertised PKCE ⇒ refuse to proceed.
                 let has_pkce = meta
@@ -264,6 +326,79 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whole point: a remote plaintext endpoint is refused. Without this,
+    /// a hijacked metadata document can name `http://evil.example` and the
+    /// authorization request, PKCE verifier, code, client secret, and issued
+    /// token all cross the network readable.
+    #[test]
+    fn remote_plaintext_urls_are_refused() {
+        for url in [
+            "http://as.example.com",
+            "http://as.example.com/token",
+            "http://192.0.2.10/token",
+            "http://[2001:db8::1]/token",
+            // A loopback-looking name that is not loopback.
+            "http://localhost.evil.example/token",
+            "http://notlocalhost/token",
+        ] {
+            assert!(
+                matches!(
+                    require_secure_url(url, "the token endpoint"),
+                    Err(OAuthClientError::InsecureUrl { .. })
+                ),
+                "{url} should have been refused"
+            );
+        }
+    }
+
+    /// HTTPS anywhere, and plaintext only to the loopback interface — the
+    /// deviation that keeps native-app flows (RFC 8252) and every local
+    /// authorization server working.
+    #[test]
+    fn https_and_loopback_are_allowed() {
+        for url in [
+            "https://as.example.com/token",
+            "https://192.0.2.10/token",
+            "http://localhost:7777/cb",
+            "http://localhost./cb",
+            "http://LOCALHOST:7777/cb",
+            "http://app.localhost/cb",
+            "http://127.0.0.1:3456/cb",
+            "http://127.9.9.9/cb",
+            "http://[::1]:7777/cb",
+        ] {
+            assert!(
+                require_secure_url(url, "the redirect URI").is_ok(),
+                "{url} should have been allowed"
+            );
+        }
+    }
+
+    /// A non-HTTP scheme is not a loophole. These parse fine and would
+    /// otherwise fall through to whatever the caller does with the URL — the
+    /// best-practices document names `javascript:`, `data:`, `file:`, and
+    /// `vbscript:` specifically, because an authorization URL is one a client
+    /// is expected to hand to a browser. Allowlisting `https` (plus loopback
+    /// `http`) refuses all of them and anything else invented later, which is
+    /// why the check is shaped that way rather than as a blocklist.
+    #[test]
+    fn other_schemes_and_junk_are_refused() {
+        for url in [
+            "javascript:alert(1)",
+            "vbscript:msgbox(1)",
+            "file:///etc/passwd",
+            "ftp://as.example.com/",
+            "data:text/plain,hi",
+            "not a url",
+            "",
+        ] {
+            assert!(
+                require_secure_url(url, "the issuer").is_err(),
+                "{url:?} should have been refused"
+            );
+        }
+    }
 
     #[test]
     fn resource_wellknown_order_prefers_path_insertion() {

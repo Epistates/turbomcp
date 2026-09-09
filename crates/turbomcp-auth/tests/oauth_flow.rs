@@ -44,6 +44,12 @@ struct MockState {
     /// Answer a refresh with no new `refresh_token` (an AS that doesn't
     /// rotate).
     no_refresh_rotation: bool,
+    /// Advertise a token endpoint somewhere else entirely — the document is
+    /// what says where credentials go, and an honest-looking issuer can still
+    /// name a plaintext one.
+    token_endpoint_override: Option<String>,
+    /// Point the resource's `authorization_servers` at another host.
+    authorization_servers_override: Option<Vec<String>>,
 }
 
 type Shared = Arc<Mutex<MockState>>;
@@ -67,10 +73,16 @@ async fn spawn_mock(state: Shared) -> String {
     base
 }
 
-async fn resource_metadata(State((_, base)): State<(Shared, String)>) -> impl IntoResponse {
+async fn resource_metadata(State((state, base)): State<(Shared, String)>) -> impl IntoResponse {
+    let servers = state
+        .lock()
+        .unwrap()
+        .authorization_servers_override
+        .clone()
+        .unwrap_or_else(|| vec![base.clone()]);
     axum::Json(json!({
         "resource": format!("{base}/mcp"),
-        "authorization_servers": [base],
+        "authorization_servers": servers,
         "scopes_supported": ["mcp:tools"],
     }))
 }
@@ -80,7 +92,10 @@ async fn as_metadata(State((state, base)): State<(Shared, String)>) -> impl Into
     let mut meta = json!({
         "issuer": s.issuer_override.clone().unwrap_or_else(|| base.clone()),
         "authorization_endpoint": format!("{base}/authorize"),
-        "token_endpoint": format!("{base}/token"),
+        "token_endpoint": s
+            .token_endpoint_override
+            .clone()
+            .unwrap_or_else(|| format!("{base}/token")),
         "registration_endpoint": format!("{base}/register"),
         "authorization_response_iss_parameter_supported": true,
         "scopes_supported": ["mcp:tools", "files:write"],
@@ -367,6 +382,73 @@ async fn missing_pkce_support_refuses_to_proceed() {
         matches!(
             err,
             turbomcp_auth::client::OAuthClientError::PkceUnsupported
+        ),
+        "got {err}"
+    );
+}
+
+/// An issuer that checks out can still name a plaintext token endpoint, and
+/// the token endpoint is where the client secret and the code actually go. The
+/// endpoints are validated individually rather than inferred from the issuer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_plaintext_token_endpoint_is_refused_even_from_an_honest_issuer() {
+    let state = Shared::default();
+    state.lock().unwrap().token_endpoint_override = Some("http://evil.example/token".into());
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let err = engine(&base).discover(None).await.unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            turbomcp_auth::client::OAuthClientError::InsecureUrl { what, .. }
+                if what.contains("token endpoint")
+        ),
+        "got {err}"
+    );
+}
+
+/// The resource's own metadata says where the user will be sent to authorize.
+/// A plaintext entry is refused before the caller ever holds the document.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_plaintext_advertised_authorization_server_is_refused() {
+    let state = Shared::default();
+    state.lock().unwrap().authorization_servers_override = Some(vec!["http://evil.example".into()]);
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let err = engine(&base).discover(None).await.unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            turbomcp_auth::client::OAuthClientError::InsecureUrl { what, .. }
+                if what.contains("authorization server")
+        ),
+        "got {err}"
+    );
+}
+
+/// The redirect URI is the caller's own, so discovery never sees it — and it is
+/// where the authorization code lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_remote_plaintext_redirect_uri_is_refused() {
+    let state = Shared::default();
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let engine = OAuthClient::new(
+        format!("{base}/mcp"),
+        "http://evil.example/callback",
+        RegistrationStrategy::Dynamic(DynamicRegistration::native(
+            "turbomcp-test",
+            vec!["http://evil.example/callback".to_owned()],
+        )),
+    );
+    let discovered = engine
+        .discover(None)
+        .await
+        .expect("discovery itself is fine; the redirect URI is the caller's");
+    let credentials = engine.credentials(&discovered).await.unwrap();
+    let err = engine.begin(&discovered, &credentials, &[]).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            turbomcp_auth::client::OAuthClientError::InsecureUrl { what, .. }
+                if what.contains("redirect URI")
         ),
         "got {err}"
     );

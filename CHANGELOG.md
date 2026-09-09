@@ -19,6 +19,21 @@ found the stdio cancel-safety bug below.
 
 ### Fixed
 
+- **The OAuth client would authorize over plaintext HTTP.** Nothing checked a
+  URL's scheme, and the authorization spec makes it a MUST twice: authorization
+  server endpoints MUST be HTTPS, and redirect URIs MUST be `localhost` or
+  HTTPS. A hijacked or hostile metadata document could name a plaintext
+  authorization server and the whole exchange — the authorization request, the
+  PKCE verifier, the code, the client secret, and the issued token — would cross
+  the network readable. Checked now at every point a URL enters the flow: the
+  issuer, each endpoint inside the discovered metadata (an honest issuer can
+  still advertise a plaintext token endpoint, and that is where credentials go),
+  every `authorization_servers` entry in the resource's own metadata, and the
+  caller's redirect URI. Loopback keeps plaintext, which the spec grants for
+  redirect URIs and which every local authorization server relies on. Being an
+  allowlist, it also satisfies the separate MUST to reject `javascript:`,
+  `data:`, `file:`, and `vbscript:` authorization URLs.
+
 - **The stdio transport lost part of a frame under concurrency.** `recv` cleared
   its accumulator on entry, but both drivers poll it as one branch of a
   `select!` in a loop, so the future is dropped whenever another branch wins —
