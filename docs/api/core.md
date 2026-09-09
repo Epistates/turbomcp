@@ -11,10 +11,10 @@ are also re-exported by `turbomcp-protocol` for async protocol users.
 
 ```toml
 [dependencies]
-turbomcp-core = "3.2.1"
+turbomcp-core = "3.3.0"
 
 # For no_std environments
-turbomcp-core = { version = "3.2.1", default-features = false }
+turbomcp-core = { version = "3.3.0", default-features = false }
 ```
 
 ## Feature Flags

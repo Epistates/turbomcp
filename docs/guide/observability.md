@@ -142,9 +142,9 @@ TurboMCP v3 provides first-class OpenTelemetry support via `turbomcp-telemetry`:
 
 ```toml
 [dependencies]
-turbomcp = { version = "3.2.1", features = ["telemetry"] }
+turbomcp = { version = "3.3.0", features = ["telemetry"] }
 # Or use the crate directly
-turbomcp-telemetry = "3.2.1"
+turbomcp-telemetry = "3.3.0"
 ```
 
 ### Configuration

@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.2.1] - 2026-09-09
+## [3.3.0] - 2026-09-09
 
 One fix: `#[tool]` schemas for parameters with nested types were not valid
 JSON Schema documents, and strict clients rejected every tool on the server
-because of it. Plus a dependency refresh that clears six open advisories and
-one yanked crate from the lockfile. No API change.
+because of it. Plus a full dependency refresh: six open advisories and one
+yanked crate cleared from the lockfile, and every direct dependency moved to
+its current major.
+
+**This is a minor, not a patch, release.** Three of the upgraded majors
+(`jsonwebtoken` 11, `tokio-tungstenite` 0.30, `tower-http` 0.7) appear in
+public signatures of `turbomcp-auth`, `turbomcp-dpop`, `turbomcp-proxy`, and
+`turbomcp-websocket`, so a crate that passes those libraries' types into
+TurboMCP has to move to the same major. Each is called out under *Changed*
+with the one-line fix. `cargo semver-checks` reports nothing in TurboMCP's own
+surface, and nothing else in the 3.x API moved.
 
 ### Security
 
@@ -28,16 +37,42 @@ one yanked crate from the lockfile. No API change.
 
 ### Changed
 
-- **Declared dependencies refreshed to the latest compatible releases** — the
-  workspace and per-crate manifests move every direct dependency to its current
-  semver-compatible version, notably `metrics` 0.24.5 → 0.24.6 (0.24.5 was
-  yanked), `redis` 1.2 → 1.7, `hyper` 1.9 → 1.11, `tokio` 1.52 → 1.53,
-  `reqwest` 0.13.3 → 0.13.5, `uuid` 1.23 → 1.26, `time` 0.3.47 → 0.3.55, and
-  `wasm-bindgen`/`js-sys`/`web-sys` to 0.2.128/0.3.105. Majors with a newer
-  incompatible line (`opentelemetry` 0.32, `jsonschema` 0.55, `tower-http` 0.7,
-  `tokio-tungstenite` 0.30, `jsonwebtoken` 11, `syn` 3) are deliberately left
-  where they are: several of them are part of the public API, so they wait for
-  a minor release. MSRV stays 1.89.0.
+- **`jsonwebtoken` 10 → 11 in public signatures** —
+  `JwtValidationResult::algorithm` and `JwtValidator::with_algorithms`
+  (`turbomcp-auth`), the `helpers` module of `turbomcp-dpop`
+  (`algorithm_to_jwt`, `jwt_to_algorithm`, `private_key_to_encoding_key`,
+  `public_key_to_jwk`, `jwk_to_decoding_key`), and
+  `ProxyAuthConfig::with_algorithm` (`turbomcp-proxy`) take or return
+  `jsonwebtoken` types. *Breaking if your crate also depends on
+  `jsonwebtoken`* — bump it to `11`, otherwise the two `Algorithm`s are
+  different types and won't unify.
+- **`tokio-tungstenite` 0.29 → 0.30 in public signatures** —
+  `WebSocketBidirectionalTransport::send_raw_message` (`turbomcp-websocket`)
+  takes a `tungstenite::Message`. *Breaking if your crate also depends on
+  `tokio-tungstenite`* — bump it to `0.30`.
+- **`tower-http` 0.6 → 0.7 in public signatures** —
+  `turbomcp_proxy::runtime::build_cors_layer` returns a
+  `tower_http::cors::CorsLayer`. *Breaking if you compose that layer into your
+  own `tower-http` stack* — bump it to `0.7`.
+- **Every other direct dependency is on its current major** —
+  `opentelemetry`/`opentelemetry_sdk`/`opentelemetry-otlp` 0.31 → 0.32 with
+  `tracing-opentelemetry` 0.32 → 0.33 (internal to `turbomcp-telemetry`, which
+  exposes only `tracing` types), `syn` 2 → 3, `p256` 0.13 → 0.14, `simd-json`
+  0.17 → 0.18, `brotli` 8 → 9, `lz4_flex` 0.13 → 0.14, `base64` 0.22 → 0.23,
+  `sha2` 0.10 → 0.11, `rand` 0.9 → 0.10, `compact_str` 0.9 → 0.10,
+  `convert_case` 0.11 → 0.12, `comfy-table` 7 → 8, `dirs` 6 → 7, `wit-bindgen`
+  0.57 → 0.61. Three crates needed source changes — `turbomcp-macros` for
+  `syn` 3's `FnModifiers`, `turbomcp-dpop` for `p256` 0.14's `Generate` and
+  SEC1 APIs, `turbomcp-cli` for `comfy-table` 8's `TableStyle` — and the rest
+  compiled as-is. Where an older major is still in `Cargo.lock` it arrives
+  through a third party (`axum` 0.8 pins `tokio-tungstenite` 0.29, `reqwest`
+  pins `tower-http` 0.6, `yubihsm` pins `p256` 0.13) and can't be selected
+  from this side.
+- **Compatible dependencies refreshed too** — notably `metrics` 0.24.5 →
+  0.24.6 (0.24.5 was yanked), `redis` 1.2 → 1.7, `hyper` 1.9 → 1.11, `tokio`
+  1.52 → 1.53, `reqwest` 0.13.3 → 0.13.5, `uuid` 1.23 → 1.26, `time` 0.3.47 →
+  0.3.55, and `wasm-bindgen`/`js-sys`/`web-sys` to 0.2.128/0.3.105. MSRV stays
+  1.89.0.
 
 ### Fixed
 

@@ -327,7 +327,7 @@ async fn handler(logger: Logger) -> McpResult<String> {
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "3.2.1", default-features = false }
+turbomcp-core = { version = "3.3.0", default-features = false }
 ```
 
 ```rust

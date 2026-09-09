@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-macros"
-version = "3.2.1"
+version = "3.3.0"
 edition = "2024"
 description = "Procedural macros for ergonomic MCP tool and resource registration"
 license = "MIT"
