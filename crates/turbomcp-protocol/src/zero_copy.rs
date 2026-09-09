@@ -1073,13 +1073,62 @@ mod tests {
     mod async_mmap_tests {
         use super::MessageId;
         use super::mmap::*;
+        use std::future::Future;
         use std::io::Write;
         use std::path::Path;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
 
-        #[tokio::test]
-        async fn test_mmap_message_from_file_async_performance() {
-            // Test that from_file_async doesn't block the async runtime
+        /// Drive `op` on a single-threaded runtime and report whether it yielded
+        /// to the scheduler before completing.
+        ///
+        /// The runtime gets exactly one blocking thread, and that thread is held
+        /// busy until a canary task has run. Any `spawn_blocking` work `op` queues
+        /// therefore cannot finish until the canary has been polled, and the canary
+        /// can only be polled if `op` handed control back to the scheduler. An
+        /// implementation that did its I/O inline would complete with the canary
+        /// still unpolled. No wall-clock measurement is involved, so this cannot
+        /// flake under CI load the way an elapsed-time bound does.
+        fn run_and_check_yields<F, T>(op: impl FnOnce() -> F) -> (T, bool)
+        where
+            F: Future<Output = T>,
+        {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .max_blocking_threads(1)
+                .enable_all()
+                .build()
+                .unwrap();
 
+            runtime.block_on(async {
+                let (release, gate) = std::sync::mpsc::channel::<()>();
+                // Returns as soon as the canary sends, or when the canary is
+                // dropped unpolled at shutdown. The timeout is only a backstop so
+                // a failing assertion can never wedge runtime teardown.
+                let hold = tokio::task::spawn_blocking(move || {
+                    let _ = gate.recv_timeout(Duration::from_secs(30));
+                });
+
+                let canary_ran = Arc::new(AtomicBool::new(false));
+                let canary = tokio::spawn({
+                    let canary_ran = Arc::clone(&canary_ran);
+                    async move {
+                        canary_ran.store(true, Ordering::SeqCst);
+                        let _ = release.send(());
+                    }
+                });
+
+                let output = op().await;
+                let yielded = canary_ran.load(Ordering::SeqCst);
+
+                canary.await.unwrap();
+                hold.await.unwrap();
+                (output, yielded)
+            })
+        }
+
+        #[test]
+        fn test_mmap_message_from_file_async_does_not_block_runtime() {
             let temp_dir = std::env::temp_dir();
             let test_file = temp_dir.join("async_mmap_test.json");
 
@@ -1091,51 +1140,25 @@ mod tests {
                 file.sync_all().unwrap();
             }
 
-            // Test concurrent async calls don't block each other
-            let handles = (0..3)
-                .map(|i| {
-                    let test_file = test_file.clone();
-                    tokio::spawn(async move {
-                        let start_time = std::time::Instant::now();
+            // Three concurrent maps of the same file: every one must succeed, and
+            // the batch must yield rather than pin the scheduler thread.
+            let (results, yielded) = run_and_check_yields(|| {
+                futures::future::join_all((0..3).map(|i| {
+                    MmapMessage::from_file_async(
+                        MessageId::from(format!("async-test-{}", i)),
+                        &test_file,
+                        0,
+                        None,
+                    )
+                }))
+            });
 
-                        // This will FAIL initially because we need to implement from_file_async
-                        let result = MmapMessage::from_file_async(
-                            MessageId::from(format!("async-test-{}", i)),
-                            &test_file,
-                            0,
-                            None,
-                        )
-                        .await;
-
-                        let duration = start_time.elapsed();
-
-                        // Should complete quickly without blocking other async tasks
-                        assert!(
-                            duration.as_millis() < 100,
-                            "Async mmap took {}ms - should be <100ms",
-                            duration.as_millis()
-                        );
-
-                        (i, result)
-                    })
-                })
-                .collect::<Vec<_>>();
-
-            let start_time = std::time::Instant::now();
-            let results = futures::future::join_all(handles).await;
-            let total_duration = start_time.elapsed();
-
-            // All concurrent operations should complete quickly
             assert!(
-                total_duration.as_millis() < 200,
-                "Concurrent async mmap operations took {}ms - should be <200ms",
-                total_duration.as_millis()
+                yielded,
+                "from_file_async completed without yielding to the runtime"
             );
-
-            // All should succeed and return valid messages
-            for result in results {
-                let (i, mmap_result) = result.unwrap();
-                let mmap_msg = mmap_result.unwrap();
+            for (i, result) in results.into_iter().enumerate() {
+                let mmap_msg = result.unwrap();
                 assert_eq!(*mmap_msg.id, MessageId::from(format!("async-test-{}", i)));
                 assert!(!mmap_msg.data().is_empty());
             }
@@ -1144,8 +1167,8 @@ mod tests {
             std::fs::remove_file(test_file).unwrap();
         }
 
-        #[tokio::test]
-        async fn test_mmap_batch_from_jsonl_file_async_concurrency() {
+        #[test]
+        fn test_mmap_batch_from_jsonl_file_async_does_not_block_runtime() {
             let temp_dir = std::env::temp_dir();
             let test_file = temp_dir.join("async_batch_test.jsonl");
 
@@ -1158,34 +1181,18 @@ mod tests {
                 file.sync_all().unwrap();
             }
 
-            // Test that async version doesn't block concurrent operations
-            let handles = (0..5)
-                .map(|_| {
-                    let test_file = test_file.clone();
-                    tokio::spawn(async move {
-                        let start_time = std::time::Instant::now();
+            let (results, yielded) = run_and_check_yields(|| {
+                futures::future::join_all(
+                    (0..5).map(|_| MmapBatch::from_jsonl_file_async(&test_file)),
+                )
+            });
 
-                        // This will FAIL initially - need to implement from_jsonl_file_async
-                        let result = MmapBatch::from_jsonl_file_async(&test_file).await;
-
-                        let duration = start_time.elapsed();
-                        assert!(
-                            duration.as_millis() < 150,
-                            "Async batch processing took {}ms - should be <150ms",
-                            duration.as_millis()
-                        );
-
-                        result
-                    })
-                })
-                .collect::<Vec<_>>();
-
-            let results = futures::future::join_all(handles).await;
-
-            // All should succeed
+            assert!(
+                yielded,
+                "from_jsonl_file_async completed without yielding to the runtime"
+            );
             for result in results {
-                let batch = result.unwrap().unwrap();
-                assert_eq!(batch.len(), 3);
+                assert_eq!(result.unwrap().len(), 3);
             }
 
             std::fs::remove_file(test_file).unwrap();

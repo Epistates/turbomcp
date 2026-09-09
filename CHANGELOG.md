@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still read "pinned to 0.9" / "pinned to 0.10" after 3.3.0 moved them to
   0.10 / 0.11; they now say which third parties keep the older generation in
   the lockfile.
+- **Async mmap tests no longer assert wall-clock bounds** —
+  `test_mmap_message_from_file_async_performance` and
+  `test_mmap_batch_from_jsonl_file_async_concurrency` in `turbomcp-protocol`
+  required each `from_file_async` / `from_jsonl_file_async` call to finish in
+  under 100 / 150 ms, which flaked under CI load during the 3.3.0 sweep and
+  proved nothing about the property they were written for. Both are replaced
+  by `*_does_not_block_runtime` tests that run the call on a `current_thread`
+  runtime whose single blocking thread is held until a canary task has been
+  polled: the call can only complete after yielding to the scheduler, so an
+  implementation that did the I/O inline fails deterministically and machine
+  load can't change the verdict.
 
 ## [3.3.0] - 2026-09-09
 
