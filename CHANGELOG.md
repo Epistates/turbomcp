@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-09-09
+
+One fix: `#[tool]` schemas for parameters with nested types were not valid
+JSON Schema documents, and strict clients rejected every tool on the server
+because of it. No API change.
+
 ### Fixed
 
 - **`#[tool]` input schemas no longer carry dangling `$ref`s** — any parameter

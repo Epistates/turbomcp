@@ -16,7 +16,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp-grpc = "3.2.0"
+turbomcp-grpc = "3.2.1"
 ```
 
 ## Quick Start

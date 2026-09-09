@@ -44,7 +44,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct DemoServer;
 
-#[server(name = "turbomcp-demo", version = "3.2.0")]
+#[server(name = "turbomcp-demo", version = "3.2.1")]
 impl DemoServer {
     #[tool]
     async fn hello(&self, name: Option<String>) -> String {
