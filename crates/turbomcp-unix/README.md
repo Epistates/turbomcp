@@ -18,7 +18,7 @@ This crate provides Unix domain socket transport with:
 
 ```toml
 [dependencies]
-turbomcp-unix = "3.1"
+turbomcp-unix = "3.3.0"
 ```
 
 Or use through the main transport crate:

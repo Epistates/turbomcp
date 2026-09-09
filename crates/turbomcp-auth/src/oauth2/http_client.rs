@@ -53,7 +53,7 @@ pub struct DpopBinding {
 #[cfg(feature = "dpop")]
 impl DpopBinding {
     /// Create a binding with the given generator. The generator's default key
-    /// (or one created on demand) is used unless [`with_key_pair`] is called.
+    /// (or one created on demand) is used unless [`Self::with_key_pair`] is called.
     pub fn new(generator: Arc<DpopProofGenerator>) -> Self {
         Self {
             generator,

@@ -19,7 +19,7 @@ This crate provides full MCP 2025-11-25 protocol support for WebSocket transport
 
 ```toml
 [dependencies]
-turbomcp-websocket = "3.1"
+turbomcp-websocket = "3.3.0"
 ```
 
 Or use through the main transport crate:

@@ -56,8 +56,8 @@ surface, and nothing else in the 3.x API moved.
   own `tower-http` stack* — bump it to `0.7`.
 - **Every other direct dependency is on its current major** —
   `opentelemetry`/`opentelemetry_sdk`/`opentelemetry-otlp` 0.31 → 0.32 with
-  `tracing-opentelemetry` 0.32 → 0.33 (internal to `turbomcp-telemetry`, which
-  exposes only `tracing` types), `syn` 2 → 3, `p256` 0.13 → 0.14, `simd-json`
+  `tracing-opentelemetry` 0.32 → 0.33 (no OpenTelemetry type is in a public
+  signature; `turbomcp-telemetry` exposes only `tracing` types), `syn` 2 → 3, `p256` 0.13 → 0.14, `simd-json`
   0.17 → 0.18, `brotli` 8 → 9, `lz4_flex` 0.13 → 0.14, `base64` 0.22 → 0.23,
   `sha2` 0.10 → 0.11, `rand` 0.9 → 0.10, `compact_str` 0.9 → 0.10,
   `convert_case` 0.11 → 0.12, `comfy-table` 7 → 8, `dirs` 6 → 7, `wit-bindgen`
