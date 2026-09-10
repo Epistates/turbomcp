@@ -79,6 +79,7 @@ ignore = []
 # Only the most permissive, well-vetted licenses that are fully compatible with MIT
 allow = [
     "MIT",                              # Primary license - full compatibility
+    "MIT-0",                            # borrow-or-share (schema URI parsing), MIT No Attribution
     "Apache-2.0",                       # Widely used, MIT-compatible
     "Apache-2.0 WITH LLVM-exception",   # LLVM projects, MIT-compatible
     "BSD-3-Clause",                     # Required by dependencies, MIT-compatible

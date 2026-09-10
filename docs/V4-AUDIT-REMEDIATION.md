@@ -82,7 +82,7 @@ LLVM 22.1.8. Separate minimum supported Rust verification used 1.88.
 | Renamed dependency fixture | Passed; CI check added |
 | Generated protocol drift (`just codegen-check`) | Passed for all three schemas |
 | Existing rmcp interoperability suite | 4 passed |
-| Dependency advisories | Passed; yanked chacha20 version replaced |
+| Supply chain | Advisories, bans, licenses, and sources passed with all features; yanked chacha20 version replaced and MIT-0 dependency license explicitly allowed |
 | Strict client conformance | 647 success messages, 486 distinct scenario/check pairs; 0 failures |
 | Strict server conformance | 231 success messages, 215 distinct scenario/check pairs; 0 failures |
 

@@ -5,7 +5,8 @@
    lockfiles (root, conformance, interop, fuzz, renamed-dependency fixture).
 3. Update CHANGELOG.md, README status, migration guidance, and ROADMAP.md.
 4. Run `just test`, excluded conformance/interop tests and Clippy, and
-   `cargo deny check advisories`. Review warnings/skips as well as failures.
+   `cargo deny --all-features check advisories bans licenses sources`.
+   Review warnings/skips as well as failures.
 5. Run `just publish-check` for metadata, package lists, and dependency order.
    This is not a registry tarball build: unpublished sibling versions cannot
    yet resolve on crates.io. Review package contents and final CI status.
