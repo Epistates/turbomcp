@@ -3,8 +3,8 @@
 //! driving **both ends** (its own client and server) over an in-process
 //! `tokio::io::duplex` pipe.
 //!
-//! Both sit on the `2025-11-25` protocol version (rmcp's latest, turbomcp's
-//! legacy path) so the comparison is apples-to-apples. The connection +
+//! Both sit on the `2025-11-25` protocol version (the shared legacy
+//! path) so the comparison is apples-to-apples. The connection +
 //! handshake happen once, outside the measured loop; each iteration is one full
 //! client→server→client tool call including newline-JSON framing on both sides.
 //!
@@ -43,8 +43,8 @@ struct RmcpAdder {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct AddArgs {
-    a: i32,
-    b: i32,
+    a: i64,
+    b: i64,
 }
 
 #[tool_router]
@@ -125,6 +125,16 @@ fn bench_call_tool(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
 
     let turbo = rt.block_on(connect_turbomcp());
+    let fixture = rt
+        .block_on(turbo.call_tool(
+            "add",
+            serde_json::from_value(serde_json::json!({"a":2,"b":3})).unwrap(),
+        ))
+        .expect("TurboMCP fixture");
+    assert!(!fixture.is_error);
+    assert!(
+        matches!(fixture.content.as_slice(), [turbomcp::neutral::Content::Text { text, .. }] if text == "5")
+    );
     c.bench_function("turbomcp/call_tool_roundtrip", |b| {
         b.to_async(&rt).iter(|| async {
             let mut args = serde_json::Map::new();
@@ -136,6 +146,18 @@ fn bench_call_tool(c: &mut Criterion) {
     });
 
     let rmcp_client = rt.block_on(connect_rmcp());
+    let fixture = rt
+        .block_on(
+            rmcp_client.call_tool(
+                CallToolRequestParams::new("add").with_arguments(object!({"a":2,"b":3})),
+            ),
+        )
+        .expect("rmcp fixture");
+    assert_ne!(fixture.is_error, Some(true));
+    assert_eq!(
+        serde_json::to_value(&fixture).unwrap()["content"][0]["text"],
+        "5"
+    );
     c.bench_function("rmcp/call_tool_roundtrip", |b| {
         b.to_async(&rt).iter(|| async {
             let result = rmcp_client

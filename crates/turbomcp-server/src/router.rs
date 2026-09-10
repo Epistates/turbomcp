@@ -88,6 +88,34 @@ handler_slot!(
     neutral::CompleteResult
 );
 
+handler_slot!(
+    LookupToolHandler<S>,
+    ListToolsContext,
+    String,
+    Option<neutral::Tool>
+);
+
+handler_slot!(
+    LookupPromptHandler<S>,
+    ListPromptsContext,
+    String,
+    Option<neutral::Prompt>
+);
+
+handler_slot!(
+    LookupResourceHandler<S>,
+    ListResourcesContext,
+    String,
+    Option<neutral::Resource>
+);
+
+handler_slot!(
+    LookupResourceTemplateHandler<S>,
+    ListResourceTemplatesContext,
+    String,
+    Option<neutral::ResourceTemplate>
+);
+
 /// Lists the capabilities actually registered, which is the question worth
 /// asking of a router. Unbounded in `S` on purpose: requiring `Debug` of the
 /// user's server type would stop anything holding a router from deriving its
@@ -120,6 +148,10 @@ impl<S> core::fmt::Debug for MethodRouter<S> {
 
 /// Per-method handler table, generic over the server type `S`.
 pub struct MethodRouter<S> {
+    lookup_resource_template: Option<LookupResourceTemplateHandler<S>>,
+    lookup_resource: Option<LookupResourceHandler<S>>,
+    lookup_prompt: Option<LookupPromptHandler<S>>,
+    lookup_tool: Option<LookupToolHandler<S>>,
     list_tools: Option<ListToolsHandler<S>>,
     call_tool: Option<CallToolHandler<S>>,
     list_resources: Option<ListResourcesHandler<S>>,
@@ -134,6 +166,10 @@ pub struct MethodRouter<S> {
 impl<S> Default for MethodRouter<S> {
     fn default() -> Self {
         Self {
+            lookup_resource_template: None,
+            lookup_resource: None,
+            lookup_prompt: None,
+            lookup_tool: None,
             list_tools: None,
             call_tool: None,
             list_resources: None,
@@ -163,6 +199,38 @@ macro_rules! dispatch_fn {
 }
 
 impl<S: McpServerCore> MethodRouter<S> {
+    dispatch_fn!(
+        dispatch_lookup_resource_template,
+        lookup_resource_template,
+        ListResourceTemplatesContext,
+        String,
+        Option<neutral::ResourceTemplate>
+    );
+
+    dispatch_fn!(
+        dispatch_lookup_resource,
+        lookup_resource,
+        ListResourcesContext,
+        String,
+        Option<neutral::Resource>
+    );
+
+    dispatch_fn!(
+        dispatch_lookup_prompt,
+        lookup_prompt,
+        ListPromptsContext,
+        String,
+        Option<neutral::Prompt>
+    );
+
+    dispatch_fn!(
+        dispatch_lookup_tool,
+        lookup_tool,
+        ListToolsContext,
+        String,
+        Option<neutral::Tool>
+    );
+
     /// An empty router — no capabilities registered.
     #[must_use]
     pub fn new() -> Self {
@@ -177,6 +245,9 @@ impl<S: McpServerCore> MethodRouter<S> {
     where
         S: WithTools,
     {
+        self.lookup_tool = Some(Box::new(|server: S, ctx, name| {
+            Box::pin(async move { server.lookup_tool(&ctx, name).await })
+        }));
         self.list_tools = Some(Box::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_tools(&ctx, params).await })
         }));
@@ -192,11 +263,17 @@ impl<S: McpServerCore> MethodRouter<S> {
     where
         S: WithResources,
     {
+        self.lookup_resource = Some(Box::new(|server: S, ctx, name| {
+            Box::pin(async move { server.lookup_resource(&ctx, name).await })
+        }));
         self.list_resources = Some(Box::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_resources(&ctx, params).await })
         }));
         self.read_resource = Some(Box::new(|server: S, ctx, params| {
             Box::pin(async move { server.read_resource(&ctx, params).await })
+        }));
+        self.lookup_resource_template = Some(Box::new(|server: S, ctx, name| {
+            Box::pin(async move { server.lookup_resource_template(&ctx, name).await })
         }));
         self.list_resource_templates = Some(Box::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_resource_templates(&ctx, params).await })
@@ -210,6 +287,9 @@ impl<S: McpServerCore> MethodRouter<S> {
     where
         S: WithPrompts,
     {
+        self.lookup_prompt = Some(Box::new(|server: S, ctx, name| {
+            Box::pin(async move { server.lookup_prompt(&ctx, name).await })
+        }));
         self.list_prompts = Some(Box::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_prompts(&ctx, params).await })
         }));

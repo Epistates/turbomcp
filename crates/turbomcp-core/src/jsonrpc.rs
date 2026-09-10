@@ -53,7 +53,6 @@ fn is_jsonrpc_version(s: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct JsonRpcRequest {
     /// Always `"2.0"`.
-    #[serde(default = "jsonrpc_version")]
     pub jsonrpc: String,
     /// Correlation id (required for requests).
     pub id: RequestId,
@@ -80,7 +79,6 @@ impl JsonRpcRequest {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct JsonRpcNotification {
     /// Always `"2.0"`.
-    #[serde(default = "jsonrpc_version")]
     pub jsonrpc: String,
     /// Notification method (e.g. `"notifications/cancelled"`).
     pub method: String,
@@ -119,7 +117,6 @@ pub struct JsonRpcError {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct JsonRpcResponse {
     /// Always `"2.0"`.
-    #[serde(default = "jsonrpc_version")]
     pub jsonrpc: String,
     /// Correlation id (matches the originating request).
     pub id: RequestId,
@@ -163,7 +160,7 @@ impl JsonRpcResponse {
 ///
 /// The protocol seam is `Service<JsonRpcMessage, Response = Option<JsonRpcMessage>>`
 /// (notifications produce `None`).
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(untagged)]
 pub enum JsonRpcMessage {
     /// A request (has `id` + `method`).
@@ -172,6 +169,54 @@ pub enum JsonRpcMessage {
     Notification(JsonRpcNotification),
     /// A response (has `id`, no `method`).
     Response(JsonRpcResponse),
+}
+
+impl<'de> serde::Deserialize<'de> for JsonRpcMessage {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let value = Value::deserialize(deserializer)?;
+        let map = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("JSON-RPC frame must be an object"))?;
+        if map.get("jsonrpc").and_then(Value::as_str).is_none() {
+            return Err(D::Error::custom("JSON-RPC version is required"));
+        }
+        if map.contains_key("method") {
+            if map.contains_key("result") || map.contains_key("error") {
+                return Err(D::Error::custom("request cannot contain response fields"));
+            }
+            if map
+                .get("params")
+                .is_some_and(|p| !p.is_object() && !p.is_array())
+            {
+                return Err(D::Error::custom("params must be an object or array"));
+            }
+            if map.contains_key("id") {
+                serde_json::from_value(value)
+                    .map(Self::Request)
+                    .map_err(D::Error::custom)
+            } else {
+                serde_json::from_value(value)
+                    .map(Self::Notification)
+                    .map_err(D::Error::custom)
+            }
+        } else {
+            if map.contains_key("result") == map.contains_key("error") {
+                return Err(D::Error::custom(
+                    "response requires exactly one of result or error",
+                ));
+            }
+            let result = map.get("result").cloned();
+            let has_error = map.contains_key("error");
+            let mut response: JsonRpcResponse =
+                serde_json::from_value(value).map_err(D::Error::custom)?;
+            if has_error && response.error.is_none() {
+                return Err(D::Error::custom("error must be an error object"));
+            }
+            response.result = result; // Preserve a legitimate JSON null result.
+            Ok(Self::Response(response))
+        }
+    }
 }
 
 impl JsonRpcMessage {
@@ -256,14 +301,15 @@ mod tests {
     }
 
     #[test]
-    fn null_id_request_degrades_to_notification() {
-        // A frame with `id: null` cannot be a Request (null ids are illegal);
-        // the untagged decode falls through to Notification (the unknown `id`
-        // field is ignored), so the frame is never answered rather than being
-        // misread as an answerable request.
-        let raw = json!({"jsonrpc":"2.0","id":null,"method":"ping"}).to_string();
-        let msg: JsonRpcMessage = serde_json::from_str(&raw).unwrap();
-        assert!(matches!(msg, JsonRpcMessage::Notification(_)));
+    fn invalid_id_is_rejected_without_notification_fallback() {
+        for id in [json!(null), json!(1.5), json!({})] {
+            assert!(
+                serde_json::from_value::<JsonRpcMessage>(
+                    json!({"jsonrpc":"2.0","id":id,"method":"ping"})
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]
@@ -274,10 +320,33 @@ mod tests {
         let raw = json!({"jsonrpc":"1.0","id":1,"method":"ping"}).to_string();
         let bad: JsonRpcMessage = serde_json::from_str(&raw).unwrap();
         assert!(!bad.has_valid_version());
-        // A missing `jsonrpc` field defaults to "2.0".
+        // A missing version is not silently upgraded.
         let raw = json!({"id":1,"method":"ping"}).to_string();
-        let missing: JsonRpcMessage = serde_json::from_str(&raw).unwrap();
-        assert!(missing.has_valid_version());
+        assert!(serde_json::from_str::<JsonRpcMessage>(&raw).is_err());
+    }
+
+    #[test]
+    fn malformed_envelopes_never_fall_back_to_another_message_kind() {
+        for raw in [
+            json!([]),
+            json!(null),
+            json!({"jsonrpc":"2.0","method":"ping","params":null}),
+            json!({"jsonrpc":"2.0","method":"ping","params":true}),
+            json!({"jsonrpc":"2.0","method":"ping","result":{}}),
+            json!({"jsonrpc":"2.0","id":1}),
+            json!({"jsonrpc":"2.0","id":1,"error":null}),
+            json!({"jsonrpc":"2.0","id":1,"result":null,"error":{"code":-1,"message":"bad"}}),
+        ] {
+            assert!(
+                serde_json::from_value::<JsonRpcMessage>(raw.clone()).is_err(),
+                "accepted {raw}"
+            );
+        }
+        for result in [json!(null), json!(false), json!([]), json!({"nested":null})] {
+            let raw = json!({"jsonrpc":"2.0","id":1,"result":result});
+            let decoded: JsonRpcMessage = serde_json::from_value(raw.clone()).unwrap();
+            assert_eq!(serde_json::to_value(decoded).unwrap(), raw);
+        }
     }
 
     #[test]

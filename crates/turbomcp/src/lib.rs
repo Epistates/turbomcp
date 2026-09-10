@@ -322,11 +322,13 @@ pub mod http {
             // listen SSE stream down off the same token.
             let closer = dispatcher.clone();
             let shutdown = config.shutdown_token();
-            tokio::spawn(async move {
+            let closer_task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
                 shutdown.cancelled().await;
                 closer.close_subscriptions().await;
-            });
-            serve_http(addr, dispatcher, config).await
+            }));
+            let result = serve_http(addr, dispatcher, config).await;
+            closer_task.abort();
+            result
         }
     }
 }

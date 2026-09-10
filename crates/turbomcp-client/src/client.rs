@@ -181,8 +181,7 @@ impl ClientBuilder {
     where
         T: Transport,
     {
-        let cache = self
-            .response_cache
+        let cache = (self.response_cache && transport.allows_response_cache())
             .then(|| Arc::new(ResponseCache::default()));
         let conn = Connection::connect_with_cache(
             transport,
@@ -209,9 +208,7 @@ impl ClientBuilder {
                 // UnsupportedProtocolVersionError code (2026-07-28 RC);
                 // `-32022` is the earlier draft's value, tolerated for peers
                 // still tracking it.
-                Err(ClientError::Rpc(e))
-                    if e.code == -32601 || e.code == -32004 || e.code == -32022 =>
-                {
+                Err(e) if matches!(e.rpc_code(), Some(-32601 | -32004 | -32022)) => {
                     self.legacy_handshake(&conn).await?
                 }
                 // The server answered `server/discover` but doesn't serve the
@@ -270,7 +267,24 @@ impl ClientBuilder {
         meta.insert(keys::CLIENT_CAPABILITIES.into(), self.capabilities.clone());
         let params = json!({ "_meta": Value::Object(meta) });
 
-        let result = conn.request(request::DISCOVER, Some(params)).await?;
+        let result = match conn.request(request::DISCOVER, Some(params.clone())).await {
+            Err(error)
+                if matches!(error.rpc_code(), Some(-32004 | -32022))
+                    && error
+                        .as_rpc()
+                        .and_then(|rpc| rpc.data.as_ref())
+                        .and_then(|data| data.get("supported"))
+                        .and_then(Value::as_array)
+                        .is_some_and(|versions| {
+                            versions
+                                .iter()
+                                .any(|v| v.as_str() == Some(version.as_str()))
+                        }) =>
+            {
+                conn.request(request::DISCOVER, Some(params)).await?
+            }
+            other => other?,
+        };
 
         // The server lists what it serves; believe it. Proceeding on a
         // successful discover alone would connect "fine" and then fail every
@@ -492,6 +506,11 @@ impl Client {
         self.versioned_request(method, params).await
     }
 
+    /// Close the shared connection and wait for transport cleanup.
+    pub async fn close(&self) {
+        self.conn.close().await;
+    }
+
     /// Drop every cached response (see
     /// [`ClientBuilder::with_response_cache`]). A no-op when the cache is
     /// disabled. Notifications already invalidate automatically; this is the
@@ -700,14 +719,15 @@ impl Client {
             // rebuilds the header cache) and retry once. `-32001` is the
             // current code (2026-07-28 RC); `-32020` is the earlier draft's,
             // tolerated for peers still tracking it.
-            Err(ClientError::Rpc(e)) if e.code == -32001 || e.code == -32020 => {
-                let code = e.code;
+            Err(e) if matches!(e.rpc_code(), Some(-32001 | -32020)) => {
+                let code = e.rpc_code().unwrap_or_default();
                 tracing::warn!(
                     tool = %name,
                     code,
                     "HeaderMismatch; refreshing tools/list and retrying once"
                 );
-                let _ = self.list_tools(None).await;
+                self.clear_response_cache();
+                self.list_all_tools().await?;
                 self.mrtr_request(request::TOOLS_CALL, build(self)).await?
             }
             other => other?,

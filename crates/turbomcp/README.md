@@ -4,10 +4,11 @@ A ground-up Rust SDK for the [Model Context Protocol](https://modelcontextprotoc
 both halves of the protocol — server **and** client — with a macro-driven,
 zero-boilerplate surface and strict spec compliance as a feature.
 
-> **Status: `4.0.0-alpha.3` — a prerelease for community testing.** A
+> **Status: `4.0.0-alpha.4` — a prerelease for community testing.** A
 > ground-up rewrite of `turbomcp` for the v4 major version; the stable line is
 > `3.x`. Edition 2024, MSRV 1.88. Both halves pass the official MCP conformance
-> suite with zero unexpected failures on both scored revisions, and interoperate
+> suite with zero failures, skips, or warnings using pinned client fixture
+> corrections, and interoperate
 > with the official Rust SDK (rmcp 3.x) in both directions on both revisions,
 > verified in-repo. All three
 > advertised revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) are dated and
@@ -18,11 +19,11 @@ zero-boilerplate surface and strict spec compliance as a feature.
 
 - **One macro defines a server.** `#[server]` over an `impl` block turns
   `#[tool]` / `#[resource]` / `#[prompt]` methods into a fully-wired MCP server.
-  JSON schemas are generated from your function signatures at compile time, and
+  The macro generates schema derivation code; schema values are initialized once at runtime and cloned for callers, and
   the advertised capabilities are *derived* from which markers are present — they
   can't drift from the implementation.
 - **Three protocol revisions, one handler.** The same server answers
-  `2025-06-18`, `2025-11-25`, and the `2026-07-28` draft. Your handlers speak
+  `2025-06-18`, `2025-11-25`, and `2026-07-28`. Your handlers speak
   version-neutral types; the version-specific wire shapes are conversions, not
   signature changes — including dropping, per session, the fields a revision
   predates. Pin the set with `#[server(protocols("2025-11-25", …))]`.
@@ -63,50 +64,20 @@ zero-boilerplate surface and strict spec compliance as a feature.
 
 [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) is the official SDK,
 maintained in the `modelcontextprotocol` organization. It is the reasonable
-default, and this crate is tested against it: the repo runs cross-SDK interop
-tests in both directions (a TurboMCP client against an rmcp server and the
-reverse) on every change.
+default, and this project is tested against it — cross-SDK interop tests run in
+both directions, a TurboMCP client against an rmcp server and the reverse, on
+every change.
 
-The two make a different central bet, and it is worth knowing which one you
-want before you pick.
+TurboMCP's interoperability tests pin `rmcp` 3.2. TurboMCP serves three
+revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) using separate generated
+wire types and exhaustive conversions to a neutral handler API. It does not
+serve `2024-11-05` or `2025-03-26`.
 
-**rmcp models the protocol once and branches where revisions differ.** One set
-of model types organized by concept, a `ProtocolVersion` string negotiated at
-the handshake, and conditional checks at the specific points where behaviour
-changes. That is lighter, and it stretches further back: rmcp 2.2 knows five
-revisions — `2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25`, and
-`2026-07-28` — where TurboMCP serves three. **If you need to talk to clients on
-`2024-11-05` or `2025-03-26`, use rmcp; this crate cannot.**
-
-**TurboMCP generates a separate wire type set per revision and converts between
-them.** Handlers speak version-neutral types; each revision's shapes are
-generated from that revision's published schema, and the conversions between
-them destructure exhaustively. Adding a field to one revision's wire is a
-compile error until someone decides what the other revision does with it. The
-cost is the three revisions above; the benefit is that "which fields does
-`2025-06-18` not have?" is answered by the compiler rather than by a reviewer.
-
-Beyond that, TurboMCP ships some things you would otherwise build yourself:
-
-- **Capabilities derived from the code.** Writing a `#[resource]` is what
-  advertises the `resources` capability. There is no capabilities builder, so
-  advertisement cannot drift from implementation.
-- **Per-RPC typed contexts.** `ctx.client` — elicitation and sampling — exists
-  only on the three contexts where the protocol permits it, so calling it from
-  a `list_tools` handler doesn't compile rather than failing at runtime.
-- **Composition and visibility.** `Composite` mounts several servers as one;
-  `with_visibility` decides per caller which components exist at all.
-- **A `no_std` foundation.** The core, codec, and protocol crates are
-  `wasm32`-portable, guarded in CI.
-- **Middleware as `tower::Layer`** at the frame seam, rather than a hook list.
-
-Both crates forbid `unsafe`, both are edition 2024, both cover server and
-client. rmcp is Apache-2.0; this is MIT.
-
-**Pick rmcp** if you want the official implementation, need the older protocol
-revisions, or want the smallest dependency surface. **Pick TurboMCP** if you
-want the macro surface, multi-revision support that the type system enforces,
-or the composition/visibility/auth seams above.
+The distinguishing APIs are macro-derived capabilities, typed per-RPC contexts,
+composition, caller-specific visibility, and Tower middleware. Conformance and
+interoperability are compatibility evidence; they do not establish performance
+superiority over another SDK. See [deployment and migration](https://github.com/Epistates/turbomcp/blob/main/docs/DEPLOYMENT.md)
+for the limits and security contracts.
 
 ## Quickstart
 
@@ -204,8 +175,8 @@ back with `turbomcp::tags`. They describe, they don't enforce:
 async fn wipe(&self, ctx: &CallToolContext) -> McpResult<String> { … }
 ```
 
-A server answers both protocol revisions by default. Pin it to the frozen
-stable one — the draft's wire shapes can still change before it freezes — with
+A server answers all three supported protocol revisions by default. Pin it to the
+revision required by your deployment with
 `protocols(…)`; an excluded version is refused with `-32004` plus the list of
 versions that *are* served:
 
@@ -243,7 +214,7 @@ async fn stats(&self) -> Json<Stats> { Json(Stats { count: 3, mean: 1.5 }) }
 | `websocket` | WebSocket transport (bidirectional, non-spec) → `turbomcp::ws` (`WsConfig`: Origin policy, bearer auth, size caps, keepalive) |
 | `client` | the typed `Client` + `ConnectMode` negotiation |
 | `auth` | OAuth 2.1 resource-server auth (bearer validation, RFC 9728 metadata) |
-| `client-oauth` | the OAuth 2.1 *client* flow (auth-code + PKCE, discovery, registration, refresh) → `turbomcp::auth::client` |
+| `client-oauth` | the OAuth 2.1 *client* flow (auth-code + PKCE, discovery, registration, refresh) → `turbomcp::client::oauth::OAuthSession` |
 | `telemetry` | OpenTelemetry tracing + metrics (`TraceContextLayer`, `MetricsLayer`, W3C `_meta` propagation, PII-safe spans) |
 | `ext-tasks` | the draft Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) |
 | `simd` | SIMD JSON (sonic-rs) as the default codec on native x86_64/aarch64; byte-compatible with the serde_json baseline |
@@ -274,3 +245,6 @@ See [`MIGRATION.md`](MIGRATION.md) for the v3 → v4 deltas.
 ## License
 
 MIT
+
+See the [conformance fixture record](https://github.com/Epistates/turbomcp/blob/main/crates/turbomcp-conformance/fixtures/README.md)
+for the exact corrections and unmodified-upstream reproduction command.

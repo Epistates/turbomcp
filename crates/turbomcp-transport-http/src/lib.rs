@@ -330,6 +330,9 @@ const RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource";
 /// chain the builder methods.
 #[derive(Clone)]
 pub struct HttpConfig {
+    max_concurrent_requests: usize,
+    request_timeout: Duration,
+    shutdown_timeout: Duration,
     path: String,
     max_body_bytes: usize,
     origins: OriginPolicy,
@@ -363,6 +366,9 @@ impl core::fmt::Debug for HttpConfig {
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
+            max_concurrent_requests: 1024,
+            request_timeout: Duration::from_secs(60),
+            shutdown_timeout: Duration::from_secs(30),
             path: "/mcp".to_owned(),
             max_body_bytes: 1 << 20, // 1 MiB
             origins: OriginPolicy::Allowlist(Vec::new()),
@@ -379,6 +385,25 @@ impl Default for HttpConfig {
 }
 
 impl HttpConfig {
+    /// Bound admitted requests, including authentication and live SSE bodies.
+    #[must_use]
+    pub fn max_concurrent_requests(mut self, limit: usize) -> Self {
+        self.max_concurrent_requests = limit.max(1);
+        self
+    }
+    /// Deadline to authenticate, read the request, and produce response headers.
+    #[must_use]
+    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+    /// Maximum drain time after shutdown is requested.
+    #[must_use]
+    pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
+        self.shutdown_timeout = timeout;
+        self
+    }
+
     /// Default configuration: `POST /mcp`, 1 MiB body limit, Origin-less only.
     #[must_use]
     pub fn new() -> Self {
@@ -563,6 +588,8 @@ where
     S: McpService + Clone + Sync,
     S::Future: Send + 'static,
 {
+    let admission = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_requests));
+    let request_timeout = config.request_timeout;
     let state = HttpState {
         service,
         codec: DefaultCodec::default(),
@@ -595,7 +622,31 @@ where
     } else {
         app
     };
-    app.with_state(state)
+    app.layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let admission = admission.clone();
+            async move {
+                let Ok(permit) = admission.try_acquire_owned() else {
+                    return too_many_requests(Duration::from_secs(1));
+                };
+                let response = match tokio::time::timeout(request_timeout, next.run(request)).await
+                {
+                    Ok(response) => response,
+                    Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+                };
+                let (parts, body) = response.into_parts();
+                let stream = futures::stream::unfold(
+                    (body.into_data_stream(), permit),
+                    |(mut stream, permit)| async move {
+                        use futures::StreamExt as _;
+                        stream.next().await.map(|chunk| (chunk, (stream, permit)))
+                    },
+                );
+                Response::from_parts(parts, axum::body::Body::from_stream(stream))
+            }
+        },
+    ))
+    .with_state(state)
 }
 
 /// Serve `service` over Streamable HTTP on `addr` until the configured shutdown
@@ -613,17 +664,27 @@ where
     S::Future: Send + 'static,
 {
     let shutdown = config.shutdown.clone();
+    let shutdown_timeout = config.shutdown_timeout;
+    let signal = shutdown.clone();
     let app = router(service, config);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "turbomcp http transport listening");
     // `with_connect_info` so the rate limiter can key anonymous requests on the
     // peer IP (a no-op when no limiter is configured).
-    axum::serve(
+    let serving = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async move { shutdown.cancelled().await })
-    .await?;
+    .with_graceful_shutdown(async move { shutdown.cancelled().await });
+    use std::future::IntoFuture as _;
+    let serving = serving.into_future();
+    tokio::pin!(serving);
+    tokio::select! {
+        result = &mut serving => result?,
+        () = signal.cancelled() => {
+            if let Ok(result) = tokio::time::timeout(shutdown_timeout, &mut serving).await { result?; }
+        }
+    }
     Ok(())
 }
 
@@ -751,12 +812,27 @@ where
     // Dual-stack routing (module docs): mark legacy traffic via internal meta;
     // modern stateless bodies pass through untouched.
     let is_initialize = msg.method() == Some("initialize");
+    if state.authenticator.is_some()
+        && state.session_terminator.is_none()
+        && (is_initialize || session_header.is_some())
+    {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "authenticated sessions require a session ownership backend",
+        )
+            .into_response();
+    }
     let mut minted_session = None;
     if is_initialize {
         let sid = uuid::Uuid::new_v4().to_string();
         meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(sid));
         minted_session = Some(sid);
     } else if let Some(sid) = session_header {
+        if let Some(terminator) = &state.session_terminator
+            && !terminator.owns(&sid, subject.as_deref()).await
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
         if !message_has_version(&msg) {
             // Which stateful revision this session negotiated is carried by
             // `MCP-Protocol-Version`, which both revisions require on every
@@ -1254,6 +1330,18 @@ where
             .into_response();
     };
 
+    if state.authenticator.is_some() && state.session_terminator.is_none() {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "authenticated sessions require a session ownership backend",
+        )
+            .into_response();
+    }
+    if let Some(terminator) = &state.session_terminator
+        && !terminator.owns(sid, subject.as_deref()).await
+    {
+        return (StatusCode::NOT_FOUND, "session not found").into_response();
+    }
     let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
     let registration = outbound::register(outbound::session_stream_id(sid), tx);
     sse_response(state.codec, rx, registration, state.sse_keepalive, None)
@@ -1311,7 +1399,7 @@ where
         )
             .into_response();
     };
-    if terminator.terminate(sid).await {
+    if terminator.terminate(sid, subject.as_deref()).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
         // Unknown/already-terminated session: the spec maps this to 404 so the
@@ -1361,8 +1449,17 @@ async fn enforce_auth<S>(
         AuthDecision::Allow(principal) => {
             let subject = principal
                 .get("sub")
-                .and_then(|v| v.as_str())
-                .map(str::to_owned);
+                .and_then(serde_json::Value::as_str)
+                .map(|sub| {
+                    serde_json::to_string(&(
+                        principal
+                            .get("claims")
+                            .and_then(|c| c.get("iss"))
+                            .and_then(serde_json::Value::as_str),
+                        sub,
+                    ))
+                    .expect("string principal serialization")
+                });
             if let Some(msg) = msg {
                 meta::set_request_meta(msg, meta::internal::IDENTITY, principal);
             }
@@ -1406,19 +1503,18 @@ impl PeerIp {
         if trusted.is_empty() || !trusted.contains(&socket) {
             return Some(socket);
         }
-        let hops: Vec<IpAddr> = self
-            .forwarded
-            .as_deref()
-            .unwrap_or("")
-            .split(',')
-            .filter_map(|s| s.trim().parse().ok())
-            .collect();
-        hops.iter()
-            .rev()
-            .find(|ip| !trusted.contains(ip))
-            .copied()
-            .or_else(|| hops.first().copied())
-            .or(Some(socket))
+        let mut candidate = socket;
+        for raw in self.forwarded.as_deref().unwrap_or("").rsplit(',') {
+            // Never skip an unknown hop to trust an address farther left.
+            let Ok(hop) = raw.trim().parse::<IpAddr>() else {
+                return Some(socket);
+            };
+            candidate = hop;
+            if !trusted.contains(&hop) {
+                return Some(hop);
+            }
+        }
+        Some(candidate)
     }
 }
 
@@ -1743,6 +1839,30 @@ mod tests {
         let p = peer("10.0.0.1", Some("203.0.113.7, 10.0.0.2"));
         let trusted = [ip("10.0.0.1"), ip("10.0.0.2")];
         assert_eq!(p.client_ip(&trusted), Some(ip("203.0.113.7")));
+    }
+
+    #[test]
+    fn client_ip_does_not_skip_malformed_proxy_boundaries() {
+        let trusted = [ip("10.0.0.1"), ip("10.0.0.2")];
+        for header in ["1.2.3.4, unknown", "1.2.3.4,,10.0.0.2", "1.2.3.4, [::1]"] {
+            assert_eq!(
+                peer("10.0.0.1", Some(header)).client_ip(&trusted),
+                Some(ip("10.0.0.1"))
+            );
+        }
+        // Entries left of the first untrusted peer are controlled by that peer.
+        assert_eq!(
+            peer("10.0.0.1", Some("garbage, 2001:db8::7, 10.0.0.2")).client_ip(&trusted),
+            Some(ip("2001:db8::7"))
+        );
+        assert_eq!(
+            PeerIp {
+                socket: None,
+                forwarded: Some("1.2.3.4".into())
+            }
+            .client_ip(&trusted),
+            None
+        );
     }
 
     /// A draft-enveloped `tools/call` body and its compliant header set.

@@ -42,10 +42,10 @@ impl WithTools for Gated {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
-            "gated",
-            json!({"type": "object", "properties": {}}),
-        )]))
+        Ok(neutral::ListToolsResult::new(vec![
+            neutral::Tool::new("fails", json!({"type":"object"})),
+            neutral::Tool::new("gated", json!({"type": "object", "properties": {}})),
+        ]))
     }
 
     async fn call_tool(

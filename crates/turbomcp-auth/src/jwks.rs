@@ -102,6 +102,8 @@ mod http {
         ttl: Duration,
         refresh_cooldown: Duration,
         cache: RwLock<Option<Cached>>,
+        refresh: tokio::sync::Mutex<Option<(Instant, String)>>,
+        policy: crate::NetworkPolicy,
     }
 
     impl core::fmt::Debug for HttpJwks {
@@ -138,10 +140,14 @@ mod http {
         pub fn new(jwks_uri: impl Into<String>, ttl: Duration) -> Self {
             Self {
                 jwks_uri: jwks_uri.into(),
-                client: reqwest::Client::new(),
+                client: crate::NetworkPolicy::default()
+                    .http_client()
+                    .expect("HTTP client initialization"),
                 ttl,
                 refresh_cooldown: Self::DEFAULT_REFRESH_COOLDOWN,
                 cache: RwLock::new(None),
+                refresh: tokio::sync::Mutex::new(None),
+                policy: crate::NetworkPolicy::default(),
             }
         }
 
@@ -166,16 +172,48 @@ mod http {
                 .map(|c| c.set.clone())
         }
 
+        /// Configure outbound network policy and a redirect-disabled HTTP client.
+        /// # Errors
+        /// Returns an error if HTTP initialization fails.
+        pub fn with_network_policy(
+            mut self,
+            policy: crate::NetworkPolicy,
+        ) -> Result<Self, AuthError> {
+            self.client = policy
+                .http_client()
+                .map_err(|e| AuthError::KeyUnavailable(e.to_string()))?;
+            self.policy = policy;
+            Ok(self)
+        }
+
+        /// Supply TLS/proxy customization. The caller must disable redirects
+        /// and preserve the configured address policy on this custom client.
+        #[must_use]
+        pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
         async fn fetch(&self) -> Result<JwkSet, AuthError> {
-            let set: JwkSet = self
-                .client
-                .get(&self.jwks_uri)
-                .send()
+            let response = self
+                .policy
+                .send(&self.client, self.client.get(&self.jwks_uri))
                 .await
-                .map_err(|e| AuthError::KeyUnavailable(format!("JWKS fetch failed: {e}")))?
-                .json()
-                .await
-                .map_err(|e| AuthError::KeyUnavailable(format!("JWKS decode failed: {e}")))?;
+                .map_err(|e| AuthError::KeyUnavailable(format!("JWKS fetch failed: {e}")))?;
+            if !response.status().is_success() {
+                return Err(AuthError::KeyUnavailable(format!(
+                    "JWKS HTTP {}",
+                    response.status()
+                )));
+            }
+            let set: JwkSet = serde_json::from_slice(
+                &self
+                    .policy
+                    .body(response)
+                    .await
+                    .map_err(AuthError::KeyUnavailable)?,
+            )
+            .map_err(|e| AuthError::KeyUnavailable(format!("JWKS decode failed: {e}")))?;
             *self.cache.write().expect("jwks cache poisoned") = Some(Cached {
                 set: set.clone(),
                 fetched: Instant::now(),
@@ -199,7 +237,27 @@ mod http {
             if let Some(set) = self.cached_within(max_age) {
                 return Ok(set);
             }
-            self.fetch().await
+            let mut last_failure = self.refresh.lock().await;
+            // Recheck after joining the in-flight refresh. Only one caller
+            // contacts the issuer, including cold-cache and expiry bursts.
+            if let Some(set) = self.cached_within(max_age) {
+                return Ok(set);
+            }
+            if let Some((at, error)) = &*last_failure
+                && at.elapsed() < self.refresh_cooldown
+            {
+                return Err(AuthError::KeyUnavailable(error.clone()));
+            }
+            match self.fetch().await {
+                Ok(set) => {
+                    *last_failure = None;
+                    Ok(set)
+                }
+                Err(error) => {
+                    *last_failure = Some((Instant::now(), error.to_string()));
+                    Err(error)
+                }
+            }
         }
     }
 

@@ -21,5 +21,9 @@ pub trait SessionTerminator: Send + Sync {
     /// Terminate the session `session_id`. Returns whether it existed (the
     /// transport answers `204` vs `404` accordingly). Async because the
     /// session state may live in an external backend.
-    fn terminate<'a>(&'a self, session_id: &'a str) -> TerminateFuture<'a>;
+    fn terminate<'a>(&'a self, session_id: &'a str, owner: Option<&'a str>) -> TerminateFuture<'a>;
+
+    /// Check session ownership without changing it. Implementations must match
+    /// anonymous sessions only to anonymous callers.
+    fn owns<'a>(&'a self, session_id: &'a str, owner: Option<&'a str>) -> TerminateFuture<'a>;
 }

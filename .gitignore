@@ -114,7 +114,10 @@ pnpm-lock.yaml
 .strategy
 
 # Scripts (local development only)
-scripts/
+scripts/*
+!scripts/check_docs.py
+!scripts/publish_all.sh
+!scripts/RELEASE_CHECKLIST.md
 
 # Benchmark and performance testing directories
 benchmarks/
@@ -148,3 +151,6 @@ fuzz/corpus/
 fuzz/artifacts/
 fuzz/coverage/
 fuzz/target/
+
+# Maintained release guidance must ship with the documentation checker.
+!scripts/RELEASE_CHECKLIST.md

@@ -243,3 +243,70 @@ async fn at_capacity_the_augmented_call_runs_synchronously() {
     assert_eq!(out["result"]["content"][0]["text"], "echoed");
     assert!(out["result"].get("taskId").is_none());
 }
+
+#[tokio::test]
+async fn another_issuer_cannot_read_update_or_cancel_a_task() {
+    let mut svc = dispatcher();
+    let principal_meta = |issuer: Option<&str>| {
+        let mut meta = draft_meta();
+        if let Some(issuer) = issuer {
+            meta["io.turbomcp.internal/identity"] = json!({"sub":"alice","claims":{"iss":issuer}});
+        }
+        meta
+    };
+    let created = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({
+                "name":"slow", "arguments":{}, "_meta":principal_meta(Some("issuer-a"))
+            })),
+        ),
+    )
+    .await;
+    let task_id = created["result"]["taskId"].as_str().expect("task created");
+    for issuer in [Some("issuer-b"), None] {
+        for method in ["tasks/get", "tasks/update", "tasks/cancel"] {
+            let refused = call(
+                &mut svc,
+                JsonRpcRequest::new(
+                    2,
+                    method,
+                    Some(json!({
+                        "taskId":task_id, "inputResponses":{}, "_meta":principal_meta(issuer)
+                    })),
+                ),
+            )
+            .await;
+            assert_eq!(refused["error"]["code"], -32602, "{refused}");
+        }
+    }
+    let owned = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            3,
+            "tasks/get",
+            Some(json!({
+                "taskId":task_id, "_meta":principal_meta(Some("issuer-a"))
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(
+        owned["result"]["status"], "working",
+        "unauthorized cancellation must have no effect"
+    );
+    let cancelled = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            4,
+            "tasks/cancel",
+            Some(json!({
+                "taskId":task_id, "_meta":principal_meta(Some("issuer-a"))
+            })),
+        ),
+    )
+    .await;
+    assert!(cancelled["error"].is_null());
+}

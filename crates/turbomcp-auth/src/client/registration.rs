@@ -148,6 +148,14 @@ pub async fn obtain_credentials(
     as_meta: &AuthorizationServerMetadata,
     strategy: &RegistrationStrategy,
 ) -> Result<ClientCredentials, OAuthClientError> {
+    obtain_credentials_with_policy(http, as_meta, strategy, &crate::NetworkPolicy::default()).await
+}
+pub(crate) async fn obtain_credentials_with_policy(
+    http: &reqwest::Client,
+    as_meta: &AuthorizationServerMetadata,
+    strategy: &RegistrationStrategy,
+    policy: &crate::NetworkPolicy,
+) -> Result<ClientCredentials, OAuthClientError> {
     match strategy {
         RegistrationStrategy::Preregistered {
             credentials,
@@ -191,25 +199,30 @@ pub async fn obtain_credentials(
                     as_meta.issuer
                 )));
             };
-            let resp = http
-                .post(endpoint)
-                .json(request)
-                .send()
+            for redirect in &request.redirect_uris {
+                super::discovery::require_secure_url(redirect, "the registration redirect URI")?;
+            }
+            let resp = policy
+                .send(http, http.post(endpoint).json(request))
                 .await
-                .map_err(|e| OAuthClientError::Registration(e.to_string()))?;
+                .map_err(OAuthClientError::Registration)?;
             let status = resp.status();
             if !status.is_success() {
                 // MCP: surface registration failures meaningfully (the AS may
                 // enforce application_type/redirect constraints).
-                let body = resp.text().await.unwrap_or_default();
+                let body = String::from_utf8_lossy(&policy.body(resp).await.unwrap_or_default())
+                    .into_owned();
                 return Err(OAuthClientError::Registration(format!(
                     "dynamic registration rejected (HTTP {status}): {body}"
                 )));
             }
-            let registered: RegistrationResponse = resp
-                .json()
-                .await
-                .map_err(|e| OAuthClientError::Registration(format!("invalid response: {e}")))?;
+            let registered: RegistrationResponse = serde_json::from_slice(
+                &policy
+                    .body(resp)
+                    .await
+                    .map_err(OAuthClientError::Registration)?,
+            )
+            .map_err(|e| OAuthClientError::Registration(format!("invalid response: {e}")))?;
             Ok(ClientCredentials {
                 client_id: registered.client_id,
                 client_secret: registered.client_secret,

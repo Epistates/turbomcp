@@ -676,16 +676,39 @@ impl CompositeServer {
         mut list: F,
     ) -> McpResult<Option<&'a Mount>>
     where
-        F: FnMut(&'a Mount) -> Option<BoxFuture<'static, McpResult<T>>>,
+        F: FnMut(&'a Mount, neutral::ListParams) -> Option<BoxFuture<'static, McpResult<T>>>,
         T: Names,
     {
+        let mut owner = None;
         for mount in mounts.iter().filter(|m| m.prefix.is_none()) {
-            let Some(fut) = list(mount) else { continue };
-            if fut.await?.has(name) {
-                return Ok(Some(mount));
+            let mut params = neutral::ListParams::default();
+            let mut cursors = std::collections::HashSet::new();
+            loop {
+                let Some(fut) = list(mount, params) else {
+                    break;
+                };
+                let page = fut.await?;
+                if page.has(name) {
+                    if owner.is_some() {
+                        return Err(McpError::internal(format!(
+                            "ambiguous flat component: {name}"
+                        )));
+                    }
+                    owner = Some(mount);
+                    break;
+                }
+                let Some(cursor) = page.next().map(str::to_owned) else {
+                    break;
+                };
+                if !cursors.insert(cursor.clone()) || cursors.len() > 10_000 {
+                    return Err(McpError::internal(
+                        "flat catalog pagination did not terminate",
+                    ));
+                }
+                params = neutral::ListParams::with_cursor(cursor);
             }
         }
-        Ok(None)
+        Ok(owner)
     }
 }
 
@@ -693,15 +716,22 @@ impl CompositeServer {
 /// one thing [`CompositeServer::flat_owner`] needs from it.
 trait Names {
     fn has(&self, name: &str) -> bool;
+    fn next(&self) -> Option<&str>;
 }
 
 impl Names for neutral::ListToolsResult {
+    fn next(&self) -> Option<&str> {
+        self.next_cursor.as_deref()
+    }
     fn has(&self, name: &str) -> bool {
         self.tools.iter().any(|t| t.name == name)
     }
 }
 
 impl Names for neutral::ListPromptsResult {
+    fn next(&self) -> Option<&str> {
+        self.next_cursor.as_deref()
+    }
     fn has(&self, name: &str) -> bool {
         self.prompts.iter().any(|p| p.name == name)
     }
@@ -861,10 +891,10 @@ impl WithTools for CompositeServer {
         let routed = match self.route(&params.name) {
             Some(routed) => Some(routed),
             None if self.has_flat() => {
-                Self::flat_owner(&self.inner.mounts, &params.name, |mount| {
+                Self::flat_owner(&self.inner.mounts, &params.name, |mount, page| {
                     mount
                         .server
-                        .list_tools(ListToolsContext::new(ctx.base.clone()), Default::default())
+                        .list_tools(ListToolsContext::new(ctx.base.clone()), page)
                 })
                 .await?
                 .map(|mount| (mount, params.name.clone()))
@@ -980,11 +1010,10 @@ impl WithPrompts for CompositeServer {
         let routed = match self.route(&params.name) {
             Some(routed) => Some(routed),
             None if self.has_flat() => {
-                Self::flat_owner(&self.inner.mounts, &params.name, |mount| {
-                    mount.server.list_prompts(
-                        ListPromptsContext::new(ctx.base.clone()),
-                        Default::default(),
-                    )
+                Self::flat_owner(&self.inner.mounts, &params.name, |mount, page| {
+                    mount
+                        .server
+                        .list_prompts(ListPromptsContext::new(ctx.base.clone()), page)
                 })
                 .await?
                 .map(|mount| (mount, params.name.clone()))
@@ -1022,11 +1051,10 @@ impl WithCompletions for CompositeServer {
                 let routed = match self.route(name) {
                     Some(routed) => Some(routed),
                     None if self.has_flat() => {
-                        Self::flat_owner(&self.inner.mounts, name, |mount| {
-                            mount.server.list_prompts(
-                                ListPromptsContext::new(ctx.base.clone()),
-                                Default::default(),
-                            )
+                        Self::flat_owner(&self.inner.mounts, name, |mount, page| {
+                            mount
+                                .server
+                                .list_prompts(ListPromptsContext::new(ctx.base.clone()), page)
                         })
                         .await?
                         .map(|mount| (mount, name.clone()))

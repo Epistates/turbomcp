@@ -37,7 +37,12 @@ impl WithTools for Asker {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![]))
+        Ok(neutral::ListToolsResult::new(vec![
+            neutral::Tool::new("guarded", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("pair", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("leak", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("hoard", serde_json::json!({"type":"object"})),
+        ]))
     }
 
     async fn call_tool(
@@ -502,4 +507,36 @@ async fn decline_outcome_carries_no_content() {
     assert_eq!(out["resultType"], "complete");
     let text = out["content"][0]["text"].as_str().unwrap_or_default();
     assert!(text.contains("action=Decline"), "got: {out}");
+}
+
+#[tokio::test]
+async fn continuation_cannot_move_to_another_tool_or_arguments() {
+    let mut svc = dispatcher();
+    let first = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({
+                "name":"guarded", "arguments":{}, "_meta":meta()
+            })),
+        ),
+    )
+    .await;
+    let state = first["requestState"].as_str().expect("signed continuation");
+    for (name, arguments) in [("pair", json!({})), ("guarded", json!({"changed":true}))] {
+        let result = call(
+            &mut svc,
+            JsonRpcRequest::new(
+                2,
+                "tools/call",
+                Some(json!({
+                    "name":name, "arguments":arguments, "_meta":meta(),
+                    "requestState":state, "inputResponses":{"confirm":accept()}
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(result["error"]["code"], -32602, "{result}");
+    }
 }

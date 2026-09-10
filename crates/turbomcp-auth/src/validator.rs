@@ -72,7 +72,9 @@ impl<S: JwkSource> JwtValidator<S> {
         self
     }
 
-    /// Accept additional issuers.
+    /// Accept another issuer using the same trusted signing keys.
+    /// Every key in this validator is trusted to speak for every listed issuer.
+    /// Use [`IssuerValidators`] for independent authorization servers.
     #[must_use]
     pub fn add_issuer(mut self, issuer: impl Into<String>) -> Self {
         self.issuers.push(issuer.into());
@@ -94,6 +96,9 @@ impl<S: JwkSource> JwtValidator<S> {
     }
 
     async fn validate_inner(&self, token: &str) -> Result<AuthPrincipal, AuthError> {
+        if token.len() > 64 * 1024 {
+            return Err(AuthError::InvalidToken("token exceeds byte limit".into()));
+        }
         let header = decode_header(token)
             .map_err(|e| AuthError::InvalidToken(format!("bad header: {e}")))?;
         if !self.algorithms.contains(&header.alg) {
@@ -108,6 +113,7 @@ impl<S: JwkSource> JwtValidator<S> {
         validation.set_audience(&self.audiences);
         validation.set_issuer(&self.issuers);
         validation.leeway = self.leeway;
+        validation.validate_nbf = true;
         // `exp` is required and validated by default; demand it explicitly so a
         // token without it is rejected rather than treated as non-expiring.
         validation.set_required_spec_claims(&["exp", "aud", "iss"]);
@@ -153,4 +159,49 @@ fn extract_scopes(claims: &Map<String, Value>) -> Vec<String> {
             .collect();
     }
     Vec::new()
+}
+
+/// Explicit issuer-to-validator routing for independent authorization servers.
+/// Unverified claims only select an already configured validator; they never
+/// supply a discovery URL or authorize a request.
+#[derive(Default)]
+pub struct IssuerValidators(
+    std::collections::BTreeMap<String, std::sync::Arc<dyn BearerValidator>>,
+);
+impl IssuerValidators {
+    /// Add a validator with its own key source, audience, and issuer validation.
+    #[must_use]
+    pub fn with_issuer(
+        mut self,
+        issuer: impl Into<String>,
+        validator: std::sync::Arc<dyn BearerValidator>,
+    ) -> Self {
+        self.0.insert(issuer.into(), validator);
+        self
+    }
+}
+impl BearerValidator for IssuerValidators {
+    fn validate<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<AuthPrincipal, AuthError>> {
+        Box::pin(async move {
+            if token.len() > 64 * 1024 {
+                return Err(AuthError::InvalidToken("token exceeds byte limit".into()));
+            }
+            let untrusted = jsonwebtoken::dangerous::insecure_decode::<Map<String, Value>>(token)
+                .map_err(|_| AuthError::InvalidToken("invalid JWT envelope".into()))?;
+            let issuer = untrusted
+                .claims
+                .get("iss")
+                .and_then(Value::as_str)
+                .ok_or_else(|| AuthError::InvalidToken("missing issuer".into()))?;
+            let validator = self
+                .0
+                .get(issuer)
+                .ok_or_else(|| AuthError::InvalidToken("untrusted issuer".into()))?;
+            let principal = validator.validate(token).await?;
+            if principal.claims.get("iss").and_then(Value::as_str) != Some(issuer) {
+                return Err(AuthError::InvalidToken("validated issuer mismatch".into()));
+            }
+            Ok(principal)
+        })
+    }
 }

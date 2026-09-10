@@ -6,7 +6,7 @@
 //! the active wire. MRTR turn handling ([`mrtr_handle`]/[`finish_mrtr`],
 //! SEP-2322) lives here because it is part of that dispatch contract.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use futures::FutureExt;
@@ -39,8 +39,8 @@ use super::params::{
     parse_read_resource_params,
 };
 use super::{
-    HeaderParam, Shared, argument_at, collect_header_params, connection_id, error_response_for,
-    ok_value, session_id,
+    Shared, argument_at, collect_header_params, connection_id, error_response_for, ok_value,
+    session_id,
 };
 
 /// Fill the server's configured default cache policy (SEP-2549) into a
@@ -190,7 +190,6 @@ where
 
 /// What a call is addressing, for the pre-dispatch visibility check.
 enum Component<'a> {
-    Tool(&'a str),
     Resource(&'a str),
     Prompt(&'a str),
 }
@@ -212,13 +211,10 @@ enum Component<'a> {
 /// Skipped entirely unless the transport reported which mirrors it saw — only
 /// Streamable HTTP has headers, and on stdio the annotation is inert (the
 /// spec lets non-HTTP transports ignore it).
-async fn check_header_mirrors<S: McpServerCore>(
-    shared: &Shared,
-    router: &MethodRouter<S>,
-    server: &S,
-    ctx: &RequestContext,
+fn check_header_mirrors(
     req: &JsonRpcRequest,
     params: &neutral::CallToolParams,
+    tool: &neutral::Tool,
 ) -> McpResult<()> {
     let Some(observed) = req
         .params
@@ -229,58 +225,23 @@ async fn check_header_mirrors<S: McpServerCore>(
     else {
         return Ok(());
     };
-    let index = shared
-        .header_params
-        .get_or_init(|| build_header_param_index(router, server, ctx))
-        .await;
-    // The overwhelmingly common case: nothing is annotated.
-    let Some(declared) = index.get(params.name.as_str()).filter(|d| !d.is_empty()) else {
-        return Ok(());
-    };
+    let mut declared = Vec::new();
+    collect_header_params(&tool.input_schema, &mut Vec::new(), &mut declared);
     let arguments = Value::Object(params.arguments.clone());
     for param in declared {
-        if argument_at(&arguments, &param.path).is_none() {
-            continue; // no value at that path, so no header is expected
-        }
-        let sent = observed
-            .iter()
-            .filter_map(Value::as_str)
-            .any(|h| h.eq_ignore_ascii_case(&param.header));
-        if !sent {
+        if argument_at(&arguments, &param.path).is_some()
+            && !observed
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|h| h.eq_ignore_ascii_case(&param.header))
+        {
             return Err(McpError::HeaderMismatch(format!(
-                "Mcp-Param-{} header is missing but `{}` is present in the request body",
-                param.header,
-                param.path.join(".")
+                "Mcp-Param-{} header is missing",
+                param.header
             )));
         }
     }
     Ok(())
-}
-
-/// Build the tool → `x-mcp-header` index from a single unfiltered
-/// `tools/list`. Runs at most once per dispatcher (see [`Shared`]).
-async fn build_header_param_index<S: McpServerCore>(
-    router: &MethodRouter<S>,
-    server: &S,
-    ctx: &RequestContext,
-) -> HashMap<String, Vec<HeaderParam>> {
-    let mut index = HashMap::new();
-    let Some(fut) = router.dispatch_list_tools(
-        server.clone(),
-        ListToolsContext::new(ctx.clone()),
-        neutral::ListParams::default(),
-    ) else {
-        return index;
-    };
-    let Ok(listed) = fut.await else { return index };
-    for tool in listed.tools {
-        let mut found = Vec::new();
-        collect_header_params(&tool.input_schema, &mut Vec::new(), &mut found);
-        if !found.is_empty() {
-            index.insert(tool.name, found);
-        }
-    }
-    index
 }
 
 async fn hidden<S: McpServerCore>(
@@ -289,11 +250,10 @@ async fn hidden<S: McpServerCore>(
     server: &S,
     ctx: &RequestContext,
     component: Component<'_>,
-) -> bool {
+) -> McpResult<bool> {
     let Some(policy) = shared.visibility.as_ref() else {
-        return false;
+        return Ok(false);
     };
-    let params = neutral::ListParams::default();
     let judge = |kind, id: &str, meta: &Map<String, Value>| {
         !policy.is_visible(&VisibleComponent {
             kind,
@@ -303,63 +263,37 @@ async fn hidden<S: McpServerCore>(
         })
     };
     match component {
-        Component::Tool(name) => {
-            let Some(fut) = router.dispatch_list_tools(
-                server.clone(),
-                ListToolsContext::new(ctx.clone()),
-                params,
-            ) else {
-                return false;
-            };
-            let Ok(listed) = fut.await else { return false };
-            listed
-                .tools
-                .iter()
-                .find(|t| t.name == name)
-                .is_some_and(|t| judge(ComponentKind::Tool, &t.name, &t.meta))
-        }
         Component::Prompt(name) => {
-            let Some(fut) = router.dispatch_list_prompts(
+            let Some(fut) = router.dispatch_lookup_prompt(
                 server.clone(),
                 ListPromptsContext::new(ctx.clone()),
-                params,
+                name.into(),
             ) else {
-                return false;
+                return Ok(true);
             };
-            let Ok(listed) = fut.await else { return false };
-            listed
-                .prompts
-                .iter()
-                .find(|p| p.name == name)
-                .is_some_and(|p| judge(ComponentKind::Prompt, &p.name, &p.meta))
+            Ok(fut
+                .await?
+                .is_none_or(|p| judge(ComponentKind::Prompt, &p.name, &p.meta)))
         }
         Component::Resource(uri) => {
-            if let Some(fut) = router.dispatch_list_resources(
+            if let Some(fut) = router.dispatch_lookup_resource(
                 server.clone(),
                 ListResourcesContext::new(ctx.clone()),
-                params.clone(),
-            ) && let Ok(listed) = fut.await
-                && let Some(r) = listed.resources.iter().find(|r| r.uri == uri)
+                uri.into(),
+            ) && let Some(r) = fut.await?
             {
-                return judge(ComponentKind::Resource, &r.uri, &r.meta);
+                return Ok(judge(ComponentKind::Resource, &r.uri, &r.meta));
             }
-            // Not a concrete resource — it may still be produced by a template,
-            // which is where the policy's decision was recorded.
-            let Some(fut) = router.dispatch_list_resource_templates(
+            let Some(fut) = router.dispatch_lookup_resource_template(
                 server.clone(),
                 ListResourceTemplatesContext::new(ctx.clone()),
-                params,
+                uri.into(),
             ) else {
-                return false;
+                return Ok(true);
             };
-            let Ok(listed) = fut.await else { return false };
-            listed
-                .resource_templates
-                .iter()
-                .find(|t| {
-                    crate::__macro_support::match_uri_template(&t.uri_template, uri).is_some()
-                })
-                .is_some_and(|t| judge(ComponentKind::ResourceTemplate, &t.uri_template, &t.meta))
+            Ok(fut
+                .await?
+                .is_none_or(|t| judge(ComponentKind::ResourceTemplate, &t.uri_template, &t.meta)))
         }
     }
 }
@@ -386,33 +320,11 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             finish::<_, W::ListTools>(id, method, &W::VERSION, fut).await
         }
         methods::request::TOOLS_CALL => {
-            let params = match parse_call_tool_params(req.params.as_ref()) {
-                Ok(p) => p,
-                Err(e) => return error_response_for(id, &W::VERSION, &e),
-            };
-            // SEP-2243: an argument the tool annotates `x-mcp-header` must
-            // arrive with its `Mcp-Param-*` mirror. A header that is present
-            // but disagrees is caught by the transport; one that is *absent*
-            // can only be caught here, and it is the same divergence — a
-            // gateway routing on a default while the server executes on the
-            // body.
-            if let Err(e) =
-                check_header_mirrors::<S>(shared, router, &server, &ctx, req, &params).await
-            {
-                return error_response_for(id, &W::VERSION, &e);
-            }
-            // A hidden tool must be unreachable, not merely unlisted — and
-            // refused exactly as an unknown one, or the refusal discloses what
-            // the policy is hiding.
-            if hidden(shared, router, &server, &ctx, Component::Tool(&params.name)).await {
-                return ok_value(
-                    id,
-                    &W::CallTool::from(neutral::CallToolResult::error(format!(
-                        "unknown tool: {}",
-                        params.name
-                    ))),
-                );
-            }
+            let (params, tool) =
+                match prepare_tool::<S, W>(&server, router, req, &ctx, shared, id.clone()).await {
+                    Ok(prepared) => prepared,
+                    Err(response) => return *response,
+                };
             let handle = match mrtr_handle::<W>(
                 req,
                 &ctx,
@@ -431,11 +343,19 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                     .with_log(log_sender::<W>(req, &ctx, router.has_logging())),
                 params,
             );
-            let subject = ctx.identity.subject().map(str::to_owned);
+            let validators = shared.validators.clone();
+            let fut = fut.map(
+                |fut| -> BoxFuture<'static, McpResult<neutral::CallToolResult>> {
+                    Box::pin(
+                        async move { validators.output(tool.output_schema.as_ref(), fut.await?) },
+                    )
+                },
+            );
+            let subject = ctx.identity.principal_key();
             finish_mrtr::<_, W::CallTool>(
                 id,
                 MrtrTurn {
-                    method,
+                    method: &request_binding(req),
                     version: &W::VERSION,
                     subject,
                     handle: &handle,
@@ -471,7 +391,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 Ok(p) => p,
                 Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
-            if hidden(
+            if match hidden(
                 shared,
                 router,
                 &server,
@@ -480,6 +400,9 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             )
             .await
             {
+                Ok(hidden) => hidden,
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
+            } {
                 return error_response_for(
                     id,
                     &W::VERSION,
@@ -505,11 +428,11 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 params,
             );
             let fut = with_cache_default(fut, shared.cache.resources_read);
-            let subject = ctx.identity.subject().map(str::to_owned);
+            let subject = ctx.identity.principal_key();
             finish_mrtr::<_, W::ReadResource>(
                 id,
                 MrtrTurn {
-                    method,
+                    method: &request_binding(req),
                     version: &W::VERSION,
                     subject,
                     handle: &handle,
@@ -535,7 +458,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 Ok(p) => p,
                 Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
-            if hidden(
+            if match hidden(
                 shared,
                 router,
                 &server,
@@ -544,6 +467,9 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             )
             .await
             {
+                Ok(hidden) => hidden,
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
+            } {
                 return error_response_for(
                     id,
                     &W::VERSION,
@@ -568,11 +494,11 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                     .with_log(log_sender::<W>(req, &ctx, router.has_logging())),
                 params,
             );
-            let subject = ctx.identity.subject().map(str::to_owned);
+            let subject = ctx.identity.principal_key();
             finish_mrtr::<_, W::GetPrompt>(
                 id,
                 MrtrTurn {
-                    method,
+                    method: &request_binding(req),
                     version: &W::VERSION,
                     subject,
                     handle: &handle,
@@ -595,6 +521,92 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
     }
 }
 
+// Bind state to the operation as well as the principal. Canonical object
+// ordering permits intermediaries to reorder JSON properties between rounds.
+pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
+    server: &S,
+    router: &MethodRouter<S>,
+    req: &JsonRpcRequest,
+    ctx: &RequestContext,
+    shared: &Shared,
+    id: RequestId,
+) -> Result<(neutral::CallToolParams, neutral::Tool), Box<JsonRpcMessage>> {
+    if W::MRTR {
+        validate_mrtr_envelope(req).map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?;
+    }
+    let params = parse_call_tool_params(req.params.as_ref())
+        .map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?;
+    let tool = match router.dispatch_lookup_tool(
+        server.clone(),
+        ListToolsContext::new(ctx.clone()),
+        params.name.clone(),
+    ) {
+        Some(fut) => fut
+            .await
+            .map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?,
+        None => None,
+    };
+    let unknown = || {
+        ok_value(
+            id.clone(),
+            &W::CallTool::from(neutral::CallToolResult::error(format!(
+                "unknown tool: {}",
+                params.name
+            ))),
+        )
+    };
+    let tool = tool.ok_or_else(unknown)?;
+    if shared.visibility.as_ref().is_some_and(|policy| {
+        !policy.is_visible(&VisibleComponent {
+            kind: ComponentKind::Tool,
+            id: &tool.name,
+            meta: &tool.meta,
+            request: ctx,
+        })
+    }) {
+        return Err(Box::new(unknown()));
+    }
+    check_header_mirrors(req, &params, &tool)
+        .map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?;
+    shared
+        .validators
+        .validate(&tool.input_schema, &Value::Object(params.arguments.clone()))
+        .map_err(|e| {
+            ok_value(
+                id.clone(),
+                &W::CallTool::from(neutral::CallToolResult::error(e.to_string())),
+            )
+        })?;
+    Ok((params, tool))
+}
+
+fn request_binding(req: &JsonRpcRequest) -> String {
+    fn canonical(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let ordered: BTreeMap<_, _> =
+                    map.iter().map(|(k, v)| (k.clone(), canonical(v))).collect();
+                serde_json::to_value(ordered).expect("JSON canonicalization")
+            }
+            Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+            other => other.clone(),
+        }
+    }
+    let mut params = req.params.clone().unwrap_or(Value::Null);
+    if let Some(map) = params.as_object_mut() {
+        for key in ["_meta", "requestState", "inputResponses"] {
+            map.remove(key);
+        }
+    }
+    use sha2::{Digest, Sha256};
+    let encoded = serde_json::to_vec(&(req.method.as_str(), canonical(&params)))
+        .expect("JSON request binding");
+    Sha256::digest(encoded)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 // ---- MRTR (SEP-2322) -----------------------------------------------------------
 
 #[derive(Deserialize, Default)]
@@ -610,6 +622,27 @@ struct RawMrtrFields {
 /// (verification failure rejects the request before the handler runs — the
 /// blob is attacker-controlled); on the legacy family, an inline-bidi handle
 /// bound to the request's session.
+fn validate_mrtr_envelope(req: &JsonRpcRequest) -> McpResult<()> {
+    if let Some(responses) = req.params.as_ref().and_then(|p| p.get("inputResponses"))
+        && !responses
+            .as_object()
+            .is_some_and(|map| map.values().all(Value::is_object))
+    {
+        return Err(McpError::invalid_params(
+            "inputResponses must map input keys to response objects",
+        ));
+    }
+    if req
+        .params
+        .as_ref()
+        .and_then(|p| p.get("requestState"))
+        .is_some_and(|state| !state.is_string())
+    {
+        return Err(McpError::invalid_params("requestState must be a string"));
+    }
+    Ok(())
+}
+
 fn mrtr_handle<W: WireFamily>(
     req: &JsonRpcRequest,
     ctx: &RequestContext,
@@ -630,13 +663,20 @@ fn mrtr_handle<W: WireFamily>(
             None => ClientHandle::unavailable("no session for inline bidirectional requests"),
         });
     }
+    validate_mrtr_envelope(req)?;
     let fields: RawMrtrFields = req
         .params
         .as_ref()
-        .and_then(|p| serde_json::from_value(p.clone()).ok())
+        .map(|p| serde_json::from_value(p.clone()))
+        .transpose()
+        .map_err(|e| McpError::invalid_params(format!("invalid MRTR fields: {e}")))?
         .unwrap_or_default();
     let state_in = match &fields.request_state {
-        Some(token) => Some(signer.verify(&req.method, ctx.identity.subject(), token)?),
+        Some(token) => Some(signer.verify(
+            &request_binding(req),
+            ctx.identity.principal_key().as_deref(),
+            token,
+        )?),
         None => None,
     };
     Ok(ClientHandle::mrtr(

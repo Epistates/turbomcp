@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "4.0.0-alpha.3"
+version = "4.0.0-alpha.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -13,6 +13,8 @@ keywords = ["mcp", "server", "llm", "ai", "tools"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
+jsonschema = { workspace = true }
+moka = { workspace = true, features = ["sync"] }
 turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-protocol = { workspace = true }
 turbomcp-service = { workspace = true }

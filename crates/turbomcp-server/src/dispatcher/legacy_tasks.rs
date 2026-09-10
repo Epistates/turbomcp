@@ -52,6 +52,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     ctx: RequestContext,
     req: &JsonRpcRequest,
     id: RequestId,
+    contract: (Arc<crate::catalog::Validators>, Option<Value>),
 ) -> JsonRpcMessage {
     let task_meta: RawTaskMetadata = match req
         .params
@@ -83,6 +84,8 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
             &McpError::method_not_found(methods::request::TOOLS_CALL),
         );
     };
+
+    let fut = async move { contract.0.output(contract.1.as_ref(), fut.await?) };
 
     // The legacy gate guarantees a session id by the time we're here.
     let sid = session_id(req.params.as_ref())

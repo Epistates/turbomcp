@@ -22,5 +22,9 @@ fuzz_target!(|data: &[u8]| {
     // Round-trip: whatever encode produces must decode back to the original.
     let encoded = mcp_headers::encode_value(s);
     let decoded = mcp_headers::decode_value(&encoded);
-    assert_eq!(decoded.as_deref(), Some(s), "sentinel round-trip must be lossless");
+    assert_eq!(
+        decoded.as_deref(),
+        Some(s),
+        "sentinel round-trip must be lossless"
+    );
 });

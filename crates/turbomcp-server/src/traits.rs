@@ -44,6 +44,26 @@ pub trait McpServerCore: Clone + Send + Sync + 'static {
 
 /// Implement to serve tools (`tools/list`, `tools/call`).
 pub trait WithTools: McpServerCore {
+    /// Look up an executable component independently of list pagination.
+    /// Override for an indexed/dynamic catalog. The default follows bounded,
+    /// advancing pages and propagates lookup errors; absence is explicit.
+    fn lookup_tool(
+        &self,
+        ctx: &ListToolsContext,
+        name: String,
+    ) -> impl Future<Output = McpResult<Option<neutral::Tool>>> + Send {
+        async move {
+            crate::catalog::find(
+                |params| async move {
+                    let page = self.list_tools(ctx, params).await?;
+                    Ok((page.tools, page.next_cursor))
+                },
+                |tool: &neutral::Tool| tool.name == name,
+            )
+            .await
+        }
+    }
+
     /// Enumerate available tools. `params.cursor` continues a prior page.
     ///
     /// Return tools in a **deterministic order** across calls (the spec
@@ -69,6 +89,48 @@ pub trait WithTools: McpServerCore {
 /// Implement to serve resources (`resources/list`, `resources/read`, and
 /// optionally `resources/templates/list`).
 pub trait WithResources: McpServerCore {
+    /// Look up an executable component independently of list pagination.
+    /// Override for an indexed/dynamic catalog. The default follows bounded,
+    /// advancing pages and propagates lookup errors; absence is explicit.
+    fn lookup_resource_template(
+        &self,
+        ctx: &ListResourceTemplatesContext,
+        name: String,
+    ) -> impl Future<Output = McpResult<Option<neutral::ResourceTemplate>>> + Send {
+        async move {
+            crate::catalog::find(
+                |params| async move {
+                    let page = self.list_resource_templates(ctx, params).await?;
+                    Ok((page.resource_templates, page.next_cursor))
+                },
+                |tool: &neutral::ResourceTemplate| {
+                    crate::__macro_support::match_uri_template(&tool.uri_template, &name).is_some()
+                },
+            )
+            .await
+        }
+    }
+
+    /// Look up an executable component independently of list pagination.
+    /// Override for an indexed/dynamic catalog. The default follows bounded,
+    /// advancing pages and propagates lookup errors; absence is explicit.
+    fn lookup_resource(
+        &self,
+        ctx: &ListResourcesContext,
+        name: String,
+    ) -> impl Future<Output = McpResult<Option<neutral::Resource>>> + Send {
+        async move {
+            crate::catalog::find(
+                |params| async move {
+                    let page = self.list_resources(ctx, params).await?;
+                    Ok((page.resources, page.next_cursor))
+                },
+                |tool: &neutral::Resource| tool.uri == name,
+            )
+            .await
+        }
+    }
+
     /// Enumerate concrete resources. `params.cursor` continues a prior page.
     fn list_resources(
         &self,
@@ -97,6 +159,26 @@ pub trait WithResources: McpServerCore {
 
 /// Implement to serve prompts (`prompts/list`, `prompts/get`).
 pub trait WithPrompts: McpServerCore {
+    /// Look up an executable component independently of list pagination.
+    /// Override for an indexed/dynamic catalog. The default follows bounded,
+    /// advancing pages and propagates lookup errors; absence is explicit.
+    fn lookup_prompt(
+        &self,
+        ctx: &ListPromptsContext,
+        name: String,
+    ) -> impl Future<Output = McpResult<Option<neutral::Prompt>>> + Send {
+        async move {
+            crate::catalog::find(
+                |params| async move {
+                    let page = self.list_prompts(ctx, params).await?;
+                    Ok((page.prompts, page.next_cursor))
+                },
+                |tool: &neutral::Prompt| tool.name == name,
+            )
+            .await
+        }
+    }
+
     /// Enumerate available prompts. `params.cursor` continues a prior page.
     fn list_prompts(
         &self,

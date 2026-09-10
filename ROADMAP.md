@@ -4,11 +4,11 @@ Where TurboMCP is going, and what it is deliberately not doing. No dates —
 this is maintained around a day job, and a date I can't keep is worse than none.
 Order within a section is roughly the order things will be picked up.
 
-Current release: **`4.0.0-alpha.3`**. The stable line is `3.x`.
+Release candidate: **`4.0.0-alpha.4`**. The stable line is `3.x`.
 
 ## Shipped
 
-The v4 rewrite is feature-complete for its own scope. In the tree today:
+The v4 alpha currently provides:
 
 - **Three protocol revisions from one handler** — `2025-06-18`, `2025-11-25`,
   `2026-07-28` — each generated from its frozen upstream schema, with
@@ -28,31 +28,29 @@ The v4 rewrite is feature-complete for its own scope. In the tree today:
 
 ## Next
 
-**Client auth conformance.** The conformance client runner does not yet drive
-the OAuth flows, so ~20 `auth/*` scenarios sit in its expected-failure baseline.
-The client implements OAuth 2.1 already (`client-oauth`); this is wiring, and it
-is the largest remaining gap against `rmcp`.
+**Audit remediation and stable API review.** Track implementation and verification
+in [the remediation record](docs/V4-AUDIT-REMEDIATION.md). Client authentication
+conformance now uses the public OAuth coordinator; both failure baselines are
+empty, and distinct successful checks are pinned in inventories.
 
-**`4.0.0` stable.** Gated on the alpha finding real users and their bugs. The
-API is where I want it; what's missing is exposure. If you are running an alpha,
-opening an issue is the single most useful thing you can do for this line.
+**`4.0.0` stable.** Requires the security and lifecycle regressions to stay green,
+reproducible performance measurements, public API review, and deployment
+feedback. Passing conformance alone is insufficient release evidence.
 
-**Documentation.** The README and rustdoc are thorough; a guide that walks
-somebody from zero to a deployed server is not there yet.
+**Deployment documentation.** See [deployment and migration](docs/DEPLOYMENT.md).
 
 ## Planned
 
 **A proxy and CLI.** Aggregating N upstream MCP servers behind one endpoint,
 with per-caller filtering — built on `Composite` at the capability level rather
-than piping frames. Bridging a single server is a commodity (supergateway,
-mcp-proxy); aggregation is the part nobody has done well. Scoped, with several
-open design questions still to settle.
+than piping frames. No v4 proxy or CLI package is currently shipped. Remote authentication,
+notification routing, cancellation, pagination, and upstream lifecycle need
+explicit contracts before support can be claimed.
 
 **The Apps extension** (SEP-1865), currently a skeleton crate.
 
-**Fewer crates.** Seventeen is more than this needs. Consolidating toward ~10
-without changing the facade's surface is a `4.x` minor at most, but it is
-disruptive to anyone importing sub-crates directly, so it needs care.
+**Fewer crates.** There are 16 workspace members and two excluded verification crates. Package boundaries must be settled before stable. Removing or moving a public
+subcrate API is a breaking change even if the facade stays unchanged.
 
 ## Not planned
 

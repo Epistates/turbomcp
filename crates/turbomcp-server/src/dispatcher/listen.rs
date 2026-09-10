@@ -131,7 +131,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         let ctx = build_context(req);
         for ext in extensions {
             let declared = context_declares_extension(&ctx, ext.id());
-            match ext.on_subscribe(&conn, &id, &raw_notifications, declared) {
+            match ext.on_subscribe(&conn, &id, &raw_notifications, declared, &ctx) {
                 SubscribeOutcome::NotApplicable => {}
                 SubscribeOutcome::MissingCapability => {
                     return Ok(Some(missing_capability_response(id, ext.id())));

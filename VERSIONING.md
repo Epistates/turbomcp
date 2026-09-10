@@ -7,7 +7,8 @@ and the Rust it needs.
 
 ## Crate versions
 
-Every crate in the workspace shares one version and they are released together.
+Publishable crates in the workspace share one version and are released together.
+Private codegen, Apps, and verification packages are not published.
 A `turbomcp` at `4.0.0` depends on `turbomcp-core` at `4.0.0`; mixing versions
 across the family is not supported.
 
@@ -88,6 +89,8 @@ These are excluded from the compatibility promise:
 - The exact text of error messages and log output.
 - `_meta` keys under `io.turbomcp/*`, which are implementation detail unless
   documented as public.
-- The generated wire types' internal module layout — use `turbomcp::neutral`.
-- Crates marked `publish = false` (`turbomcp-codegen`, and the interop and
+- Private implementation details within generated modules. Public generated
+  types and module paths in published subcrates are public API; moving or
+  removing them requires the same compatibility review as the facade.
+- Crates marked `publish = false` (`turbomcp-codegen`, `turbomcp-ext-apps`, and the interop and
   conformance test crates).

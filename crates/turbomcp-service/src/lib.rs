@@ -35,7 +35,7 @@ pub use panic::catch_handler_panic;
 pub use ratelimit::{GovernorRateLimiter, RateKey, RateLimiter};
 pub use serve::{ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, TerminateFuture};
-pub use transport::Transport;
+pub use transport::{HttpFailure, Transport};
 
 pub use tokio_util::sync::CancellationToken;
 

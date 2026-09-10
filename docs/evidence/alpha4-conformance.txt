@@ -1,0 +1,23 @@
+Client fixture corrections v1 active; unmodified upstream mode: TURBOMCP_CONFORMANCE_UPSTREAM=1
+
+=== TurboMCP conformance (client) (2025-11-25 + 2026-07-28) ===
+  checks: 1459 total, 650 passed, 0 failed (0 expected, 0 unexpected), 0 skipped, 0 warnings, 809 info
+  baseline entries: 0 (0 stale)
+  2025-11-25: 242 passed (floor 200)
+  2026-07-28: 408 passed (floor 200)
+test conformance_client_suite ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.07s
+
+     Running tests/conformance_server.rs (crates/turbomcp-conformance/target/debug/deps/conformance_server-0c8baf917dc18f82)
+
+running 1 test
+
+=== TurboMCP conformance (server) (2025-11-25 + 2026-07-28) ===
+  checks: 236 total, 231 passed, 0 failed (0 expected, 0 unexpected), 0 skipped, 0 warnings, 5 info
+  baseline entries: 0 (0 stale)
+  2025-11-25: 80 passed (floor 60)
+  2026-07-28: 151 passed (floor 60)
+test conformance_server_suite ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.89s

@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-auth"
-version = "4.0.0-alpha.3"
+version = "4.0.0-alpha.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -23,6 +23,7 @@ http-jwks = ["dep:reqwest", "dep:tokio"]
 oauth-client = ["dep:oauth2", "dep:reqwest", "dep:tokio", "dep:url"]
 
 [dependencies]
+subtle = { workspace = true }
 turbomcp-core = { workspace = true }
 turbomcp-service = { workspace = true }
 jsonwebtoken = { workspace = true }

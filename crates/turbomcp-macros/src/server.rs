@@ -137,15 +137,16 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         }
     };
 
-    Ok(quote! {
-        #block
+    let generated = quote! {
         #core_impl
         #tools_impl
         #resources_impl
         #prompts_impl
         #completions_impl
         #entry_impl
-    })
+    };
+    let generated = crate::resolve_facade(generated)?;
+    Ok(quote! { #block #generated })
 }
 
 const NAME_REMEDY: &str = "rename one, or give it a distinct `name = \"…\"`";
@@ -1032,11 +1033,20 @@ fn gen_tools_impl(self_ty: &Type, tools: &[Handler]) -> TokenStream {
     let arg_structs = tools.iter().map(|t| gen_args_struct(self_ty, t));
     let list_entries = tools.iter().map(|t| gen_tool_list_entry(self_ty, t));
     let call_arms = tools.iter().map(|t| gen_tool_call_arm(self_ty, t));
+    let lookup_arms = tools.iter().map(|t| {
+        let name = t.wire_name();
+        let entry = gen_tool_list_entry(self_ty, t);
+        quote!(#name => Some(#entry),)
+    });
 
     quote! {
         #(#arg_structs)*
 
         impl ::turbomcp::WithTools for #self_ty {
+            async fn lookup_tool(&self, _ctx: &::turbomcp::ListToolsContext, name: String)
+                -> ::turbomcp::McpResult<Option<::turbomcp::neutral::Tool>> {
+                Ok(match name.as_str() { #(#lookup_arms)* _ => None })
+            }
             async fn list_tools(
                 &self,
                 _ctx: &::turbomcp::ListToolsContext,
@@ -1173,6 +1183,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
         .map(|s| quote!(__schema = ::turbomcp::__macros::extend_object_schema(__schema, #s);));
     quote! {
         {
+            static __TOOL: ::std::sync::LazyLock<::turbomcp::neutral::Tool> = ::std::sync::LazyLock::new(|| {
             let mut __schema = ::turbomcp::__macros::close_object_schema(
                 ::turbomcp::__macros::normalize_input_schema(
                     ::turbomcp::__macros::serde_json::to_value(
@@ -1186,6 +1197,8 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
             #(#header_marks)*
             ::turbomcp::neutral::Tool::new(#name, __schema)
                 #desc #title #annotations #output_schema #task_support #tags #scopes
+            });
+            (*__TOOL).clone()
         }
     }
 }

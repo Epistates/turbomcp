@@ -56,6 +56,17 @@ pub enum Identity {
 }
 
 impl Identity {
+    /// Stable issuer-and-subject key for identity-bound sessions and quotas.
+    /// Token rotation and scope changes preserve this key. Anonymous callers
+    /// have no key; callers must not log the returned identity data.
+    #[must_use]
+    pub fn principal_key(&self) -> Option<String> {
+        self.subject().map(|subject| {
+            serde_json::to_string(&(self.claim("iss").and_then(Value::as_str), subject))
+                .expect("string identity serialization")
+        })
+    }
+
     /// The authenticated subject, if this identity has one.
     #[must_use]
     pub fn subject(&self) -> Option<&str> {

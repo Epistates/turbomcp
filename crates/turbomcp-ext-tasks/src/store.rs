@@ -29,6 +29,7 @@ pub(crate) enum TaskOutcome {
 }
 
 struct Entry {
+    owner: Option<String>,
     status: TaskStatus,
     status_message: Option<String>,
     created_wall: OffsetDateTime,
@@ -121,11 +122,12 @@ impl DraftTaskStore {
     /// Register a fresh `working` task driven by `cancel`. Returns the seed
     /// [`Task`] to render as a `CreateTaskResult`. `None` if the registry is at
     /// capacity (the caller should answer `-32603` and run the call normally).
-    pub(crate) fn create(
+    pub(crate) fn create_owned(
         &self,
         ttl_ms: Option<i64>,
         poll_interval_ms: Option<i64>,
         cancel: CancellationToken,
+        owner: Option<String>,
     ) -> Option<Task> {
         let mut map = self.lock();
         Self::purge_expired(&mut map);
@@ -135,6 +137,7 @@ impl DraftTaskStore {
         let id = uuid::Uuid::new_v4().to_string();
         let now_wall = OffsetDateTime::now_utc();
         let entry = Entry {
+            owner,
             status: TaskStatus::Working,
             status_message: None,
             created_wall: now_wall,
@@ -149,6 +152,24 @@ impl DraftTaskStore {
         let task = entry.base(&id);
         map.insert(id, entry);
         Some(task)
+    }
+
+    pub(crate) fn owns(&self, id: &str, owner: Option<&str>) -> bool {
+        let mut entries = self.lock();
+        Self::purge_expired(&mut entries);
+        entries
+            .get(id)
+            .is_some_and(|entry| entry.owner.as_deref() == owner)
+    }
+
+    #[cfg(test)]
+    fn create(
+        &self,
+        ttl_ms: Option<i64>,
+        poll_interval_ms: Option<i64>,
+        cancel: CancellationToken,
+    ) -> Option<Task> {
+        self.create_owned(ttl_ms, poll_interval_ms, cancel, None)
     }
 
     /// Record a task's terminal outcome (`Completed` ⇒ `completed`, `Failed` ⇒

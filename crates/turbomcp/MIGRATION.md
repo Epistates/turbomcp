@@ -289,8 +289,7 @@ identity you name, so a bad composition fails on deploy rather than on a client'
 first `tools/list`.
 
 One cost worth knowing: an unprefixed `tools/call` has to ask the flat mounts
-what they currently serve in order to find the owner, so it costs one list per
-call. Dispatching speculatively instead would be unsound — a tool-level failure
+what they currently serve in order to find the owner, using bounded pagination, so it can cost multiple list requests per call. Dispatching speculatively instead would be unsound — a tool-level failure
 is indistinguishable from "I don't have that tool", so a call that genuinely ran
 and failed would be retried against the next server, running its side effects
 twice.
@@ -329,8 +328,8 @@ Three differences worth knowing:
 - **Hidden means unreachable.** v3 filtered lists. v4 also refuses the call —
   and refuses it *exactly as a component that does not exist* (unknown tool,
   unknown prompt, resource-not-found), because a distinct "forbidden" answer
-  would disclose the existence the policy is hiding. This costs one list per
-  guarded call, paid only when a policy is installed. A hidden *template's*
+  would disclose the existence the policy is hiding. Authoritative lookup is enforced on calls; macro-generated tool lookup is
+  direct, while custom providers default to bounded catalog pagination. A hidden *template's*
   URIs are refused too, since a template's URIs are not enumerable and checking
   only the concrete list would leave the whole template readable.
 - **`requiring_declared_scopes()` closes a real gap.** `#[tool(scopes("admin"))]`
@@ -367,7 +366,7 @@ v3 surfaced Tasks one way. In v4 they split by protocol version:
   marked, every tool defaults to `optional`.
 - `2026-07-28`: Tasks are an **extension** (`io.modelcontextprotocol/tasks`,
   SEP-2663) — enable the `ext-tasks` feature and register
-  `TasksExtension` with `ServerBuilder::with_extension(...)`. The draft is
+  `TasksExtension` with `ServerBuilder::with_extension(...)`. The modern revision is
   session-less and server-directed (`resultType: "task"`, `tasks/get|update|cancel`,
   `notifications/tasks`).
 
@@ -401,3 +400,9 @@ one workspace while you migrate the server/client code.
 `turbomcp-tcp`, `turbomcp-unix`, `turbomcp-transport-streamable`, `turbomcp-wire`,
 and `turbomcp-types` were internal decompositions of the v3 SDK; their roles are
 covered by the v4 crates in the table at the top of the [README](README.md).
+
+## alpha.3 to alpha.4
+
+See the [alpha migration and deployment guide](../../docs/DEPLOYMENT.md) for
+authoritative lookup, runtime schema enforcement, session/task ownership,
+subscription context, OAuth orchestration, and HTTP resource limits.

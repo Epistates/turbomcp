@@ -6,7 +6,7 @@
 
 # Project configuration
 project_name := "TurboMCP"
-rust_version := "1.89.0"
+rust_version := "1.88.0"
 
 # Build flags
 release_flags := "--release"
@@ -523,9 +523,14 @@ docs-build:
 
 # Check documentation for broken links and issues
 [group: 'docs']
-docs-check: test-docs
+docs-check: test-docs docs-links
   @echo "Checking documentation..."
   cargo doc --workspace --no-deps --document-private-items
+
+# Check local file links in maintained Markdown (historical audits excluded)
+[group: 'docs']
+docs-links:
+  python3 scripts/check_docs.py
 
 # Build docs exactly as docs.rs does, failing on any warning (needs nightly)
 [group: 'docs']

@@ -23,7 +23,6 @@
 //! `_meta`→context extraction may still move to a `MetaExtractLayer` once
 //! Auth/RateLimit need to observe it between layers (Phase 6/7).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -112,15 +111,7 @@ struct Shared {
     /// Opt-in progressive disclosure: which components a given caller may see,
     /// and therefore reach. `None` (the default) shows everything.
     visibility: crate::visibility::Policy,
-    /// Tool name → the `x-mcp-header` mirrors its `inputSchema` declares
-    /// (SEP-2243), built once from `tools/list` on the first `tools/call` that
-    /// needs it.
-    ///
-    /// Cached because it is a property of the *catalogue*, not of a caller —
-    /// unlike visibility, which is per-request. A server that annotates
-    /// nothing caches an empty map and every later call short-circuits on a
-    /// single `is_empty`.
-    header_params: Arc<tokio::sync::OnceCell<HashMap<String, Vec<HeaderParam>>>>,
+    validators: Arc<crate::catalog::Validators>,
 }
 
 /// One `x-mcp-header` annotation: the `{name}` portion of the
@@ -276,8 +267,30 @@ impl core::fmt::Debug for DispatcherSessionTerminator {
 }
 
 impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
-    fn terminate<'a>(&'a self, session_id: &'a str) -> turbomcp_service::TerminateFuture<'a> {
-        Box::pin(self.shared.terminate_session(session_id))
+    fn owns<'a>(
+        &'a self,
+        session_id: &'a str,
+        owner: Option<&'a str>,
+    ) -> turbomcp_service::TerminateFuture<'a> {
+        Box::pin(async move {
+            self.shared
+                .sessions
+                .get(session_id)
+                .await
+                .is_some_and(|state| state.owner.as_deref() == owner)
+        })
+    }
+    fn terminate<'a>(
+        &'a self,
+        session_id: &'a str,
+        owner: Option<&'a str>,
+    ) -> turbomcp_service::TerminateFuture<'a> {
+        Box::pin(async move {
+            if !self.owns(session_id, owner).await {
+                return false;
+            }
+            self.shared.terminate_session(session_id).await
+        })
     }
 }
 
@@ -313,7 +326,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 strict_elicitation_keys: false,
                 cache: CachePolicies::default(),
                 visibility: None,
-                header_params: Arc::new(tokio::sync::OnceCell::new()),
+                validators: Arc::new(crate::catalog::Validators::default()),
             },
         }
     }
@@ -725,9 +738,16 @@ async fn handle_request<S: McpServerCore>(
                     // running synchronously. The extension decides per call; a
                     // `None` here falls through to the normal dispatch.
                     if method == methods::request::TOOLS_CALL
-                        && let Some(resp) =
-                            try_augment_call(&server, router, &req, &ctx, &shared.extensions, &id)
-                                .await
+                        && let Some(resp) = try_augment_call(
+                            &server,
+                            router,
+                            &req,
+                            &ctx,
+                            shared,
+                            &shared.extensions,
+                            &id,
+                        )
+                        .await
                     {
                         return Ok(resp);
                     }
@@ -756,9 +776,29 @@ async fn handle_request<S: McpServerCore>(
                         if method == methods::request::TOOLS_CALL
                             && has_task_field(req.params.as_ref())
                         {
-                            return Ok(
-                                task_augmented_call(server, router, store, ctx, &req, id).await
-                            );
+                            let (_, tool) = match capability::prepare_tool::<S, LegacyWire>(
+                                &server,
+                                router,
+                                &req,
+                                &ctx,
+                                shared,
+                                id.clone(),
+                            )
+                            .await
+                            {
+                                Ok(prepared) => prepared,
+                                Err(response) => return Ok(*response),
+                            };
+                            return Ok(task_augmented_call(
+                                server,
+                                router,
+                                store,
+                                ctx,
+                                &req,
+                                id,
+                                (shared.validators.clone(), tool.output_schema),
+                            )
+                            .await);
                         }
                         if method == methods::request::TOOLS_LIST {
                             return Ok(legacy_list_tools_with_task_support(

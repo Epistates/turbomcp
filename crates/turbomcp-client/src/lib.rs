@@ -37,4 +37,10 @@ pub use async_trait::async_trait;
 mod http;
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-pub use http::{BearerSource, HttpClientError, HttpClientTransport, connect_http};
+pub use http::{
+    BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, connect_http,
+};
+
+/// Coordinated HTTP OAuth authorization and token refresh.
+#[cfg(feature = "oauth")]
+pub mod oauth;

@@ -68,7 +68,10 @@ impl WithTools for Blocker {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![]))
+        Ok(neutral::ListToolsResult::new(vec![
+            neutral::Tool::new("block", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("fast", serde_json::json!({"type":"object"})),
+        ]))
     }
 
     async fn call_tool(

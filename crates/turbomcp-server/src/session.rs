@@ -28,6 +28,9 @@ use turbomcp_core::{Implementation, LogLevel, ProtocolVersion};
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct SessionState {
+    /// Issuer-and-subject key of the creating principal. `None` binds this
+    /// session to anonymous callers, never to the next authenticated caller.
+    pub owner: Option<String>,
     /// The protocol version the server answered with.
     pub version: ProtocolVersion,
     /// The client's `clientInfo`.
@@ -286,6 +289,7 @@ mod tests {
 
     fn state() -> SessionState {
         SessionState {
+            owner: None,
             version: ProtocolVersion::V2025_11_25,
             client_info: Implementation::new("test-client", "1.0"),
             client_capabilities: serde_json::json!({}),

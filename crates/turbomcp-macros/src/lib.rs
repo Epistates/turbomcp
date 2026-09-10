@@ -37,9 +37,8 @@ mod server;
 /// - `instructions` — guidance returned during discovery.
 /// - `protocols("…", …)` — the protocol revisions this server accepts.
 ///   Defaults to every version the build supports (currently `"2025-11-25"`
-///   and the `"2026-07-28"` draft). Narrow it to pin a server to the frozen
-///   stable revision — the draft's wire shapes can still change before it
-///   freezes:
+///   and `"2026-07-28"`). All three are frozen revisions; narrow this set
+///   when an application intentionally supports fewer peers:
 ///
 ///   ```ignore
 ///   #[server(name = "prod", version = "1.0.0", protocols("2025-11-25"))]
@@ -152,4 +151,60 @@ pub fn mcp_header(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn completion(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
+}
+
+// Rewrite only generated absolute paths and generated Serde/Schemars crate
+// attributes. The user's impl block is never passed through this transform.
+fn resolve_facade(tokens: proc_macro2::TokenStream) -> syn::Result<proc_macro2::TokenStream> {
+    let name = match proc_macro_crate::crate_name("turbomcp") {
+        Ok(proc_macro_crate::FoundCrate::Name(name)) => name,
+        // The facade exposes `extern crate self as turbomcp`, including tests.
+        Ok(proc_macro_crate::FoundCrate::Itself) => "turbomcp".to_owned(),
+        Err(_) => "turbomcp".to_owned(),
+    };
+    fn rewrite(tokens: proc_macro2::TokenStream, name: &str) -> proc_macro2::TokenStream {
+        let mut out = proc_macro2::TokenStream::new();
+        let mut colons = 0;
+        for token in tokens {
+            let next = match token {
+                proc_macro2::TokenTree::Group(group) => {
+                    let mut replacement =
+                        proc_macro2::Group::new(group.delimiter(), rewrite(group.stream(), name));
+                    replacement.set_span(group.span());
+                    replacement.into()
+                }
+                proc_macro2::TokenTree::Ident(ident) if colons >= 2 && ident == "turbomcp" => {
+                    proc_macro2::Ident::new(name, ident.span()).into()
+                }
+                proc_macro2::TokenTree::Literal(lit) => {
+                    if let Ok(string) = syn::parse_str::<syn::LitStr>(&lit.to_string()) {
+                        let value = string.value();
+                        if matches!(
+                            value.as_str(),
+                            "::turbomcp::__macros::serde" | "::turbomcp::__macros::schemars"
+                        ) {
+                            let rest = value
+                                .strip_prefix("::turbomcp::")
+                                .expect("known generated crate path");
+                            let replacement =
+                                syn::LitStr::new(&format!("::{name}::{rest}"), string.span());
+                            out.extend(quote::quote!(#replacement));
+                            colons = 0;
+                            continue;
+                        }
+                    }
+                    lit.into()
+                }
+                other => other,
+            };
+            colons = if matches!(&next, proc_macro2::TokenTree::Punct(p) if p.as_char() == ':') {
+                colons + 1
+            } else {
+                0
+            };
+            out.extend([next]);
+        }
+        out
+    }
+    Ok(rewrite(tokens, &name))
 }

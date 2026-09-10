@@ -36,6 +36,7 @@ pub(super) async fn try_augment_call<S: McpServerCore>(
     router: &MethodRouter<S>,
     req: &JsonRpcRequest,
     ctx: &RequestContext,
+    shared: &super::Shared,
     extensions: &[Arc<dyn Extension>],
     id: &RequestId,
 ) -> Option<JsonRpcMessage> {
@@ -43,7 +44,26 @@ pub(super) async fn try_augment_call<S: McpServerCore>(
         if !(ext.augments_calls() && context_declares_extension(ctx, ext.id())) {
             continue;
         }
-        let run = match build_call_runner(server, router, req, ctx) {
+        let (_, tool) = match super::capability::prepare_tool::<S, super::capability::DraftWire>(
+            server,
+            router,
+            req,
+            ctx,
+            shared,
+            id.clone(),
+        )
+        .await
+        {
+            Ok(prepared) => prepared,
+            Err(response) => return Some(*response),
+        };
+        let run = match build_call_runner(
+            server,
+            router,
+            req,
+            ctx,
+            (shared.validators.clone(), tool.output_schema),
+        ) {
             Ok(run) => run,
             // A malformed `tools/call` envelope is `-32602` regardless of
             // augmentation (mirrors the normal `dispatch_capability` path).
@@ -78,6 +98,7 @@ fn build_call_runner<S: McpServerCore>(
     router: &MethodRouter<S>,
     req: &JsonRpcRequest,
     ctx: &RequestContext,
+    contract: (Arc<crate::catalog::Validators>, Option<Value>),
 ) -> Result<CallRunner, McpError> {
     let params = parse_call_tool_params(req.params.as_ref())?;
     let cancel = CancellationToken::new();
@@ -101,8 +122,13 @@ fn build_call_runner<S: McpServerCore>(
                 methods::request::TOOLS_CALL,
             ))),
             Some(f) => match f.await {
-                Ok(result) => serde_json::to_value(v0728::CallToolResult::from(result))
-                    .map_err(|e| mcp_to_jsonrpc_error(&McpError::internal(e.to_string()))),
+                Ok(result) => serde_json::to_value(v0728::CallToolResult::from(
+                    contract
+                        .0
+                        .output(contract.1.as_ref(), result)
+                        .map_err(|e| mcp_to_jsonrpc_error(&e))?,
+                ))
+                .map_err(|e| mcp_to_jsonrpc_error(&McpError::internal(e.to_string()))),
                 Err(e) => Err(mcp_to_jsonrpc_error(&e)),
             },
         }

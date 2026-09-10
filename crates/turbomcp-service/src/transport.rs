@@ -79,6 +79,17 @@ pub trait Transport: Send + 'static {
     /// Transport-specific failure (I/O, protocol framing).
     type Error: core::error::Error + Send + Sync + 'static;
 
+    /// Whether this transport guarantees one stable principal for cached results.
+    fn allows_response_cache(&self) -> bool {
+        true
+    }
+
+    /// Retrieve a locally observed HTTP failure accompanying a synthetic
+    /// response. This side channel cannot be forged through JSON-RPC data.
+    fn take_http_failure(&mut self, _id: &turbomcp_core::RequestId) -> Option<HttpFailure> {
+        None
+    }
+
     /// Send one frame to the peer.
     fn send(&mut self, msg: JsonRpcMessage)
     -> impl Future<Output = Result<(), Self::Error>> + Send;
@@ -107,4 +118,20 @@ pub trait Transport: Send + 'static {
     {
         self.close()
     }
+}
+
+/// Structured HTTP failure, preserving protocol errors and retry challenges.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("HTTP {status}: {message}")]
+pub struct HttpFailure {
+    /// HTTP response status.
+    pub status: u16,
+    /// Diagnostic summary, excluding bearer credentials.
+    pub message: String,
+    /// Parsed JSON-RPC error when the body contains one.
+    pub rpc: Option<turbomcp_core::JsonRpcError>,
+    /// Bearer challenge needed for discovery and scope escalation.
+    pub www_authenticate: Option<String>,
+    /// Server retry guidance, retained verbatim for caller policy.
+    pub retry_after: Option<String>,
 }

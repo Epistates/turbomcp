@@ -51,11 +51,19 @@ jobs:
     - name: Check formatting
       run: cargo fmt --all -- --check
 
+    - name: Check maintained documentation links
+      run: python3 scripts/check_docs.py
+
     # Clippy with --all-targets compiles libs, tests, benches, examples, and bins.
     # Using dev profile (default) — no LTO/optimization overhead.
     # All subsequent steps reuse these artifacts via matching features + profile.
     - name: Clippy
       run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+    - name: Renamed facade dependency
+      run: cargo check --locked --manifest-path crates/turbomcp/tests/renamed_dependency/Cargo.toml
+      env:
+        CARGO_TARGET_DIR: target
 
     # Same --all-features as clippy so cargo reuses compiled artifacts.
     - name: Unit tests

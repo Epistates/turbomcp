@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use common::Everything;
 use turbomcp::CancellationToken;
-use turbomcp::http::{HttpConfig, ServeHttp};
+use turbomcp::http::{HttpConfig, serve_http};
 use turbomcp_conformance::harness::{
     self, CONFORMANCE_PKG, CheckResult, assert_conformance, load_baseline,
 };
@@ -75,11 +75,20 @@ async fn spawn_server() -> (String, CancellationToken, tokio::task::JoinHandle<(
         .allow_origin(format!("http://{authority}"))
         .allow_host(authority);
     let handle = tokio::spawn(async move {
-        let _ = Everything
-            .into_server()
-            .with_logging()
-            .run_http(addr, config)
-            .await;
+        let dispatcher = Everything.into_server().with_logging().build();
+        let notifier = dispatcher.notifier();
+        let config =
+            config.with_session_terminator(std::sync::Arc::new(dispatcher.session_terminator()));
+        let serving = serve_http(addr, dispatcher, config);
+        tokio::pin!(serving);
+        // Exercise subscribed catalog-change delivery from the public notifier.
+        let mut changes = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            tokio::select! {
+                result = &mut serving => { result.expect("conformance server"); break; }
+                _ = changes.tick() => { notifier.tools_list_changed(); notifier.prompts_list_changed(); }
+            }
+        }
     });
 
     // Give axum a moment to bind before the harness connects.
@@ -107,6 +116,12 @@ async fn run_harness(url: &str, spec_version: &str) -> Vec<CheckResult> {
         .await
         .expect("spawn pnpm dlx conformance");
 
+    assert!(
+        output.status.success(),
+        "harness exited {}: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
     let checks = harness::parse_checks_from_dir(&out_dir, spec_version);
     assert!(
         !checks.is_empty(),
@@ -115,6 +130,7 @@ async fn run_harness(url: &str, spec_version: &str) -> Vec<CheckResult> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    harness::assert_inventory("server", spec_version, &checks);
     checks
 }
 

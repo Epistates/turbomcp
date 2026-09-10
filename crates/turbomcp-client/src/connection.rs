@@ -53,7 +53,7 @@ use crate::handler::{ClientHandler, dispatch_server_request};
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The waiting side of in-flight requests: id → the oneshot its caller awaits.
-type Pending = Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, JsonRpcError>>>>;
+type Pending = Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, ClientError>>>>;
 
 /// Shared connection state, held by every [`Connection`] clone.
 struct Inner {
@@ -66,6 +66,15 @@ struct Inner {
     next_id: AtomicI64,
     /// How long [`Connection::request`] waits before giving up.
     request_timeout: Duration,
+    shutdown: tokio_util::sync::CancellationToken,
+    done: tokio_util::sync::CancellationToken,
+    admission: tokio::sync::Semaphore,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+    }
 }
 
 /// A raw connection to a live MCP peer — the transport + request/response
@@ -142,6 +151,8 @@ impl Connection {
         let (tx, rx) = mpsc::channel::<JsonRpcMessage>(1024);
         let pending: Arc<Pending> = Arc::new(Mutex::new(HashMap::new()));
         let weak_out = tx.downgrade();
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let done = tokio_util::sync::CancellationToken::new();
         tokio::spawn(actor(
             transport,
             rx,
@@ -149,6 +160,7 @@ impl Connection {
             weak_out,
             handler,
             cache,
+            (shutdown.clone(), done.clone()),
         ));
         Self {
             inner: Arc::new(Inner {
@@ -156,8 +168,18 @@ impl Connection {
                 pending,
                 next_id: AtomicI64::new(1),
                 request_timeout,
+                shutdown,
+                done,
+                admission: tokio::sync::Semaphore::new(1024),
             }),
         }
+    }
+
+    /// Cancel this connection and wait for its owned tasks and transport to
+    /// close. Applies to all clones; transport cleanup is bounded to five seconds.
+    pub async fn close(&self) {
+        self.inner.shutdown.cancel();
+        self.inner.done.cancelled().await;
     }
 
     /// Issue a request and await its result.
@@ -171,6 +193,11 @@ impl Connection {
         method: impl Into<String>,
         params: Option<Value>,
     ) -> ClientResult<Value> {
+        let deadline = tokio::time::Instant::now() + self.inner.request_timeout;
+        let _admission = tokio::time::timeout_at(deadline, self.inner.admission.acquire())
+            .await
+            .map_err(|_| ClientError::Timeout)?
+            .map_err(|_| ClientError::Closed)?;
         let id = RequestId::Number(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
         let (reply_tx, reply_rx) = oneshot::channel();
         self.inner
@@ -179,29 +206,26 @@ impl Connection {
             .expect("pending mutex poisoned")
             .insert(id.clone(), reply_tx);
 
-        let method = method.into();
-        let notify_on_abandon = cancellable(&method, params.as_ref());
-        let msg = JsonRpcMessage::Request(JsonRpcRequest::new(id.clone(), method, params));
-        if self.inner.outbound.send(msg).await.is_err() {
-            self.forget(&id);
-            return Err(ClientError::Closed);
-        }
-
-        // Armed from here until the request resolves. Both ways a caller can
-        // stop waiting run through its `Drop`: the timeout arm below returns
-        // while it is still armed, and a caller that drops this future outright
-        // (a `select!` losing its race, its own deadline firing) never reaches
-        // the disarm at all.
+        // The same deadline covers admission and the response. Register cleanup
+        // before the first await, including a caller dropping an unsent request.
         let mut abandon = AbandonGuard {
             conn: self,
             id: id.clone(),
             reason: Some("the caller dropped the request"),
-            notify: notify_on_abandon,
+            notify: false,
         };
+        let method = method.into();
+        let notify_on_abandon = cancellable(&method, params.as_ref());
+        let msg = JsonRpcMessage::Request(JsonRpcRequest::new(id.clone(), method, params));
+        match tokio::time::timeout_at(deadline, self.inner.outbound.send(msg)).await {
+            Ok(Ok(())) => abandon.notify = notify_on_abandon,
+            Ok(Err(_)) => return Err(ClientError::Closed),
+            Err(_) => return Err(ClientError::Timeout),
+        }
 
-        let outcome = match tokio::time::timeout(self.inner.request_timeout, reply_rx).await {
+        let outcome = match tokio::time::timeout_at(deadline, reply_rx).await {
             Ok(Ok(Ok(value))) => Ok(value),
-            Ok(Ok(Err(err))) => Err(ClientError::Rpc(err)),
+            Ok(Ok(Err(err))) => Err(err),
             // The actor dropped the sender (connection closed) before replying.
             Ok(Err(_recv)) => Err(ClientError::Closed),
             Err(_elapsed) => {
@@ -260,18 +284,8 @@ impl Connection {
     /// SHOULD stop processing, free resources, and send no response).
     ///
     /// This runs from a `Drop`, which cannot await, so the fast path is
-    /// [`try_send`](mpsc::Sender::try_send). A full channel is the interesting
-    /// case: dropping the frame there would silently restore the very bug this
-    /// exists to fix, and "the client was busy" is exactly when a server is
-    /// most worth telling. So a full channel hands the blocking send to a task
-    /// instead — on the *same* channel, because a cancellation overtaking the
-    /// request it names would reference something the server has never seen
-    /// ("cancellation notifications MUST only reference requests that … are
-    /// believed to still be in-progress").
-    ///
-    /// Two cases genuinely have nothing to do: a closed channel means the
-    /// connection is gone and the server has stopped listening, and no runtime
-    /// means this future was dropped somewhere that cannot spawn.
+    /// `try_send` preserves ordering with the request. If its queue is full,
+    /// cancel the connection instead of spawning an unbounded detached waiter.
     fn cancel_on_wire(&self, id: &RequestId, reason: &str) {
         let params = serde_json::json!({ "requestId": id, "reason": reason });
         let msg = JsonRpcMessage::Notification(turbomcp_core::JsonRpcNotification::new(
@@ -280,19 +294,10 @@ impl Connection {
         ));
         match self.inner.outbound.try_send(msg) {
             Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(msg)) => {
-                match tokio::runtime::Handle::try_current() {
-                    Ok(handle) => {
-                        let outbound = self.inner.outbound.clone();
-                        handle.spawn(async move {
-                            let _ = outbound.send(msg).await;
-                        });
-                    }
-                    Err(_) => tracing::debug!(
-                        request_id = ?id,
-                        "dropped outside a runtime; notifications/cancelled not sent"
-                    ),
-                }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // No detached waiters during cancellation storms. Closing the
+                // overloaded connection cancels its transport-owned requests.
+                self.inner.shutdown.cancel();
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 tracing::debug!(request_id = ?id, "connection closed; nothing to cancel");
@@ -353,19 +358,29 @@ async fn actor<T>(
     weak_out: mpsc::WeakSender<JsonRpcMessage>,
     handler: Option<Arc<dyn ClientHandler>>,
     cache: Option<Arc<ResponseCache>>,
+    lifecycle: (
+        tokio_util::sync::CancellationToken,
+        tokio_util::sync::CancellationToken,
+    ),
 ) where
     T: Transport,
 {
+    let (shutdown, done) = lifecycle;
+    let _done = done.drop_guard();
+    let mut callbacks = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
-            biased;
+            () = shutdown.cancelled() => break,
+            Some(_) = callbacks.join_next(), if !callbacks.is_empty() => {},
             // Outbound: a frame to put on the wire.
             out = outbound.recv() => {
                 match out {
                     Some(msg) => {
-                        if let Err(e) = transport.send(msg).await {
-                            tracing::debug!(error = %e, "client transport send failed; closing");
-                            break;
+                        tokio::select! {
+                            () = shutdown.cancelled() => break,
+                            result = tokio::time::timeout(Duration::from_secs(30), transport.send(msg)) => {
+                                if !matches!(result, Ok(Ok(()))) { break; }
+                            }
                         }
                     }
                     // All Connection handles dropped — nothing more to send.
@@ -376,11 +391,22 @@ async fn actor<T>(
             frame = transport.recv() => {
                 match frame {
                     Ok(Some(msg)) => {
-                        if let Some(reply) = route_inbound(msg, &pending, &handler, &weak_out, &cache)
-                            && let Err(e) = transport.send(reply).await {
-                                tracing::debug!(error = %e, "client reply send failed; closing");
-                                break;
+                        if callbacks.len() >= 128 && !matches!(msg, JsonRpcMessage::Response(_)) {
+                            tracing::warn!("client callback capacity exceeded; closing peer");
+                            break;
+                        }
+                        let failure = match &msg {
+                            JsonRpcMessage::Response(r) => transport.take_http_failure(&r.id),
+                            _ => None,
+                        };
+                        if let Some(reply) = route_inbound(msg, failure, &pending, &handler, &weak_out, &cache, &mut callbacks) {
+                            tokio::select! {
+                                () = shutdown.cancelled() => break,
+                                result = tokio::time::timeout(Duration::from_secs(30), transport.send(reply)) => {
+                                    if !matches!(result, Ok(Ok(()))) { break; }
+                                }
                             }
+                        }
                     }
                     Ok(None) => break, // clean EOF
                     Err(e) => {
@@ -396,6 +422,10 @@ async fn actor<T>(
     // `request` sees its receiver close and returns `ClientError::Closed`.
     // This happens *before* the close below, which can block on I/O — a caller
     // must learn the connection died promptly, not after a shutdown round trip.
+    // No new request may be accepted after pending calls are drained. Keeping
+    // this receiver open during transport.close allowed a late registration
+    // to enqueue successfully after the only pending cleanup had already run.
+    outbound.close();
     pending.lock().expect("pending mutex poisoned").clear();
 
     // Shut the transport down deliberately rather than by drop. Each transport
@@ -404,9 +434,9 @@ async fn actor<T>(
     // it, a long-lived server accumulates one session per client that ever
     // connected), and WebSocket sends its Close frame. Best-effort — the
     // connection is already going away, so a failure here has no one to tell.
-    if let Err(e) = transport.close().await {
-        tracing::debug!(error = %e, "client transport close failed");
-    }
+    callbacks.abort_all();
+    while callbacks.join_next().await.is_some() {}
+    let _ = tokio::time::timeout(Duration::from_secs(5), transport.close()).await;
 }
 
 /// Route one inbound frame. Returns `Some(reply)` for an *inline* reply the
@@ -415,14 +445,16 @@ async fn actor<T>(
 /// `weak_out`.
 fn route_inbound(
     msg: JsonRpcMessage,
+    failure: Option<turbomcp_service::HttpFailure>,
     pending: &Arc<Pending>,
     handler: &Option<Arc<dyn ClientHandler>>,
     weak_out: &mpsc::WeakSender<JsonRpcMessage>,
     cache: &Option<Arc<ResponseCache>>,
+    callbacks: &mut tokio::task::JoinSet<()>,
 ) -> Option<JsonRpcMessage> {
     match msg {
         JsonRpcMessage::Response(resp) => {
-            complete_pending(resp, pending);
+            complete_pending(resp, pending, failure);
             None
         }
         JsonRpcMessage::Notification(n) => {
@@ -443,7 +475,7 @@ fn route_inbound(
             match handler {
                 Some(handler) => {
                     let handler = Arc::clone(handler);
-                    tokio::spawn(async move {
+                    callbacks.spawn(async move {
                         // `elicitation/complete` also reaches its dedicated
                         // hook; a malformed one (no string `elicitationId`)
                         // is an unknown id — ignored, per spec.
@@ -481,7 +513,7 @@ fn route_inbound(
             Some(handler) => {
                 let handler = Arc::clone(handler);
                 let weak_out = weak_out.clone();
-                tokio::spawn(async move {
+                callbacks.spawn(async move {
                     let id = req.id.clone();
                     let reply =
                         match dispatch_server_request(handler.as_ref(), &req.method, req.params)
@@ -531,7 +563,11 @@ fn complete_pending_ok(id: &RequestId, value: Value, pending: &Arc<Pending>) {
 }
 
 /// Deliver a response to the request waiting on its id, if any.
-fn complete_pending(resp: JsonRpcResponse, pending: &Arc<Pending>) {
+fn complete_pending(
+    resp: JsonRpcResponse,
+    pending: &Arc<Pending>,
+    failure: Option<turbomcp_service::HttpFailure>,
+) {
     let waiter = pending
         .lock()
         .expect("pending mutex poisoned")
@@ -540,9 +576,10 @@ fn complete_pending(resp: JsonRpcResponse, pending: &Arc<Pending>) {
         tracing::debug!(id = ?resp.id, "response for unknown/duplicate request id (dropped)");
         return;
     };
-    let outcome = match resp.error {
-        Some(err) => Err(err),
-        None => Ok(resp.result.unwrap_or(Value::Null)),
+    let outcome = match (failure, resp.error) {
+        (Some(err), _) => Err(ClientError::Http(Box::new(err))),
+        (None, Some(err)) => Err(ClientError::Rpc(err)),
+        (None, None) => Ok(resp.result.unwrap_or(Value::Null)),
     };
     // The caller may have timed out and dropped the receiver — that's fine.
     let _ = waiter.send(outcome);

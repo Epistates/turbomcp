@@ -18,11 +18,15 @@ use std::path::{Path, PathBuf};
 /// — pinning to it would mean the wire we actually serve as `LATEST` is the one
 /// wire nothing checks. Revisit when a stable 0.2.x ships.
 ///
-/// When bumping this, also try deleting the one entry in
-/// `conformance-baseline-client.json`: it baselines an upstream defect that is
-/// already fixed on their `main` but not in any published version. See the
-/// module docs on `tests/conformance_client.rs`.
+/// Fixture corrections are hash-pinned in fixtures/corrected-client.mjs.
+/// Review them and both inventories whenever this package pin changes.
 pub const CONFORMANCE_PKG: &str = "@modelcontextprotocol/conformance@0.2.0-alpha.11";
+
+/// Run the unmodified upstream client fixtures for comparison.
+#[must_use]
+pub fn raw_upstream() -> bool {
+    std::env::var("TURBOMCP_CONFORMANCE_UPSTREAM").as_deref() == Ok("1")
+}
 
 /// Set this to turn the "no Node toolchain" skip into a failure.
 ///
@@ -78,7 +82,9 @@ pub enum Disposition {
     /// that read "0 failed": the SEP-2243 header mirror was only ever measured
     /// on tools methods, and three SEP-2575 capability checks never ran at all.
     Skip,
-    /// `INFO` / `WARNING` — informational; neither pass nor fail. Mostly the
+    /// `WARNING` — a separately tracked conformance shortfall.
+    Warning,
+    /// `INFO` — informational wire tracing. Mostly the
     /// harness's own wire trace (`incoming-request` / `outgoing-response`).
     Info,
 }
@@ -92,6 +98,8 @@ pub struct CheckResult {
     pub scenario: String,
     /// The check's own name/id.
     pub name: String,
+    /// Human-readable subcheck name (several HTTP checks share one id).
+    pub label: Option<String>,
     /// Pass, fail, or informational.
     pub disposition: Disposition,
     /// The harness's message, when it wrote one.
@@ -254,7 +262,9 @@ fn collect_checks(
             "SUCCESS" | "PASS" | "PASSED" | "OK" => Disposition::Pass,
             "FAILURE" | "FAIL" | "FAILED" | "ERROR" => Disposition::Fail,
             "SKIPPED" | "SKIP" => Disposition::Skip,
-            _ => Disposition::Info, // INFO / WARNING / anything else: not scored.
+            "WARNING" => Disposition::Warning,
+            "INFO" => Disposition::Info,
+            _ => panic!("unknown harness check status: {status}"),
         };
 
         let message = check
@@ -265,6 +275,10 @@ fn collect_checks(
             .map(std::string::ToString::to_string);
 
         out.push(CheckResult {
+            label: check
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
             spec_version: spec_version.to_string(),
             scenario: scenario.to_string(),
             name,
@@ -306,7 +320,11 @@ pub fn assert_conformance(
     let passed: Vec<&CheckResult> = checks.iter().filter(|c| c.is_pass()).collect();
     let failed: Vec<&CheckResult> = checks.iter().filter(|c| c.is_fail()).collect();
     let skipped: Vec<&CheckResult> = checks.iter().filter(|c| c.is_skip()).collect();
-    let info = checks.len() - passed.len() - failed.len() - skipped.len();
+    let warnings = checks
+        .iter()
+        .filter(|c| c.disposition == Disposition::Warning)
+        .count();
+    let info = checks.len() - passed.len() - failed.len() - skipped.len() - warnings;
 
     let unexpected: Vec<&&CheckResult> = failed
         .iter()
@@ -321,7 +339,7 @@ pub fn assert_conformance(
         .collect();
 
     eprintln!(
-        "\n=== TurboMCP {suite} ({}) ===\n  checks: {} total, {} passed, {} failed ({} expected, {} unexpected), {} skipped, {info} info\n  baseline entries: {} ({} stale)",
+        "\n=== TurboMCP {suite} ({}) ===\n  checks: {} total, {} passed, {} failed ({} expected, {} unexpected), {} skipped, {warnings} warnings, {info} info\n  baseline entries: {} ({} stale)",
         spec_versions.join(" + "),
         checks.len(),
         passed.len(),
@@ -332,6 +350,13 @@ pub fn assert_conformance(
         baseline.len(),
         stale.len(),
     );
+
+    for warning in checks
+        .iter()
+        .filter(|c| c.disposition == Disposition::Warning)
+    {
+        eprintln!("  WARNING {}", warning.id());
+    }
 
     // Per revision, because the totals hide a version that contributed nothing.
     let per_version: Vec<(&&str, usize)> = spec_versions
@@ -392,6 +417,47 @@ pub fn assert_conformance(
             "only {n} passing {suite} checks for {spec_version} (floor {floor}) — \
              the harness ran but produced almost nothing, which is a broken run, not a pass",
         );
+    }
+}
+
+/// Require the pinned suite's unique successful checks and explicit skips.
+/// Repeated HTTP probes cannot inflate this inventory; missing or newly
+/// unexercised checks fail even when the upstream harness reports no failures.
+/// # Panics
+/// Panics on inventory drift, which must be reviewed with a harness update.
+pub fn assert_inventory(suite: &str, version: &str, checks: &[CheckResult]) {
+    let raw = match suite {
+        "client" if raw_upstream() => include_str!("../conformance-inventory-client-upstream.json"),
+        "client" => include_str!("../conformance-inventory-client.json"),
+        "server" => include_str!("../conformance-inventory-server.json"),
+        _ => panic!("unknown conformance suite"),
+    };
+    let inventory: serde_json::Value = serde_json::from_str(raw).expect("inventory JSON");
+    assert_eq!(
+        inventory["package"].as_str(),
+        Some(CONFORMANCE_PKG),
+        "inventory package pin"
+    );
+    for (key, disposition) in [
+        ("passed", Disposition::Pass),
+        ("skipped", Disposition::Skip),
+        ("warnings", Disposition::Warning),
+    ] {
+        let prefix = format!("{version}::");
+        let expected: BTreeSet<String> = inventory[key]
+            .as_array()
+            .expect("inventory array")
+            .iter()
+            .map(|v| v.as_str().expect("inventory key"))
+            .filter(|v| v.starts_with(&prefix))
+            .map(str::to_owned)
+            .collect();
+        let actual: BTreeSet<String> = checks
+            .iter()
+            .filter(|c| c.spec_version == version && c.disposition == disposition)
+            .map(CheckResult::id)
+            .collect();
+        assert_eq!(actual, expected, "{suite} {version} {key} inventory drift");
     }
 }
 

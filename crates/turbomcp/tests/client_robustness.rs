@@ -310,3 +310,48 @@ async fn an_inbound_ping_is_answered_without_a_handler() {
         "ping is answered with an empty result, not an error: {reply}"
     );
 }
+
+/// Admission closes before transport teardown, even when teardown blocks.
+#[tokio::test]
+async fn requests_during_transport_teardown_fail_closed_promptly() {
+    use turbomcp::{JsonRpcMessage, Transport};
+    struct ClosingTransport {
+        entered: tokio::sync::oneshot::Sender<()>,
+        release: tokio::sync::oneshot::Receiver<()>,
+    }
+    impl Transport for ClosingTransport {
+        type Error = std::io::Error;
+        async fn send(&mut self, _: JsonRpcMessage) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        async fn recv(&mut self) -> Result<Option<JsonRpcMessage>, Self::Error> {
+            Err(std::io::Error::other("peer disconnected"))
+        }
+        async fn close(self) -> Result<(), Self::Error> {
+            let _ = self.entered.send(());
+            let _ = self.release.await;
+            Ok(())
+        }
+    }
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    let (release, wait) = tokio::sync::oneshot::channel();
+    let connection = turbomcp::client::Connection::with_timeout(
+        ClosingTransport {
+            entered,
+            release: wait,
+        },
+        Duration::from_secs(60),
+    );
+    tokio::time::timeout(Duration::from_secs(1), ready)
+        .await
+        .unwrap()
+        .unwrap();
+    let result =
+        tokio::time::timeout(Duration::from_secs(1), connection.request("ping", None)).await;
+    let _ = release.send(());
+    assert!(
+        matches!(result, Ok(Err(ClientError::Closed))),
+        "late request must fail immediately: {result:?}"
+    );
+    connection.close().await;
+}

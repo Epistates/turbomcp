@@ -44,6 +44,15 @@ pub(super) async fn legacy_context(
     let Some(state) = sessions.get(sid).await else {
         return Err(ProtocolError::UnknownSession(sid.to_owned()));
     };
+    let owner = req
+        .params
+        .as_ref()
+        .and_then(|p| p.get("_meta"))
+        .and_then(Value::as_object)
+        .and_then(|m| meta::extract_identity(m).principal_key());
+    if state.owner != owner {
+        return Err(ProtocolError::UnknownSession(sid.to_owned()));
+    }
     let mut ctx = RequestContext::new(state.version).with_client_info(state.client_info);
     ctx.client_capabilities = Some(state.client_capabilities);
     ctx.log_level = state.log_level;

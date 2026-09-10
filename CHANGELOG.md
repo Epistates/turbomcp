@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0-alpha.4] - 2026-09-10
+
+Security, correctness, and lifecycle hardening following the v4 audit. This
+alpha changes public contracts; see [migration guidance](docs/DEPLOYMENT.md).
+
+### Added
+
+- Critical-test coverage guide and maintained Markdown link checking in CI.
+- Concurrent public OAuth authorization/refresh, malformed JSON-RPC, and
+  metadata isolation regression coverage.
+- Public `OAuthSession` and `AuthorizationHandler` client integration for
+  coordinated authorization, token refresh, scope step-up, and issuer discovery.
+- Typed HTTP failures retaining JSON-RPC errors, authentication challenges,
+  status, and retry metadata; explicit connection close/wait support.
+- Configurable HTTP client/server budgets and OAuth `NetworkPolicy`, including
+  opt-in public-only egress with DNS address validation.
+- Separate issuer validators for deployments with independent signing keys.
+
+### Fixed
+
+- Requests arriving during transport teardown fail closed immediately instead
+  of entering a queue whose pending calls were already drained.
+- Legacy POST SSE responses resume through GET after graceful closure, with
+  per-request Last-Event-ID, retry timing, cancellation, and no repeated POST.
+- Client conformance uses explicit hash-pinned fixture corrections for the
+  supported legacy revision and modern discovery headers; raw upstream results
+  remain separately reproducible.
+- Concurrent callers share rejected OAuth refreshes instead of repeatedly
+  retrying the same failed token; fresh challenge authorization remains possible.
+- Trusted proxy chains stop at malformed boundaries instead of trusting an
+  address farther left. Publication scripts share one fail-fast verified path.
+- Macro tool metadata initializes once instead of rebuilding schemas on every
+  call; runtime argument and output validation remain enforced.
+- Stale benchmark, contributor, protocol, migration, and release documentation.
+
+- Catalog lookup now follows pagination, rejects lookup failures, enforces
+  visibility, and routes flat-mounted providers beyond page one. Tool calls
+  validate advertised input and structured output schemas, including tasks.
+- Header mirror validation uses current definitions; client recovery refreshes
+  the complete catalog instead of reusing stale cached metadata.
+- Saturated servers continue handling control traffic. Client deadlines cover
+  admission and sending; abandoned requests, callbacks, HTTP pumps, stalled
+  writes, and shutdown have bounded ownership and cleanup.
+- JWT validation enforces `nbf`. Auth networking has deadlines and body limits,
+  disables redirects/proxies by default, and coalesces JWKS refreshes with
+  failure cooldowns. OAuth callbacks redact secrets in debug output.
+- Sessions and task state bind to their creator's issuer and subject. MRTR
+  continuations also bind arguments and method; mutable bearer HTTP clients
+  do not reuse identity-sensitive cached responses.
+- JSON-RPC decoding rejects malformed envelopes. Macros support renamed facade
+  dependencies. Schema normalization rejects unsupported intersections.
+- Dispatch and comparative benchmark fixtures assert successful results before
+  timing. Conformance requires exact coverage inventories and completion checks.
+
+### Changed
+
+- Custom providers must resolve callable components through authoritative lookup.
+  Custom session backends must persist ownership; session terminators must check
+  it. Subscription extensions now receive the authenticated request context.
+- HTTP overload, body, and timeout limits apply by default. Applications supplying
+  custom auth HTTP clients own their redirect and DNS policy guarantees.
+- Documentation distinguishes supported features from the Apps placeholder and
+  removes unsupported performance claims.
+
+### Validation
+
+- The updated candidate passed 720 workspace tests, strict Clippy, Rust 1.88,
+  foundation WASM checks, 43 feature combinations, and four fuzz smoke campaigns.
+- Strict conformance: 650 corrected-client success messages (488 distinct
+  scenario/check pairs) and 231 unmodified-server successes (215 distinct pairs),
+  zero failures, skips, or warnings. See the [fixture correction record](crates/turbomcp-conformance/fixtures/README.md)
+  for the precise changes and raw upstream mode, which retains its original
+  fixture skips/warnings. The real POST-stream recovery gap is fixed in the SDK.
+- See [audit evidence and remaining release gates](docs/V4-AUDIT-REMEDIATION.md).
+
 ## [4.0.0-alpha.3] - 2026-09-07
 
 The client had never been measured. Scoring it against the official conformance

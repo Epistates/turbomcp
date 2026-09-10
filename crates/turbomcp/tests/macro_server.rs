@@ -290,3 +290,37 @@ async fn prompt_get_extracts_arguments() {
             .contains("the quick brown fox")
     );
 }
+
+#[tokio::test]
+async fn metadata_returns_independent_copies_and_lookup_matches_catalog() {
+    use turbomcp::WithTools;
+    let ctx = turbomcp::ListToolsContext::new(Default::default());
+    let listed = Demo.list_tools(&ctx, Default::default()).await.unwrap();
+    for tool in listed.tools {
+        let lookup = Demo
+            .lookup_tool(&ctx, tool.name.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lookup.name, tool.name);
+        assert_eq!(lookup.description, tool.description);
+        assert_eq!(lookup.title, tool.title);
+        assert_eq!(lookup.input_schema, tool.input_schema);
+        assert_eq!(lookup.output_schema, tool.output_schema);
+        assert_eq!(lookup.meta, tool.meta);
+        let mut edited = lookup;
+        edited.input_schema = json!({"type":"null"});
+        let fresh = Demo
+            .lookup_tool(&ctx, tool.name.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fresh.input_schema, tool.input_schema);
+    }
+    assert!(
+        Demo.lookup_tool(&ctx, "missing".into())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}

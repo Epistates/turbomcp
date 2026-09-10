@@ -1,6 +1,6 @@
 # turbomcp-macros
 
-The TurboMCP v4 procedural macros: `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`, `#[completion]`, and `#[mcp_header]`. Schemas and capability advertisement are derived from your function signatures at compile time.
+The TurboMCP v4 procedural macros: `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`, `#[completion]`, and `#[mcp_header]`. The macro derives capability advertisement and schema-generation code from signatures. Tool metadata initializes once at runtime and returns independent copies; dynamic catalogs use custom providers. Renamed facade dependencies are supported.
 
 Part of [TurboMCP](https://github.com/Epistates/turbomcp), a Rust SDK for the
 [Model Context Protocol](https://modelcontextprotocol.io). Most users should

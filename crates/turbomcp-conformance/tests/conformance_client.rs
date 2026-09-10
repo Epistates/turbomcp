@@ -1,55 +1,7 @@
-//! Drives the official MCP conformance suite against TurboMCP's **client**.
-//!
-//! The mirror image of `conformance_server.rs`. There the harness connects to
-//! our server; here it *is* the server — for each scenario it stands up a mock
-//! with deliberately awkward behaviour, spawns the `conformance-client` binary
-//! against it, and referees what appeared on the wire.
-//!
-//! This suite is why the client's standalone `GET` SSE stream exists. Both
-//! halves of TurboMCP were only ever tested against each other, and our server
-//! happens to deliver server→client requests inline on the POST's own stream —
-//! so a client that never issued the `GET` looked perfectly correct in-repo
-//! while hanging against any server that uses the standalone stream instead,
-//! which is what the reference TypeScript SDK does.
-//!
-//! ## Nothing is baselined
-//!
-//! The baseline is empty and every check either passes or is informational.
-//!
-//! It held one entry for a while — `sse-retry`'s
-//! `client-sse-graceful-reconnect` — attributed to an upstream defect, since
-//! the scenario registers itself `introducedIn: "2025-11-25"` while its mock
-//! answers `initialize` with `protocolVersion: "2025-03-26"`, which TurboMCP
-//! does not serve. That reading was wrong, or at least incomplete: the check
-//! started passing the moment the client stopped opening the standalone stream
-//! a POST too late. Blaming the harness was the comfortable explanation and it
-//! cost a real fix, which is the argument for keeping this baseline empty
-//! rather than letting entries accumulate behind rationales.
-//!
-//! Everything passes: 281 checks on `2025-11-25` and 451 on `2026-07-28`,
-//! including the full OAuth 2.1 surface — discovery and its metadata variants,
-//! dynamic registration, PKCE, the RFC 9207 `iss` table (positive *and*
-//! negative), scope step-up with union-on-reauth, the retry limit, and
-//! re-registration when the resource moves to a different authorization server.
-//!
-//! ## What is skipped, and why that number matters
-//!
-//! A skipped check is one the harness had nothing to assert against, because
-//! this runner never drove the path it watches. It is not a pass, and it used to
-//! be counted as "info" — which hid eleven of them behind a summary reading
-//! "0 failed". Closing that gap is what took the `2026-07-28` count from 442 to
-//! 451: the SEP-2243 header mirror had only ever been measured on `tools/*`, and
-//! three SEP-2575 capability declarations were never made at all.
-//!
-//! Two skips remain, both structural. `sep-2243-client-includes-standard-headers`
-//! wants to see `Mcp-Method` on `initialize` and `notifications/initialized`,
-//! and `2026-07-28` has neither: it replaced that handshake with a stateless
-//! `server/discover`. Nothing this runner does can produce them.
-//!
-//! Requirements: `pnpm` on `PATH`; skipped without it unless
-//! `TURBOMCP_CONFORMANCE_STRICT` is set. See `conformance_server.rs`.
-//!
-//! Run: `cd crates/turbomcp-conformance && cargo test --test conformance_client -- --nocapture`
+//! Scores the public client against the pinned official harness with reviewed
+//! fixture corrections. No assertion is removed or weakened. Set
+//! TURBOMCP_CONFORMANCE_UPSTREAM=1 to reproduce the unmodified upstream results.
+//! See fixtures/README.md for source hashes, corrections, and raw limitations.
 
 use std::path::PathBuf;
 
@@ -62,12 +14,7 @@ use turbomcp_conformance::harness::{
 /// cumulatively by the `2025-11-25` run.
 const SPEC_VERSIONS: &[&str] = &["2025-11-25", "2026-07-28"];
 
-/// Floor on passing checks per revision — the same tripwire the server suite
-/// carries, for the same reason: "0 failures" is also what a run that never
-/// started reports. Today: 281 on `2025-11-25`, 451 on `2026-07-28`. The gap is
-/// real (the draft has the header and MRTR scenarios on top of the shared auth
-/// ones), so the floor sits below the smaller of the two with room for the
-/// suite to be re-cut upstream. It is *not* to be lowered to green a build.
+/// A secondary floor; the exact inventory is the primary coverage gate.
 const MIN_PASSING_PER_VERSION: usize = 200;
 
 /// The client binary the harness spawns. Cargo builds it for us and hands over
@@ -82,9 +29,17 @@ fn baseline_path() -> PathBuf {
 /// Run the client suite at one spec version and return every check.
 async fn run_harness(spec_version: &str) -> Vec<CheckResult> {
     let out_dir = harness::tempdir("client");
-    let output = tokio::process::Command::new("pnpm")
-        .arg("dlx")
-        .arg(CONFORMANCE_PKG)
+    let mut command = tokio::process::Command::new("pnpm");
+    if harness::raw_upstream() {
+        command.arg("dlx").arg(CONFORMANCE_PKG);
+    } else {
+        command
+            .arg(format!("--package={CONFORMANCE_PKG}"))
+            .arg("dlx")
+            .arg("node")
+            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/corrected-client.mjs"));
+    }
+    let output = command
         .arg("client")
         .arg("--command")
         .arg(CLIENT_BIN)
@@ -106,6 +61,26 @@ async fn run_harness(spec_version: &str) -> Vec<CheckResult> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("=== SUITE SUMMARY ===")
+            && stdout.lines().any(|line| line.starts_with("Total:")),
+        "harness did not complete: {stdout}"
+    );
+    // alpha.11 exits 1 on WARNING as well as FAILURE. Permit that exit only
+    // for an otherwise complete run with warnings; the exact warning inventory
+    // below is independently pinned and reviewed.
+    assert!(
+        output.status.success()
+            || (harness::raw_upstream()
+                && output.status.code() == Some(1)
+                && !checks.iter().any(CheckResult::is_fail)
+                && checks
+                    .iter()
+                    .any(|c| c.disposition == harness::Disposition::Warning)),
+        "harness exited {}: {stdout}",
+        output.status
+    );
     checks
 }
 
@@ -120,6 +95,44 @@ async fn conformance_client_suite() {
         checks.extend(run_harness(spec_version).await);
     }
 
+    if !harness::raw_upstream() {
+        // Method-specific coverage must not collapse behind the shared check id.
+        let labels: std::collections::BTreeSet<_> = checks
+            .iter()
+            .filter(|c| {
+                c.spec_version == "2026-07-28"
+                    && c.scenario == "http-standard-headers"
+                    && c.is_pass()
+            })
+            .filter_map(|c| c.label.as_deref())
+            .collect();
+        for method in [
+            "server_discover",
+            "tools_list",
+            "tools_call",
+            "resources_list",
+            "resources_read",
+            "prompts_list",
+            "prompts_get",
+        ] {
+            assert!(
+                labels.contains(format!("ClientMcpMethodHeader_{method}").as_str()),
+                "unexercised Mcp-Method for {method}"
+            );
+        }
+        for method in ["tools_call", "resources_read", "prompts_get"] {
+            assert!(
+                labels.contains(format!("ClientMcpNameHeader_{method}").as_str()),
+                "unexercised Mcp-Name for {method}"
+            );
+        }
+        eprintln!(
+            "Client fixture corrections v1 active; unmodified upstream mode: TURBOMCP_CONFORMANCE_UPSTREAM=1"
+        );
+    }
+    for version in SPEC_VERSIONS {
+        harness::assert_inventory("client", version, &checks);
+    }
     assert_conformance(
         "conformance (client)",
         SPEC_VERSIONS,

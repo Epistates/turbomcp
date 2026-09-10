@@ -72,7 +72,7 @@ Stated so you know what to hold us to, not as a guarantee:
 - **`#![forbid(unsafe_code)]` in every published crate.** There is no `unsafe`
   block to audit, and adding one is a compile error rather than a review
   question.
-- **Fuzz targets for every untrusted-input decoder** — the JSON-RPC codec, the
+- **Fuzz targets for critical untrusted-input surfaces** — the JSON-RPC codec, the
   `Mcp-Param` header codec, URI-template matching, and a sonic-vs-serde
   differential. Run out of band (`just fuzz`, `just fuzz-long <target>`) rather
   than on every push.

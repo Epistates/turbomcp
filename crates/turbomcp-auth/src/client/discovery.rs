@@ -66,13 +66,28 @@ pub async fn discover_protected_resource(
     resource_url: &str,
     challenge_metadata_url: Option<&str>,
 ) -> Result<ProtectedResourceMetadata, OAuthClientError> {
+    discover_protected_resource_with_policy(
+        http,
+        resource_url,
+        challenge_metadata_url,
+        &crate::NetworkPolicy::default(),
+    )
+    .await
+}
+
+pub(crate) async fn discover_protected_resource_with_policy(
+    http: &reqwest::Client,
+    resource_url: &str,
+    challenge_metadata_url: Option<&str>,
+    policy: &crate::NetworkPolicy,
+) -> Result<ProtectedResourceMetadata, OAuthClientError> {
     let candidates: Vec<String> = match challenge_metadata_url {
         Some(url) => vec![url.to_owned()],
         None => protected_resource_wellknown_candidates(resource_url)?,
     };
     let mut last_error = String::from("no candidate URLs");
     for candidate in &candidates {
-        match fetch_json::<ProtectedResourceMetadata>(http, candidate).await {
+        match fetch_json::<ProtectedResourceMetadata>(http, candidate, policy).await {
             Ok(meta) => {
                 if meta.authorization_servers.is_empty() {
                     return Err(OAuthClientError::Discovery(format!(
@@ -233,6 +248,14 @@ pub async fn discover_authorization_server(
     http: &reqwest::Client,
     issuer: &str,
 ) -> Result<AuthorizationServerMetadata, OAuthClientError> {
+    discover_authorization_server_with_policy(http, issuer, &crate::NetworkPolicy::default()).await
+}
+
+pub(crate) async fn discover_authorization_server_with_policy(
+    http: &reqwest::Client,
+    issuer: &str,
+    policy: &crate::NetworkPolicy,
+) -> Result<AuthorizationServerMetadata, OAuthClientError> {
     // Before anything is fetched: an issuer we would talk to in the clear is
     // refused outright, rather than after its metadata has been read and
     // trusted.
@@ -240,7 +263,7 @@ pub async fn discover_authorization_server(
     let candidates = authorization_server_wellknown_candidates(issuer)?;
     let mut last_error = String::from("no candidate URLs");
     for candidate in &candidates {
-        match fetch_json::<AuthorizationServerMetadata>(http, candidate).await {
+        match fetch_json::<AuthorizationServerMetadata>(http, candidate, policy).await {
             Ok(meta) => {
                 // RFC 8414 §3.3 / OIDC Discovery §4.3: reject impersonation.
                 if meta.issuer.trim_end_matches('/') != issuer.trim_end_matches('/') {
@@ -261,7 +284,7 @@ pub async fn discover_authorization_server(
                 let has_pkce = meta
                     .code_challenge_methods_supported
                     .as_ref()
-                    .is_some_and(|m| !m.is_empty());
+                    .is_some_and(|m| m.iter().any(|method| method == "S256"));
                 if !has_pkce {
                     return Err(OAuthClientError::PkceUnsupported);
                 }
@@ -310,17 +333,15 @@ fn authorization_server_wellknown_candidates(
 async fn fetch_json<T: serde::de::DeserializeOwned>(
     http: &reqwest::Client,
     url: &str,
+    policy: &crate::NetworkPolicy,
 ) -> Result<T, String> {
-    let resp = http
-        .get(url)
-        .header("accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = policy
+        .send(http, http.get(url).header("accept", "application/json"))
+        .await?;
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.json::<T>().await.map_err(|e| e.to_string())
+    serde_json::from_slice(&policy.body(resp).await?).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

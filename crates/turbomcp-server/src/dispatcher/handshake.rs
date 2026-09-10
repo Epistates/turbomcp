@@ -57,6 +57,12 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
             .insert(
                 sid,
                 SessionState {
+                    owner: req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("_meta"))
+                        .and_then(Value::as_object)
+                        .and_then(|m| turbomcp_core::meta::extract_identity(m).principal_key()),
                     version: negotiated.clone(),
                     client_info: from_legacy_impl(params.client_info),
                     client_capabilities,

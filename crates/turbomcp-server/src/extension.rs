@@ -245,6 +245,7 @@ pub trait Extension: Send + Sync + 'static {
         _subscription_id: &turbomcp_core::RequestId,
         _notifications: &Value,
         _client_declared: bool,
+        _context: &RequestContext,
     ) -> SubscribeOutcome {
         SubscribeOutcome::NotApplicable
     }

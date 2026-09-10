@@ -318,6 +318,7 @@ impl Extension for TasksExtension {
         subscription_id: &turbomcp_core::RequestId,
         notifications: &serde_json::Value,
         client_declared: bool,
+        context: &RequestContext,
     ) -> SubscribeOutcome {
         // The Tasks extension owns the `taskIds` filter on `subscriptions/listen`.
         let task_ids = notifications.get("taskIds").and_then(|v| v.as_array());
@@ -329,9 +330,11 @@ impl Extension for TasksExtension {
         if !client_declared {
             return SubscribeOutcome::MissingCapability;
         }
+        let owner = context.identity.principal_key();
         let ids: Vec<String> = task_ids
             .iter()
             .filter_map(|v| v.as_str().map(str::to_owned))
+            .filter(|id| self.store.owns(id, owner.as_deref()))
             .collect();
         self.subs.subscribe(connection_id, subscription_id, &ids);
         SubscribeOutcome::Subscribed(json!({ "taskIds": ids }))
@@ -357,9 +360,12 @@ impl Extension for TasksExtension {
         let cancel = run.cancel_token();
         // SEP-2663: a task MUST be durably created before `CreateTaskResult`
         // returns. We create synchronously here, then spawn the call.
-        let task = self
-            .store
-            .create(self.ttl_ms, self.poll_interval_ms, cancel.clone())?; // capacity ⇒ run normally
+        let task = self.store.create_owned(
+            self.ttl_ms,
+            self.poll_interval_ms,
+            cancel.clone(),
+            context.identity.principal_key(),
+        )?; // capacity ⇒ run normally
 
         // Enable mid-task client input (in-execution `input_required`): the
         // call's ClientHandle publishes through this broker; the client
@@ -390,13 +396,22 @@ impl Extension for TasksExtension {
     }
 
     async fn dispatch(&self, request: ExtensionRequest) -> JsonRpcMessage {
-        let ExtensionRequest { request, .. } = request;
+        let ExtensionRequest {
+            request, context, ..
+        } = request;
         let id = request.id.clone();
 
         let task_id = match parse_task_id(&request) {
             Ok(t) => t,
             Err(e) => return error(id, e),
         };
+
+        if !self
+            .store
+            .owns(&task_id, context.identity.principal_key().as_deref())
+        {
+            return error(id, task_not_found(&task_id));
+        }
 
         match request.method.as_str() {
             methods::TASKS_GET => match self.store.get(&task_id) {

@@ -442,8 +442,7 @@ async fn a_remote_plaintext_redirect_uri_is_refused() {
         .discover(None)
         .await
         .expect("discovery itself is fine; the redirect URI is the caller's");
-    let credentials = engine.credentials(&discovered).await.unwrap();
-    let err = engine.begin(&discovered, &credentials, &[]).unwrap_err();
+    let err = engine.credentials(&discovered).await.unwrap_err();
     assert!(
         matches!(
             &err,

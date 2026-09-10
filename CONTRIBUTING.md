@@ -22,11 +22,13 @@ just check          # fast compile check
 just test           # the full gate — run this before pushing
 ```
 
-`just test` is what CI runs, in the same order: tests across the feature matrix,
-`clippy -D warnings`, a no-default-features lint of the facade, `cargo fmt
---check`, a `wasm32-unknown-unknown` build of the `no_std` foundation crates,
-and a docs.rs-configuration rustdoc build. If it passes locally it should pass
-in CI.
+`just test` is a local aggregate gate: all-feature tests, Clippy, default-facade
+lint, no-default-feature foundation tests, formatting, WASM builds, nightly
+docs.rs checks, and generated artifact checks. Install nightly and the
+`wasm32-unknown-unknown` target for those steps. CI splits validation into jobs
+and additionally exercises platforms and feature combinations; a local pass
+does not substitute for the workflow result. The authoritative commands are in
+[justfile](justfile) and [.github/workflows/test.yml](.github/workflows/test.yml).
 
 Two suites live outside the workspace because they need something the main gate
 should not depend on — a Node toolchain and a heavy `rmcp` dependency tree

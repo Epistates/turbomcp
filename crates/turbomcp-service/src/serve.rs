@@ -18,9 +18,9 @@
 //!   `mpsc::Sender` is the seam Phase 6 clones into the subscription registry so
 //!   server-initiated notifications share the same ordered writer.
 //!
-//! **Backpressure** is a [`Semaphore`] sized to `max_in_flight`: the reader
-//! parks on `acquire` once that many handlers are outstanding, which (on stdio's
-//! single process) naturally serializes load instead of unbounded-spawning.
+//! **Admission** uses separate bounded application and control budgets. Excess
+//! application requests are rejected; responses and cancellation can still
+//! progress when every application slot is occupied.
 //!
 //! **Graceful shutdown** (PLAN §4.13): firing the configured
 //! [`CancellationToken`] stops the reader, then in-flight handlers are given
@@ -52,7 +52,7 @@ use crate::{McpService, ProtocolError, Transport, catch_handler_panic};
 /// Tuning for the [`serve_with`] driver.
 #[derive(Clone, Debug)]
 pub struct ServeConfig {
-    /// Maximum concurrently in-flight handlers; the reader parks once reached.
+    /// Maximum concurrently in-flight application handlers; excess requests fail.
     /// Doubles as the outbound channel capacity. Default: 1024.
     pub max_in_flight: usize,
     /// On shutdown, how long in-flight handlers have to finish and flush before
@@ -132,19 +132,29 @@ where
     // (subscription pushes, bidi requests) ride the same single-writer actor.
     let writer_registration = crate::outbound::register(&connection_id, tx.clone());
     let limiter = Arc::new(Semaphore::new(capacity));
+    let controls = Arc::new(Semaphore::new(64));
     let mut handlers: JoinSet<()> = JoinSet::new();
     // `svc` is always the instance most recently driven to readiness; we call a
     // clone of it and keep a fresh clone for the next frame (the canonical tower
     // "drive-to-ready, clone, call" concurrency pattern).
-    let mut svc = service;
+    let svc = service;
 
+    let mut write_usable = true;
     let result = loop {
         tokio::select! {
             biased;
             // 1. Flush outbound first so replies stay prompt and writes ordered.
             Some(out) = rx.recv() => {
-                if let Err(e) = transport.send(out).await {
-                    break Err(ProtocolError::Transport(e.to_string()));
+                tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => { write_usable = false; break Ok(()); },
+                    result = tokio::time::timeout(drain_timeout, transport.send(out)) => {
+                        match result {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => break Err(ProtocolError::Transport(e.to_string())),
+                            Err(_) => break Err(ProtocolError::Transport("write deadline exceeded".into())),
+                        }
+                    }
                 }
             }
             // 2. Reap finished handlers so the JoinSet can't grow unbounded.
@@ -172,17 +182,25 @@ where
                                 principal.clone(),
                             );
                         }
-                        // Backpressure: park the reader until a slot frees.
-                        let Ok(permit) = Arc::clone(&limiter).acquire_owned().await else {
-                            break Ok(()); // semaphore closed — shouldn't happen
+                        let application = matches!(msg, JsonRpcMessage::Request(_));
+                        let budget = if application { &limiter } else { &controls };
+                        let permit = match Arc::clone(budget).try_acquire_owned() {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                if let JsonRpcMessage::Request(req) = msg {
+                                    let reply = turbomcp_core::JsonRpcResponse::error(req.id,
+                                        turbomcp_core::JsonRpcError { code: -32000,
+                                            message: "server at capacity".into(), data: None }).into();
+                                    // Never park the reader behind its own writer queue.
+                                    if tx.try_send(reply).is_err() {
+                                        break Err(ProtocolError::Transport("outbound capacity exceeded".into()));
+                                    }
+                                    continue;
+                                }
+                                break Err(ProtocolError::Transport("control capacity exceeded".into()));
+                            }
                         };
-                        // Drive readiness on `svc`, then call a clone of *that*
-                        // instance and retain a fresh clone for the next frame.
-                        if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
-                            break Err(e);
-                        }
                         let mut ready = svc.clone();
-                        std::mem::swap(&mut ready, &mut svc);
                         let out_tx = tx.clone();
                         // Kept for the panic path: a handler that unwinds still
                         // owes this request a response (see `catch_handler_panic`).
@@ -192,7 +210,11 @@ where
                         };
                         handlers.spawn(async move {
                             let _permit = permit; // released when the handler ends
-                            match catch_handler_panic(reply_id, ready.call(msg)).await {
+                            let call = async move {
+                                poll_fn(|cx| ready.poll_ready(cx)).await?;
+                                ready.call(msg).await
+                            };
+                            match catch_handler_panic(reply_id, call).await {
                                 Ok(Some(reply)) => {
                                     let _ = out_tx.send(reply).await;
                                 }
@@ -205,6 +227,13 @@ where
             }
         }
     };
+
+    // A cancelled/failed framed write may have emitted a partial frame.
+    // Never append another frame to that stream during graceful drain.
+    if !write_usable || result.is_err() {
+        handlers.abort_all();
+        return result;
+    }
 
     // Drain, phase 1: in-flight handlers may still emit server-initiated
     // messages (progress, inline bidi requests) through the outbound table, so
@@ -219,7 +248,7 @@ where
         tokio::select! {
             biased;
             Some(out) = rx.recv() => {
-                if transport.send(out).await.is_err() {
+                if !matches!(tokio::time::timeout_at(deadline, transport.send(out)).await, Ok(Ok(()))) {
                     handlers.abort_all();
                     break;
                 }
@@ -237,18 +266,20 @@ where
     // closure once the last straggler clone drops; flush what's left.
     drop(writer_registration);
     drop(tx);
-    while let Some(out) = rx.recv().await {
-        if transport.send(out).await.is_err() {
-            break;
+    let close = tokio::time::timeout_at(deadline, async {
+        while let Some(out) = rx.recv().await {
+            transport
+                .send(out)
+                .await
+                .map_err(|e| ProtocolError::Transport(e.to_string()))?;
         }
-    }
-
-    // Close the transport regardless of drain outcome; prefer reporting the
-    // driver loop's error over the close error.
-    let close = transport
-        .graceful_shutdown(deadline.into_std())
-        .await
-        .map_err(|e| ProtocolError::Transport(e.to_string()));
+        transport
+            .graceful_shutdown(deadline.into_std())
+            .await
+            .map_err(|e| ProtocolError::Transport(e.to_string()))
+    })
+    .await
+    .unwrap_or(Ok(()));
     match result {
         Err(e) => Err(e),
         Ok(()) => close,

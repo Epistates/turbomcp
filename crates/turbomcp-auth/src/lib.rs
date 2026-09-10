@@ -41,6 +41,10 @@
 #[cfg(feature = "oauth-client")]
 #[cfg_attr(docsrs, doc(cfg(feature = "oauth-client")))]
 pub mod client;
+#[cfg(any(feature = "http-jwks", feature = "oauth-client"))]
+pub mod network;
+#[cfg(any(feature = "http-jwks", feature = "oauth-client"))]
+pub use network::NetworkPolicy;
 mod error;
 mod jwks;
 mod metadata;
@@ -51,7 +55,7 @@ pub use error::AuthError;
 pub use jwks::{JwkSource, StaticJwks};
 pub use metadata::ResourceMetadata;
 pub use resource_server::ResourceServer;
-pub use validator::{AuthPrincipal, BearerValidator, JwtValidator};
+pub use validator::{AuthPrincipal, BearerValidator, IssuerValidators, JwtValidator};
 
 #[cfg(feature = "http-jwks")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http-jwks")))]

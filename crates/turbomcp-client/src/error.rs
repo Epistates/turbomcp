@@ -15,6 +15,9 @@ pub type ClientResult<T> = Result<T, ClientError>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClientError {
+    /// HTTP failure including a protocol error and authorization/retry headers.
+    #[error(transparent)]
+    Http(Box<turbomcp_service::HttpFailure>),
     /// The server answered with a JSON-RPC error object.
     #[error("server error {}: {}", .0.code, .0.message)]
     Rpc(JsonRpcError),
@@ -45,6 +48,7 @@ impl ClientError {
     pub fn as_rpc(&self) -> Option<&JsonRpcError> {
         match self {
             Self::Rpc(e) => Some(e),
+            Self::Http(e) => e.rpc.as_ref(),
             _ => None,
         }
     }

@@ -124,6 +124,7 @@ pub fn mcp_to_jsonrpc_error(err: &McpError) -> JsonRpcError {
 /// into its own declaration and retry.
 fn error_data(err: &McpError) -> Option<serde_json::Value> {
     match err {
+        McpError::ResourceNotFound(uri) => Some(serde_json::json!({"uri":uri})),
         McpError::MissingRequiredCapability(capability) => Some(serde_json::json!({
             "requiredCapabilities": { capability.as_str(): {} }
         })),

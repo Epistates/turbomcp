@@ -24,10 +24,11 @@ use oauth2::{
 
 use super::challenge::BearerChallenge;
 use super::discovery::{
-    AuthorizationServerMetadata, ProtectedResourceMetadata, discover_authorization_server,
-    discover_protected_resource, require_secure_url,
+    AuthorizationServerMetadata, ProtectedResourceMetadata,
+    discover_authorization_server_with_policy, discover_protected_resource_with_policy,
+    require_secure_url,
 };
-use super::registration::{ClientCredentials, RegistrationStrategy, obtain_credentials};
+use super::registration::{ClientCredentials, RegistrationStrategy};
 use super::store::{CredentialStore, MemoryCredentialStore};
 use super::{OAuthClientError, TokenSet};
 
@@ -76,7 +77,7 @@ impl std::fmt::Debug for PendingAuthorization {
 
 /// The parameters of the authorization-response redirect, parsed from its
 /// query string.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct CallbackParams {
     /// `code` — the authorization code.
@@ -89,6 +90,17 @@ pub struct CallbackParams {
     pub error: Option<String>,
     /// Human-readable error detail.
     pub error_description: Option<String>,
+}
+
+impl std::fmt::Debug for CallbackParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallbackParams")
+            .field("code", &self.code.as_ref().map(|_| "<redacted>"))
+            .field("state", &self.state.as_ref().map(|_| "<redacted>"))
+            .field("iss", &self.iss)
+            .field("error", &self.error)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CallbackParams {
@@ -117,6 +129,7 @@ impl CallbackParams {
 /// The MCP OAuth 2.1 client engine. See the [module docs](self).
 pub struct OAuthClient {
     http: reqwest::Client,
+    network: crate::NetworkPolicy,
     resource: String,
     redirect_uri: String,
     strategy: RegistrationStrategy,
@@ -145,12 +158,29 @@ impl OAuthClient {
         strategy: RegistrationStrategy,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::NetworkPolicy::default()
+                .http_client()
+                .expect("HTTP client initialization"),
+            network: crate::NetworkPolicy::default(),
             resource: resource.into(),
             redirect_uri: redirect_uri.into(),
             strategy,
             store: Arc::new(MemoryCredentialStore::default()),
         }
+    }
+
+    /// Configure outbound address policy and rebuild the redirect-disabled client.
+    /// # Errors
+    /// Returns an error if HTTP client initialization fails.
+    pub fn with_network_policy(
+        mut self,
+        policy: crate::NetworkPolicy,
+    ) -> Result<Self, OAuthClientError> {
+        self.http = policy
+            .http_client()
+            .map_err(|e| OAuthClientError::Discovery(e.to_string()))?;
+        self.network = policy;
+        Ok(self)
     }
 
     /// Persist credentials/tokens in `store` (issuer-keyed; see
@@ -162,6 +192,8 @@ impl OAuthClient {
     }
 
     /// Use a custom HTTP client (proxies, TLS pinning, timeouts).
+    /// The caller must disable redirects and preserve the configured address
+    /// policy. Prefer `with_network_policy` for SDK-enforced defaults.
     #[must_use]
     pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
         self.http = http;
@@ -186,16 +218,18 @@ impl OAuthClient {
         &self,
         challenge: Option<&BearerChallenge>,
     ) -> Result<Discovered, OAuthClientError> {
-        let resource_meta = discover_protected_resource(
+        let resource_meta = discover_protected_resource_with_policy(
             &self.http,
             &self.resource,
             challenge.and_then(|c| c.resource_metadata.as_deref()),
+            &self.network,
         )
         .await?;
         // Selection among multiple advertised servers is the client's call
         // (RFC 9728 §7.6); we take the first. Wrap the engine to override.
         let issuer = resource_meta.authorization_servers[0].clone();
-        let server = discover_authorization_server(&self.http, &issuer).await?;
+        let server =
+            discover_authorization_server_with_policy(&self.http, &issuer, &self.network).await?;
         Ok(Discovered {
             resource: resource_meta,
             server,
@@ -215,8 +249,13 @@ impl OAuthClient {
         if let Some(stored) = self.store.load_client(&discovered.server.issuer).await {
             return Ok(stored);
         }
-        let credentials =
-            obtain_credentials(&self.http, &discovered.server, &self.strategy).await?;
+        let credentials = super::registration::obtain_credentials_with_policy(
+            &self.http,
+            &discovered.server,
+            &self.strategy,
+            &self.network,
+        )
+        .await?;
         self.store
             .store_client(&discovered.server.issuer, &credentials)
             .await;
@@ -272,6 +311,15 @@ impl OAuthClient {
         credentials: &ClientCredentials,
         scopes: &[String],
     ) -> Result<PendingAuthorization, OAuthClientError> {
+        for endpoint in [
+            &discovered.server.issuer,
+            &discovered.server.authorization_endpoint,
+            &discovered.server.token_endpoint,
+        ] {
+            self.network
+                .validate_url(endpoint)
+                .map_err(OAuthClientError::Discovery)?;
+        }
         let client = build_oauth2_client(discovered, credentials, &self.redirect_uri)?;
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
         let mut request = client
@@ -314,6 +362,12 @@ impl OAuthClient {
         pending: PendingAuthorization,
         callback: &CallbackParams,
     ) -> Result<TokenSet, OAuthClientError> {
+        if discovered.server.issuer != pending.expected_issuer {
+            return Err(OAuthClientError::IssuerMismatch {
+                expected: pending.expected_issuer,
+                got: discovered.server.issuer.clone(),
+            });
+        }
         // state: discard mismatches (CSRF / open-redirect protection). The
         // compare is constant-time — the redirect is typically received by a
         // localhost HTTP listener, so a variable-time check would expose a
@@ -363,15 +417,26 @@ impl OAuthClient {
             ));
         };
 
+        for endpoint in [
+            &discovered.server.issuer,
+            &discovered.server.authorization_endpoint,
+            &discovered.server.token_endpoint,
+        ] {
+            self.network
+                .validate_url(endpoint)
+                .map_err(OAuthClientError::Discovery)?;
+        }
         let client = build_oauth2_client(discovered, credentials, &self.redirect_uri)?;
         let http = self.http.clone();
+        let policy = self.network.clone();
         let token = client
             .exchange_code(AuthorizationCode::new(code.clone()))
             .set_pkce_verifier(PkceCodeVerifier::new(pending.pkce_verifier.clone()))
             .add_extra_param("resource", &self.resource)
             .request_async(&move |req| {
                 let http = http.clone();
-                async move { oauth_http_call(&http, req).await }
+                let policy = policy.clone();
+                async move { oauth_http_call(&http, req, &policy).await }
             })
             .await
             .map_err(|e| OAuthClientError::TokenExchange(e.to_string()))?;
@@ -400,14 +465,25 @@ impl OAuthClient {
                 "no refresh token; re-authorization required".into(),
             ));
         };
+        for endpoint in [
+            &discovered.server.issuer,
+            &discovered.server.authorization_endpoint,
+            &discovered.server.token_endpoint,
+        ] {
+            self.network
+                .validate_url(endpoint)
+                .map_err(OAuthClientError::Discovery)?;
+        }
         let client = build_oauth2_client(discovered, credentials, &self.redirect_uri)?;
         let http = self.http.clone();
+        let policy = self.network.clone();
         let token = client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.clone()))
             .add_extra_param("resource", &self.resource)
             .request_async(&move |req| {
                 let http = http.clone();
-                async move { oauth_http_call(&http, req).await }
+                let policy = policy.clone();
+                async move { oauth_http_call(&http, req, &policy).await }
             })
             .await
             .map_err(|e| OAuthClientError::TokenExchange(e.to_string()))?;
@@ -436,14 +512,8 @@ impl OAuthClient {
 /// timing signal about how much of it matched. Length still differs fast — the
 /// `state` length is fixed by `CsrfToken::new_random`, so that is not sensitive.
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    bool::from(a.ct_eq(b))
 }
 
 /// Assemble the `oauth2` client from discovered endpoints + credentials.
@@ -536,6 +606,7 @@ fn to_token_set(
 async fn oauth_http_call(
     http: &reqwest::Client,
     request: oauth2::HttpRequest,
+    policy: &crate::NetworkPolicy,
 ) -> Result<oauth2::HttpResponse, OAuthClientError> {
     let (parts, body) = request.into_parts();
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
@@ -544,18 +615,17 @@ async fn oauth_http_call(
     for (name, value) in &parts.headers {
         req = req.header(name.as_str(), value.as_bytes());
     }
-    let resp = req
-        .body(body)
-        .send()
+    let resp = policy
+        .send(http, req.body(body))
         .await
-        .map_err(|e| OAuthClientError::TokenExchange(e.to_string()))?;
+        .map_err(OAuthClientError::TokenExchange)?;
 
     let status = resp.status().as_u16();
     let headers = resp.headers().clone();
-    let bytes = resp
-        .bytes()
+    let bytes = policy
+        .body(resp)
         .await
-        .map_err(|e| OAuthClientError::TokenExchange(e.to_string()))?;
+        .map_err(OAuthClientError::TokenExchange)?;
 
     let mut builder = oauth2::http::Response::builder().status(status);
     for (name, value) in &headers {

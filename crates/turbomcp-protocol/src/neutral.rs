@@ -197,7 +197,7 @@ pub enum TaskSupport {
 /// A tool the server offers, as `tools/list` reports it.
 ///
 /// The `#[tool]` macro builds these from a method signature: `input_schema`
-/// and `output_schema` are generated at compile time, so the advertised
+/// and `output_schema` are constructed by generated schema derivation code, so the advertised
 /// contract can't drift from the handler that serves it.
 #[derive(Clone, Debug)]
 #[non_exhaustive]

@@ -20,6 +20,7 @@
 
 mod adapter;
 mod builder;
+mod catalog;
 mod composite;
 mod context;
 mod dispatcher;

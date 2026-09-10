@@ -254,6 +254,62 @@ async fn session_termination_goes_through_the_custom_backend() {
     // The adapter minted one session; terminate it through the seam the HTTP
     // DELETE handler uses.
     use turbomcp_service::SessionTerminator;
-    assert!(!terminator.terminate("no-such-session").await);
-    assert_eq!(sessions.removes.load(Ordering::SeqCst), 1);
+    assert!(!terminator.terminate("no-such-session", None).await);
+    assert_eq!(
+        sessions.removes.load(Ordering::SeqCst),
+        0,
+        "unknown sessions never reach deletion"
+    );
+}
+
+#[tokio::test]
+async fn sessions_bind_issuer_and_subject_and_keep_anonymous_separate() {
+    use turbomcp_core::{Identity, meta};
+    use turbomcp_service::SessionTerminator;
+    let mut dispatcher = ServerBuilder::new(Echo).with_tools().build();
+    let terminator = dispatcher.session_terminator();
+    let identity = |issuer: &str| Identity::Bearer {
+        sub: "alice".into(),
+        claims: serde_json::from_value(json!({"iss":issuer})).unwrap(),
+    };
+    let alice = identity("issuer-a");
+    for (sid, principal) in [("owned", alice.clone()), ("anonymous", Identity::Anonymous)] {
+        let mut msg: JsonRpcMessage = JsonRpcRequest::new(
+            1,
+            "initialize",
+            Some(json!({
+                "protocolVersion":"2025-11-25", "capabilities":{},
+                "clientInfo":{"name":"ownership-test", "version":"1"}
+            })),
+        )
+        .into();
+        meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(sid));
+        meta::set_request_meta(
+            &mut msg,
+            meta::internal::IDENTITY,
+            match principal {
+                Identity::Bearer { sub, claims } => json!({"sub":sub,"claims":claims}),
+                _ => Value::Null,
+            },
+        );
+        let reply = dispatcher
+            .ready()
+            .await
+            .unwrap()
+            .call(msg)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(reply, JsonRpcMessage::Response(r) if r.error.is_none()));
+    }
+    let owner = alice.principal_key().unwrap();
+    let other = identity("issuer-b").principal_key().unwrap();
+    assert!(terminator.owns("owned", Some(&owner)).await);
+    assert!(!terminator.owns("owned", Some(&other)).await);
+    assert!(!terminator.owns("owned", None).await);
+    assert!(!terminator.owns("anonymous", Some(&owner)).await);
+    assert!(terminator.owns("anonymous", None).await);
+    assert!(!terminator.terminate("owned", Some(&other)).await);
+    assert!(terminator.owns("owned", Some(&owner)).await);
+    assert!(terminator.terminate("owned", Some(&owner)).await);
 }

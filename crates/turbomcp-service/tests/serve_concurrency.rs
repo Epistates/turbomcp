@@ -182,8 +182,8 @@ async fn concurrent_handlers_do_not_head_of_line_block() {
     driver.await.unwrap().expect("clean shutdown on EOF");
 }
 
-/// With `max_in_flight = 1`, the reader parks before dispatching a second
-/// request until the first frees its permit.
+/// With `max_in_flight = 1`, a second application request is rejected while
+/// the first owns capacity; the reader remains available for control traffic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backpressure_caps_in_flight() {
     let gate = Arc::new(Semaphore::new(0));
@@ -207,27 +207,33 @@ async fn backpressure_caps_in_flight() {
     let driver = tokio::spawn(serve_with(transport, service, config));
 
     in_tx.send(request(1, "a")).await.unwrap();
+    // Reserving capacity precedes polling the spawned handler. Synchronize on
+    // actual entry rather than assuming an overload response implies entry.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while started.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("first handler entered");
     in_tx.send(request(2, "b")).await.unwrap();
 
-    // Only one handler may run; the second is parked at the driver's semaphore.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(
-        started.load(Ordering::SeqCst),
-        1,
-        "second must not start yet"
-    );
-
-    // Free the first → it completes → the second may now start.
+    // Capacity rejects new work while the first handler is still blocked.
+    let rejected = tokio::time::timeout(Duration::from_secs(1), out_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reply_id(&rejected), Some(RequestId::from(2i64)));
+    assert!(matches!(rejected, JsonRpcMessage::Response(r) if r.error.is_some()));
+    assert_eq!(started.load(Ordering::SeqCst), 1);
     gate.add_permits(1);
     let first = out_rx.recv().await.unwrap();
     assert_eq!(reply_id(&first), Some(RequestId::from(1i64)));
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(started.load(Ordering::SeqCst), 2, "second should start now");
-
-    gate.add_permits(1);
-    let second = out_rx.recv().await.unwrap();
-    assert_eq!(reply_id(&second), Some(RequestId::from(2i64)));
+    assert_eq!(
+        started.load(Ordering::SeqCst),
+        1,
+        "rejected work never executes"
+    );
 
     drop(in_tx);
     driver.await.unwrap().expect("clean shutdown on EOF");

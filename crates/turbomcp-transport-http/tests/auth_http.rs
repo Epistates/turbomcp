@@ -46,7 +46,10 @@ impl WithTools for Whoami {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![]))
+        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            "whoami",
+            serde_json::json!({"type":"object"}),
+        )]))
     }
 
     async fn call_tool(
@@ -145,12 +148,10 @@ async fn get_stream_requires_auth() {
         .oneshot(get(Some(format!("Bearer {}", token()))))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert!(
-        resp.headers()[header::CONTENT_TYPE]
-            .to_str()
-            .unwrap()
-            .starts_with("text/event-stream")
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_IMPLEMENTED,
+        "a custom authenticated router must supply session ownership before opening GET"
     );
 }
 
@@ -158,7 +159,15 @@ async fn get_stream_requires_auth() {
 struct CountingTerminator(AtomicUsize);
 
 impl SessionTerminator for CountingTerminator {
-    fn terminate<'a>(&'a self, _session_id: &'a str) -> TerminateFuture<'a> {
+    fn owns<'a>(&'a self, _sid: &'a str, _owner: Option<&'a str>) -> TerminateFuture<'a> {
+        Box::pin(async { true })
+    }
+
+    fn terminate<'a>(
+        &'a self,
+        _session_id: &'a str,
+        _owner: Option<&'a str>,
+    ) -> TerminateFuture<'a> {
         self.0.fetch_add(1, SeqCst);
         Box::pin(async { true })
     }

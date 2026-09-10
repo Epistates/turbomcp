@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-client"
-version = "4.0.0-alpha.3"
+version = "4.0.0-alpha.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -17,7 +17,12 @@ categories = ["network-programming", "asynchronous", "api-bindings"]
 # needs no extra deps.
 http = ["dep:reqwest", "dep:eventsource-stream", "dep:futures"]
 
+oauth = ["http", "dep:turbomcp-auth"]
+
 [dependencies]
+turbomcp-auth = { workspace = true, features = ["oauth-client"], optional = true }
+bytes = { workspace = true }
+tokio-util = { workspace = true, features = ["rt"] }
 turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-protocol = { workspace = true }
 turbomcp-codec = { workspace = true }

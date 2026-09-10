@@ -29,7 +29,8 @@ fn main() -> Result<()> {
         serde_json::from_str(&raw).with_context(|| format!("parsing {input} as JSON"))?;
 
     // Normalize before handing to typify (F14).
-    normalize::flatten_all_of(&mut value);
+    normalize::flatten_all_of(&mut value)
+        .map_err(|e| anyhow::anyhow!("schema normalization: {e}"))?;
     // Keep embedded JSON-Schema nodes (tool input/output schemas) open so
     // arbitrary keywords (`$defs`, `additionalProperties`, …) survive the wire.
     normalize::open_embedded_schemas(&mut value);

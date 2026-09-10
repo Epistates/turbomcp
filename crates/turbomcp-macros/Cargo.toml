@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-macros"
-version = "4.0.0-alpha.3"
+version = "4.0.0-alpha.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -17,6 +17,7 @@ proc-macro = true
 
 [dependencies]
 proc-macro2 = "1"
+proc-macro-crate = "3"
 quote = "1"
 # Compile-time only: validates `#[tool(schema_extend = "…")]` payloads so a
 # malformed object is an error on the literal, not a wrong `inputSchema`.

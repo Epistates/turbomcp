@@ -8,11 +8,11 @@
 //! `$ref` target carries a `description`. See `.strategy/v4/AUDIT_FINDINGS.md`
 //! F14.
 //!
-//! Fix: flatten every `allOf` intersection into a single inline object —
+//! Specialized pre-pass: flatten supported `allOf` intersection into a single inline object —
 //! resolve each member (`$ref` → its definition, or inline subschema), drop
 //! metadata at the merge site, and union `properties`/`required`/`type`/
-//! `additionalProperties`. Semantically identical (an intersection of object
-//! schemas is one object with all their fields), and typify never reaches the
+//! unrestricted `additionalProperties`. Unsupported intersections fail generation
+//! instead of dropping constraints. Typify never reaches the
 //! offending merge path. Validated: 2025-11-25 → 25,473 lines, draft → 22,506,
 //! both compile.
 
@@ -22,106 +22,172 @@ const METADATA_KEYS: [&str; 3] = ["description", "title", "default"];
 
 /// Flatten every `allOf` in `schema`, in place. `$ref`s are resolved against a
 /// snapshot of the schema's `$defs`/`definitions` taken before mutation.
-pub fn flatten_all_of(schema: &mut Value) {
+pub fn flatten_all_of(schema: &mut Value) -> Result<(), String> {
     let defs = schema
         .get("$defs")
         .or_else(|| schema.get("definitions"))
         .cloned()
         .unwrap_or(Value::Null);
-    walk(schema, &defs);
+    // Transactional: an unsupported intersection leaves the input untouched.
+    let mut candidate = schema.clone();
+    walk(&mut candidate, &defs, 0)?;
+    *schema = candidate;
+    Ok(())
 }
 
-fn walk(value: &mut Value, defs: &Value) {
+fn walk(value: &mut Value, defs: &Value, depth: usize) -> Result<(), String> {
+    if depth > 128 {
+        return Err("schema intersection recursion limit exceeded".into());
+    }
     match value {
         Value::Object(map) => {
             if map.contains_key("allOf") {
-                flatten_node(map, defs);
+                flatten_node(map, defs, depth + 1)?;
             }
             for child in map.values_mut() {
-                walk(child, defs);
+                walk(child, defs, depth + 1)?;
             }
         }
         Value::Array(items) => {
             for child in items {
-                walk(child, defs);
+                walk(child, defs, depth + 1)?;
             }
         }
         _ => {}
     }
+    Ok(())
 }
 
-/// Resolve a local `$ref` (e.g. `#/$defs/Task`) to a clone of its target.
-fn resolve(defs: &Value, reference: &str) -> Option<Value> {
-    let name = reference.rsplit('/').next()?;
-    defs.get(name).cloned()
-}
-
-fn flatten_node(node: &mut Map<String, Value>, defs: &Value) {
-    let members = match node.remove("allOf") {
-        Some(Value::Array(members)) => members,
-        // Not the shape we flatten — restore and leave it for typify.
-        Some(other) => {
-            node.insert("allOf".into(), other);
-            return;
-        }
-        None => return,
+fn flatten_node(node: &mut Map<String, Value>, defs: &Value, depth: usize) -> Result<(), String> {
+    if depth > 128 {
+        return Err("cyclic or excessively deep allOf reference".into());
+    }
+    let Some(Value::Array(members)) = node.remove("allOf") else {
+        return Err("allOf must be an array".into());
     };
-
+    if members.is_empty() {
+        return Err("allOf must not be empty".into());
+    }
     let mut merged = Map::new();
     for member in members {
         let mut resolved = match member.get("$ref").and_then(Value::as_str) {
-            Some(reference) => resolve(defs, reference).unwrap_or_else(|| member.clone()),
-            None => member.clone(),
+            Some(reference) => {
+                if member.as_object().is_none_or(|m| m.len() != 1) {
+                    return Err(
+                        "allOf reference siblings require explicit intersection support".into(),
+                    );
+                }
+                let name = reference
+                    .strip_prefix("#/$defs/")
+                    .or_else(|| reference.strip_prefix("#/definitions/"))
+                    .ok_or("only local definition references can be flattened")?;
+                let name = name.replace("~1", "/").replace("~0", "~");
+                defs.get(&name)
+                    .cloned()
+                    .ok_or_else(|| format!("unresolved allOf reference: {reference}"))?
+            }
+            None => member,
         };
-        if let Value::Object(obj) = &mut resolved {
-            // Defensive: a resolved target could itself be an intersection.
-            if obj.contains_key("allOf") {
-                flatten_node(obj, defs);
-            }
-            for key in METADATA_KEYS {
-                obj.remove(key);
-            }
-            merge_object_into(&mut merged, obj);
+        let obj = resolved
+            .as_object_mut()
+            .ok_or("only object schemas can be flattened")?;
+        if obj.contains_key("allOf") {
+            flatten_node(obj, defs, depth + 1)?;
+        }
+        merge_object_into(&mut merged, obj)?;
+    }
+    // Parent constraints are part of the intersection, too.
+    merge_object_into(&mut merged, node)?;
+    for key in METADATA_KEYS {
+        if let Some(value) = node.get(key) {
+            merged.insert(key.into(), value.clone());
         }
     }
-
-    // Apply merged content without clobbering the node's own keys, so the
-    // node's own `description`/`type` (the parent metadata) is preserved.
-    for (key, value) in merged {
-        node.entry(key).or_insert(value);
-    }
+    *node = merged;
+    Ok(())
 }
 
-fn merge_object_into(target: &mut Map<String, Value>, src: &Map<String, Value>) {
-    if let Some(Value::Object(props)) = src.get("properties") {
-        let entry = target
-            .entry("properties")
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Value::Object(target_props) = entry {
-            for (key, value) in props {
-                target_props.insert(key.clone(), value.clone());
+fn merge_object_into(
+    target: &mut Map<String, Value>,
+    src: &Map<String, Value>,
+) -> Result<(), String> {
+    for (key, value) in src {
+        match key.as_str() {
+            "description" | "title" | "default" => {}
+            "type" if value == "object" => {
+                target.insert(key.clone(), value.clone());
             }
-        }
-    }
-    if let Some(Value::Array(required)) = src.get("required") {
-        let entry = target
-            .entry("required")
-            .or_insert_with(|| Value::Array(Vec::new()));
-        if let Value::Array(target_required) = entry {
-            for value in required {
-                if !target_required.contains(value) {
-                    target_required.push(value.clone());
+            "properties" => {
+                let props = value.as_object().ok_or("properties must be an object")?;
+                let dest = target
+                    .entry(key.clone())
+                    .or_insert_with(|| Value::Object(Map::new()))
+                    .as_object_mut()
+                    .unwrap();
+                for (name, schema) in props {
+                    let combined = match dest.get(name) {
+                        Some(prior) if prior != schema => intersect_property(prior, schema)
+                            .ok_or_else(|| {
+                                format!("unsupported intersection of property {name}")
+                            })?,
+                        _ => schema.clone(),
+                    };
+                    dest.insert(name.clone(), combined);
                 }
             }
+            "required" => {
+                let items = value.as_array().ok_or("required must be an array")?;
+                let dest = target
+                    .entry(key.clone())
+                    .or_insert_with(|| Value::Array(Vec::new()))
+                    .as_array_mut()
+                    .unwrap();
+                for item in items {
+                    if !item.is_string() {
+                        return Err("required entries must be strings".into());
+                    }
+                    if !dest.contains(item) {
+                        dest.push(item.clone());
+                    }
+                }
+            }
+            "additionalProperties"
+                if value == &Value::Bool(true) || value.as_object().is_some_and(Map::is_empty) =>
+            {
+                target.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+            _ => return Err(format!("unsupported allOf keyword or constraint: {key}")),
         }
     }
-    if let Some(ty) = src.get("type") {
-        target.insert("type".into(), ty.clone());
+    Ok(())
+}
+
+// A schema containing a superset of another's identical constraints is their
+// intersection. Annotations do not constrain instances. This covers the
+// frozen error schema's integer code refined by `const`, without generalizing
+// to conflicting bounds, enums, closed objects, or arbitrary intersections.
+fn intersect_property(a: &Value, b: &Value) -> Option<Value> {
+    fn constraints(value: &Value) -> Option<Map<String, Value>> {
+        let mut map = value.as_object()?.clone();
+        for key in METADATA_KEYS {
+            map.remove(key);
+        }
+        Some(map)
     }
-    if let Some(additional) = src.get("additionalProperties") {
-        target
-            .entry("additionalProperties")
-            .or_insert_with(|| additional.clone());
+    let left = constraints(a)?;
+    let right = constraints(b)?;
+    if left
+        .iter()
+        .all(|(key, value)| right.get(key) == Some(value))
+    {
+        Some(b.clone())
+    } else if right
+        .iter()
+        .all(|(key, value)| left.get(key) == Some(value))
+    {
+        Some(a.clone())
+    } else {
+        None
     }
 }
 
@@ -272,7 +338,7 @@ mod tests {
                 }
             }
         });
-        flatten_all_of(&mut schema);
+        flatten_all_of(&mut schema).unwrap();
         let result = &schema["$defs"]["Result"];
         assert!(result.get("allOf").is_none(), "allOf removed");
         // Parent metadata preserved.
@@ -409,5 +475,25 @@ mod tests {
         });
         open_embedded_schemas(&mut schema);
         assert!(schema.get("additionalProperties").is_none());
+    }
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn rejects_unsupported_intersections_transactionally() {
+        for schema in [
+            json!({"allOf":[{"type":"string"},{"type":"number"}]}),
+            json!({"allOf":[{"properties":{"x":{"minimum":5}}},{"properties":{"x":{"maximum":3}}}]}),
+            json!({"allOf":[{"additionalProperties":false},{"properties":{"x":{}}}]}),
+            json!({"allOf":[{"$ref":"https://example.com/schema"}]}),
+            json!({"$defs":{"x":{"allOf":[{"$ref":"#/$defs/x"}]}},"allOf":[{"$ref":"#/$defs/x"}]}),
+        ] {
+            let mut candidate = schema.clone();
+            assert!(flatten_all_of(&mut candidate).is_err());
+            assert_eq!(candidate, schema);
+        }
     }
 }

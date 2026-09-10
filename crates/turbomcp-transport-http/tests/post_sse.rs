@@ -65,7 +65,10 @@ impl WithTools for Quiet {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![]))
+        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            "echo",
+            serde_json::json!({"type":"object"}),
+        )]))
     }
 
     async fn call_tool(
@@ -114,7 +117,10 @@ impl WithTools for Slow {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![]))
+        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            "slow",
+            serde_json::json!({"type":"object"}),
+        )]))
     }
 
     async fn call_tool(

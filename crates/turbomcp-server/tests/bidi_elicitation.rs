@@ -56,7 +56,10 @@ impl WithTools for Confirmer {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![]))
+        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            "deploy",
+            serde_json::json!({"type":"object"}),
+        )]))
     }
 
     async fn call_tool(

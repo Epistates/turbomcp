@@ -1,0 +1,23 @@
+Gnuplot not found, using plotters backend
+Benchmarking turbomcp/call_tool_roundtrip
+Benchmarking turbomcp/call_tool_roundtrip: Warming up for 3.0000 s
+Benchmarking turbomcp/call_tool_roundtrip: Collecting 100 samples in estimated 5.0907 s (187k iterations)
+Benchmarking turbomcp/call_tool_roundtrip: Analyzing
+turbomcp/call_tool_roundtrip
+                        time:   [27.083 µs 27.120 µs 27.154 µs]
+Found 4 outliers among 100 measurements (4.00%)
+  1 (1.00%) low severe
+  1 (1.00%) low mild
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+Benchmarking rmcp/call_tool_roundtrip
+Benchmarking rmcp/call_tool_roundtrip: Warming up for 3.0000 s
+Benchmarking rmcp/call_tool_roundtrip: Collecting 100 samples in estimated 5.1041 s (202k iterations)
+Benchmarking rmcp/call_tool_roundtrip: Analyzing
+rmcp/call_tool_roundtrip
+                        time:   [24.901 µs 25.714 µs 26.997 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) low mild
+  1 (1.00%) high mild
+  2 (2.00%) high severe

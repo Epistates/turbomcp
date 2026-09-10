@@ -40,7 +40,8 @@ fn tools_call() -> JsonRpcRequest {
         Some(json!({
             "name": "add",
             "arguments": { "a": 2.0, "b": 40.0 },
-            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {} },
         })),
     )
 }
@@ -48,6 +49,15 @@ fn tools_call() -> JsonRpcRequest {
 fn bench_dispatch(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let svc = BenchServer.into_server().build();
+
+    let fixture = rt.block_on(async {
+        svc.clone()
+            .oneshot(tools_call().into())
+            .await
+            .expect("fixture dispatch")
+    });
+    assert!(matches!(fixture, Some(JsonRpcMessage::Response(ref r))
+        if r.error.is_none() && r.result.as_ref().is_some_and(|v| v["content"][0]["text"] == "42")));
 
     c.bench_function("dispatch/tools_call", |b| {
         b.to_async(&rt).iter(|| {
