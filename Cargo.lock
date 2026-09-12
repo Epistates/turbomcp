@@ -3743,7 +3743,7 @@ version = "4.0.0-alpha.4"
 dependencies = [
  "anyhow",
  "prettyplease",
- "schemars 0.8.22",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "syn 3.0.5",
