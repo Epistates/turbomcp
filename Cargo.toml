@@ -137,7 +137,7 @@ clap_complete = "4.6"
 ring = "0.17.14"
 subtle = "2.6"  # Constant-time comparison for secret values
 hmac = "0.13"   # HMAC (pairs with sha2 0.11 / digest 0.11)
-base64 = "0.22.1"
+base64 = "0.23.1"
 percent-encoding = "2.3.2"  # URL percent encoding/decoding (RFC 3986)
 uuid = { version = "1.23", features = ["v4", "serde"] }
 # OAuth 2.1 client flows (auth-code + PKCE + token exchange); HTTP is supplied
