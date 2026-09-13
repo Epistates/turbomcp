@@ -124,7 +124,8 @@ codegen-check:
 refresh-locks:
   #!/usr/bin/env bash
   set -euo pipefail
-  for dir in crates/turbomcp-conformance crates/turbomcp-interop fuzz; do
+  for dir in crates/turbomcp-conformance crates/turbomcp-interop fuzz \
+             crates/turbomcp/tests/renamed_dependency; do
     echo "Refreshing ${dir}/Cargo.lock"
     (cd "${dir}" && cargo update)
   done
@@ -132,21 +133,27 @@ refresh-locks:
   echo "  just conformance"
   echo "  just interop"
 
-# Only the workspace lockfile is a hard gate, and the asymmetry is deliberate.
+# What CI builds `--locked` is a hard gate here; everything else warns.
 #
-# It is a source artifact: it pins what we publish and what every job builds, and
-# leaving it stale behind a manifest bump is the exact failure this was written
-# for (see .github/dependabot.yml). No other job builds `--locked`, so nothing
-# else would notice.
+# The workspace lockfile is a source artifact: it pins what we publish and what
+# every job builds, and leaving it stale behind a manifest bump is the exact
+# failure this was written for (see .github/dependabot.yml).
 #
-# The two excluded crates' lockfiles are *derived*. Both crates depend on the
+# The renamed-dependency fixture is the other one, because `Lint & Test` runs
+# `cargo check --locked` against it. Nothing bumps that lockfile: it is not in
+# the workspace, so Dependabot never sees it, and it resolves the facade by
+# path, so *any* shared dependency bump invalidates it. Left out of this recipe
+# it failed silently in the opposite direction from the usual one — green
+# locally, and every Dependabot PR red on a step that names none of this.
+#
+# The three excluded crates' lockfiles are *derived*. Each depends on the
 # workspace by path, so any root dependency bump invalidates them by
 # construction, and Dependabot cannot fix them from the root ecosystem. Cargo
-# also re-resolves them on the next build, which is how both suites already run.
-# Gating them would turn every shared-dependency bump into a two-commit chore for
-# no safety, so they warn and point at `just refresh-locks`.
+# also re-resolves them on the next build, which is how their suites already
+# run. Gating them would turn every shared-dependency bump into a two-commit
+# chore for no safety, so they warn and point at `just refresh-locks`.
 
-# Fail if the workspace lockfile has drifted; warn for the excluded crates.
+# Fail if a `--locked` lockfile has drifted; warn for the excluded crates.
 [group: 'quality']
 lock-check:
   #!/usr/bin/env bash
@@ -158,6 +165,14 @@ lock-check:
     exit 1
   fi
   echo "Cargo.lock is in sync."
+  fixture=crates/turbomcp/tests/renamed_dependency
+  if ! (cd "${fixture}" && cargo metadata --locked --format-version 1 >/dev/null 2>&1); then
+    echo >&2
+    echo "${fixture}/Cargo.lock is out of date, and CI checks it with --locked." >&2
+    echo "Run 'just refresh-locks' and commit the lockfile." >&2
+    exit 1
+  fi
+  echo "${fixture}/Cargo.lock is in sync."
   for dir in crates/turbomcp-conformance crates/turbomcp-interop fuzz; do
     if (cd "${dir}" && cargo metadata --locked --format-version 1 >/dev/null 2>&1); then
       echo "${dir}/Cargo.lock is in sync."
