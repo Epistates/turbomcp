@@ -74,7 +74,10 @@ required except configured loopback HTTP. Internal HTTPS authorization servers
 remain supported by default. Server-side clients accepting untrusted endpoint
 URLs should select `NetworkPolicy::public_only()`: it rejects private/reserved
 literals and DNS results, uses the checked addresses for connection, and disables
-proxies. This policy also disables loopback HTTP. A custom reqwest client is an
+proxies. This policy also disables loopback HTTP. Where such a deployment still
+has to reach one internal authorization server, name its range with
+`with_allowed_ranges` rather than turning the policy off; the ranges are
+consulted after the reserved-range check, so nothing else reopens. A custom reqwest client is an
 explicit trust override: its owner must preserve redirect and DNS restrictions.
 Use `with_network_policy` when those restrictions should be supplied by the SDK.
 

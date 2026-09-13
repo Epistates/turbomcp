@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `NetworkPolicy::with_allowed_ranges` names CIDR ranges that stay reachable
+  under public-only egress. A deployment accepting untrusted endpoint URLs that
+  also runs its own authorization server on an internal range no longer has to
+  choose between SSRF exposure and not working: the single switch reopened
+  CGNAT, link-local, the cloud metadata address, and every other reserved range
+  alongside the one it needed. The URL check and the DNS resolver share one
+  predicate, so a literal address and the same address reached by name are
+  judged identically, and an IPv4-mapped IPv6 spelling reads as the address it
+  maps to.
+
+### Changed
+
+- **Breaking:** `NetworkPolicy` is `#[non_exhaustive]`, matching every other
+  public policy and metadata struct in the SDK. Construct it with `default()`
+  or `public_only()` and adjust with the new `with_timeout`,
+  `with_max_response_bytes`, `with_public_only`, `with_loopback_http`, and
+  `with_allowed_ranges` methods; struct-literal construction from outside the
+  crate no longer compiles. Reading the fields is unchanged.
+
 ## [4.0.0-alpha.4] - 2026-09-10
 
 Security, correctness, and lifecycle hardening following the v4 audit. This

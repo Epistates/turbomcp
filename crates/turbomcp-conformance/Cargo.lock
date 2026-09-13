@@ -2757,6 +2757,7 @@ name = "turbomcp-auth"
 version = "4.0.0-alpha.4"
 dependencies = [
  "futures",
+ "ipnet",
  "jsonwebtoken",
  "oauth2",
  "reqwest",

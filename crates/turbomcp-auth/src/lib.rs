@@ -42,6 +42,7 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "oauth-client")))]
 pub mod client;
 #[cfg(any(feature = "http-jwks", feature = "oauth-client"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "http-jwks", feature = "oauth-client"))))]
 pub mod network;
 #[cfg(any(feature = "http-jwks", feature = "oauth-client"))]
 pub use network::NetworkPolicy;

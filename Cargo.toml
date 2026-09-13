@@ -126,6 +126,8 @@ tokio-stream = "0.1"
 
 # URL and random utilities
 url = "2.5.8"
+# CIDR parsing and containment for the outbound authorization network policy.
+ipnet = "2.12"
 fastrand = "2.4"
 
 # Configuration and CLI
