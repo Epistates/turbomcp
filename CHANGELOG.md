@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Graceful shutdown no longer discards a reply that was mid-write when the
+  shutdown token fired. The `serve` driver raced the token against the write of
+  a frame it had already taken out of the outbound channel, so nothing else
+  held a copy; worse, it then treated the abandoned write as a possibly-partial
+  frame, which skipped the drain entirely and aborted every other in-flight
+  handler. The write is bounded by `drain_timeout` on its own, which is the
+  same budget the drain gets. The busier the server, the likelier this was: it
+  needs only a non-empty outbound channel at the moment shutdown fires.
+
 ### Added
 
 - `NetworkPolicy::with_allowed_ranges` names CIDR ranges that stay reachable

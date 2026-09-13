@@ -139,22 +139,24 @@ where
     // "drive-to-ready, clone, call" concurrency pattern).
     let svc = service;
 
-    let mut write_usable = true;
     let result = loop {
         tokio::select! {
             biased;
             // 1. Flush outbound first so replies stay prompt and writes ordered.
+            //
+            // Once a frame is out of `rx` it has to be written: nothing else
+            // holds a copy. Racing the shutdown token against the write here
+            // dropped it instead, and — since an abandoned write may have
+            // emitted a partial frame — also marked the stream unusable, which
+            // skips the drain and aborts every other in-flight handler. The
+            // write is already bounded by `drain_timeout`, which is the same
+            // budget the drain itself gets, so shutdown loses nothing by
+            // letting it finish and the loop breaks on branch 3 straight after.
             Some(out) = rx.recv() => {
-                tokio::select! {
-                    biased;
-                    () = shutdown.cancelled() => { write_usable = false; break Ok(()); },
-                    result = tokio::time::timeout(drain_timeout, transport.send(out)) => {
-                        match result {
-                            Ok(Ok(())) => {}
-                            Ok(Err(e)) => break Err(ProtocolError::Transport(e.to_string())),
-                            Err(_) => break Err(ProtocolError::Transport("write deadline exceeded".into())),
-                        }
-                    }
+                match tokio::time::timeout(drain_timeout, transport.send(out)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => break Err(ProtocolError::Transport(e.to_string())),
+                    Err(_) => break Err(ProtocolError::Transport("write deadline exceeded".into())),
                 }
             }
             // 2. Reap finished handlers so the JoinSet can't grow unbounded.
@@ -228,9 +230,9 @@ where
         }
     };
 
-    // A cancelled/failed framed write may have emitted a partial frame.
+    // A failed or timed-out framed write may have emitted a partial frame.
     // Never append another frame to that stream during graceful drain.
-    if !write_usable || result.is_err() {
+    if result.is_err() {
         handlers.abort_all();
         return result;
     }

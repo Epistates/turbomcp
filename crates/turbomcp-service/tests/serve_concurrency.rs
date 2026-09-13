@@ -24,12 +24,41 @@ use turbomcp_service::{CancellationToken, ProtocolError, ServeConfig, Transport,
 struct MockTransport {
     inbound: mpsc::Receiver<JsonRpcMessage>,
     outbound: mpsc::UnboundedSender<JsonRpcMessage>,
+    /// When set, every `send` waits for a permit first, so a test can hold the
+    /// driver inside a write and control when it completes.
+    write_gate: Option<Arc<Semaphore>>,
+}
+
+impl MockTransport {
+    fn new(
+        inbound: mpsc::Receiver<JsonRpcMessage>,
+        outbound: mpsc::UnboundedSender<JsonRpcMessage>,
+    ) -> Self {
+        Self {
+            inbound,
+            outbound,
+            write_gate: None,
+        }
+    }
+
+    /// Make every write wait for a permit from `gate`.
+    fn gated_writes(mut self, gate: Arc<Semaphore>) -> Self {
+        self.write_gate = Some(gate);
+        self
+    }
 }
 
 impl Transport for MockTransport {
     type Error = std::io::Error;
 
     async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
+        if let Some(gate) = &self.write_gate {
+            let permit = gate
+                .acquire()
+                .await
+                .map_err(|_| std::io::Error::other("write gate closed"))?;
+            permit.forget();
+        }
         self.outbound
             .send(msg)
             .map_err(|_| std::io::Error::other("outbound closed"))
@@ -154,10 +183,7 @@ async fn concurrent_handlers_do_not_head_of_line_block() {
 
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-    let transport = MockTransport {
-        inbound: in_rx,
-        outbound: out_tx,
-    };
+    let transport = MockTransport::new(in_rx, out_tx);
     let driver = tokio::spawn(serve_with(transport, service, ServeConfig::default()));
 
     in_tx.send(request(1, "slow")).await.unwrap(); // gated
@@ -196,10 +222,7 @@ async fn backpressure_caps_in_flight() {
 
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-    let transport = MockTransport {
-        inbound: in_rx,
-        outbound: out_tx,
-    };
+    let transport = MockTransport::new(in_rx, out_tx);
     let config = ServeConfig {
         max_in_flight: 1,
         ..ServeConfig::default()
@@ -253,10 +276,7 @@ async fn graceful_shutdown_drains_in_flight() {
 
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-    let transport = MockTransport {
-        inbound: in_rx,
-        outbound: out_tx,
-    };
+    let transport = MockTransport::new(in_rx, out_tx);
     let shutdown = CancellationToken::new();
     let config = ServeConfig {
         drain_timeout: Duration::from_secs(5),
@@ -283,6 +303,59 @@ async fn graceful_shutdown_drains_in_flight() {
     driver.await.unwrap().expect("graceful shutdown is clean");
 }
 
+/// Shutdown firing while a reply is *already being written* must not throw that
+/// reply away.
+///
+/// The frame has left the outbound channel by then, so nothing else will ever
+/// send it, and abandoning it also skipped the drain entirely: the driver
+/// treated an unfinished write as a possibly-partial frame, aborted every
+/// in-flight handler, and returned. On a busy server that is the ordinary
+/// shutdown, not a rare one, because the outbound channel is rarely empty.
+///
+/// Holding the write open makes the interleaving deterministic; the same window
+/// is what `graceful_shutdown_drains_in_flight` hits intermittently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reply_being_written_when_shutdown_fires_still_goes_out() {
+    let gate = Arc::new(Semaphore::new(0));
+    let started = Arc::new(AtomicUsize::new(0));
+    let service = GatedService {
+        gate: Arc::clone(&gate),
+        started: Arc::clone(&started),
+        fast_method: None,
+    };
+
+    let (in_tx, in_rx) = mpsc::channel(8);
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+    let writes = Arc::new(Semaphore::new(0));
+    let transport = MockTransport::new(in_rx, out_tx).gated_writes(Arc::clone(&writes));
+    let shutdown = CancellationToken::new();
+    let config = ServeConfig {
+        drain_timeout: Duration::from_secs(5),
+        shutdown: shutdown.clone(),
+        ..ServeConfig::default()
+    };
+    let driver = tokio::spawn(serve_with(transport, service, config));
+
+    in_tx.send(request(1, "slow")).await.unwrap();
+    while started.load(Ordering::SeqCst) == 0 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // Let the handler finish. Its reply reaches the writer, which parks on the
+    // write gate, so the driver is now inside `transport.send`.
+    gate.add_permits(1);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    shutdown.cancel();
+    writes.add_permits(8);
+
+    let reply = tokio::time::timeout(Duration::from_secs(5), out_rx.recv())
+        .await
+        .expect("the in-flight write should complete")
+        .expect("the reply should not be dropped on the floor");
+    assert_eq!(reply_id(&reply), Some(RequestId::from(1i64)));
+    driver.await.unwrap().expect("graceful shutdown is clean");
+}
+
 /// A handler that never completes is aborted once the drain deadline passes;
 /// the driver still returns promptly rather than hanging.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -297,10 +370,7 @@ async fn shutdown_aborts_stragglers_past_deadline() {
 
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-    let transport = MockTransport {
-        inbound: in_rx,
-        outbound: out_tx,
-    };
+    let transport = MockTransport::new(in_rx, out_tx);
     let shutdown = CancellationToken::new();
     let config = ServeConfig {
         drain_timeout: Duration::from_millis(150),
@@ -430,10 +500,7 @@ async fn driver_sanitizes_inbound_and_asserts_connection_identity() {
     };
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-    let transport = MockTransport {
-        inbound: in_rx,
-        outbound: out_tx,
-    };
+    let transport = MockTransport::new(in_rx, out_tx);
     let driver = tokio::spawn(serve_with(transport, service, ServeConfig::default()));
 
     // A request forging both internal keys.
@@ -502,10 +569,7 @@ async fn a_panicking_handler_answers_and_the_connection_survives() {
 
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-    let transport = MockTransport {
-        inbound: in_rx,
-        outbound: out_tx,
-    };
+    let transport = MockTransport::new(in_rx, out_tx);
     let driver = tokio::spawn(serve_with(transport, PanicOnBoom, ServeConfig::default()));
 
     in_tx.send(request(1, "boom")).await.unwrap();
