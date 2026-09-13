@@ -356,6 +356,72 @@ async fn a_reply_being_written_when_shutdown_fires_still_goes_out() {
     driver.await.unwrap().expect("graceful shutdown is clean");
 }
 
+/// The drain holds under load, not just for one request: every handler that
+/// finishes inside the window gets its reply out, and the driver still returns.
+///
+/// One in-flight request is the easy case. The defect this guards against only
+/// needed the outbound channel to be non-empty when shutdown fired, which is
+/// the normal state of a busy server and the hard case to reason about.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_shutdown_under_load_drains_every_reply() {
+    const IN_FLIGHT: usize = 32;
+
+    let gate = Arc::new(Semaphore::new(0));
+    let started = Arc::new(AtomicUsize::new(0));
+    let service = GatedService {
+        gate: Arc::clone(&gate),
+        started: Arc::clone(&started),
+        fast_method: None,
+    };
+
+    let (in_tx, in_rx) = mpsc::channel(IN_FLIGHT);
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+    let writes = Arc::new(Semaphore::new(0));
+    let transport = MockTransport::new(in_rx, out_tx).gated_writes(Arc::clone(&writes));
+    let shutdown = CancellationToken::new();
+    let config = ServeConfig {
+        drain_timeout: Duration::from_secs(10),
+        shutdown: shutdown.clone(),
+        ..ServeConfig::default()
+    };
+    let driver = tokio::spawn(serve_with(transport, service, config));
+
+    for id in 1..=IN_FLIGHT {
+        in_tx.send(request(id as i64, "slow")).await.unwrap();
+    }
+    while started.load(Ordering::SeqCst) < IN_FLIGHT {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // Release every handler while writes are still blocked, so one reply is
+    // stuck in the writer and the rest queue up behind it. That is the state a
+    // busy server is in when shutdown arrives, and cancelling now with an empty
+    // outbound channel would test the easy path instead.
+    gate.add_permits(IN_FLIGHT);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    shutdown.cancel();
+    writes.add_permits(IN_FLIGHT);
+
+    let mut seen = Vec::with_capacity(IN_FLIGHT);
+    for _ in 0..IN_FLIGHT {
+        let reply = tokio::time::timeout(Duration::from_secs(10), out_rx.recv())
+            .await
+            .expect("the drain should not stall")
+            .expect("every in-flight reply should survive the drain");
+        seen.push(reply_id(&reply).expect("replies carry an id"));
+    }
+    for id in 1..=IN_FLIGHT {
+        let id = RequestId::from(id as i64);
+        assert_eq!(
+            seen.iter().filter(|seen| **seen == id).count(),
+            1,
+            "{id:?} should be answered exactly once"
+        );
+    }
+
+    driver.await.unwrap().expect("graceful shutdown is clean");
+}
+
 /// A handler that never completes is aborted once the drain deadline passes;
 /// the driver still returns promptly rather than hanging.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

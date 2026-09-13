@@ -375,6 +375,13 @@ async fn actor<T>(
             // Outbound: a frame to put on the wire.
             out = outbound.recv() => {
                 match out {
+                    // Cancellation abandons this frame even though it has
+                    // already left the channel. That is the opposite of the
+                    // server driver, which owes callers a drain window and so
+                    // must finish a write it has started — deliberately, and
+                    // not an oversight: `close()` is documented as "cancel this
+                    // connection", so it has to return promptly rather than
+                    // wait out a stalled peer for the write timeout below.
                     Some(msg) => {
                         tokio::select! {
                             () = shutdown.cancelled() => break,
