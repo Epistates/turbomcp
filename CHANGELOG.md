@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dependencies: `tokio-tungstenite` 0.29 → 0.30, `jsonschema` 0.46 → 0.49,
+  `base64` 0.22 → 0.23, `reqwest` 0.13.5, plus patch bumps to
+  `crossbeam-channel`, `trybuild`, `ipnet`, and `uuid`.
+- **Breaking:** `tokio_tungstenite::WebSocketStream` appears in
+  `WebSocketTransport::new`, so the `tokio-tungstenite` bump is breaking for
+  anyone constructing that transport from their own stream. `cargo-semver-checks`
+  does not flag public-dependency major bumps, which is why this is listed by
+  hand.
 - **Breaking:** `NetworkPolicy` is `#[non_exhaustive]`, matching every other
   public policy and metadata struct in the SDK. Construct it with `default()`
   or `public_only()` and adjust with the new `with_timeout`,
