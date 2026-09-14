@@ -17,6 +17,33 @@ use crate::content::{
     BlobResourceContents, Content, Message, ResourceContents, Role, TextResourceContents,
 };
 
+/// Return `value` only if it may legally occupy `structuredContent`.
+///
+/// Every MCP schema version this SDK speaks types the field as
+/// `{ [key: string]: unknown }`, so a scalar or an array there is invalid and
+/// strict clients reject the whole result. Callers pair this with a text block
+/// that carries the value regardless of its JSON shape.
+///
+/// # Example
+///
+/// ```
+/// use turbomcp_types::structured_content_if_object;
+///
+/// assert!(structured_content_if_object(serde_json::json!({"a": 1})).is_some());
+/// assert!(structured_content_if_object(serde_json::json!([1, 2])).is_none());
+/// ```
+#[must_use]
+pub fn structured_content_if_object(value: Value) -> Option<Value> {
+    value.is_object().then_some(value)
+}
+
+/// The `_meta` map carried by every MCP result type.
+///
+/// Aliased because the underlying map differs by target — `std::collections::HashMap`
+/// with `std`, `alloc::collections::BTreeMap` without — so callers that build a
+/// `_meta` map can name one type and stay portable.
+pub type MetaMap = HashMap<String, Value>;
+
 /// Result from calling a tool.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ToolResult {
@@ -54,12 +81,17 @@ impl ToolResult {
     }
 
     /// Create a JSON result with structured content.
+    ///
+    /// The value is always rendered into a text block. It additionally
+    /// populates `structuredContent` when it serializes to a JSON **object** —
+    /// see [`structured_content_if_object`] for why arrays and scalars cannot
+    /// go there.
     pub fn json<T: Serialize>(value: &T) -> Result<Self, serde_json::Error> {
         let structured = serde_json::to_value(value)?;
-        let text = serde_json::to_string_pretty(value)?;
+        let text = serde_json::to_string_pretty(&structured)?;
         Ok(Self {
             content: vec![Content::text(text)],
-            structured_content: Some(structured),
+            structured_content: structured_content_if_object(structured),
             ..Default::default()
         })
     }

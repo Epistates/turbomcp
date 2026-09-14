@@ -51,6 +51,7 @@ pub struct CompositeHandler {
     name: String,
     version: String,
     description: Option<String>,
+    instructions: Option<String>,
     handlers: Arc<Vec<MountedHandler>>,
 }
 
@@ -232,6 +233,7 @@ impl CompositeHandler {
             name: name.into(),
             version: version.into(),
             description: None,
+            instructions: None,
             handlers: Arc::new(Vec::new()),
         }
     }
@@ -240,6 +242,18 @@ impl CompositeHandler {
     #[must_use]
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    /// Set the `instructions` string returned by the `initialize` handshake.
+    ///
+    /// Mounted handlers' own instructions are deliberately not merged: each was
+    /// written to describe a standalone server, and concatenating several of
+    /// them yields guidance that contradicts the composite's prefixed tool
+    /// names. Describe the composed surface here instead.
+    #[must_use]
+    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
         self
     }
 
@@ -482,6 +496,10 @@ impl McpHandler for CompositeHandler {
             info = info.with_description(desc);
         }
         info
+    }
+
+    fn instructions(&self) -> Option<String> {
+        self.instructions.clone()
     }
 
     fn server_capabilities(&self) -> ServerCapabilities {

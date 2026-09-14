@@ -35,11 +35,19 @@ pub struct ServerInfo {
     /// Struct name
     pub struct_name: Ident,
     /// Server name
-    pub name: String,
+    pub name: TokenStream,
     /// Server version
-    pub version: String,
+    pub version: TokenStream,
     /// Server description
-    pub description: Option<String>,
+    pub description: Option<TokenStream>,
+    /// Human-readable title (SEP-973)
+    pub title: Option<TokenStream>,
+    /// Guidance returned as the `initialize` result's `instructions` field
+    pub instructions: Option<TokenStream>,
+    /// Homepage for this implementation
+    pub website_url: Option<TokenStream>,
+    /// Icon source URIs (SEP-973)
+    pub icons: Vec<TokenStream>,
     /// Tool handlers
     pub tools: Vec<ToolInfo>,
     /// Resource handlers
@@ -80,6 +88,9 @@ pub struct PromptInfo {
     pub description: Option<String>,
     /// Prompt arguments (HIGH-002)
     pub arguments: Vec<PromptArgumentInfo>,
+    /// Whether the handler returns `McpResult`/`Result<_, McpError>`, in which
+    /// case an `Err` propagates instead of being rendered as a message.
+    pub returns_mcp_error: bool,
     /// Function name
     pub fn_name: Ident,
     /// Tags for categorization
@@ -104,40 +115,74 @@ pub struct PromptArgumentInfo {
 }
 
 /// Parse server attributes.
+///
+/// Every value-bearing key accepts any expression that evaluates to something
+/// `Into<String>`, not only a string literal, so server identity can come from
+/// the build or the environment:
+///
+/// ```ignore
+/// #[server(name = "calc", version = env!("CARGO_PKG_VERSION"))]
+/// ```
+#[derive(Default)]
 pub struct ServerAttrs {
     /// Server name
-    pub name: Option<String>,
+    pub name: Option<syn::Expr>,
     /// Server version
-    pub version: Option<String>,
+    pub version: Option<syn::Expr>,
     /// Server description
-    pub description: Option<String>,
+    pub description: Option<syn::Expr>,
+    /// Human-readable title (SEP-973)
+    pub title: Option<syn::Expr>,
+    /// Guidance returned as the `initialize` result's `instructions` field
+    pub instructions: Option<syn::Expr>,
+    /// Homepage for this implementation
+    pub website_url: Option<syn::Expr>,
+    /// Icon source URIs (SEP-973)
+    pub icons: Vec<syn::Expr>,
 }
 
 impl ServerAttrs {
     /// Parse from attribute token stream.
     pub fn parse(args: proc_macro::TokenStream) -> Result<Self, syn::Error> {
-        let mut name = None;
-        let mut version = None;
-        let mut description = None;
+        let mut attrs = Self::default();
 
         if args.is_empty() {
-            return Ok(Self {
-                name,
-                version,
-                description,
-            });
+            return Ok(attrs);
         }
+
+        let Self {
+            ref mut name,
+            ref mut version,
+            ref mut description,
+            ref mut title,
+            ref mut instructions,
+            ref mut website_url,
+            ref mut icons,
+        } = attrs;
 
         let parser = syn::meta::parser(|meta| {
             if meta.path.is_ident("name") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                name = Some(value.value());
+                *name = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("version") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                version = Some(value.value());
+                *version = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("description") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                description = Some(value.value());
+                *description = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("title") {
+                *title = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("instructions") {
+                *instructions = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("website_url") {
+                *website_url = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("icons") {
+                let value = meta.value()?;
+                let items;
+                syn::bracketed!(items in value);
+                *icons =
+                    syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated(
+                        &items,
+                    )?
+                    .into_iter()
+                    .collect();
             } else if meta.path.is_ident("transports") {
                 // v3: The `transports` attribute was removed.
                 //
@@ -155,17 +200,26 @@ impl ServerAttrs {
                 // v3: Ignore `root` attribute for backward compatibility.
                 // Roots configuration should be done via builder API.
                 let _value: syn::LitStr = meta.value()?.parse()?;
+            } else {
+                // Name the accepted keys rather than dropping a typo silently:
+                // `descriptio = "..."` used to compile into a server with no
+                // description and no diagnostic.
+                let key = meta
+                    .path
+                    .get_ident()
+                    .map(|i| i.to_string())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                return Err(meta.error(format!(
+                    "unknown #[server] attribute key `{key}`; expected one of `name`, \
+                     `version`, `description`, `title`, `instructions`, `website_url`, `icons`",
+                )));
             }
             Ok(())
         });
 
         syn::parse::Parser::parse(parser, args)?;
 
-        Ok(Self {
-            name,
-            version,
-            description,
-        })
+        Ok(attrs)
     }
 }
 
@@ -190,12 +244,23 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
         }
     };
 
-    let name = attrs
-        .name
-        .clone()
-        .unwrap_or_else(|| struct_name.to_string());
-    let version = attrs.version.clone().unwrap_or_else(|| "1.0.0".to_string());
-    let description = attrs.description.clone();
+    let name = match &attrs.name {
+        Some(expr) => quote!(#expr),
+        None => {
+            let literal = struct_name.to_string();
+            quote!(#literal)
+        }
+    };
+    let version = match &attrs.version {
+        Some(expr) => quote!(#expr),
+        None => quote!("1.0.0"),
+    };
+    let to_tokens = |expr: &Option<syn::Expr>| expr.as_ref().map(|e| quote!(#e));
+    let description = to_tokens(&attrs.description);
+    let title = to_tokens(&attrs.title);
+    let instructions = to_tokens(&attrs.instructions);
+    let website_url = to_tokens(&attrs.website_url);
+    let icons = attrs.icons.iter().map(|e| quote!(#e)).collect();
 
     let mut tools = Vec::new();
     let mut resources = Vec::new();
@@ -244,6 +309,7 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
                         name: fn_name.to_string(),
                         description,
                         arguments,
+                        returns_mcp_error: returns_mcp_error(&method.sig),
                         fn_name,
                         tags: prompt_attrs.tags,
                         version: prompt_attrs.version,
@@ -261,6 +327,10 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
         name,
         version,
         description,
+        title,
+        instructions,
+        website_url,
+        icons,
         tools,
         resources,
         prompts,
@@ -348,6 +418,44 @@ fn extract_resource_attrs(attr: &syn::Attribute) -> Result<ResourceAttrInfo, syn
         title,
         icons,
     })
+}
+
+/// Does this handler hand back an `McpError` the dispatcher can inspect?
+///
+/// Matches `-> McpResult<T>` and `-> Result<T, McpError>` (through any path
+/// prefix, so `turbomcp::McpResult<T>` and `core::result::Result<T,
+/// turbomcp_core::error::McpError>` both count). Anything else — a bare value,
+/// or a `Result` over some other error type — is left on the legacy conversion
+/// path, where the error can only become display text.
+fn returns_mcp_error(sig: &syn::Signature) -> bool {
+    let syn::ReturnType::Type(_, ty) = &sig.output else {
+        return false;
+    };
+    let syn::Type::Path(type_path) = ty.as_ref() else {
+        return false;
+    };
+    let Some(segment) = type_path.path.segments.last() else {
+        return false;
+    };
+
+    if segment.ident == "McpResult" {
+        return true;
+    }
+    if segment.ident != "Result" {
+        return false;
+    }
+
+    // `Result<T, E>` — the error type must be McpError.
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return false;
+    };
+    let Some(syn::GenericArgument::Type(syn::Type::Path(err))) = args.args.iter().nth(1) else {
+        return false;
+    };
+    err.path
+        .segments
+        .last()
+        .is_some_and(|seg| seg.ident == "McpError")
 }
 
 /// Check if a type is a reference to RequestContext.
@@ -574,11 +682,34 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     let version = &info.version;
     let turbomcp = turbomcp_crate();
 
-    let description_code = if let Some(desc) = &info.description {
-        quote! { .with_description(#desc) }
-    } else {
-        quote! {}
+    let description_code = match &info.description {
+        Some(desc) => quote! { .with_description(#desc) },
+        None => quote! {},
     };
+    let title_code = match &info.title {
+        Some(title) => quote! { .with_title(#title) },
+        None => quote! {},
+    };
+    let website_url_code = match &info.website_url {
+        Some(url) => quote! { .with_website_url(#url) },
+        None => quote! {},
+    };
+    let icons_code = info.icons.iter().map(|src| {
+        quote! {
+            .with_icon(#turbomcp::__macro_support::turbomcp_types::Icon::new(#src))
+        }
+    });
+
+    // `instructions` is a separate `initialize` field, not part of serverInfo:
+    // omit the override entirely when unset so the trait default keeps it off
+    // the wire.
+    let instructions_code = info.instructions.as_ref().map(|instructions| {
+        quote! {
+            fn instructions(&self) -> ::std::option::Option<::std::string::String> {
+                ::std::option::Option::Some(::std::string::ToString::to_string(&#instructions))
+            }
+        }
+    });
 
     // Generate tool listing code
     // Uses #turbomcp::__macro_support:: paths so users don't need internal crates
@@ -765,20 +896,40 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         let extraction = generate_extraction_code(&tool.parameters, &turbomcp);
         let call_args = generate_call_args(&tool.sig);
 
+        // A handler that returns `McpResult<T>` gets its error *kind* carried
+        // into the tool result's `_meta`; the spec's `isError` convention alone
+        // would flatten every failure to a message, leaving a client unable to
+        // tell bad input from an internal fault. Other return types keep the
+        // blanket `Display` conversion, which has no kind to preserve.
+        let ok_conversion = if returns_mcp_error(&tool.sig) {
+            quote! {
+                match result {
+                    Ok(value) => #turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(value),
+                    Err(e) => e.to_tool_result(),
+                }
+            }
+        } else {
+            quote! {
+                #turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(result)
+            }
+        };
+
         quote! {
             #tool_name => {
-                let outcome: ::std::result::Result<_, #turbomcp::__macro_support::turbomcp_core::error::McpError> = async {
+                // `Box::pin` keeps the handler body off this function's future.
+                // Every arm is inlined into one `call_tool` state machine, so
+                // without it the machine is as large as the fattest tool body
+                // and every caller pays that size on every call.
+                let outcome: ::std::result::Result<_, #turbomcp::__macro_support::turbomcp_core::error::McpError> = ::std::boxed::Box::pin(async {
                     #extraction
                     Ok(self.#fn_name(#call_args).await)
-                }.await;
+                }).await;
 
                 match outcome {
-                    Ok(result) => Ok(
-                        #turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(result)
-                    ),
+                    Ok(result) => Ok(#ok_conversion),
                     Err(e) if e.kind == #turbomcp::__macro_support::turbomcp_core::error::ErrorKind::InvalidParams => {
                         // SEP-1303: validation failure → tool execution error.
-                        Ok(#turbomcp::__macro_support::turbomcp_types::ToolResult::error(e.message.clone()))
+                        Ok(e.to_tool_result())
                     }
                     Err(e) => Err(e),
                 }
@@ -791,6 +942,20 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         let uri_template = &resource.uri_template;
         let fn_name = &resource.fn_name;
 
+        // Each body is boxed for the same reason as the tool arms: they all
+        // share one `read_resource` state machine.
+        let dispatch = quote! {
+            let __result: #turbomcp::__macro_support::turbomcp_core::error::McpResult<
+                #turbomcp::__macro_support::turbomcp_types::ResourceResult
+            > = ::std::boxed::Box::pin(async {
+                match self.#fn_name(uri.to_string(), ctx).await {
+                    Ok(r) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
+                    Err(e) => Err(e),
+                }
+            }).await;
+            return __result;
+        };
+
         // Check if template has variables (contains '{')
         if uri_template.contains('{') {
             // Extract prefix and suffix for template matching
@@ -802,22 +967,14 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             // Generate safe template matching code
             quote! {
                 if uri.starts_with(#prefix) && uri.ends_with(#suffix) && uri.len() >= #prefix.len() + #suffix.len() {
-                    let result = self.#fn_name(uri.to_string(), ctx).await;
-                    return match result {
-                        Ok(r) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
-                        Err(e) => Err(e),
-                    };
+                    #dispatch
                 }
             }
         } else {
             // Exact match for templates without variables
             quote! {
                 if uri == #uri_template {
-                    let result = self.#fn_name(uri.to_string(), ctx).await;
-                    return match result {
-                        Ok(r) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
-                        Err(e) => Err(e),
-                    };
+                    #dispatch
                 }
             }
         }
@@ -865,20 +1022,43 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             quote! { #arg_ident }
         });
 
-        if prompt.arguments.is_empty() {
+        // A prompt returning `McpResult<T>` propagates its error as a JSON-RPC
+        // error. The blanket `IntoPromptResult` conversion renders `Err` as a
+        // *user message* reading "Error: …", which makes a failed render
+        // indistinguishable from a successful one whose text happens to start
+        // that way — the model is then asked to act on the failure.
+        let conversion = if prompt.returns_mcp_error {
             quote! {
-                #prompt_name => {
-                    let result = self.#fn_name(ctx).await;
-                    Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
+                match result {
+                    Ok(value) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(value)),
+                    Err(e) => Err(e),
                 }
             }
         } else {
             quote! {
-                #prompt_name => {
-                    #(#arg_extractions)*
-                    let result = self.#fn_name(#(#call_args,)* ctx).await;
-                    Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
-                }
+                Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
+            }
+        };
+
+        let call = if prompt.arguments.is_empty() {
+            quote! { let result = self.#fn_name(ctx).await; }
+        } else {
+            quote! {
+                #(#arg_extractions)*
+                let result = self.#fn_name(#(#call_args,)* ctx).await;
+            }
+        };
+
+        quote! {
+            #prompt_name => {
+                // Boxed for the same reason as the tool arms.
+                let __result: #turbomcp::__macro_support::turbomcp_core::error::McpResult<
+                    #turbomcp::__macro_support::turbomcp_types::PromptResult
+                > = ::std::boxed::Box::pin(async {
+                    #call
+                    #conversion
+                }).await;
+                __result
             }
         }
     });
@@ -893,7 +1073,12 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             fn server_info(&self) -> #turbomcp::__macro_support::turbomcp_types::ServerInfo {
                 #turbomcp::__macro_support::turbomcp_types::ServerInfo::new(#name, #version)
                     #description_code
+                    #title_code
+                    #website_url_code
+                    #(#icons_code)*
             }
+
+            #instructions_code
 
             fn list_tools(&self) -> Vec<#turbomcp::__macro_support::turbomcp_types::Tool> {
                 vec![#(#tool_list_code),*]

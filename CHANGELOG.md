@@ -7,6 +7,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-09-14
+
+A downstream team filed seven gaps in the handler contract — places where what a
+handler returned was not what reached the client. All seven are fixed. Every one
+had the same shape: information the handler held, that the SDK discarded before
+the wire.
+
+- A tool's error **kind** was flattened to display text, so a client could not
+  tell bad input from an internal fault, and `McpError` had nowhere to carry
+  structured detail onto a JSON-RPC error's `data`.
+- `Json<T>`, the wrapper whose entire purpose is typed output, never populated
+  `structuredContent` — and the code that did populate it wrote values there
+  that the schema forbids.
+- The server-level `instructions` string had **no outlet at all**: the field was
+  defined in the schema and on `InitializeResult`, and no code path emitted it.
+- A `#[prompt]` returning `Err` had it rendered as a *user message* reading
+  `Error: …`, so a failed render was indistinguishable from a successful one.
+- `#[server]` metadata was literal-only, and the content types needed to build a
+  result by hand were not re-exported.
+- Handler bodies were inlined into the dispatch state machines, making every
+  `tools/call` future as large as the fattest tool in the server.
+
+**Why this is 3.4.0 and not 4.0.** The 3.x line exists to keep existing servers
+working, and 4.x is where breaking work belongs — so the bar here is that
+upgrading should be uneventful. Nearly everything below is additive or a
+spec-compliance correction. Two changes need a moment's attention: a new field on
+`ErrorContext` that `cargo semver-checks` flags but that no realistic caller
+touches (*A note on `ErrorContext`*), and three behaviour corrections where the
+old behaviour was itself the bug (*Fixed*). Read those two sections and you have
+read the upgrade.
+
+### Added
+
+- **Tool errors keep their kind.** A `#[tool]` returning `Err(McpError)` still
+  reports a tool execution error (`isError: true`, per SEP-1303, so the model
+  can self-correct), but the classification the convention used to discard now
+  travels in `_meta`: `io.turbomcp/errorKind` (the `ErrorKind`, snake_case) and
+  `io.turbomcp/errorCode` (its JSON-RPC code). A client can finally tell bad
+  input from an internal fault. The spec reserves `_meta` for exactly this —
+  data the client application consumes rather than the model. Applies to
+  argument-validation failures too. Available to hand-written handlers as
+  `McpError::to_tool_result`, and the key names as `turbomcp_core::meta_keys`.
+
+- **`McpError::with_data`** attaches a `serde_json::Value` that reaches the
+  client: as the JSON-RPC error object's `data` member, which was hard-coded to
+  `None`, and as `io.turbomcp/errorData` in a tool result's `_meta`. Nothing
+  else in the error is forwarded verbatim — `operation`, `component`, and
+  `source_location` stay server-side — so this is the one place to put a field
+  path, a retry hint, or a validation report.
+
+  > **Release decision required.** The payload is stored as a new public field
+  > on `turbomcp_core::error::ErrorContext`, and `cargo semver-checks` classes
+  > that as a **major** break (`constructible_struct_adds_field`): a downstream
+  > writing `ErrorContext { operation, component, request_id }` as an exhaustive
+  > literal stops compiling. There is no additive alternative — the value needs
+  > somewhere to live, and every field of both `McpError` and `ErrorContext` is
+  > already public. Nothing in this repository constructs the struct that way,
+  > and the documented path has always been the `with_*` builders, so the real
+  > blast radius is likely zero. Either accept it, or drop `ErrorContext.data`
+  > plus `McpError::{with_data, data}` and the `data:` line in
+  > `From<McpError> for JsonRpcError` to keep this release a minor; the rest of
+  > the changelog is unaffected, and the whole workspace is otherwise clean
+  > against the 3.4.0 baseline.
+
+- **`McpError::with_data`** attaches a `serde_json::Value` that reaches the
+  client: as the JSON-RPC error object's `data` member, which was hard-coded to
+  `None`, and as `io.turbomcp/errorData` in a tool result's `_meta`. Nothing
+  else in the error is forwarded — `operation`, `component`, and
+  `source_location` stay server-side — so this is the one place to put
+  machine-readable detail: a field path, a retry hint, a validation report.
+  See *A note on `ErrorContext`* below.
+
+- **`#[server(instructions = "...")]`** fills the `initialize` result's
+  `instructions` field, which had no outlet: the string was defined in the MCP
+  schema and by `InitializeResult`, but no code path ever emitted it. Backed by
+  a new `McpHandler::instructions` method that defaults to `None`, so the field
+  stays off the wire unless a server supplies one. `CompositeHandler` gains
+  `with_instructions`; a mount's own instructions are deliberately not merged,
+  since each was written for a standalone server and would contradict the
+  composite's prefixed tool names.
+
+- **`#[server]` accepts `title`, `website_url`, and `icons`**, and every value
+  is now an expression rather than a string literal, so server identity can come
+  from the build or the environment:
+  `#[server(name = "svc", version = env!("CARGO_PKG_VERSION"))]`.
+
+- **Content types re-exported from `turbomcp`** — `Content`, `TextContent`,
+  `ImageContent`, `AudioContent`, `EmbeddedResource`, `TextResourceContents`,
+  `BlobResourceContents`, `ResourceTemplate`, `Annotations`,
+  `ToolAnnotations`, `ToolOutputSchema`, `Icon`, and `MetaMap`. Assembling a
+  result by hand previously meant depending on `turbomcp-types` directly or
+  reaching through `ResourceContents::Text`.
+
+### Fixed
+
+- **`Json<T>` now emits `structuredContent`.** It only ever produced a text
+  block, so the one wrapper whose entire purpose is typed output was the one
+  that never populated the typed field, and callers built `ToolResult` by hand
+  to get it. The value is placed in `structuredContent` **when it serializes to
+  a JSON object**, and always mirrored into a text block for clients that
+  ignore structured output.
+
+- **`structuredContent` can no longer hold a non-object.** Every MCP schema
+  version this SDK speaks types the field as `{ [key: string]: unknown }`, but
+  `ToolResult::json` wrote any JSON value there — so returning a `Vec<T>` or a
+  `serde_json::Value` array from a tool produced a result that strict clients
+  reject outright, the same failure mode as the 3.3.0 `$defs` bug. Arrays and
+  scalars now travel in the text block only. **Behaviour change:**
+  `ToolResult::json(&vec![…]).structured_content` is now `None`; use an object
+  wrapper if a client depends on that field.
+
+- **`#[prompt]` handlers propagate `McpError`.** An `Err` was rendered as a
+  *user message* reading `Error: …`, so a failed render was indistinguishable
+  from a successful one and the model was asked to act on the failure — despite
+  the trait comment promising propagation. A prompt returning `McpResult<T>` or
+  `Result<T, McpError>` now returns a JSON-RPC error. Handlers with other error
+  types keep the old rendering, which is all a bare `Display` value allows.
+
+- **Handler bodies no longer inflate the dispatch futures.** `call_tool`,
+  `read_resource`, and `get_prompt` are each generated as one `async` block
+  with a `match` arm per handler, so the resulting state machine was at least as
+  large as the fattest handler body — and it is returned by value, moved into
+  tasks, and held for the whole call. A 30-tool server whose largest tool held a
+  10 KiB local measured a 10776-byte `call_tool` future; boxing each arm brought
+  it to 192 bytes, and the size is now independent of handler count and body
+  size alike. One allocation per dispatch, against JSON parsing already on that
+  path.
+
+  (The original report attributed this to arms *summing* into one frame. They do
+  not — `rustc` overlaps disjoint match arms, so the cost was max-over-arms, not
+  the sum. Boxing removes it either way.)
+
+- **Unknown `#[server]` attribute keys are a compile error** instead of being
+  silently dropped, matching what `#[tool]` has done since 3.2.0. This only
+  affects code carrying a key that never did anything, such as a typo.
+
+### A note on `ErrorContext`
+
+Storing the `with_data` payload required a new public field on
+`turbomcp_core::error::ErrorContext`, and `cargo semver-checks` classes that as
+a major break (`constructible_struct_adds_field`): code that builds the struct
+with an exhaustive literal —
+`ErrorContext { operation, component, request_id }` — stops compiling.
+
+We are shipping it in a minor anyway, deliberately. `ErrorContext` is a context
+bag that exists to be defaulted and then filled through
+`McpError::with_operation`, `with_component`, and `with_request_id`; those
+builders have always been the documented and only sensible way to reach it.
+Nothing constructs it literally in this repository, and a downstream doing so
+would be reaching past the API into a struct that carries no invariants. The
+fix, if anyone is: add `..Default::default()`.
+
+The alternative was to leave the gap open until 4.x, and that traded a
+real, reported defect — a server having no way to tell a client *why* a call
+failed — against a break with no plausible victim. Every other change in this
+release is additive; the workspace is otherwise clean against the 3.3.0
+baseline.
+
 ### Internal
 
 - **22 unused `[workspace.dependencies]` entries dropped** — 16 were referenced

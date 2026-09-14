@@ -1144,6 +1144,10 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
         self.inner.server_info()
     }
 
+    fn instructions(&self) -> Option<String> {
+        self.inner.instructions()
+    }
+
     fn server_capabilities(&self) -> turbomcp_types::ServerCapabilities {
         self.inner.server_capabilities()
     }

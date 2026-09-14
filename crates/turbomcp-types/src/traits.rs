@@ -339,12 +339,21 @@ impl IntoPromptResult for &str {
     }
 }
 
+/// Last-resort rendering for prompt handlers whose error type is **not**
+/// `McpError`.
+///
+/// The error becomes a user message reading `Error: …`, which a model will read
+/// as prompt content — a failed render then looks like a successful one. There
+/// is nothing better to do here, because a bare `Display` value carries no
+/// classification to propagate.
+///
+/// Return [`McpResult`](https://docs.rs/turbomcp-core) from a `#[prompt]`
+/// instead: the `#[server]` macro detects that signature and propagates the
+/// error as a JSON-RPC error rather than routing it through this impl.
 impl<T: IntoPromptResult, E: Display> IntoPromptResult for Result<T, E> {
     fn into_prompt_result(self) -> PromptResult {
         match self {
             Ok(v) => v.into_prompt_result(),
-            // Note: Errors are converted to user messages for compatibility.
-            // For proper error propagation, return McpResult from handlers.
             Err(e) => PromptResult::user(format!("Error: {e}")),
         }
     }
@@ -426,9 +435,23 @@ mod tests {
 
     #[test]
     fn test_vec_into_tool_result() {
+        // A Vec serializes to a JSON array, and `structuredContent` is typed
+        // `{ [key: string]: unknown }` in every schema version this SDK
+        // speaks — so the value travels as text only. Emitting the array there
+        // made the whole result invalid for validating clients.
         let v = vec!["a", "b", "c"];
         let result = v.into_tool_result();
-        assert!(result.structured_content.is_some());
+        assert_eq!(result.structured_content, None);
+        assert_eq!(
+            result.first_text(),
+            Some("[\n  \"a\",\n  \"b\",\n  \"c\"\n]")
+        );
+    }
+
+    #[test]
+    fn test_object_into_tool_result_keeps_structured_content() {
+        let result = serde_json::json!({ "a": 1 }).into_tool_result();
+        assert_eq!(result.structured_content, Some(serde_json::json!({"a": 1})));
     }
 
     #[test]

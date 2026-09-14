@@ -208,6 +208,20 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
     /// server metadata to the client.
     fn server_info(&self) -> ServerInfo;
 
+    /// Natural-language guidance returned to the client as the `instructions`
+    /// field of the `initialize` result.
+    ///
+    /// The spec describes it as a hint for how to use the server and its
+    /// tools — a client may surface it to the model the way a system prompt
+    /// would. Distinct from [`ServerInfo::description`], which identifies the
+    /// implementation rather than instructing its user.
+    ///
+    /// `None` by default, in which case the field is omitted. The `#[server]`
+    /// macro implements this from its `instructions = "..."` argument.
+    fn instructions(&self) -> Option<alloc::string::String> {
+        None
+    }
+
     /// Returns the server capabilities advertised during initialization.
     ///
     /// Override this when the server supports capabilities that cannot be

@@ -74,6 +74,13 @@ pub struct ErrorContext {
     /// Request ID for tracing
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Structured payload for the JSON-RPC error object's `data` member.
+    ///
+    /// Unlike [`source_location`](McpError::source_location), this is meant to
+    /// reach the client: it is set explicitly by the server author via
+    /// [`McpError::with_data`], so it carries only what they chose to expose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 /// Error classification for programmatic handling.
@@ -459,6 +466,86 @@ impl McpError {
             .get_or_insert_with(|| alloc::boxed::Box::new(ErrorContext::default()));
         ctx.request_id = Some(request_id.into());
         self
+    }
+
+    /// Attach a structured payload that travels to the client.
+    ///
+    /// The value becomes the JSON-RPC error object's `data` member (see
+    /// `From<McpError> for JsonRpcError`) and the `io.turbomcp/errorData`
+    /// entry of a tool result's `_meta` (see [`Self::to_tool_result`]).
+    /// Nothing else in the error is forwarded verbatim — `operation`,
+    /// `component`, and `source_location` stay server-side — so this is the one
+    /// place to put machine-readable detail: a field path, a retry hint, a
+    /// validation report.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_core::error::McpError;
+    ///
+    /// let err = McpError::invalid_params("start must precede end")
+    ///     .with_data(serde_json::json!({ "field": "start", "got": "2026-01-02" }));
+    /// assert_eq!(err.data().unwrap()["field"], "start");
+    /// ```
+    #[must_use]
+    pub fn with_data(mut self, data: serde_json::Value) -> Self {
+        let ctx = self
+            .context
+            .get_or_insert_with(|| alloc::boxed::Box::new(ErrorContext::default()));
+        ctx.data = Some(data);
+        self
+    }
+
+    /// The structured payload set by [`Self::with_data`], if any.
+    #[must_use]
+    pub fn data(&self) -> Option<&serde_json::Value> {
+        self.context.as_ref().and_then(|ctx| ctx.data.as_ref())
+    }
+
+    /// Render this error as a tool execution error, preserving its kind.
+    ///
+    /// Per MCP (SEP-1303) a tool that runs and fails reports the failure in
+    /// its result with `isError: true`, not as a JSON-RPC error, so the model
+    /// can read it and self-correct. That convention alone would erase the
+    /// error's classification, leaving a client unable to tell bad input from
+    /// an internal fault. The classification is therefore carried in `_meta`,
+    /// which the spec reserves for data the client — not the model — consumes:
+    ///
+    /// | key | value |
+    /// |-----|-------|
+    /// | `io.turbomcp/errorKind` | the [`ErrorKind`] as a snake_case string |
+    /// | `io.turbomcp/errorCode` | the JSON-RPC code the kind maps to |
+    /// | `io.turbomcp/errorData` | the [`Self::with_data`] payload, when set |
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_core::error::McpError;
+    ///
+    /// let result = McpError::invalid_params("bad date").to_tool_result();
+    /// assert!(result.is_error());
+    /// let meta = result.meta.unwrap();
+    /// assert_eq!(meta["io.turbomcp/errorCode"], -32602);
+    /// assert_eq!(meta["io.turbomcp/errorKind"], "invalid_params");
+    /// ```
+    #[must_use]
+    pub fn to_tool_result(&self) -> turbomcp_types::ToolResult {
+        use alloc::string::ToString;
+
+        let mut meta = turbomcp_types::MetaMap::new();
+        meta.insert(
+            crate::meta_keys::ERROR_KIND.to_string(),
+            serde_json::to_value(self.kind).unwrap_or(serde_json::Value::Null),
+        );
+        meta.insert(
+            crate::meta_keys::ERROR_CODE.to_string(),
+            serde_json::Value::from(self.jsonrpc_error_code()),
+        );
+        if let Some(data) = self.data() {
+            meta.insert(crate::meta_keys::ERROR_DATA.to_string(), data.clone());
+        }
+
+        turbomcp_types::ToolResult::error(self.to_string()).with_meta(meta)
     }
 
     /// Set the source location (typically file:line)

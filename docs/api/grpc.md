@@ -8,7 +8,7 @@ logging/timing.
 
 ```toml
 [dependencies]
-turbomcp-grpc = "3.3.0"
+turbomcp-grpc = "3.4.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tonic = "0.14"
 ```

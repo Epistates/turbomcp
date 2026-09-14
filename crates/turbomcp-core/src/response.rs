@@ -202,26 +202,35 @@ where
 #[derive(Debug, Clone)]
 pub struct Json<T>(pub T);
 
-/// Pretty-print `value` to JSON and enforce `MAX_MESSAGE_SIZE`.
+/// Serialize `value` once, then render it, enforcing `MAX_MESSAGE_SIZE`.
 ///
-/// Returns the encoded JSON on success, or a user-facing error string suitable
-/// for placing into a tool-result error variant.
-fn encode_json_for_tool<T: Serialize>(value: &T) -> Result<String, String> {
-    match serde_json::to_string_pretty(value) {
+/// Returns the `serde_json::Value` alongside its pretty-printed text so callers
+/// can populate `structuredContent` and the text mirror from a single
+/// serialization pass, or a user-facing error string suitable for placing into
+/// a tool-result error variant.
+fn encode_json_for_tool<T: Serialize>(value: &T) -> Result<(serde_json::Value, String), String> {
+    let value =
+        serde_json::to_value(value).map_err(|e| format!("JSON serialization failed: {e}"))?;
+    match serde_json::to_string_pretty(&value) {
         Ok(json) if json.len() > crate::MAX_MESSAGE_SIZE => Err(format!(
             "JSON output too large: {} bytes exceeds {} byte limit",
             json.len(),
             crate::MAX_MESSAGE_SIZE
         )),
-        Ok(json) => Ok(json),
+        Ok(json) => Ok((value, json)),
         Err(e) => Err(format!("JSON serialization failed: {e}")),
     }
 }
 
+use turbomcp_types::structured_content_if_object as structured_if_object;
+
 impl<T: Serialize> IntoToolResponse for Json<T> {
     fn into_tool_response(self) -> CallToolResult {
         match encode_json_for_tool(&self.0) {
-            Ok(json) => CallToolResult::text(json),
+            Ok((value, json)) => CallToolResult {
+                structured_content: structured_if_object(value),
+                ..CallToolResult::text(json)
+            },
             Err(msg) => ToolError::new(msg).into_tool_response(),
         }
     }
@@ -230,7 +239,10 @@ impl<T: Serialize> IntoToolResponse for Json<T> {
 impl<T: Serialize> turbomcp_types::IntoToolResult for Json<T> {
     fn into_tool_result(self) -> turbomcp_types::ToolResult {
         match encode_json_for_tool(&self.0) {
-            Ok(json) => turbomcp_types::ToolResult::text(json),
+            Ok((value, json)) => turbomcp_types::ToolResult {
+                structured_content: structured_if_object(value),
+                ..turbomcp_types::ToolResult::text(json)
+            },
             Err(msg) => turbomcp_types::ToolResult::error(msg),
         }
     }

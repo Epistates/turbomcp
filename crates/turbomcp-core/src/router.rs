@@ -368,6 +368,12 @@ fn build_initialize_result<H: McpHandler>(
     result.insert("capabilities".to_string(), Value::Object(capabilities));
     result.insert("serverInfo".to_string(), Value::Object(server_info));
 
+    // Optional per the schema: emit it only when the server supplies one, so
+    // clients can distinguish "no guidance" from "empty guidance".
+    if let Some(instructions) = handler.instructions() {
+        result.insert("instructions".to_string(), Value::String(instructions));
+    }
+
     Value::Object(result)
 }
 

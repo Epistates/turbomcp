@@ -91,10 +91,10 @@
 //!
 //! ```toml
 //! # Minimal (STDIO only, recommended for CLI tools)
-//! turbomcp = { version = "3.3.0", default-features = false, features = ["minimal"] }
+//! turbomcp = { version = "3.4.0", default-features = false, features = ["minimal"] }
 //!
 //! # Full (all transports)
-//! turbomcp = { version = "3.3.0", features = ["full"] }
+//! turbomcp = { version = "3.4.0", features = ["full"] }
 //! ```
 //!
 //! Available features:
@@ -146,6 +146,18 @@ pub use turbomcp_types::{
     IntoPromptResult, IntoResourceResult, IntoToolResult, Message, Prompt, PromptArgument,
     PromptResult, Resource, ResourceContents, ResourceLink, ResourceResult, Role, SamplingContent,
     SamplingContentBlock, ServerInfo, Tool, ToolInputSchema, ToolResult,
+};
+
+// Content and metadata types. Building a result by hand — the way you must to
+// set `structuredContent`, annotations, or a non-text resource body — needs the
+// concrete variant types, not just the enums that wrap them. Without these a
+// caller has to depend on `turbomcp-types` directly or reach through
+// `ResourceContents::Text`.
+pub use turbomcp_types::{
+    Annotations, AudioContent, BlobResourceContents, Content, EmbeddedResource, Icon, IconTheme,
+    ImageContent, Implementation, MetaMap, PromptMessage, ResourceAnnotations, ResourceTemplate,
+    TextContent, TextResourceContents, ToolAnnotations, ToolOutputSchema,
+    structured_content_if_object,
 };
 
 // Re-export server builder and transport
@@ -334,6 +346,12 @@ pub mod prelude {
     pub use super::{
         CallToolRequest, CallToolResult, Message, Prompt, PromptArgument, RequestContext, Resource,
         ResourceContents, Role, ServerInfo, Tool, ToolInputSchema,
+    };
+
+    // Content block types, for handlers that assemble results by hand.
+    pub use super::{
+        Annotations, AudioContent, BlobResourceContents, Content, EmbeddedResource, Icon,
+        ImageContent, ResourceTemplate, TextContent, TextResourceContents, ToolAnnotations,
     };
 
     // Unified response types

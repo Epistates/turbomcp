@@ -689,13 +689,19 @@ impl JsonRpcOutgoing {
     }
 }
 
-/// Conversion from McpError to JsonRpcError
+/// Conversion from McpError to JsonRpcError.
+///
+/// `data` carries whatever the server author attached with
+/// [`McpError::with_data`](crate::error::McpError::with_data) and nothing else:
+/// the remaining context fields (`operation`, `component`, `source_location`)
+/// stay server-side, because they describe TurboMCP internals rather than the
+/// client's request.
 impl From<crate::error::McpError> for JsonRpcError {
     fn from(err: crate::error::McpError) -> Self {
         Self {
             code: err.jsonrpc_code(),
             message: err.message.clone(),
-            data: None,
+            data: err.data().cloned(),
         }
     }
 }

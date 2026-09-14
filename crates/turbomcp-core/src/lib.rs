@@ -267,6 +267,30 @@ pub mod methods {
     pub const ROOTS_LIST_CHANGED: &str = "notifications/roots/list_changed";
 }
 
+/// Keys TurboMCP writes into MCP `_meta` maps.
+///
+/// MCP reserves `_meta` for data the client application consumes rather than
+/// the model, and requires third-party keys to be prefixed with a reverse-DNS
+/// label whose second component is neither `modelcontextprotocol` nor `mcp`.
+/// Everything TurboMCP adds therefore lives under `io.turbomcp/`, named once
+/// here so the wire format has a single source of truth.
+pub mod meta_keys {
+    /// Reverse-DNS prefix owned by this SDK.
+    pub const PREFIX: &str = "io.turbomcp/";
+
+    /// [`crate::error::ErrorKind`] of a failed tool call, snake_case.
+    ///
+    /// A tool that runs and fails reports `isError: true` with a human-readable
+    /// message; this preserves the classification that convention discards.
+    pub const ERROR_KIND: &str = "io.turbomcp/errorKind";
+
+    /// JSON-RPC code the failed tool call's [`crate::error::ErrorKind`] maps to.
+    pub const ERROR_CODE: &str = "io.turbomcp/errorCode";
+
+    /// Structured payload attached with [`crate::error::McpError::with_data`].
+    pub const ERROR_DATA: &str = "io.turbomcp/errorData";
+}
+
 /// Protocol error codes (JSON-RPC standard + MCP extensions)
 pub mod error_codes {
     /// Parse error (-32700)

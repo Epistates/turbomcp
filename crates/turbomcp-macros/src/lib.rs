@@ -82,7 +82,17 @@ mod tool;
 ///
 /// - `name = "server-name"` - Server name (defaults to struct name)
 /// - `version = "1.0.0"` - Server version (defaults to "1.0.0")
-/// - `description = "..."` - Server description
+/// - `description = "..."` - What this implementation *is*
+/// - `title = "..."` - Human-readable display name (SEP-973)
+/// - `instructions = "..."` - How to *use* this server. Returned as the
+///   `initialize` result's `instructions` field, which clients may hand to the
+///   model much like a system prompt.
+/// - `website_url = "..."` - Homepage for this implementation
+/// - `icons = ["https://…/icon.png"]` - Icon sources (SEP-973)
+///
+/// Every value is an expression, not just a string literal, so server identity
+/// can come from the build or the environment. Unknown keys are a compile
+/// error rather than a silent no-op.
 ///
 /// # Example
 ///
@@ -92,7 +102,12 @@ mod tool;
 /// #[derive(Clone)]
 /// struct MyServer;
 ///
-/// #[server(name = "my-server", version = "1.0.0", description = "A demo server")]
+/// #[server(
+///     name = "my-server",
+///     version = env!("CARGO_PKG_VERSION"),
+///     description = "A demo server",
+///     instructions = "Call `add` for arithmetic. Values are i64."
+/// )]
 /// impl MyServer {
 ///     /// Add two numbers
 ///     #[tool]
@@ -106,6 +121,22 @@ mod tool;
 ///     MyServer.run_stdio().await.unwrap();
 /// }
 /// ```
+///
+/// # Handler errors
+///
+/// A handler whose return type names `McpError` (`McpResult<T>` or
+/// `Result<T, McpError>`) gets error-kind-aware dispatch:
+///
+/// - **Tools** report the failure as a tool execution error (`isError: true`,
+///   per SEP-1303, so the model can self-correct) and preserve the
+///   classification in `_meta` under `io.turbomcp/errorKind` and
+///   `io.turbomcp/errorCode`, plus `io.turbomcp/errorData` when the error
+///   carries [`McpError::with_data`](turbomcp_core::error::McpError::with_data).
+/// - **Prompts and resources** propagate the error as a JSON-RPC error. A
+///   failed render is not a successful one whose text begins "Error:".
+///
+/// Handlers returning other types keep the plain `Display` conversion, which
+/// has no kind to preserve.
 #[proc_macro_attribute]
 pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
     server::generate_server(args, input)
