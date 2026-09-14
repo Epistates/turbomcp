@@ -1,6 +1,6 @@
 # v4 documentation
 
-The active candidate is 4.0.0-alpha.4. The codebase provides the library/server
+The active candidate is 4.0.0-alpha.5. The codebase provides the library/server
 and typed client, three protocol revisions, stdio/HTTP transports, WebSocket as
 a convenience transport, OAuth, telemetry, and Tasks. There is no v4 standalone
 MCP proxy, CLI, OpenAPI adapter, or implemented Apps extension. Trusted HTTP

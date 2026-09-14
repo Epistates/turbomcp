@@ -8,7 +8,7 @@ A ground-up Rust SDK for the [Model Context Protocol](https://modelcontextprotoc
 both halves of the protocol, server **and** client — with a macro-driven,
 zero-boilerplate surface and strict spec compliance as a feature.
 
-> **Status: `4.0.0-alpha.4` — a prerelease for community testing.** v4 is a
+> **Status: `4.0.0-alpha.5` — a prerelease for community testing.** v4 is a
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
 > MSRV 1.88. It interoperates with the official Rust SDK in both directions, on
 > both revisions, and both halves are scored against the official MCP conformance

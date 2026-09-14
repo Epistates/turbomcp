@@ -4,7 +4,7 @@ A ground-up Rust SDK for the [Model Context Protocol](https://modelcontextprotoc
 both halves of the protocol — server **and** client — with a macro-driven,
 zero-boilerplate surface and strict spec compliance as a feature.
 
-> **Status: `4.0.0-alpha.4` — a prerelease for community testing.** A
+> **Status: `4.0.0-alpha.5` — a prerelease for community testing.** A
 > ground-up rewrite of `turbomcp` for the v4 major version; the stable line is
 > `3.x`. Edition 2024, MSRV 1.88. Both halves pass the official MCP conformance
 > suite with zero failures, skips, or warnings using pinned client fixture

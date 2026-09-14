@@ -7,16 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [4.0.0-alpha.5] - 2026-09-13
 
-- Graceful shutdown no longer discards a reply that was mid-write when the
-  shutdown token fired. The `serve` driver raced the token against the write of
-  a frame it had already taken out of the outbound channel, so nothing else
-  held a copy; worse, it then treated the abandoned write as a possibly-partial
-  frame, which skipped the drain entirely and aborted every other in-flight
-  handler. The write is bounded by `drain_timeout` on its own, which is the
-  same budget the drain gets. The busier the server, the likelier this was: it
-  needs only a non-empty outbound channel at the moment shutdown fires.
+One graceful-shutdown correctness fix, one SSRF policy addition, and the
+dependency refresh. Two breaking changes, both listed below.
 
 ### Added
 
@@ -46,6 +40,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_max_response_bytes`, `with_public_only`, `with_loopback_http`, and
   `with_allowed_ranges` methods; struct-literal construction from outside the
   crate no longer compiles. Reading the fields is unchanged.
+
+### Fixed
+
+- Graceful shutdown no longer discards a reply that was mid-write when the
+  shutdown token fired. The `serve` driver raced the token against the write of
+  a frame it had already taken out of the outbound channel, so nothing else
+  held a copy; worse, it then treated the abandoned write as a possibly-partial
+  frame, which skipped the drain entirely and aborted every other in-flight
+  handler. The write is bounded by `drain_timeout` on its own, which is the
+  same budget the drain gets. The busier the server, the likelier this was: it
+  needs only a non-empty outbound channel at the moment shutdown fires.
+
+### Internal
+
+- Every `tokio::select!` in the workspace audited for the shape behind that
+  shutdown defect: a branch holding a value already taken from its channel. The
+  other 21 sites are clean, and the one deliberate exception (the client
+  connection loop, where `close()` must return promptly) now says so.
+- `just lock-check` and `just refresh-locks` cover the renamed-dependency
+  fixture's lockfile, which CI checks with `--locked` and no Dependabot
+  ecosystem maintains. Every dependency bump was failing on it.
 
 ## [4.0.0-alpha.4] - 2026-09-10
 
