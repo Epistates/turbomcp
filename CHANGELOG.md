@@ -61,6 +61,11 @@ dependency refresh. Two breaking changes, both listed below.
 - `just lock-check` and `just refresh-locks` cover the renamed-dependency
   fixture's lockfile, which CI checks with `--locked` and no Dependabot
   ecosystem maintains. Every dependency bump was failing on it.
+- 38 unused `[workspace.dependencies]` entries dropped (96 → 58), porting the
+  same cleanup from the v3 line. No member crate referenced any of them and
+  none reached a lockfile, so the build graph is unchanged; what they cost was
+  a version list that implied a dependency set we do not have, and review time
+  on bumps to crates nothing compiles.
 
 ## [4.0.0-alpha.4] - 2026-09-10
 
