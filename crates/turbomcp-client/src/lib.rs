@@ -25,10 +25,12 @@ mod stdio;
 pub use client::{Client, ClientBuilder, ConnectMode};
 pub use connection::{Connection, DEFAULT_REQUEST_TIMEOUT};
 pub use error::{ClientError, ClientResult};
-pub use handler::ClientHandler;
+pub use handler::{
+    ClientHandlers, ElicitationHandler, NotificationHandler, RootsHandler, SamplingHandler,
+};
 pub use stdio::connect_child;
 
-/// Re-exported so implementers of [`ClientHandler`] can write
+/// Re-exported so implementers of [`ElicitationHandler`] can write
 /// `#[async_trait]` without taking a direct dependency on the crate.
 pub use async_trait::async_trait;
 

@@ -96,6 +96,13 @@ pub mod notification {
     pub const RESOURCES_UPDATED: &str = "notifications/resources/updated";
     /// `notifications/prompts/list_changed` — the prompt list changed.
     pub const PROMPTS_LIST_CHANGED: &str = "notifications/prompts/list_changed";
+    /// `notifications/roots/list_changed` — the *client's* root list changed.
+    ///
+    /// The one list-changed notification that travels client→server, and the
+    /// only client→server notification besides `cancelled`/`initialized`. Sent
+    /// only by clients that declared `roots.listChanged`; `2026-07-28` dropped
+    /// that sub-capability, so it belongs to the stateful revisions.
+    pub const ROOTS_LIST_CHANGED: &str = "notifications/roots/list_changed";
     /// `notifications/progress` — progress for a request that carried a
     /// `progressToken`, delivered on that request's own stream.
     pub const PROGRESS: &str = "notifications/progress";

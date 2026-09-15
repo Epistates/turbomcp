@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
-use turbomcp_client::{Client, ClientBuilder, ClientError, ClientHandler};
+use turbomcp_client::{
+    Client, ClientBuilder, ClientError, ElicitationHandler, NotificationHandler,
+};
 use turbomcp_codec::SerdeJsonCodec;
 use turbomcp_core::LogLevel;
 use turbomcp_protocol::neutral;
@@ -59,11 +61,14 @@ struct Spy {
 }
 
 #[async_trait]
-impl ClientHandler for Spy {
+impl ElicitationHandler for Spy {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
     }
+}
 
+#[async_trait]
+impl NotificationHandler for Spy {
     async fn on_notification(&self, method: String, _params: Option<Value>) {
         self.seen.lock().unwrap().push(method);
     }
@@ -81,7 +86,10 @@ where
     let (rd, wr) = split(client_io);
     let mut builder = ClientBuilder::new("subscriber", "1.0.0").with_response_cache(false);
     if let Some(handler) = handler {
-        builder = builder.with_handler(HandlerArc(handler));
+        let shared = HandlerArc(handler);
+        builder = builder
+            .with_elicitation(shared.clone())
+            .with_notifications(shared);
     }
     builder
         .connect(LineTransport::new(BufReader::new(rd), wr, SerdeJsonCodec))
@@ -89,14 +97,19 @@ where
         .expect("handshake")
 }
 
-/// `ClientHandler` is consumed by value; this shares one `Spy` with the test.
+/// Handlers are consumed by value; this shares one `Spy` with the test.
+#[derive(Clone)]
 struct HandlerArc(Arc<Spy>);
 
 #[async_trait]
-impl ClientHandler for HandlerArc {
+impl ElicitationHandler for HandlerArc {
     async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         self.0.elicit(request).await
     }
+}
+
+#[async_trait]
+impl NotificationHandler for HandlerArc {
     async fn on_notification(&self, method: String, params: Option<Value>) {
         self.0.on_notification(method, params).await;
     }

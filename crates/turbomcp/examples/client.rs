@@ -12,26 +12,29 @@
 //! It covers the pieces a real client needs: the handshake and what it
 //! negotiated, enumerating the server's capabilities, calling a tool and
 //! reading its content back, and handling server→client requests
-//! (elicitation) through a [`ClientHandler`].
+//! (elicitation) through an [`ElicitationHandler`].
 
 use std::path::PathBuf;
 
 use serde_json::{Map, json};
 use tokio::process::Command;
-use turbomcp::client::{ClientBuilder, ClientHandler, connect_child};
+use turbomcp::client::{ClientBuilder, ElicitationHandler, NotificationHandler, connect_child};
 use turbomcp::neutral;
 
 /// How this client answers server→client requests.
 ///
 /// A server can ask the *client* for things mid-request: input from the user
 /// (`elicitation/create`), an LLM completion (`sampling/createMessage`), or the
-/// filesystem roots it may touch (`roots/list`). The trait's defaults decline
-/// sampling and report no roots, so you implement only what you support — but
-/// `elicit` has no safe default and is always yours to answer.
+/// filesystem roots it may touch (`roots/list`). Each is its own trait, and
+/// **registering one is what advertises it** — there is no separate capability
+/// list to keep in step, because a server must not send what the client did not
+/// declare, and a declaration that disagrees with the code is invisible to both
+/// sides. This client answers elicitation and nothing else, so that is exactly
+/// what the server is told.
 struct Cli;
 
 #[turbomcp::client::async_trait]
-impl ClientHandler for Cli {
+impl ElicitationHandler for Cli {
     async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         // A real client would render `request.message` and
         // `request.requested_schema` and collect the user's answer. Declining
@@ -39,7 +42,10 @@ impl ClientHandler for Cli {
         eprintln!("server asked: {}", request.message);
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
     }
+}
 
+#[turbomcp::client::async_trait]
+impl NotificationHandler for Cli {
     async fn on_notification(&self, method: String, _params: Option<serde_json::Value>) {
         eprintln!("notification: {method}");
     }
@@ -68,7 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn the server and run the handshake. `connect_child` hands back the
     // `Child` too, so process lifetime stays the caller's to manage.
     let (client, mut child) = connect_child(
-        ClientBuilder::new("example-client", "1.0.0").with_handler(Cli),
+        ClientBuilder::new("example-client", "1.0.0")
+            .with_elicitation(Cli)
+            .with_notifications(Cli),
         {
             let mut cmd = Command::new(&server);
             cmd.kill_on_drop(true);

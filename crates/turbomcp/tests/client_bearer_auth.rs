@@ -23,7 +23,7 @@ use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde_json::{Value, json};
-use turbomcp::client::{BearerSource, ClientBuilder, ClientHandler, ConnectMode, async_trait};
+use turbomcp::client::{BearerSource, ClientBuilder, ConnectMode, ElicitationHandler, async_trait};
 use turbomcp::neutral;
 
 /// Every `Authorization` header the mock saw, tagged with the HTTP method.
@@ -32,7 +32,7 @@ type Seen = Arc<Mutex<Vec<(String, Option<String>)>>>;
 struct Silent;
 
 #[async_trait]
-impl ClientHandler for Silent {
+impl ElicitationHandler for Silent {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, serde_json::Map::new())
     }
@@ -106,7 +106,7 @@ async fn every_request_kind_carries_the_bearer_token() {
         .expect("build transport")
         .with_bearer("token-abc");
     let client = ClientBuilder::new("bearer-test", "1.0.0")
-        .with_handler(Silent)
+        .with_elicitation(Silent)
         .with_connect_mode(ConnectMode::Legacy)
         .connect(transport)
         .await
@@ -163,7 +163,7 @@ async fn a_refreshed_token_applies_without_reconnecting() {
         .expect("build transport")
         .with_bearer_source(Arc::clone(&rotating) as Arc<dyn BearerSource>);
     let client = ClientBuilder::new("refresh-test", "1.0.0")
-        .with_handler(Silent)
+        .with_elicitation(Silent)
         .with_connect_mode(ConnectMode::Legacy)
         .connect(transport)
         .await

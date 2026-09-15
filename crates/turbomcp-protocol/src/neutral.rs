@@ -20,6 +20,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde_json::{Map, Value};
+use turbomcp_core::ProtocolVersion;
 
 use crate::v2025_06_18::types as v06;
 use crate::v2025_11_25::types as legacy;
@@ -1493,6 +1494,191 @@ impl CompleteParams {
             argument,
             context_arguments: BTreeMap::new(),
         }
+    }
+}
+
+// ---- client capabilities --------------------------------------------------
+
+/// What a client can answer when the server calls back.
+///
+/// Derived from which handlers a client registers rather than written by hand,
+/// for the same reason `#[server]` derives the server's: a capability object
+/// that disagrees with the implementation is a bug neither side can see. Over-
+/// declaring makes the server send requests the client refuses; under-declaring
+/// makes it skip features the client implements, silently, because refusing to
+/// send what was not declared is a spec MUST (SEP-2322) and the server obeys it.
+///
+/// The *sub*-capabilities matter as much as the top-level ones: a client that
+/// declares `elicitation` without `url` is saying it can render a form and not
+/// a consent page, and a server that ignores the difference will strand the
+/// user on an interaction they were never shown.
+///
+/// Render with [`to_wire`](Self::to_wire), which drops what a revision predates
+/// (`2025-06-18` has no elicitation or sampling sub-capabilities; `2026-07-28`
+/// has no `roots.listChanged`) so one declaration is correct on every wire.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClientCapabilities {
+    /// Set when the client can answer `elicitation/create`.
+    pub elicitation: Option<ElicitationCapability>,
+    /// Set when the client can answer `sampling/createMessage`.
+    pub sampling: Option<SamplingCapability>,
+    /// Set when the client can answer `roots/list`.
+    pub roots: Option<RootsCapability>,
+    /// Non-standard capabilities, passed through untouched.
+    pub experimental: Option<Map<String, Value>>,
+    /// Extensions this client participates in, keyed by extension id. Only the
+    /// `2026-07-28` shape has this field, so it is dropped on the older wires.
+    pub extensions: Option<Map<String, Value>>,
+}
+
+/// Which elicitation modes a client can present.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ElicitationCapability {
+    /// The client can render a form from `requestedSchema`.
+    pub form: bool,
+    /// The client can send the user out of band to a URL.
+    pub url: bool,
+}
+
+/// Which sampling features a client supports.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SamplingCapability {
+    /// The client honours `includeContext`. Undeclared, the spec says servers
+    /// SHOULD send only `includeContext: "none"` (or omit it).
+    pub context: bool,
+    /// The client honours `tools` / `toolChoice` (agentic sampling).
+    pub tools: bool,
+}
+
+/// How a client exposes its roots.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RootsCapability {
+    /// The client emits `notifications/roots/list_changed` when its roots
+    /// change. Not part of the `2026-07-28` shape, so dropped on that wire.
+    pub list_changed: bool,
+}
+
+impl ElicitationCapability {
+    /// A client that can render a form but not navigate to a URL.
+    #[must_use]
+    pub fn form() -> Self {
+        Self {
+            form: true,
+            url: false,
+        }
+    }
+
+    /// Declare URL-mode support.
+    #[must_use]
+    pub fn with_url(mut self, url: bool) -> Self {
+        self.url = url;
+        self
+    }
+}
+
+impl SamplingCapability {
+    /// Sampling with neither `context` nor `tools`.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Declare that the client honours `includeContext`.
+    #[must_use]
+    pub fn with_context(mut self, context: bool) -> Self {
+        self.context = context;
+        self
+    }
+
+    /// Declare that the client honours `tools` / `toolChoice`.
+    #[must_use]
+    pub fn with_tools(mut self, tools: bool) -> Self {
+        self.tools = tools;
+        self
+    }
+}
+
+impl RootsCapability {
+    /// Roots without change notifications.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Declare that the client emits `notifications/roots/list_changed`.
+    #[must_use]
+    pub fn with_list_changed(mut self, list_changed: bool) -> Self {
+        self.list_changed = list_changed;
+        self
+    }
+}
+
+impl ClientCapabilities {
+    /// An empty declaration: the client answers no server→client requests.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Render for `version`, dropping the fields that revision predates.
+    ///
+    /// Always an object, never `null`: "I support nothing" is `{}`, which is a
+    /// statement, where a missing `capabilities` is a malformed handshake.
+    #[must_use]
+    pub fn to_wire(&self, version: ProtocolVersion) -> Value {
+        // `2025-06-18` has the three capabilities but none of their
+        // sub-objects; declaring a sub-object there would assert something its
+        // schema cannot express.
+        let sub_capabilities = !matches!(version, ProtocolVersion::V2025_06_18);
+        let mut out = Map::new();
+        if let Some(e) = self.elicitation {
+            let mut o = Map::new();
+            if sub_capabilities {
+                if e.form {
+                    o.insert("form".into(), Value::Object(Map::new()));
+                }
+                if e.url {
+                    o.insert("url".into(), Value::Object(Map::new()));
+                }
+            }
+            out.insert("elicitation".into(), Value::Object(o));
+        }
+        if let Some(s) = self.sampling {
+            let mut o = Map::new();
+            if sub_capabilities {
+                if s.context {
+                    o.insert("context".into(), Value::Object(Map::new()));
+                }
+                if s.tools {
+                    o.insert("tools".into(), Value::Object(Map::new()));
+                }
+            }
+            out.insert("sampling".into(), Value::Object(o));
+        }
+        if let Some(r) = self.roots {
+            let mut o = Map::new();
+            // `2026-07-28` dropped `listChanged` from the roots capability.
+            if r.list_changed && !matches!(version, ProtocolVersion::V2026_07_28) {
+                o.insert("listChanged".into(), Value::Bool(true));
+            }
+            out.insert("roots".into(), Value::Object(o));
+        }
+        if let Some(x) = &self.experimental
+            && !x.is_empty()
+        {
+            out.insert("experimental".into(), Value::Object(x.clone()));
+        }
+        if let Some(x) = &self.extensions
+            && !x.is_empty()
+            && matches!(version, ProtocolVersion::V2026_07_28)
+        {
+            out.insert("extensions".into(), Value::Object(x.clone()));
+        }
+        Value::Object(out)
     }
 }
 
@@ -3015,6 +3201,74 @@ neutral_via_legacy!(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// One declaration, three wires. A revision that cannot express a
+    /// sub-capability must not be told about it: `2025-06-18` has bare
+    /// `elicitation`/`sampling` objects, and `2026-07-28` dropped
+    /// `roots.listChanged`.
+    #[test]
+    fn capabilities_render_per_revision() {
+        let caps = ClientCapabilities {
+            elicitation: Some(ElicitationCapability {
+                form: true,
+                url: true,
+            }),
+            sampling: Some(SamplingCapability {
+                context: true,
+                tools: true,
+            }),
+            roots: Some(RootsCapability { list_changed: true }),
+            experimental: None,
+            extensions: None,
+        };
+        assert_eq!(
+            caps.to_wire(ProtocolVersion::V2025_11_25),
+            json!({
+                "elicitation": { "form": {}, "url": {} },
+                "sampling": { "context": {}, "tools": {} },
+                "roots": { "listChanged": true },
+            })
+        );
+        assert_eq!(
+            caps.to_wire(ProtocolVersion::V2025_06_18),
+            json!({
+                "elicitation": {},
+                "sampling": {},
+                "roots": { "listChanged": true },
+            })
+        );
+        assert_eq!(
+            caps.to_wire(ProtocolVersion::V2026_07_28),
+            json!({
+                "elicitation": { "form": {}, "url": {} },
+                "sampling": { "context": {}, "tools": {} },
+                "roots": {},
+            })
+        );
+    }
+
+    /// Declaring nothing is `{}`, and a capability with no sub-capability is
+    /// still the capability. Both are statements a server acts on, so neither
+    /// may collapse to an absent key.
+    #[test]
+    fn an_empty_declaration_is_still_an_object() {
+        assert_eq!(
+            ClientCapabilities::new().to_wire(ProtocolVersion::V2025_11_25),
+            json!({})
+        );
+        let form_only = ClientCapabilities {
+            elicitation: Some(ElicitationCapability {
+                form: true,
+                url: false,
+            }),
+            ..ClientCapabilities::new()
+        };
+        assert_eq!(
+            form_only.to_wire(ProtocolVersion::V2025_11_25),
+            json!({ "elicitation": { "form": {} } }),
+            "a form-only client must not read as url-capable"
+        );
+    }
 
     #[test]
     fn tool_widens_to_draft_wire() {

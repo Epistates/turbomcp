@@ -13,7 +13,7 @@ use std::time::Duration;
 use serde_json::{Map, json};
 use turbomcp::CancellationToken;
 use turbomcp::client::{
-    Client, ClientBuilder, ClientHandler, ConnectMode, async_trait, connect_http,
+    Client, ClientBuilder, ConnectMode, ElicitationHandler, async_trait, connect_http,
 };
 use turbomcp::http::{HttpConfig, ServeHttp};
 use turbomcp::prelude::*;
@@ -49,7 +49,7 @@ struct Confirm {
 }
 
 #[async_trait]
-impl ClientHandler for Confirm {
+impl ElicitationHandler for Confirm {
     async fn elicit(&self, _req: neutral::ElicitParams) -> neutral::ElicitOutcome {
         let mut content = Map::new();
         content.insert("ok".into(), json!(self.ok));
@@ -74,8 +74,7 @@ async fn connect(url: &str, mode: ConnectMode, ok: bool) -> Client {
     connect_http(
         ClientBuilder::new("confirmer", "1.0.0")
             .with_connect_mode(mode)
-            .with_capabilities(json!({ "elicitation": {} }))
-            .with_handler(Confirm { ok }),
+            .with_elicitation(Confirm { ok }),
         url,
     )
     .await

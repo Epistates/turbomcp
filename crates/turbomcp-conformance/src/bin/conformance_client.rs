@@ -24,7 +24,10 @@ use std::process::ExitCode;
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use turbomcp::client::{Client, ClientBuilder, ClientHandler, ConnectMode, connect_http};
+use turbomcp::client::{
+    Client, ClientBuilder, ConnectMode, ElicitationHandler, RootsHandler, SamplingHandler,
+    connect_http,
+};
 use turbomcp::neutral;
 
 /// Where the harness serves from when it doesn't say otherwise.
@@ -77,16 +80,27 @@ impl ScenarioContext {
 
 /// Declines everything. `elicit` has no safe default, so even the do-nothing
 /// handler has to answer it — declining is always a valid response.
+#[derive(Clone, Copy)]
 struct Basic;
 
 #[turbomcp::client::async_trait]
-impl ClientHandler for Basic {
+impl ElicitationHandler for Basic {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
     }
+}
 
+#[turbomcp::client::async_trait]
+impl SamplingHandler for Basic {
     async fn create_message(&self, _params: Value) -> turbomcp::client::ClientResult<Value> {
         Ok(sample_message())
+    }
+}
+
+#[turbomcp::client::async_trait]
+impl RootsHandler for Basic {
+    async fn list_roots(&self) -> turbomcp::client::ClientResult<Value> {
+        Ok(serde_json::json!({ "roots": [] }))
     }
 }
 
@@ -98,10 +112,11 @@ impl ClientHandler for Basic {
 /// else. Fields without one still get a type-appropriate value: the MRTR
 /// scenarios elicit a plain `confirmed: boolean` with no default, and a client
 /// that answered nothing would stall the loop they exist to score.
+#[derive(Clone, Copy)]
 struct AutoAnswer;
 
 #[turbomcp::client::async_trait]
-impl ClientHandler for AutoAnswer {
+impl ElicitationHandler for AutoAnswer {
     async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         let mut content = Map::new();
         if let Some(properties) = request
@@ -115,30 +130,20 @@ impl ClientHandler for AutoAnswer {
         }
         neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
     }
+}
 
+#[turbomcp::client::async_trait]
+impl SamplingHandler for AutoAnswer {
     async fn create_message(&self, _params: Value) -> turbomcp::client::ClientResult<Value> {
         Ok(sample_message())
     }
 }
 
-/// The capability set this client advertises.
-///
-/// All three of elicitation, roots and sampling. `formats: ["form"]` is the
-/// form-mode elicitation declaration both wires use.
-///
-/// Roots and sampling are here because SEP-2575 scores whether a client
-/// *declares* what it can service, and a capability we stay quiet about is a
-/// check the harness skips rather than grades — three of them, invisible behind
-/// a summary that read "0 failed". Each is backed by a real answer:
-/// [`list_roots`](ClientHandler::list_roots) defaults to an empty list, and
-/// [`sample_message`] answers `sampling/createMessage`. Declaring one we could
-/// not service would trade a skip for a lie.
-fn client_capabilities() -> Value {
-    serde_json::json!({
-        "elicitation": { "formats": ["form"] },
-        "roots": {},
-        "sampling": {}
-    })
+#[turbomcp::client::async_trait]
+impl RootsHandler for AutoAnswer {
+    async fn list_roots(&self) -> turbomcp::client::ClientResult<Value> {
+        Ok(serde_json::json!({ "roots": [] }))
+    }
 }
 
 /// A fixed, obviously synthetic completion for `sampling/createMessage`.
@@ -172,13 +177,22 @@ fn connect_mode() -> ConnectMode {
     }
 }
 
-async fn connect(url: &str, handler: impl ClientHandler, capabilities: Option<Value>) -> Client {
-    let mut builder = ClientBuilder::new("turbomcp-conformance-client", env!("CARGO_PKG_VERSION"))
-        .with_handler(handler)
+/// Connect, registering all three server→client handlers.
+///
+/// Elicitation, roots and sampling are all registered because SEP-2575 scores
+/// whether a client *declares* what it can service, and a capability we stay
+/// quiet about is a check the harness skips rather than grades. Registering is
+/// what declares now, so the two cannot disagree: each of the three is backed
+/// by a real answer on the type being passed in.
+async fn connect<H>(url: &str, handler: H) -> Client
+where
+    H: ElicitationHandler + SamplingHandler + RootsHandler + Clone,
+{
+    let builder = ClientBuilder::new("turbomcp-conformance-client", env!("CARGO_PKG_VERSION"))
+        .with_elicitation(handler.clone())
+        .with_sampling(handler.clone())
+        .with_roots(handler)
         .with_connect_mode(connect_mode());
-    if let Some(capabilities) = capabilities {
-        builder = builder.with_capabilities(capabilities);
-    }
     match connect_http(builder, url).await {
         Ok(client) => client,
         Err(err) => fatal(format!("connect to {url}: {err}")),
@@ -196,7 +210,7 @@ async fn run_handshake_only(url: &str) {
     // Capabilities are declared even here, where nothing will exercise them:
     // `request-metadata` scores the *declaration* itself (SEP-2575), and with
     // `None` those three checks were skipped rather than graded.
-    let client = connect(url, Basic, Some(client_capabilities())).await;
+    let client = connect(url, Basic).await;
     report_tools(&client).await;
     close(client).await;
 }
@@ -213,7 +227,7 @@ async fn run_tool_calls(url: &str, context: &ScenarioContext, all_methods: bool)
     // Elicitation is advertised unconditionally: a tool call is exactly where a
     // server asks the client something back, and the MRTR scenarios only reach
     // their checks if we are eligible to be asked.
-    let client = connect(url, AutoAnswer, Some(client_capabilities())).await;
+    let client = connect(url, AutoAnswer).await;
 
     // Always list first, even when the scenario dictates the calls: listing is
     // what teaches the client which arguments a tool marks `x-mcp-header`, and
@@ -300,7 +314,7 @@ async fn run_schema_echo(url: &str) {
     const SUBJECT: &str = "json_schema_2020_12_tool";
     const ECHO: &str = "json_schema_echo";
 
-    let client = connect(url, Basic, None).await;
+    let client = connect(url, Basic).await;
     let tools = list_tools(&client).await;
 
     match tools.iter().find(|t| t.name == SUBJECT) {
@@ -318,7 +332,7 @@ async fn run_schema_echo(url: &str) {
 /// Call the tool whose stream the scenario severs, so the client's SSE retry is
 /// what gets scored.
 async fn run_sse_retry(url: &str) {
-    let client = connect(url, Basic, None).await;
+    let client = connect(url, Basic).await;
     for tool in report_tools(&client).await {
         if tool.contains("reconnect") {
             call(&client, &tool, Map::new()).await;
@@ -387,9 +401,10 @@ async fn run_auth(url: &str, context: &ScenarioContext) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .with_bearer_source(source);
     let client = ClientBuilder::new("turbomcp-conformance-client", env!("CARGO_PKG_VERSION"))
-        .with_handler(AutoAnswer)
+        .with_elicitation(AutoAnswer)
+        .with_sampling(AutoAnswer)
+        .with_roots(AutoAnswer)
         .with_connect_mode(connect_mode())
-        .with_capabilities(client_capabilities())
         .connect(transport)
         .await
         .map_err(|e| e.to_string())?;

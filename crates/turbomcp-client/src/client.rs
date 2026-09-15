@@ -34,7 +34,10 @@ use turbomcp_service::{Transport, mcp_headers};
 use crate::cache::ResponseCache;
 use crate::connection::Connection;
 use crate::error::{ClientError, ClientResult};
-use crate::handler::{ClientHandler, dispatch_server_request};
+use crate::handler::{
+    ClientHandlers, ElicitationHandler, NotificationHandler, RootsHandler, SamplingHandler,
+    dispatch_server_request,
+};
 
 /// Cap on MRTR re-issue rounds — a guard against a server that keeps answering
 /// `input_required` forever.
@@ -83,10 +86,11 @@ pub enum ConnectMode {
 #[derive(Clone)]
 pub struct ClientBuilder {
     client_info: Implementation,
-    capabilities: Value,
+    experimental: Option<Map<String, Value>>,
+    extensions: Option<Map<String, Value>>,
     connect_mode: ConnectMode,
     request_timeout: Duration,
-    handler: Option<Arc<dyn ClientHandler>>,
+    handler: ClientHandlers,
     response_cache: bool,
 }
 
@@ -94,12 +98,12 @@ impl fmt::Debug for ClientBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ClientBuilder")
             .field("client_info", &self.client_info)
-            .field("capabilities", &self.capabilities)
+            .field("capabilities", &self.capabilities())
             .field("connect_mode", &self.connect_mode)
             .field("request_timeout", &self.request_timeout)
-            // A handler is a user trait object; whether one is installed is the
-            // part that explains behaviour.
-            .field("handler", &self.handler.is_some())
+            // Handlers are user trait objects; which features are served is
+            // the part that explains behaviour.
+            .field("handler", &self.handler)
             .field("response_cache", &self.response_cache)
             .finish()
     }
@@ -110,29 +114,72 @@ impl ClientBuilder {
     pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
             client_info: Implementation::new(name, version),
-            capabilities: Value::Object(Map::new()),
+            experimental: None,
+            extensions: None,
             connect_mode: ConnectMode::Auto,
             request_timeout: crate::connection::DEFAULT_REQUEST_TIMEOUT,
-            handler: None,
+            handler: ClientHandlers::default(),
             response_cache: true,
         }
     }
 
-    /// Set the [`ClientHandler`] that answers server→client requests
-    /// (elicitation, sampling, roots). Required to answer elicitation on either
-    /// version — and, on the modern path, also drives the MRTR loop.
+    /// What this client advertises, derived from its registered handlers.
     #[must_use]
-    pub fn with_handler<H: ClientHandler>(mut self, handler: H) -> Self {
-        self.handler = Some(Arc::new(handler));
+    pub fn capabilities(&self) -> neutral::ClientCapabilities {
+        let mut caps = self.handler.capabilities();
+        caps.experimental = self.experimental.clone();
+        caps.extensions = self.extensions.clone();
+        caps
+    }
+
+    /// Answer `elicitation/create`, declaring `elicitation` (and
+    /// `elicitation.url` when the handler says it supports URL mode).
+    #[must_use]
+    pub fn with_elicitation<H: ElicitationHandler>(mut self, handler: H) -> Self {
+        self.handler.elicitation = Some(Arc::new(handler));
         self
     }
 
-    /// Set the capabilities this client advertises (e.g. `elicitation`,
-    /// `sampling`, `roots`). Sent in the handshake and, on the modern path,
-    /// stamped into every request's `_meta`. Defaults to `{}`.
+    /// Answer `sampling/createMessage`, declaring `sampling` (and whichever of
+    /// `context` / `tools` the handler reports).
     #[must_use]
-    pub fn with_capabilities(mut self, capabilities: Value) -> Self {
-        self.capabilities = capabilities;
+    pub fn with_sampling<H: SamplingHandler>(mut self, handler: H) -> Self {
+        self.handler.sampling = Some(Arc::new(handler));
+        self
+    }
+
+    /// Answer `roots/list`, declaring `roots` (and `roots.listChanged` when the
+    /// handler says it emits the notification).
+    #[must_use]
+    pub fn with_roots<H: RootsHandler>(mut self, handler: H) -> Self {
+        self.handler.roots = Some(Arc::new(handler));
+        self
+    }
+
+    /// Observe server→client notifications. Declares no capability.
+    #[must_use]
+    pub fn with_notifications<H: NotificationHandler>(mut self, handler: H) -> Self {
+        self.handler.notifications = Some(Arc::new(handler));
+        self
+    }
+
+    /// Add non-standard `experimental` capabilities. The standard ones are
+    /// derived from the registered handlers and cannot be set by hand: a
+    /// declaration that disagrees with the implementation is a bug neither side
+    /// can see, so there is one source for both.
+    #[must_use]
+    pub fn with_experimental(mut self, experimental: Map<String, Value>) -> Self {
+        self.experimental = Some(experimental);
+        self
+    }
+
+    /// Declare participation in an extension (`2026-07-28` `extensions`
+    /// capability); older wires have no such field and drop it.
+    #[must_use]
+    pub fn with_extension(mut self, id: impl Into<String>, value: Value) -> Self {
+        self.extensions
+            .get_or_insert_with(Map::new)
+            .insert(id.into(), value);
         self
     }
 
@@ -232,7 +279,10 @@ impl ClientBuilder {
             keys::CLIENT_INFO.into(),
             serde_json::to_value(&self.client_info).unwrap_or(Value::Null),
         );
-        request_meta.insert(keys::CLIENT_CAPABILITIES.into(), self.capabilities.clone());
+        request_meta.insert(
+            keys::CLIENT_CAPABILITIES.into(),
+            self.capabilities().to_wire(outcome.version.clone()),
+        );
 
         Ok(Client {
             conn,
@@ -264,7 +314,10 @@ impl ClientBuilder {
             keys::CLIENT_INFO.into(),
             serde_json::to_value(&self.client_info).unwrap_or(Value::Null),
         );
-        meta.insert(keys::CLIENT_CAPABILITIES.into(), self.capabilities.clone());
+        meta.insert(
+            keys::CLIENT_CAPABILITIES.into(),
+            self.capabilities().to_wire(version.clone()),
+        );
         let params = json!({ "_meta": Value::Object(meta) });
 
         let result = match conn.request(request::DISCOVER, Some(params.clone())).await {
@@ -313,7 +366,7 @@ impl ClientBuilder {
         let requested = ProtocolVersion::V2025_11_25;
         let params = json!({
             "protocolVersion": requested.as_str(),
-            "capabilities": self.capabilities,
+            "capabilities": self.capabilities().to_wire(requested.clone()),
             "clientInfo": serde_json::to_value(&self.client_info).unwrap_or(Value::Null),
         });
         let result = conn.request(request::INITIALIZE, Some(params)).await?;
@@ -412,7 +465,7 @@ pub struct Client {
     server_capabilities: Value,
     instructions: Option<String>,
     request_meta: Map<String, Value>,
-    handler: Option<Arc<dyn ClientHandler>>,
+    handler: ClientHandlers,
     /// Tool name → its `#[mcp_header]` parameter names, learned from `list_tools`.
     /// Drives transparent `Mcp-Param-*` mirroring on `call_tool`.
     header_params: Arc<Mutex<HashMap<String, Vec<HeaderParam>>>>,
@@ -431,7 +484,7 @@ impl fmt::Debug for Client {
             .field("server_info", &self.server_info)
             .field("server_capabilities", &self.server_capabilities)
             .field("instructions", &self.instructions)
-            .field("handler", &self.handler.is_some())
+            .field("handler", &self.handler)
             .field("response_cache", &self.cache.is_some())
             .finish_non_exhaustive()
     }
@@ -971,7 +1024,7 @@ impl Client {
     /// This is how a draft-protocol client receives server→client
     /// notifications at all: the draft replaced both `resources/subscribe` and
     /// the HTTP GET stream with this one long-lived subscription. Notifications
-    /// then arrive at [`ClientHandler::on_notification`], each stamped with
+    /// then arrive at [`NotificationHandler::on_notification`], each stamped with
     /// this subscription's id in `_meta`.
     ///
     /// Returns the acknowledgement's `notifications` object — the filter subset
@@ -1011,7 +1064,7 @@ impl Client {
     /// `2025-11-25`).
     ///
     /// `notifications/resources/updated` for `uri` then arrive at
-    /// [`ClientHandler::on_notification`]. The draft dropped this method in
+    /// [`NotificationHandler::on_notification`]. The draft dropped this method in
     /// favor of [`listen`](Self::listen) with
     /// [`SubscriptionFilter::with_resource`](neutral::SubscriptionFilter::with_resource);
     /// on that wire the server answers `-32601`.
@@ -1047,7 +1100,7 @@ impl Client {
     ///
     /// Until a client calls this the server sends no log messages at all, so
     /// on `2025-11-25` this is the opt-in for server logging; messages arrive
-    /// at [`ClientHandler::on_notification`].
+    /// at [`NotificationHandler::on_notification`].
     ///
     /// # Errors
     /// Propagates RPC failures (`-32601` if the server doesn't advertise
@@ -1059,6 +1112,29 @@ impl Client {
         self.versioned_request(request::LOGGING_SET_LEVEL, params)
             .await
             .map(drop)
+    }
+
+    /// Tell the server this client's root list changed
+    /// (`notifications/roots/list_changed`).
+    ///
+    /// Call this whenever the set of roots a
+    /// [`RootsHandler`](crate::RootsHandler) would return changes — the server
+    /// re-reads them with `roots/list` when it cares. Only meaningful if that
+    /// handler reports [`list_changed`](crate::RootsHandler::list_changed),
+    /// since a server told otherwise will not have stopped polling.
+    ///
+    /// `2026-07-28` dropped the `roots.listChanged` capability, so this is a
+    /// no-op there rather than a frame the peer has no rule for.
+    ///
+    /// # Errors
+    /// [`ClientError::Closed`] if the connection is gone.
+    pub async fn notify_roots_changed(&self) -> ClientResult<()> {
+        if matches!(self.version, ProtocolVersion::V2026_07_28) {
+            return Ok(());
+        }
+        self.conn
+            .notify(notification::ROOTS_LIST_CHANGED, None)
+            .await
     }
 
     /// Poll a task's current state (`tasks/get`, SEP-2663 Tasks extension).
@@ -1145,7 +1221,7 @@ impl Client {
 
     /// Drive a `CreateTaskResult` to its terminal state (SEP-2663): poll
     /// `tasks/get` at the server's suggested interval, answer `input_required`
-    /// requests through the [`ClientHandler`] (deduplicating keys across
+    /// requests through the registered handlers (deduplicating keys across
     /// polls, per spec) via `tasks/update`, and return the task's final
     /// `result` value. A `failed` task surfaces its JSON-RPC error; a
     /// `cancelled` task is a protocol error; a finite `ttlMs` acts as the
@@ -1193,11 +1269,12 @@ impl Client {
                     )));
                 }
                 Some("input_required") => {
-                    let handler = self.handler.as_deref().ok_or_else(|| {
-                        ClientError::Protocol(
-                            "task requires input but the client has no handler".into(),
-                        )
-                    })?;
+                    if self.handler.is_empty() {
+                        return Err(ClientError::Protocol(
+                            "task requires input but the client registered no handler".into(),
+                        ));
+                    }
+                    let handler = &self.handler;
                     // Answer each outstanding request exactly once (the spec
                     // has clients dedup keys across consecutive polls; keys
                     // are unique over the task's lifetime).
@@ -1309,7 +1386,7 @@ impl Client {
     ///
     /// On the modern path a server can answer `{ resultType: "input_required",
     /// inputRequests, requestState }`; this gathers each packaged request via the
-    /// [`ClientHandler`] and re-issues the call with `inputResponses` + the echoed
+    /// registered handlers and re-issue the call with `inputResponses` + the echoed
     /// `requestState`, until a real result comes back. On the legacy path the
     /// server elicits inline (handled by the connection actor), so the first
     /// result is final and the loop runs exactly once.
@@ -1326,11 +1403,12 @@ impl Client {
                 return Ok(result);
             }
 
-            let handler = self.handler.as_deref().ok_or_else(|| {
-                ClientError::Protocol(
-                    "server requires input (MRTR) but the client has no handler".into(),
-                )
-            })?;
+            if self.handler.is_empty() {
+                return Err(ClientError::Protocol(
+                    "server requires input (MRTR) but the client registered no handler".into(),
+                ));
+            }
+            let handler = &self.handler;
 
             // Answer each packaged input request, keyed exactly as the server sent.
             let mut responses = Map::new();

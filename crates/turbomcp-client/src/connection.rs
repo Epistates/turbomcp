@@ -16,10 +16,10 @@
 //! - **Inbound:** `transport.recv()` *is* a selected future. A `Response` is
 //!   matched to its waiting request via the [`Pending`] table; a `Notification`
 //!   invalidates whatever it obsoletes in the [`ResponseCache`] and then reaches
-//!   the [`ClientHandler`]; a server→client `Request` is dispatched to that same
-//!   handler (elicit/sample/roots) on a spawned task whose reply is sent back
-//!   through a [`WeakSender`](mpsc::WeakSender) — or, with no handler, answered
-//!   `-32601` inline.
+//!   the registered [`NotificationHandler`]; a server→client `Request` goes to
+//!   whichever handler serves that method (elicit/sample/roots) on a spawned
+//!   task whose reply is sent back through a [`WeakSender`](mpsc::WeakSender)
+//!   — or, with none registered for it, answered `-32601` inline.
 //!
 //! A request that is abandoned rather than answered — the timeout in
 //! [`Connection::request`] firing, or its caller dropping the future — leaves
@@ -46,7 +46,7 @@ use turbomcp_service::Transport;
 
 use crate::cache::ResponseCache;
 use crate::error::{ClientError, ClientResult};
-use crate::handler::{ClientHandler, dispatch_server_request};
+use crate::handler::{ClientHandlers, dispatch_server_request};
 
 /// Default per-request timeout — a request with no answer in this window fails
 /// with [`ClientError::Timeout`] rather than hanging forever.
@@ -110,7 +110,11 @@ impl Connection {
     where
         T: Transport,
     {
-        Self::connect(transport, DEFAULT_REQUEST_TIMEOUT, None)
+        Self::connect(
+            transport,
+            DEFAULT_REQUEST_TIMEOUT,
+            ClientHandlers::default(),
+        )
     }
 
     /// Spawn the connection actor with an explicit per-request timeout and no
@@ -119,16 +123,12 @@ impl Connection {
     where
         T: Transport,
     {
-        Self::connect(transport, request_timeout, None)
+        Self::connect(transport, request_timeout, ClientHandlers::default())
     }
 
     /// Spawn the connection actor with a timeout and an optional
-    /// [`ClientHandler`] for server→client requests (elicit/sample/roots).
-    pub fn connect<T>(
-        transport: T,
-        request_timeout: Duration,
-        handler: Option<Arc<dyn ClientHandler>>,
-    ) -> Self
+    /// [`ClientHandlers`] set for server→client requests (elicit/sample/roots).
+    pub fn connect<T>(transport: T, request_timeout: Duration, handler: ClientHandlers) -> Self
     where
         T: Transport,
     {
@@ -141,7 +141,7 @@ impl Connection {
     pub(crate) fn connect_with_cache<T>(
         transport: T,
         request_timeout: Duration,
-        handler: Option<Arc<dyn ClientHandler>>,
+        handler: ClientHandlers,
         cache: Option<Arc<ResponseCache>>,
     ) -> Self
     where
@@ -356,7 +356,7 @@ async fn actor<T>(
     mut outbound: mpsc::Receiver<JsonRpcMessage>,
     pending: Arc<Pending>,
     weak_out: mpsc::WeakSender<JsonRpcMessage>,
-    handler: Option<Arc<dyn ClientHandler>>,
+    handler: ClientHandlers,
     cache: Option<Arc<ResponseCache>>,
     lifecycle: (
         tokio_util::sync::CancellationToken,
@@ -454,7 +454,7 @@ fn route_inbound(
     msg: JsonRpcMessage,
     failure: Option<turbomcp_service::HttpFailure>,
     pending: &Arc<Pending>,
-    handler: &Option<Arc<dyn ClientHandler>>,
+    handler: &ClientHandlers,
     weak_out: &mpsc::WeakSender<JsonRpcMessage>,
     cache: &Option<Arc<ResponseCache>>,
     callbacks: &mut tokio::task::JoinSet<()>,
@@ -479,28 +479,31 @@ fn route_inbound(
             if let Some(cache) = cache {
                 cache.on_notification(&n.method, n.params.as_ref());
             }
-            match handler {
-                Some(handler) => {
-                    let handler = Arc::clone(handler);
-                    callbacks.spawn(async move {
-                        // `elicitation/complete` also reaches its dedicated
-                        // hook; a malformed one (no string `elicitationId`)
-                        // is an unknown id — ignored, per spec.
-                        if n.method == notification::ELICITATION_COMPLETE
-                            && let Some(id) = n
-                                .params
-                                .as_ref()
-                                .and_then(|p| p.get("elicitationId"))
-                                .and_then(Value::as_str)
-                        {
-                            handler.on_elicitation_complete(id.to_owned()).await;
-                        }
-                        handler.on_notification(n.method, n.params).await;
-                    });
-                }
-                None => {
-                    tracing::trace!(method = %n.method, "client received notification (no handler)");
-                }
+            // `elicitation/complete` reaches the elicitation handler's
+            // dedicated hook; everything reaches the notification observer.
+            // The two are registered independently, so each runs on its own.
+            let elicitation = handler.elicitation.clone();
+            let observer = handler.notifications.clone();
+            if elicitation.is_none() && observer.is_none() {
+                tracing::trace!(method = %n.method, "client received notification (no handler)");
+            } else {
+                callbacks.spawn(async move {
+                    // A malformed `elicitation/complete` (no string
+                    // `elicitationId`) is an unknown id — ignored, per spec.
+                    if let Some(h) = elicitation
+                        && n.method == notification::ELICITATION_COMPLETE
+                        && let Some(id) = n
+                            .params
+                            .as_ref()
+                            .and_then(|p| p.get("elicitationId"))
+                            .and_then(Value::as_str)
+                    {
+                        h.on_elicitation_complete(id.to_owned()).await;
+                    }
+                    if let Some(h) = observer {
+                        h.on_notification(n.method, n.params).await;
+                    }
+                });
             }
             None
         }
@@ -514,18 +517,19 @@ fn route_inbound(
         JsonRpcMessage::Request(req) if req.method == request::PING => {
             Some(JsonRpcResponse::success(req.id, serde_json::json!({})).into())
         }
-        JsonRpcMessage::Request(req) => match handler {
+        JsonRpcMessage::Request(req) => match handler.is_empty() {
             // Dispatch on a task so a slow handler (user interaction) doesn't
             // head-of-line-block inbound reads; reply via the WeakSender.
-            Some(handler) => {
-                let handler = Arc::clone(handler);
+            // `dispatch_server_request` answers `-32601` for a method whose own
+            // handler is unregistered, so an unrelated one being present cannot
+            // make this client look more capable than it declared.
+            false => {
+                let handlers = handler.clone();
                 let weak_out = weak_out.clone();
                 callbacks.spawn(async move {
                     let id = req.id.clone();
                     let reply =
-                        match dispatch_server_request(handler.as_ref(), &req.method, req.params)
-                            .await
-                        {
+                        match dispatch_server_request(&handlers, &req.method, req.params).await {
                             Ok(value) => JsonRpcResponse::success(id, value),
                             Err(err) => JsonRpcResponse::error(id, err),
                         };
@@ -536,7 +540,7 @@ fn route_inbound(
                 None
             }
             // No handler configured: refuse politely rather than hang the server.
-            None => {
+            true => {
                 tracing::debug!(method = %req.method, "server→client request with no handler");
                 Some(JsonRpcMessage::Response(JsonRpcResponse::error(
                     req.id,

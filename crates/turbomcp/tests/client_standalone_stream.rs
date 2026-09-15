@@ -27,7 +27,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use serde_json::{Map, Value, json};
 use tokio::sync::{Mutex, mpsc, oneshot};
-use turbomcp::client::{ClientBuilder, ClientHandler, ConnectMode, async_trait, connect_http};
+use turbomcp::client::{ClientBuilder, ConnectMode, ElicitationHandler, async_trait, connect_http};
 use turbomcp::neutral;
 
 /// Answers every elicitation by accepting with a fixed marker value, so the
@@ -35,7 +35,7 @@ use turbomcp::neutral;
 struct Confirming;
 
 #[async_trait]
-impl ClientHandler for Confirming {
+impl ElicitationHandler for Confirming {
     async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         assert_eq!(request.message, "confirm?");
         let mut content = Map::new();
@@ -147,9 +147,8 @@ async fn a_server_request_on_the_standalone_stream_is_answered() {
 
     let client = connect_http(
         ClientBuilder::new("standalone-stream-test", "1.0.0")
-            .with_handler(Confirming)
-            .with_connect_mode(ConnectMode::Legacy)
-            .with_capabilities(json!({ "elicitation": { "formats": ["form"] } })),
+            .with_elicitation(Confirming)
+            .with_connect_mode(ConnectMode::Legacy),
         format!("http://{addr}/mcp"),
     )
     .await
@@ -226,9 +225,8 @@ async fn the_standalone_stream_is_open_before_connect_returns() {
 
     let client = connect_http(
         ClientBuilder::new("standalone-stream-test", "1.0.0")
-            .with_handler(Confirming)
-            .with_connect_mode(ConnectMode::Legacy)
-            .with_capabilities(json!({ "elicitation": { "formats": ["form"] } })),
+            .with_elicitation(Confirming)
+            .with_connect_mode(ConnectMode::Legacy),
         format!("http://{addr}/mcp"),
     )
     .await
@@ -292,7 +290,7 @@ async fn a_405_on_the_standalone_stream_is_not_retried_forever() {
 
     let client = connect_http(
         ClientBuilder::new("no-stream-test", "1.0.0")
-            .with_handler(Confirming)
+            .with_elicitation(Confirming)
             .with_connect_mode(ConnectMode::Legacy),
         format!("http://{addr}/mcp"),
     )

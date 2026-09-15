@@ -12,7 +12,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
-use turbomcp_client::{Client, ClientBuilder, ClientError, ClientHandler, ConnectMode};
+use turbomcp_client::{
+    Client, ClientBuilder, ClientError, ConnectMode, ElicitationHandler, NotificationHandler,
+    RootsHandler, SamplingHandler,
+};
 use turbomcp_codec::SerdeJsonCodec;
 use turbomcp_core::ProtocolVersion;
 use turbomcp_protocol::neutral;
@@ -65,7 +68,7 @@ fn discover_ok() -> Value {
 struct AcceptAll;
 
 #[async_trait]
-impl ClientHandler for AcceptAll {
+impl ElicitationHandler for AcceptAll {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
     }
@@ -254,7 +257,7 @@ async fn mrtr_gives_up_after_the_round_cap() {
     }
     let client = ClientBuilder::new("looper", "1.0.0")
         .with_connect_mode(ConnectMode::Modern)
-        .with_handler(AcceptAll)
+        .with_elicitation(AcceptAll)
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -285,7 +288,7 @@ async fn packaged_sampling_is_refused_by_default() {
     });
     let client = ClientBuilder::new("no-sampling", "1.0.0")
         .with_connect_mode(ConnectMode::Modern)
-        .with_handler(AcceptAll) // elicit-only: sampling stays the refusing default
+        .with_elicitation(AcceptAll) // elicit-only: sampling is never declared
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -305,16 +308,25 @@ async fn packaged_sampling_is_refused_by_default() {
 async fn packaged_sampling_and_roots_reach_the_handler_and_return() {
     struct Sampler;
     #[async_trait]
-    impl ClientHandler for Sampler {
+    impl ElicitationHandler for Sampler {
         async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
             neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
         }
+    }
+    #[async_trait]
+    impl SamplingHandler for Sampler {
         async fn create_message(&self, _params: Value) -> Result<Value, ClientError> {
             Ok(json!({
                 "role": "assistant",
                 "content": { "type": "text", "text": "sampled" },
                 "model": "test-model"
             }))
+        }
+    }
+    #[async_trait]
+    impl RootsHandler for Sampler {
+        async fn list_roots(&self) -> Result<Value, ClientError> {
+            Ok(json!({ "roots": [] }))
         }
     }
 
@@ -348,7 +360,9 @@ async fn packaged_sampling_and_roots_reach_the_handler_and_return() {
 
     let client = ClientBuilder::new("sampler", "1.0.0")
         .with_connect_mode(ConnectMode::Modern)
-        .with_handler(Sampler)
+        .with_elicitation(Sampler)
+        .with_sampling(Sampler)
+        .with_roots(Sampler)
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -453,13 +467,17 @@ struct CompletionSpy {
 }
 
 #[async_trait]
-impl ClientHandler for CompletionSpy {
+impl ElicitationHandler for CompletionSpy {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
     }
     async fn on_elicitation_complete(&self, elicitation_id: String) {
         self.ids.lock().unwrap().push(elicitation_id);
     }
+}
+
+#[async_trait]
+impl NotificationHandler for CompletionSpy {
     async fn on_notification(&self, method: String, _params: Option<Value>) {
         self.methods.lock().unwrap().push(method);
     }
@@ -506,7 +524,8 @@ async fn elicitation_complete_reaches_the_typed_hook() {
     let spy = CompletionSpy::default();
     let _client = ClientBuilder::new("ec", "1.0.0")
         .with_connect_mode(ConnectMode::Modern)
-        .with_handler(spy.clone())
+        .with_elicitation(spy.clone())
+        .with_notifications(spy.clone())
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -528,4 +547,83 @@ async fn elicitation_complete_reaches_the_typed_hook() {
         2,
         "both still reach the generic hook"
     );
+}
+
+/// A client that serves roots declares them, and `roots.listChanged` only when
+/// the handler says it emits the notification — which it then actually does.
+///
+/// The notification is the one list-changed message that travels client→server,
+/// and before this it existed nowhere but the generated wire types: no
+/// constant, nothing that sent it, nothing that accepted it. Driven by a
+/// bespoke loop because `spawn_scripted` drops notifications before its
+/// callback ever sees them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_roots_client_declares_and_emits_list_changed() {
+    struct Watched;
+    #[async_trait]
+    impl RootsHandler for Watched {
+        async fn list_roots(&self) -> Result<Value, ClientError> {
+            Ok(json!({ "roots": [{ "uri": "file:///work", "name": "work" }] }))
+        }
+        fn list_changed(&self) -> bool {
+            true
+        }
+    }
+
+    let declared: Arc<std::sync::Mutex<Option<Value>>> = Arc::new(std::sync::Mutex::new(None));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    {
+        let declared = Arc::clone(&declared);
+        tokio::spawn(async move {
+            let (rd, mut wr) = split(server_io);
+            let mut lines = BufReader::new(rd).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let frame: Value = serde_json::from_str(&line).expect("valid json");
+                let Some(method) = frame.get("method").and_then(Value::as_str) else {
+                    continue;
+                };
+                let _ = tx.send(method.to_owned());
+                if method == "initialize" {
+                    *declared.lock().unwrap() = Some(frame["params"]["capabilities"].clone());
+                    let reply = json!({
+                        "jsonrpc": "2.0",
+                        "id": frame["id"].clone(),
+                        "result": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "serverInfo": { "name": "s", "version": "1" }
+                        }
+                    });
+                    wr.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                }
+            }
+        });
+    }
+
+    let client = ClientBuilder::new("rooted", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .with_roots(Watched)
+        .connect(transport_for(client_io))
+        .await
+        .expect("handshake");
+
+    let declared = declared.lock().unwrap().clone().expect("handshake seen");
+    assert_eq!(
+        declared,
+        json!({ "roots": { "listChanged": true } }),
+        "registering a roots handler is what declares roots"
+    );
+
+    client.notify_roots_changed().await.unwrap();
+    let mut seen = Vec::new();
+    while let Ok(Some(method)) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await
+    {
+        seen.push(method);
+        if seen.iter().any(|m| m == "notifications/roots/list_changed") {
+            return;
+        }
+    }
+    panic!("no notifications/roots/list_changed; saw {seen:?}");
 }

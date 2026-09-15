@@ -13,7 +13,9 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 use tokio::io::{BufReader, split};
-use turbomcp::client::{Client, ClientBuilder, ClientHandler, ConnectMode};
+use turbomcp::client::{
+    Client, ClientBuilder, ConnectMode, ElicitationHandler, NotificationHandler,
+};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
 use turbomcp_transport_stdio::LineTransport;
@@ -43,22 +45,31 @@ struct Spy {
 }
 
 #[turbomcp::client::async_trait]
-impl ClientHandler for Spy {
+impl ElicitationHandler for Spy {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
     }
+}
+
+#[turbomcp::client::async_trait]
+impl NotificationHandler for Spy {
     async fn on_notification(&self, method: String, params: Option<Value>) {
         self.seen.lock().unwrap().push((method, params));
     }
 }
 
+#[derive(Clone)]
 struct Shared(Arc<Spy>);
 
 #[turbomcp::client::async_trait]
-impl ClientHandler for Shared {
+impl ElicitationHandler for Shared {
     async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         self.0.elicit(request).await
     }
+}
+
+#[turbomcp::client::async_trait]
+impl NotificationHandler for Shared {
     async fn on_notification(&self, method: String, params: Option<Value>) {
         self.0.on_notification(method, params).await;
     }
@@ -75,7 +86,8 @@ async fn connect(mode: ConnectMode) -> (Client, Arc<Spy>) {
     let (c_rd, c_wr) = split(client_io);
     let client = ClientBuilder::new("subscriber", "1.0.0")
         .with_connect_mode(mode)
-        .with_handler(Shared(Arc::clone(&spy)))
+        .with_elicitation(Shared(Arc::clone(&spy)))
+        .with_notifications(Shared(Arc::clone(&spy)))
         .connect(LineTransport::new(
             BufReader::new(c_rd),
             c_wr,

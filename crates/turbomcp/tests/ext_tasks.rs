@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 use tokio::io::{BufReader, split};
-use turbomcp::client::{Client, ClientBuilder, ClientHandler, ConnectMode, async_trait};
+use turbomcp::client::{Client, ClientBuilder, ConnectMode, ElicitationHandler, async_trait};
 use turbomcp::ext_tasks::{EXTENSION_ID, TasksExtension};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
@@ -82,7 +82,7 @@ impl Workshop {
 struct Confirm;
 
 #[async_trait]
-impl ClientHandler for Confirm {
+impl ElicitationHandler for Confirm {
     async fn elicit(&self, _req: neutral::ElicitParams) -> neutral::ElicitOutcome {
         let mut content = Map::new();
         content.insert("ok".into(), json!(true));
@@ -111,11 +111,8 @@ async fn connect() -> Client {
     let client_transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
     ClientBuilder::new("workshop-client", "1.0.0")
         .with_connect_mode(ConnectMode::Modern)
-        .with_capabilities(json!({
-            "elicitation": {},
-            "extensions": { EXTENSION_ID: {} },
-        }))
-        .with_handler(Confirm)
+        .with_extension(EXTENSION_ID, json!({}))
+        .with_elicitation(Confirm)
         .connect(client_transport)
         .await
         .expect("handshake")
@@ -191,7 +188,7 @@ async fn call_tool_transparently_drives_a_task_to_completion() {
 async fn mid_task_elicitation_flows_through_tasks_update() {
     // The Phase-12 exit: a taskified tool elicits WHILE EXECUTING. The typed
     // client observes `input_required` on a poll, answers through its
-    // ClientHandler via tasks/update, and the task completes.
+    // the elicitation handler via tasks/update, and the task completes.
     let client = connect().await;
     let mut args = Map::new();
     args.insert("topic".into(), json!("throughput"));

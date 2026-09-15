@@ -1,5 +1,5 @@
 //! Phase 8d exit criterion: a tool that elicits user input round-trips with the
-//! typed [`Client`] + a [`ClientHandler`], on **both protocol versions** — the
+//! typed [`Client`] + a [`ElicitationHandler`], on **both protocol versions** — the
 //! MRTR loop on the draft (input-required → re-issue with `inputResponses`) and
 //! inline bidi on legacy (a server→client `elicitation/create` answered by the
 //! actor). The same handler drives both.
@@ -8,7 +8,7 @@
 
 use serde_json::{Map, json};
 use tokio::io::{BufReader, split};
-use turbomcp::client::{Client, ClientBuilder, ClientHandler, ConnectMode, async_trait};
+use turbomcp::client::{Client, ClientBuilder, ConnectMode, ElicitationHandler, async_trait};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
 use turbomcp_transport_stdio::LineTransport;
@@ -50,7 +50,7 @@ struct Confirm {
 }
 
 #[async_trait]
-impl ClientHandler for Confirm {
+impl ElicitationHandler for Confirm {
     async fn elicit(&self, _req: neutral::ElicitParams) -> neutral::ElicitOutcome {
         let mut content = Map::new();
         content.insert("ok".into(), json!(self.ok));
@@ -71,8 +71,7 @@ async fn connect(mode: ConnectMode, ok: bool) -> Client {
     let client_transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
     ClientBuilder::new("confirmer", "1.0.0")
         .with_connect_mode(mode)
-        .with_capabilities(json!({ "elicitation": {} }))
-        .with_handler(Confirm { ok })
+        .with_elicitation(Confirm { ok })
         .connect(client_transport)
         .await
         .expect("handshake")

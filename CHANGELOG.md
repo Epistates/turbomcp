@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `notifications/roots/list_changed`, via `Client::notify_roots_changed`. The
+  one list-changed notification that travels client→server existed nowhere but
+  the generated wire types: no method constant, nothing that sent it. A client
+  that serves roots now declares `roots.listChanged` when its handler says it
+  emits them, and emits them. No-op on `2026-07-28`, which dropped the
+  sub-capability.
+- `neutral::ClientCapabilities`, rendered per revision. `2025-06-18` has no
+  elicitation or sampling sub-capabilities and `2026-07-28` has no
+  `roots.listChanged`, so one declaration is now correct on all three wires
+  instead of the same hand-written blob going to each.
+
+### Changed
+
+- **Breaking:** `ClientHandler` is replaced by four per-feature traits —
+  `ElicitationHandler`, `SamplingHandler`, `RootsHandler`, `NotificationHandler`
+  — registered individually (`with_elicitation`, `with_sampling`, `with_roots`,
+  `with_notifications`). **Registering is what advertises**, so
+  `with_capabilities` is gone; `with_experimental` and `with_extension` cover
+  what remains caller-chosen.
+
+  The old shape let the two disagree in both directions, and did. `ClientHandler`
+  defaulted sampling to a refusal and roots to an empty list while capabilities
+  defaulted to `{}`, so the shipped `examples/client.rs` implemented `elicit`,
+  advertised nothing, and **could never receive an elicitation** — the server is
+  right to refuse sending what the client did not declare (SEP-2322). The
+  reverse drifted too: declare `sampling` without overriding `create_message`
+  and every request got refused. The server half has always derived its
+  capabilities from the `#[tool]`/`#[resource]`/`#[prompt]` markers for exactly
+  this reason; the client half now does the same.
+
+  Sub-capabilities (`elicitation.url`, `sampling.context`, `sampling.tools`,
+  `roots.listChanged`) come from the handler and default to off, because
+  under-declaring costs a feature while over-declaring strands a user on an
+  interaction the client never presents.
+
 ## [4.0.0-alpha.5] - 2026-09-13
 
 One graceful-shutdown correctness fix, one SSRF policy addition, and the

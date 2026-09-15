@@ -283,7 +283,7 @@ async fn dropping_the_request_future_tells_the_server_to_stop() {
 /// Ping is bidirectional and mandatory in both directions: "the receiver MUST
 /// respond promptly with an empty response". It is also the one server→client
 /// request that has nothing to do with the application, so it must be answered
-/// by a client that installed no [`ClientHandler`] at all — which is exactly
+/// by a client that installed no handler at all — which is exactly
 /// the client this test builds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_inbound_ping_is_answered_without_a_handler() {
