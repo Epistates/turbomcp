@@ -646,6 +646,40 @@ pub struct RootsCapabilities {
     pub list_changed: Option<bool>,
 }
 
+/// A filesystem boundary the client has granted the server access to.
+///
+/// Canonical home for the type so `RequestContext::list_roots` can return it
+/// without `turbomcp-core` depending on `turbomcp-protocol`; the latter
+/// re-exports it from `types::roots` so the original path keeps working.
+///
+/// The `_meta` field keeps its original name and `Value` shape rather than
+/// adopting this crate's `meta: Option<HashMap<..>>` convention, because
+/// clients construct `Root` directly in their roots handlers and renaming it
+/// would break them for no protocol benefit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Root {
+    /// Root URI, typically a `file://` URI.
+    pub uri: crate::primitives::Uri,
+    /// Optional human-readable name for this root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Optional metadata per the current MCP specification.
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<Value>,
+}
+
+/// Result of a `roots/list` request.
+///
+/// Roots are never paginated, so there is no cursor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListRootsResult {
+    /// Filesystem roots the client is exposing.
+    pub roots: Vec<Root>,
+    /// Optional metadata per the current MCP specification.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<Value>,
+}
+
 /// Client-side Tasks capabilities (MCP 2025-11-25 draft, SEP-1686).
 ///
 /// Indicates which task operations and request types the client supports.

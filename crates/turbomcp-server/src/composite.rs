@@ -148,6 +148,32 @@ trait DynHandler: Send + Sync {
         args: Option<serde_json::Value>,
         ctx: &'a RequestContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<PromptResult>> + Send + 'a>>;
+    fn dyn_subscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>>;
+    fn dyn_unsubscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>>;
+    fn dyn_set_log_level<'a>(
+        &'a self,
+        level: &'a str,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>>;
+    fn dyn_complete<'a>(
+        &'a self,
+        params: serde_json::Value,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = McpResult<serde_json::Value>> + Send + 'a>,
+    >;
+    fn dyn_on_roots_list_changed<'a>(
+        &'a self,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>>;
 }
 
 impl<H: McpHandler> DynHandler for HandlerWrapper<H> {
@@ -202,6 +228,47 @@ impl<H: McpHandler> DynHandler for HandlerWrapper<H> {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<PromptResult>> + Send + 'a>>
     {
         Box::pin(self.get_prompt(name, args, ctx))
+    }
+
+    fn dyn_subscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(self.handler.subscribe(uri, ctx))
+    }
+
+    fn dyn_unsubscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(self.handler.unsubscribe(uri, ctx))
+    }
+
+    fn dyn_set_log_level<'a>(
+        &'a self,
+        level: &'a str,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(self.handler.set_log_level(level, ctx))
+    }
+
+    fn dyn_complete<'a>(
+        &'a self,
+        params: serde_json::Value,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = McpResult<serde_json::Value>> + Send + 'a>,
+    > {
+        Box::pin(self.handler.complete(params, ctx))
+    }
+
+    fn dyn_on_roots_list_changed<'a>(
+        &'a self,
+        ctx: &'a RequestContext,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(self.handler.on_roots_list_changed(ctx))
     }
 }
 
@@ -618,6 +685,146 @@ impl McpHandler for CompositeHandler {
                 .handler
                 .dyn_get_prompt(original_name, args, ctx)
                 .await
+        }
+    }
+
+    /// Routed to the mount owning the URI, exactly like `read_resource`.
+    fn subscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        async move {
+            let (prefix, original_uri) = self
+                .parse_prefixed_uri(uri)
+                .ok_or_else(|| McpError::resource_not_found(uri))?;
+            let handler = self
+                .find_handler(prefix)
+                .ok_or_else(|| McpError::resource_not_found(uri))?;
+
+            handler.handler.dyn_subscribe(original_uri, ctx).await
+        }
+    }
+
+    fn unsubscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        async move {
+            let (prefix, original_uri) = self
+                .parse_prefixed_uri(uri)
+                .ok_or_else(|| McpError::resource_not_found(uri))?;
+            let handler = self
+                .find_handler(prefix)
+                .ok_or_else(|| McpError::resource_not_found(uri))?;
+
+            handler.handler.dyn_unsubscribe(original_uri, ctx).await
+        }
+    }
+
+    /// Broadcast: the log level is a connection-wide setting, so every mount
+    /// that implements it gets told. Mounts that do not are not an error —
+    /// the composite reports success if any mount accepted the level.
+    fn set_log_level<'a>(
+        &'a self,
+        level: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        async move {
+            let mut accepted = false;
+            let mut last_error = None;
+
+            for mount in self.handlers.iter() {
+                match mount.handler.dyn_set_log_level(level, ctx).await {
+                    Ok(()) => accepted = true,
+                    Err(e) => last_error = Some(e),
+                }
+            }
+
+            if accepted {
+                Ok(())
+            } else {
+                Err(last_error
+                    .unwrap_or_else(|| McpError::capability_not_supported("logging/setLevel")))
+            }
+        }
+    }
+
+    /// Routed by the completion's `ref`: a prompt ref carries a prefixed prompt
+    /// name, a resource ref a prefixed URI. Both are rewritten to the mount's
+    /// own namespace before being forwarded.
+    fn complete<'a>(
+        &'a self,
+        params: serde_json::Value,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<serde_json::Value>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        async move {
+            let mut params = params;
+            let reference = params
+                .get("ref")
+                .ok_or_else(|| McpError::invalid_params("completion/complete requires `ref`"))?;
+
+            let ref_type = reference.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+            let prefix = match ref_type {
+                "ref/prompt" => {
+                    let name = reference
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| McpError::invalid_params("ref/prompt requires `name`"))?;
+                    let (prefix, original) = self
+                        .parse_prefixed_prompt(name)
+                        .ok_or_else(|| McpError::prompt_not_found(name))?;
+                    let original = original.to_string();
+                    let prefix = prefix.to_string();
+                    params["ref"]["name"] = serde_json::Value::String(original);
+                    prefix
+                }
+                "ref/resource" => {
+                    let uri = reference
+                        .get("uri")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| McpError::invalid_params("ref/resource requires `uri`"))?;
+                    let (prefix, original) = self
+                        .parse_prefixed_uri(uri)
+                        .ok_or_else(|| McpError::resource_not_found(uri))?;
+                    let original = original.to_string();
+                    let prefix = prefix.to_string();
+                    params["ref"]["uri"] = serde_json::Value::String(original);
+                    prefix
+                }
+                other => {
+                    return Err(McpError::invalid_params(format!(
+                        "unsupported completion ref type: {other}"
+                    )));
+                }
+            };
+
+            let handler = self
+                .find_handler(&prefix)
+                .ok_or_else(|| McpError::capability_not_supported("completion/complete"))?;
+
+            handler.handler.dyn_complete(params, ctx).await
+        }
+    }
+
+    /// Broadcast: every mount may be caching roots independently.
+    fn on_roots_list_changed<'a>(
+        &'a self,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        async move {
+            for mount in self.handlers.iter() {
+                let _ = mount.handler.dyn_on_roots_list_changed(ctx).await;
+            }
+            Ok(())
         }
     }
 }

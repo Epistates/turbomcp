@@ -100,6 +100,13 @@ impl core::fmt::Display for TransportType {
     }
 }
 
+/// Metadata slot holding the client's `_meta.progressToken` for this request.
+///
+/// Kept in [`RequestContext::metadata`] rather than as a struct field so the
+/// addition stays backwards compatible for callers that build the context with
+/// a struct literal.
+const PROGRESS_TOKEN_KEY: &str = "io.turbomcp/progressToken";
+
 /// Canonical per-request context.
 ///
 /// Carries request identity, transport information, authentication principal,
@@ -303,6 +310,20 @@ impl RequestContext {
         self
     }
 
+    /// Attach the client's progress token for this request.
+    ///
+    /// Populated by the router from `params._meta.progressToken`. Per the MCP
+    /// progress utility the token is `string | number`, so it is stored as the
+    /// raw [`Value`] the client sent rather than being coerced.
+    ///
+    /// Handlers should read it through [`progress_token`](Self::progress_token)
+    /// rather than reaching into [`metadata`](Self::metadata).
+    #[must_use]
+    pub fn with_progress_token(mut self, token: Value) -> Self {
+        self.metadata.insert(PROGRESS_TOKEN_KEY.to_string(), token);
+        self
+    }
+
     /// Attach a bidirectional session handle.
     #[must_use]
     pub fn with_session(mut self, session: Arc<dyn McpSession>) -> Self {
@@ -456,6 +477,27 @@ impl RequestContext {
         self.session.is_some()
     }
 
+    /// The progress token the client attached to this request, if any.
+    ///
+    /// Present only when the client asked for progress by including
+    /// `params._meta.progressToken`. The MCP progress utility requires progress
+    /// notifications to reference *only* tokens supplied in an active request,
+    /// so a handler reporting progress must use this value and stay silent when
+    /// it is `None`.
+    ///
+    /// The token is `string | number` per the specification, and is returned
+    /// exactly as the client sent it.
+    #[inline]
+    pub fn progress_token(&self) -> Option<&Value> {
+        self.metadata.get(PROGRESS_TOKEN_KEY)
+    }
+
+    /// Returns true when the client requested progress for this request.
+    #[inline]
+    pub fn wants_progress(&self) -> bool {
+        self.progress_token().is_some()
+    }
+
     /// All HTTP headers, if the transport captured any.
     #[inline]
     pub fn headers(&self) -> Option<&HashbrownMap<String, String>> {
@@ -580,10 +622,103 @@ impl RequestContext {
         })
     }
 
+    /// Ask the client which filesystem roots the server may operate within.
+    ///
+    /// Requires a bidirectional session. Returns
+    /// [`McpError::capability_not_supported`] when the transport has none, or
+    /// when the client did not declare the `roots` capability.
+    pub async fn list_roots(&self) -> McpResult<Vec<turbomcp_types::Root>> {
+        let session = self.require_session("roots/list")?;
+
+        // Only enforce when capabilities are known; a session that cannot
+        // report them (tests, in-process harnesses) should not be blocked.
+        if let Some(caps) = session.client_capabilities().await?
+            && caps.roots.is_none()
+        {
+            return Err(McpError::capability_not_supported(
+                "client roots capability required for roots/list",
+            ));
+        }
+
+        let result = session.call("roots/list", serde_json::json!({})).await?;
+        let parsed: turbomcp_types::ListRootsResult = serde_json::from_value(result)
+            .map_err(|e| McpError::internal(alloc::format!("Failed to parse roots result: {e}")))?;
+        Ok(parsed.roots)
+    }
+
+    /// Signal that an out-of-band URL elicitation has finished.
+    ///
+    /// Sends `notifications/elicitation/complete` with the `elicitationId` from
+    /// the originating [`elicit_url`](Self::elicit_url) call, letting the client
+    /// retry a request that failed with `URLElicitationRequiredError` or
+    /// otherwise resume. Per the specification this goes only to the client that
+    /// began the elicitation, which is exactly this request's session.
+    pub async fn notify_elicitation_complete(
+        &self,
+        elicitation_id: impl Into<String>,
+    ) -> McpResult<()> {
+        self.notify_client(
+            "notifications/elicitation/complete",
+            serde_json::json!({ "elicitationId": elicitation_id.into() }),
+        )
+        .await
+    }
+
     /// Send a JSON-RPC notification to the client.
     pub async fn notify_client(&self, method: impl AsRef<str>, params: Value) -> McpResult<()> {
         let session = self.require_session(method.as_ref())?;
         session.notify(method.as_ref(), params).await
+    }
+
+    /// Report progress for this request.
+    ///
+    /// Emits `notifications/progress` carrying the token the client supplied in
+    /// `params._meta.progressToken`.
+    ///
+    /// # When nothing is sent
+    ///
+    /// This is a no-op returning `Ok(())` when the client did not request
+    /// progress (no token), and when the transport has no bidirectional
+    /// session. Both are normal: the MCP progress utility makes progress
+    /// entirely optional, and forbids referencing a token the client never
+    /// issued. Handlers can therefore call this unconditionally.
+    ///
+    /// Use [`wants_progress`](Self::wants_progress) to skip expensive
+    /// instrumentation when nobody is listening.
+    ///
+    /// # Arguments
+    ///
+    /// * `progress` - Work done so far. Must increase across successive calls
+    ///   for one token, even when `total` is unknown.
+    /// * `total` - Total expected, when known.
+    /// * `message` - Human-readable status.
+    pub async fn report_progress(
+        &self,
+        progress: f64,
+        total: Option<f64>,
+        message: Option<&str>,
+    ) -> McpResult<()> {
+        // Absent token means the client never asked; sending anything here
+        // would reference a token that was never issued.
+        let Some(token) = self.progress_token() else {
+            return Ok(());
+        };
+        if self.session.is_none() {
+            return Ok(());
+        }
+
+        let mut params = serde_json::json!({
+            "progressToken": token,
+            "progress": progress,
+        });
+        if let Some(total) = total {
+            params["total"] = serde_json::json!(total);
+        }
+        if let Some(message) = message {
+            params["message"] = Value::String(message.to_string());
+        }
+
+        self.notify_client("notifications/progress", params).await
     }
 
     fn require_session(&self, op: &str) -> McpResult<&Arc<dyn McpSession>> {

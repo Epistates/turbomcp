@@ -439,14 +439,15 @@ impl<H: McpHandler> LineTransportRunner<H> {
                     line.clear();
                 }
 
-                // Completed handler responses ready to write back
-                Some(response) = response_rx.recv() => {
-                    if response.should_send() {
-                        self.send_response(&mut writer, &response).await?;
-                    }
-                }
-
-                // Outgoing server-to-client requests/notifications
+                // Outgoing server-to-client requests/notifications.
+                //
+                // Drained ahead of completed responses: a handler emits these
+                // while it is still running, so they belong on the wire before
+                // the response that concludes it. Progress notifications in
+                // particular must stop once an operation completes, which a
+                // response-first order would violate. The channel is bounded
+                // and only in-flight handlers write to it, so responses cannot
+                // be starved.
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
                         SessionCommand::Request { method, params, response_tx } => {
@@ -500,6 +501,13 @@ impl<H: McpHandler> LineTransportRunner<H> {
                             writer.flush().await
                                 .map_err(|e| McpError::internal(format!("Failed to flush: {e}")))?;
                         }
+                    }
+                }
+
+                // Completed handler responses ready to write back
+                Some(response) = response_rx.recv() => {
+                    if response.should_send() {
+                        self.send_response(&mut writer, &response).await?;
                     }
                 }
             }

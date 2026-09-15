@@ -508,6 +508,25 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
         }
     }
 
+    // ===== Client Notifications =====
+
+    /// Called when the client reports that its filesystem roots changed.
+    ///
+    /// Dispatched on `notifications/roots/list_changed`. Servers that cache the
+    /// result of [`RequestContext::list_roots`] should invalidate it here and
+    /// re-query. The default does nothing.
+    ///
+    /// Notifications carry no response, so a returned error is logged by the
+    /// caller rather than reaching the client.
+    ///
+    /// [`RequestContext::list_roots`]: crate::context::RequestContext::list_roots
+    fn on_roots_list_changed<'a>(
+        &'a self,
+        _ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<()>> + MaybeSend + 'a {
+        async { Ok(()) }
+    }
+
     // ===== Lifecycle Hooks =====
 
     /// Called when the server is initialized.

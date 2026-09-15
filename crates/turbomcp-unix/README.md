@@ -18,14 +18,14 @@ This crate provides Unix domain socket transport with:
 
 ```toml
 [dependencies]
-turbomcp-unix = "3.4.0"
+turbomcp-unix = "3.5.0"
 ```
 
 Or use through the main transport crate:
 
 ```toml
 [dependencies]
-turbomcp-transport = { version = "3.4.0", features = ["unix"] }
+turbomcp-transport = { version = "3.5.0", features = ["unix"] }
 ```
 
 ## Quick Start

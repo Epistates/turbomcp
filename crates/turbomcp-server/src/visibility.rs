@@ -1236,6 +1236,75 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
         }
     }
 
+    /// Subscribing to a hidden resource must be indistinguishable from
+    /// subscribing to one that does not exist, so this reuses `read_resource`'s
+    /// visibility rule rather than forwarding blindly.
+    fn subscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        async move {
+            if let Some(resource) = self.registered_resource(uri) {
+                if !self.is_resource_enabled(&resource, ctx.session_id()) {
+                    return Err(McpError::resource_not_found(uri));
+                }
+            } else if !self.is_unregistered_resource_readable(uri) {
+                return Err(McpError::resource_not_found(uri));
+            }
+
+            self.inner.subscribe(uri, ctx).await
+        }
+    }
+
+    /// Unsubscribing is gated identically: a hidden URI reveals nothing.
+    fn unsubscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        async move {
+            if let Some(resource) = self.registered_resource(uri) {
+                if !self.is_resource_enabled(&resource, ctx.session_id()) {
+                    return Err(McpError::resource_not_found(uri));
+                }
+            } else if !self.is_unregistered_resource_readable(uri) {
+                return Err(McpError::resource_not_found(uri));
+            }
+
+            self.inner.unsubscribe(uri, ctx).await
+        }
+    }
+
+    fn set_log_level<'a>(
+        &'a self,
+        level: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        async move { self.inner.set_log_level(level, ctx).await }
+    }
+
+    fn complete<'a>(
+        &'a self,
+        params: serde_json::Value,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<serde_json::Value>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        async move { self.inner.complete(params, ctx).await }
+    }
+
+    fn on_roots_list_changed<'a>(
+        &'a self,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        async move { self.inner.on_roots_list_changed(ctx).await }
+    }
+
     fn get_prompt<'a>(
         &'a self,
         name: &'a str,

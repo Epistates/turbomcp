@@ -91,10 +91,10 @@
 //!
 //! ```toml
 //! # Minimal (STDIO only, recommended for CLI tools)
-//! turbomcp = { version = "3.4.0", default-features = false, features = ["minimal"] }
+//! turbomcp = { version = "3.5.0", default-features = false, features = ["minimal"] }
 //!
 //! # Full (all transports)
-//! turbomcp = { version = "3.4.0", features = ["full"] }
+//! turbomcp = { version = "3.5.0", features = ["full"] }
 //! ```
 //!
 //! Available features:
@@ -134,7 +134,9 @@ pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 // ============================================================================
 
 // Re-export macros
-pub use turbomcp_macros::{description, prompt, resource, server, tool};
+pub use turbomcp_macros::{
+    completion, description, prompt, resource, server, set_level, subscribe, tool, unsubscribe,
+};
 
 // Re-export core types
 pub use turbomcp_core::context::RequestContext;
@@ -324,7 +326,9 @@ pub mod __macro_support {
 /// ```
 pub mod prelude {
     // Macros
-    pub use super::{description, prompt, resource, server, tool};
+    pub use super::{
+        completion, description, prompt, resource, server, set_level, subscribe, tool, unsubscribe,
+    };
 
     // Version info
     pub use super::{CRATE_NAME, VERSION};

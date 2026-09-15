@@ -33,7 +33,7 @@
 //!
 //!     // Progress reporting
 //!     for i in 0..100 {
-//!         ctx.report_progress(i, 100, Some(&format!("Step {}", i)));
+//!         ctx.log_progress(i, 100, Some(&format!("Step {}", i)));
 //!     }
 //!
 //!     ctx.log_info("Processing complete!");
@@ -239,17 +239,20 @@ pub trait RichContextExt {
 
     // ===== Progress Reporting =====
 
-    /// Report progress on a long-running operation.
+    /// Log progress to the console as a formatted percentage.
     ///
-    /// In WASM environments, this logs to the console by default.
-    /// For SSE-based progress, use `report_progress_with_callback`.
+    /// This is a local diagnostic, not the MCP progress utility: nothing
+    /// reaches the client. To send `notifications/progress`, use
+    /// [`RequestContext::report_progress`], which carries the client's
+    /// `_meta.progressToken`; for a custom transport use
+    /// [`report_progress_with_callback`](Self::report_progress_with_callback).
     ///
     /// # Arguments
     ///
     /// * `current` - Current progress value
     /// * `total` - Total value (for percentage: current/total * 100)
     /// * `message` - Optional status message
-    fn report_progress(&self, current: u64, total: u64, message: Option<&str>);
+    fn log_progress(&self, current: u64, total: u64, message: Option<&str>);
 
     /// Report progress with a custom callback.
     ///
@@ -469,7 +472,7 @@ impl RichContextExt for RequestContext {
 
     // ===== Progress Reporting =====
 
-    fn report_progress(&self, current: u64, total: u64, message: Option<&str>) {
+    fn log_progress(&self, current: u64, total: u64, message: Option<&str>) {
         let percentage = if total > 0 {
             (current as f64 / total as f64 * 100.0) as u32
         } else {
@@ -751,8 +754,8 @@ mod tests {
         let ctx = RequestContext::new().with_session_id("progress-test");
 
         // Basic progress reporting (logs to console)
-        ctx.report_progress(50, 100, Some("halfway"));
-        ctx.report_progress(100, 100, None);
+        ctx.log_progress(50, 100, Some("halfway"));
+        ctx.log_progress(100, 100, None);
 
         // Progress with callback
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

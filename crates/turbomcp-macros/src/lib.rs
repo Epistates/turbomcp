@@ -77,6 +77,7 @@ mod tool;
 /// - Parsing function signatures to extract parameters
 /// - Extracting doc comments for descriptions
 /// - Generating JSON Schema from Rust types
+/// - Deriving the advertised capabilities from what the impl block declares
 ///
 /// # Attributes
 ///
@@ -137,6 +138,42 @@ mod tool;
 ///
 /// Handlers returning other types keep the plain `Display` conversion, which
 /// has no kind to preserve.
+///
+/// # Optional handlers
+///
+/// Beyond `#[tool]`, `#[resource]`, and `#[prompt]`, four markers opt into the
+/// MCP methods that are optional for a server:
+///
+/// | Marker | Serves | Capability advertised |
+/// |---|---|---|
+/// | [`#[completion]`](macro@completion) | `completion/complete` | `completions` |
+/// | [`#[subscribe]`](macro@subscribe) | `resources/subscribe` | `resources.subscribe` |
+/// | [`#[unsubscribe]`](macro@unsubscribe) | `resources/unsubscribe` | — |
+/// | [`#[set_level]`](macro@set_level) | `logging/setLevel` | `logging` |
+///
+/// Each may appear at most once. Omitting one leaves the trait default, which
+/// answers `capability_not_supported`, and the capability stays unadvertised —
+/// so what `initialize` claims always matches what the server can serve.
+///
+/// ```ignore
+/// #[server(name = "docs", version = "1.0.0")]
+/// impl Docs {
+///     #[tool]
+///     async fn search(&self, query: String) -> McpResult<String> { /* ... */ }
+///
+///     #[completion]
+///     async fn complete(&self, params: serde_json::Value) -> McpResult<serde_json::Value> {
+///         // ...
+///     }
+///
+///     #[subscribe]
+///     async fn watch(&self, uri: String, ctx: &RequestContext) -> McpResult<()> {
+///         // ...
+///     }
+/// }
+/// ```
+///
+/// A trailing `ctx: &RequestContext` is optional on all four.
 #[proc_macro_attribute]
 pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
     server::generate_server(args, input)
@@ -380,6 +417,139 @@ pub fn prompt(_args: TokenStream, input: TokenStream) -> TokenStream {
         )
         .to_compile_error()
         .into()
+    }
+}
+
+/// Marks a method as the server's argument-completion handler.
+///
+/// Answers `completion/complete`, which clients call to autocomplete a prompt
+/// argument or a resource-template variable. Declaring it makes `#[server]`
+/// advertise the `completions` capability during initialization.
+///
+/// At most one `#[completion]` method may exist per server.
+///
+/// # Signature
+///
+/// ```ignore
+/// #[completion]
+/// async fn complete(
+///     &self,
+///     params: serde_json::Value,
+///     ctx: &RequestContext,
+/// ) -> McpResult<serde_json::Value>
+/// ```
+///
+/// `params` is the raw `CompleteRequestParams` shape — `{ ref, argument,
+/// context? }` — and the return value is the `CompleteResult` shape,
+/// `{ completion: { values, total?, hasMore? } }`. The `ctx` parameter is
+/// optional and may be omitted.
+///
+/// # Example
+///
+/// ```ignore
+/// #[server(name = "docs", version = "1.0.0")]
+/// impl Docs {
+///     #[completion]
+///     async fn complete(&self, params: serde_json::Value) -> McpResult<serde_json::Value> {
+///         let prefix = params["argument"]["value"].as_str().unwrap_or("");
+///         let values: Vec<&str> = ["rust", "ruby", "racket"]
+///             .into_iter()
+///             .filter(|lang| lang.starts_with(prefix))
+///             .collect();
+///         Ok(serde_json::json!({ "completion": { "values": values } }))
+///     }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn completion(_args: TokenStream, input: TokenStream) -> TokenStream {
+    marker_outside_server("completion", input)
+}
+
+/// Marks a method as the handler for `resources/subscribe`.
+///
+/// Declaring it makes `#[server]` advertise `resources.subscribe`, committing
+/// the server to sending `notifications/resources/updated` when a subscribed
+/// resource changes. Emit those with
+/// `ctx.notify_client("notifications/resources/updated", ...)`.
+///
+/// At most one `#[subscribe]` method may exist per server.
+///
+/// # Signature
+///
+/// ```ignore
+/// #[subscribe]
+/// async fn subscribe(&self, uri: String, ctx: &RequestContext) -> McpResult<()>
+/// ```
+///
+/// The `ctx` parameter is optional and may be omitted.
+#[proc_macro_attribute]
+pub fn subscribe(_args: TokenStream, input: TokenStream) -> TokenStream {
+    marker_outside_server("subscribe", input)
+}
+
+/// Marks a method as the handler for `resources/unsubscribe`.
+///
+/// Pairs with [`macro@subscribe`]. A server that declares `#[subscribe]` should
+/// declare this too, so clients can cancel what they started.
+///
+/// # Signature
+///
+/// ```ignore
+/// #[unsubscribe]
+/// async fn unsubscribe(&self, uri: String, ctx: &RequestContext) -> McpResult<()>
+/// ```
+#[proc_macro_attribute]
+pub fn unsubscribe(_args: TokenStream, input: TokenStream) -> TokenStream {
+    marker_outside_server("unsubscribe", input)
+}
+
+/// Marks a method as the handler for `logging/setLevel`.
+///
+/// Declaring it makes `#[server]` advertise the `logging` capability. The level
+/// is the raw spec string: `debug`, `info`, `notice`, `warning`, `error`,
+/// `critical`, `alert`, or `emergency`. Persist it and use it to filter the
+/// `notifications/message` your server emits.
+///
+/// At most one `#[set_level]` method may exist per server.
+///
+/// # Signature
+///
+/// ```ignore
+/// #[set_level]
+/// async fn set_level(&self, level: String, ctx: &RequestContext) -> McpResult<()>
+/// ```
+#[proc_macro_attribute]
+pub fn set_level(_args: TokenStream, input: TokenStream) -> TokenStream {
+    marker_outside_server("set_level", input)
+}
+
+/// Shared diagnostic for the marker attributes that only mean something inside
+/// a `#[server]` impl block. They are inert there (the `#[server]` expansion
+/// strips them), so reaching the macro body at all means it was used standalone.
+fn marker_outside_server(name: &str, input: TokenStream) -> TokenStream {
+    let message = format!(
+        "#[{name}] must be used within a #[server] impl block. \
+         The #[server] macro discovers handlers by scanning impl blocks.\n\n\
+         Example:\n\
+         \n\
+         #[server(name = \"my-server\", version = \"1.0.0\")]\n\
+         impl MyServer {{\n\
+             #[{name}]\n\
+             async fn handler(&self, /* ... */) -> McpResult<()> {{\n\
+                 // ...\n\
+             }}\n\
+         }}"
+    );
+
+    if let Ok(func) = syn::parse::<syn::ItemFn>(input.clone()) {
+        syn::Error::new(func.sig.ident.span(), message)
+            .to_compile_error()
+            .into()
+    } else {
+        let input2 = proc_macro2::TokenStream::from(input);
+        syn::Error::new_spanned(&input2, message)
+            .to_compile_error()
+            .into()
     }
 }
 

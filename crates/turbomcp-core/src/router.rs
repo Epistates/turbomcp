@@ -36,6 +36,23 @@ use crate::handler::McpHandler;
 use crate::jsonrpc::{JsonRpcIncoming, JsonRpcOutgoing};
 use turbomcp_types::ServerInfo;
 
+/// Lift `params._meta.progressToken` off an incoming request.
+///
+/// Per the MCP progress utility the token is `string | number`; anything else
+/// is ignored rather than rejected, since a malformed `_meta` entry must not
+/// fail an otherwise valid request.
+fn progress_token(request: &JsonRpcIncoming) -> Option<Value> {
+    let token = request
+        .params
+        .as_ref()?
+        .get("_meta")?
+        .get("progressToken")?;
+    match token {
+        Value::String(_) | Value::Number(_) => Some(token.clone()),
+        _ => None,
+    }
+}
+
 /// Configuration for request routing.
 ///
 /// This provides minimal configuration that works on all platforms.
@@ -83,8 +100,28 @@ pub async fn route_request<H: McpHandler>(
     config: &RouteConfig<'_>,
 ) -> JsonRpcOutgoing {
     if request.is_notification() {
+        // Notifications get no response, but some of them the server can act
+        // on. Dispatch those before acking; the rest are ignored, per the
+        // spec's instruction to tolerate unrecognised notifications.
+        if request.method == "notifications/roots/list_changed" {
+            // Nothing to send on failure — a notification has no reply.
+            let _ = handler.on_roots_list_changed(ctx).await;
+        }
         return JsonRpcOutgoing::notification_ack();
     }
+
+    // Any request may carry `_meta.progressToken` to opt into progress
+    // notifications, so the token is lifted here — once, centrally — rather
+    // than in each method arm or each transport. The context is only cloned
+    // when a token is actually present, keeping the common path allocation-free.
+    let with_token;
+    let ctx = match progress_token(&request) {
+        Some(token) => {
+            with_token = ctx.clone().with_progress_token(token);
+            &with_token
+        }
+        None => ctx,
+    };
 
     let id = request.id.clone();
 

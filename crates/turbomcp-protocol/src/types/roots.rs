@@ -5,20 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::core::Uri;
-
-/// Filesystem root definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Root {
-    /// Root URI (typically a file:// URI)
-    pub uri: Uri,
-    /// Optional human-readable name for this root
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Optional metadata per the current MCP specification
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub _meta: Option<serde_json::Value>,
-}
+// `Root` and `ListRootsResult` are defined in `turbomcp-types` so that
+// `RequestContext::list_roots` can return them without inverting the crate
+// layering. Re-exported here so `turbomcp_protocol::types::Root` still resolves.
+pub use turbomcp_types::{ListRootsResult, Root};
 
 /// List roots request with optional metadata
 /// Note: Roots do not support pagination, only metadata
@@ -26,16 +16,6 @@ pub struct Root {
 pub struct ListRootsRequest {
     /// Optional metadata per the current MCP specification
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub _meta: Option<serde_json::Value>,
-}
-
-/// List roots result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListRootsResult {
-    /// Available filesystem roots
-    pub roots: Vec<Root>,
-    /// Optional metadata per the current MCP specification
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
 

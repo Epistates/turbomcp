@@ -11,6 +11,7 @@
 //! - Post-initialize requests are routed through `route_request_versioned`,
 //!   which applies the negotiated `ProtocolVersion` adapter for response filtering.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -20,15 +21,15 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::get;
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use turbomcp_core::error::{McpError, McpResult};
+use turbomcp_core::error::{ErrorKind, McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
-use turbomcp_types::ProtocolVersion;
+use turbomcp_types::{ClientCapabilities, ProtocolVersion};
 
 use super::SessionState;
 use crate::config::{ConnectionCounter, RateLimiter, ServerConfig};
-use crate::context::{Cancellable, RequestContext};
+use crate::context::{Cancellable, McpSession, RequestContext, SessionFuture};
 use crate::router::{self, JsonRpcOutgoing};
 use crate::transport::line::jsonrpc_id_key;
 use turbomcp_transport::security::{
@@ -37,6 +38,74 @@ use turbomcp_transport::security::{
 
 /// Maximum WebSocket message size (10MB).
 const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
+/// Maximum number of in-flight server-to-client requests before back-pressure.
+const MAX_PENDING_REQUESTS: usize = 64;
+
+/// Bidirectional session handle for a single WebSocket connection.
+///
+/// Mirrors [`crate::transport::line::SessionHandle`]: handler tasks push
+/// commands onto a channel that the connection loop drains, so a handler
+/// awaiting `session.call()` never blocks the socket's read side.
+#[derive(Debug, Clone)]
+struct WebSocketSessionHandle {
+    request_tx: mpsc::Sender<SessionCommand>,
+    client_capabilities: Arc<RwLock<Option<ClientCapabilities>>>,
+}
+
+#[derive(Debug)]
+enum SessionCommand {
+    Request {
+        method: String,
+        params: serde_json::Value,
+        response_tx: oneshot::Sender<McpResult<serde_json::Value>>,
+    },
+    Notify {
+        method: String,
+        params: serde_json::Value,
+    },
+}
+
+impl McpSession for WebSocketSessionHandle {
+    fn client_capabilities<'a>(&'a self) -> SessionFuture<'a, Option<ClientCapabilities>> {
+        Box::pin(async move { Ok(self.client_capabilities.read().await.clone()) })
+    }
+
+    fn call<'a>(
+        &'a self,
+        method: &'a str,
+        params: serde_json::Value,
+    ) -> SessionFuture<'a, serde_json::Value> {
+        Box::pin(async move {
+            let (response_tx, response_rx) = oneshot::channel();
+            self.request_tx
+                .send(SessionCommand::Request {
+                    method: method.to_string(),
+                    params,
+                    response_tx,
+                })
+                .await
+                .map_err(|_| McpError::internal("Session closed"))?;
+
+            response_rx
+                .await
+                .map_err(|_| McpError::internal("Response channel closed"))?
+        })
+    }
+
+    fn notify<'a>(&'a self, method: &'a str, params: serde_json::Value) -> SessionFuture<'a, ()> {
+        Box::pin(async move {
+            self.request_tx
+                .send(SessionCommand::Notify {
+                    method: method.to_string(),
+                    params,
+                })
+                .await
+                .map_err(|_| McpError::internal("Session closed"))?;
+            Ok(())
+        })
+    }
+}
 
 /// Run a handler on WebSocket transport.
 ///
@@ -257,6 +326,20 @@ async fn handle_websocket<H: McpHandler>(
     // Channel for handler responses produced by spawned tasks.
     let (response_tx, mut response_rx) = mpsc::channel::<JsonRpcOutgoing>(32);
 
+    // Server-to-client channel. Handlers hold the sender via `ctx.session`;
+    // this loop is the only writer to the socket.
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<SessionCommand>(32);
+    let session_handle = Arc::new(WebSocketSessionHandle {
+        request_tx: cmd_tx,
+        client_capabilities: Arc::new(RwLock::new(None)),
+    });
+
+    // Correlation table for requests this server sent to the client.
+    let mut pending_requests =
+        HashMap::<serde_json::Value, oneshot::Sender<McpResult<serde_json::Value>>>::new();
+    // String-prefixed so server ids can never collide with client integer ids.
+    let mut next_request_id = 1u64;
+
     // In-flight handler cancellation tokens, keyed by JSON-RPC id; signalled
     // by `notifications/cancelled` per MCP 2025-11-25.
     let pending_handlers: Arc<DashMap<String, CancellationToken>> = Arc::new(DashMap::new());
@@ -264,6 +347,59 @@ async fn handle_websocket<H: McpHandler>(
     loop {
         tokio::select! {
             biased;
+
+            // Outgoing: server-to-client requests and notifications raised by
+            // handlers through `ctx.sample()` / `elicit_*()` / `notify_client()`.
+            //
+            // Polled *before* completed responses, and deliberately so. A
+            // handler emits these while it is still running, so they belong on
+            // the wire ahead of the response that concludes it — the progress
+            // utility in particular requires notifications to stop once an
+            // operation completes, which a response-first order would violate.
+            // Starvation is not a concern: this channel is bounded and only
+            // in-flight handlers write to it.
+            Some(cmd) = cmd_rx.recv() => {
+                let payload = match cmd {
+                    SessionCommand::Request { method, params, response_tx } => {
+                        if pending_requests.len() >= MAX_PENDING_REQUESTS {
+                            tracing::error!(
+                                count = pending_requests.len(),
+                                "Too many pending server-to-client requests"
+                            );
+                            let _ = response_tx.send(Err(McpError::internal(
+                                "Too many pending server-to-client requests"
+                            )));
+                            continue;
+                        }
+
+                        let id = serde_json::json!(format!("s-{next_request_id}"));
+                        next_request_id += 1;
+                        pending_requests.insert(id.clone(), response_tx);
+
+                        serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "method": method,
+                            "params": params,
+                        })
+                    }
+                    SessionCommand::Notify { method, params } => serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": method,
+                        "params": params,
+                    }),
+                };
+
+                let Ok(text) = serde_json::to_string(&payload) else {
+                    tracing::error!("Failed to serialize server-to-client message");
+                    continue;
+                };
+                if sender.send(Message::Text(text.into())).await.is_err() {
+                    tracing::error!("Failed to send server-to-client message");
+                    break;
+                }
+                continue;
+            }
 
             // Outgoing: completed handler responses.
             Some(response) = response_rx.recv() => {
@@ -319,7 +455,49 @@ async fn handle_websocket<H: McpHandler>(
                     continue;
                 }
 
-                let parsed = match router::parse_request(&text) {
+                // Parse once as a generic JSON-RPC message: the frame may be a
+                // *response* to something this server asked the client, not a
+                // request. Treating those as requests would answer the client's
+                // reply with a parse error.
+                let value: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        let error = JsonRpcOutgoing::error(
+                            Some(serde_json::Value::Null),
+                            McpError::parse_error(e.to_string()),
+                        );
+                        if let Ok(error_str) = router::serialize_response(&error) {
+                            let _ = sender.send(Message::Text(error_str.into())).await;
+                        }
+                        continue;
+                    }
+                };
+
+                if let Some(id) = value.get("id")
+                    && (value.get("result").is_some() || value.get("error").is_some())
+                {
+                    if let Some(tx) = pending_requests.remove(id) {
+                        if let Some(error) = value.get("error") {
+                            let mcp_error = serde_json::from_value::<
+                                turbomcp_core::jsonrpc::JsonRpcError,
+                            >(error.clone())
+                                .map(|e| McpError::new(ErrorKind::from_i32(e.code), e.message))
+                                .unwrap_or_else(|_| {
+                                    McpError::internal("Failed to parse error response")
+                                });
+                            let _ = tx.send(Err(mcp_error));
+                        } else {
+                            let result =
+                                value.get("result").cloned().unwrap_or(serde_json::Value::Null);
+                            let _ = tx.send(Ok(result));
+                        }
+                    } else {
+                        tracing::warn!(id = %id, "Received response for unknown request ID");
+                    }
+                    continue;
+                }
+
+                let parsed = match router::parse_request_from_value(value) {
                     Ok(req) => req,
                     Err(e) => {
                         let error = JsonRpcOutgoing::error(
@@ -336,7 +514,13 @@ async fn handle_websocket<H: McpHandler>(
                 // `initialize` mutates `session_state`, so it must run inline
                 // on the loop task.
                 if parsed.method == "initialize" {
-                    let ctx = RequestContext::websocket();
+                    // Capture what the client can do before dispatching, so
+                    // capability checks in `sample()` / `elicit_*()` have it.
+                    *session_handle.client_capabilities.write().await = Some(
+                        super::client_capabilities_from_initialize_params(parsed.params.as_ref()),
+                    );
+
+                    let ctx = RequestContext::websocket().with_session(session_handle.clone());
                     let response = if matches!(session_state, SessionState::Initialized(_)) {
                         JsonRpcOutgoing::error(
                             parsed.id.clone(),
@@ -409,7 +593,7 @@ async fn handle_websocket<H: McpHandler>(
                 // `notifications/initialized` is a lifecycle no-op (no id, no
                 // response). Route it inline since there's nothing to spawn.
                 if parsed.method == "notifications/initialized" {
-                    let ctx = RequestContext::websocket();
+                    let ctx = RequestContext::websocket().with_session(session_handle.clone());
                     let _ = router::route_request(&handler, parsed, &ctx).await;
                     continue;
                 }
@@ -418,7 +602,7 @@ async fn handle_websocket<H: McpHandler>(
                     && matches!(session_state, SessionState::Uninitialized)
                 {
                     // Lifecycle permits ping before initialize has completed.
-                    let ctx = RequestContext::websocket();
+                    let ctx = RequestContext::websocket().with_session(session_handle.clone());
                     let response = router::route_request(&handler, parsed, &ctx).await;
                     if response.should_send()
                         && let Ok(response_str) = router::serialize_response(&response)
@@ -474,6 +658,7 @@ async fn handle_websocket<H: McpHandler>(
                     );
                 }
                 let ctx = RequestContext::websocket()
+                    .with_session(session_handle.clone())
                     .with_cancellation_token(Arc::new(token) as Arc<dyn Cancellable>);
                 let guard = super::PendingHandlerGuard::new(
                     Arc::clone(&pending_handlers),
@@ -492,6 +677,17 @@ async fn handle_websocket<H: McpHandler>(
                 });
             }
         }
+    }
+
+    // Handlers awaiting a client reply will never get one now that the socket
+    // is closing. Dropping the senders resolves their `await` with an error
+    // rather than leaving the tasks parked forever.
+    if !pending_requests.is_empty() {
+        tracing::warn!(
+            count = pending_requests.len(),
+            "Abandoning pending server-to-client requests on WebSocket shutdown"
+        );
+        pending_requests.clear();
     }
 }
 

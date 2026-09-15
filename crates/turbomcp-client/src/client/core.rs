@@ -829,6 +829,13 @@ impl<T: Transport + 'static> Client<T> {
                     self.send_response(response).await?;
                 }
             }
+            "ping" => {
+                // Either side may ping; the receiver MUST respond promptly with
+                // an empty result. This is the liveness check, so answering it
+                // with "method not found" would make a healthy client look dead.
+                let response = JsonRpcResponse::success(serde_json::json!({}), request.id);
+                self.send_response(response).await?;
+            }
             _ => {
                 // Unknown method
                 let error = turbomcp_protocol::jsonrpc::JsonRpcError {
@@ -988,6 +995,39 @@ impl<T: Transport + 'static> Client<T> {
                     }
                 } else {
                     tracing::debug!("Cancellation notification received (no handler registered)");
+                }
+            }
+
+            "notifications/elicitation/complete" => {
+                // Completion of an out-of-band URL mode elicitation. The id is
+                // required by the spec; a notification without one references
+                // nothing and is ignored rather than treated as an error.
+                let elicitation_id = notification
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("elicitationId"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned);
+
+                let Some(elicitation_id) = elicitation_id else {
+                    tracing::debug!("Elicitation complete notification without an elicitationId");
+                    return Ok(());
+                };
+
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .get_elicitation_complete_handler();
+
+                if let Some(handler) = handler_opt {
+                    if let Err(e) = handler.handle_elicitation_complete(elicitation_id).await {
+                        tracing::error!("Elicitation complete handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!(
+                        "Elicitation complete notification received (no handler registered)"
+                    );
                 }
             }
 

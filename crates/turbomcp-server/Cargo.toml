@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "3.4.0"
+version = "3.5.0"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Production-ready MCP server with zero-boilerplate macros and transport-agnostic design"
@@ -54,6 +54,7 @@ schemars = { version = "1.2", features = ["chrono04", "uuid1"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 proptest = "1.11"
 reqwest = { workspace = true }
+tokio-tungstenite = { workspace = true }
 
 [[bench]]
 name = "sse_throughput"

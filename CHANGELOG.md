@@ -7,6 +7,195 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-09-14
+
+A downstream team reported that a long-running handler could not report progress
+on any transport we ship. Validating that claim found it half-right, and found
+the real situation worse than described.
+
+Two of their four assertions held. Nothing in the request path ever read
+`params._meta.progressToken`, so the token a client sends to *ask* for progress
+never reached a handler. And the WebSocket transport built its `RequestContext`
+without an `McpSession`, so `sample`, `elicit_form`, `elicit_url`, and
+`notify_client` all failed there. Their other two assertions did not hold: HTTP
+does have a working bidirectional session — server-to-client traffic rides the
+GET SSE stream, keyed by `Mcp-Session-Id` — and STDIO, TCP, Unix, and channel
+were all wired correctly. WebSocket was the only hole.
+
+Underneath sat a worse bug they had not found. The one progress helper we
+shipped, `RichContextExt::report_progress`, used the *request id* as the progress
+token. The specification is explicit that progress notifications "MUST only
+reference tokens that were provided in an active request." So the SDK emitted
+notifications carrying a token no client had issued, and emitted them even when
+progress had never been requested. Not silence: non-conforming traffic that
+looked like it was working.
+
+That prompted a sweep of the rest of the protocol surface — elicitation,
+sampling, roots, resources, prompts, completions, logging, ping, cancellation.
+Most of it held up. Elicitation capability negotiation is correct down to the
+backwards-compatibility rule that an empty `elicitation: {}` means form mode
+only; sampling is current through 2025-11-25 including `tools`, `toolChoice`,
+and task augmentation; and the default `server_capabilities()` was scrupulously
+honest, advertising nothing it could not serve.
+
+But the sweep surfaced something structural. `#[server]` generated a *complete*
+`impl McpHandler` with a fixed method set and no override hook, and no second
+impl block is possible. Five of the trait's extension points were therefore
+unreachable for every macro-built server — which is every server. Completions,
+resource subscriptions, and logging were not merely undocumented; they were
+impossible. This release opens them.
+
+### Added
+
+- **Progress reporting that follows the specification.** `RequestContext` gains
+  `report_progress(progress, total, message)`, alongside `sample` and
+  `elicit_*` where server-to-client work already lives. The router lifts
+  `params._meta.progressToken` off *any* incoming request — once, centrally,
+  rather than per-method or per-transport — and `progress_token()` /
+  `wants_progress()` expose it.
+
+  The method is a no-op returning `Ok(())` when the client sent no token, and
+  when the transport has no session. Both are correct and both matter: progress
+  is optional, and referencing a token that was never issued is forbidden. So
+  handlers can call it unconditionally, and `wants_progress()` is there to skip
+  expensive instrumentation when nobody is listening.
+
+- **`RequestContext::list_roots`** asks the client which filesystem roots the
+  server may work within. Our *client* has always answered `roots/list`; our
+  server had no way to ask it. Gated on the client having declared the `roots`
+  capability. Paired with **`McpHandler::on_roots_list_changed`**, dispatched on
+  `notifications/roots/list_changed`, which the router previously dropped — so a
+  server that caches roots can now invalidate that cache.
+
+- **Four markers that open `#[server]`'s sealed extension points**:
+
+  | Marker | Serves | Capability advertised |
+  |---|---|---|
+  | `#[completion]` | `completion/complete` | `completions` |
+  | `#[subscribe]` | `resources/subscribe` | `resources.subscribe` |
+  | `#[unsubscribe]` | `resources/unsubscribe` | — |
+  | `#[set_level]` | `logging/setLevel` | `logging` |
+
+  Declaring one generates the override *and* flips the matching capability;
+  omitting it keeps the trait default, which answers `capability_not_supported`,
+  and leaves the capability unadvertised. The two move together by construction,
+  so a server can never claim a capability it would then refuse to serve. A
+  trailing `ctx: &RequestContext` is optional on all four.
+
+- **WebSocket is bidirectional.** A per-connection session handle, mirroring the
+  one in `line.rs`: handler tasks push onto a channel that the connection loop
+  drains, so a handler awaiting `session.call()` never blocks the socket's read
+  side. The receive loop now distinguishes a client's *response* to a
+  server-initiated request from a new request, and correlates it back to the
+  parked handler. Client capabilities are captured at `initialize`. This lands
+  sampling, both elicitation modes, `list_roots`, and notifications on the one
+  transport that had none.
+
+- **`RequestContext::notify_elicitation_complete`** sends
+  `notifications/elicitation/complete`, closing the URL-mode elicitation loop so
+  a client can retry a request that failed with `URLElicitationRequiredError`.
+  The client half is **`ElicitationCompleteHandler`**, registered via
+  `set_elicitation_complete_handler`; the notification was previously dropped.
+
+### Fixed
+
+- **Progress notifications referenced a fabricated token.** `report_progress`
+  derived the token from the request id rather than from the client's
+  `_meta.progressToken`, violating the progress utility's central requirement
+  and producing notifications a conforming client discards. See *Changed*.
+
+- **The client could not answer `ping`.** It handled `sampling/createMessage`,
+  `roots/list`, and `elicitation/create`, then fell through to
+  `-32601 Method not found`. Ping is the liveness check, so this made a healthy
+  client look dead to any server that used it. It now replies with an empty
+  result, as the specification requires of the receiver.
+
+- **Notifications emitted during a request could arrive after its response.**
+  The transport loops polled completed responses ahead of outgoing session
+  traffic, so a notification a handler sent *while running* could be written
+  after the response that concluded it — which for progress would mean a
+  notification arriving after completion. Outgoing session commands are now
+  drained first on WebSocket and on the line transports (STDIO, TCP, Unix).
+
+- **`VisibilityLayer` and `CompositeHandler` silently dropped four handler
+  methods.** Neither forwarded `complete`, `subscribe`, `unsubscribe`, or
+  `set_log_level`, so wrapping a server in either disabled those features
+  regardless of what the inner handler implemented. Latent before this release
+  because no macro server could implement them; load-bearing now that they can.
+  `VisibilityLayer` gates subscriptions by the same rule as reads, so
+  subscribing to a hidden resource stays indistinguishable from subscribing to
+  one that does not exist. `CompositeHandler` routes `subscribe`/`unsubscribe`
+  by URI prefix and `complete` by the reference in its params, and broadcasts
+  `set_log_level` and `on_roots_list_changed` to every mount.
+
+### Changed
+
+- **`RichContextExt::report_progress` and `report_progress_with_token` are
+  removed**, superseded by the inherent `RequestContext::report_progress`. This
+  is a breaking change to `turbomcp-protocol`'s public API, and it is deliberate:
+  the removed methods could not be fixed in place. An inherent method takes
+  precedence over a trait method of the same name, so any call site would have
+  bound to the new one regardless — and the old behaviour was itself the bug.
+  `report_progress_with_token` has no replacement by design, because choosing
+  your own token is precisely what the specification forbids.
+
+  Callers move from `ctx.report_progress(50.0, 100.0, Some("…"))` to
+  `ctx.report_progress(50.0, Some(100.0), Some("…"))`, and their notifications
+  start carrying the client's token instead of a fabricated one. Note that the
+  trait was never re-exported from the `turbomcp` facade — it was reachable only
+  through `__macro_support`, a `#[doc(hidden)]` module documented as not part of
+  the public API — so for anyone depending on `turbomcp` alone, progress
+  reporting was unreachable in the first place.
+
+- **`turbomcp-wasm`'s `RichContextExt::report_progress` is renamed
+  `log_progress`.** It formats a percentage to the console and never touched the
+  wire, so it was not progress reporting in the MCP sense; it now says so, and
+  the name is free for the method that is.
+
+- **`Root` and `ListRootsResult` moved to `turbomcp-types`** so that
+  `RequestContext::list_roots` can return them without `turbomcp-core` depending
+  on `turbomcp-protocol`. Both are re-exported from `turbomcp_protocol::types`,
+  with their fields unchanged, so existing paths keep resolving.
+
+- **`#[server]` now generates `server_capabilities()`** rather than relying on
+  the trait default. For a macro server the result is identical for tools,
+  resources, and prompts — the lists are static — and it is what lets the four
+  new markers advertise themselves.
+
+### What `cargo semver-checks` says
+
+Three of the twenty-five crates fail the check against the 3.4.0 baseline. The
+other twenty-two are clean. Since 3.x is maintained for backwards support, here
+is exactly what breaks and why each was judged acceptable.
+
+- **`turbomcp-protocol`** (2 major) — the two removed `RichContextExt` progress
+  methods, covered above. Unfixable in place: an inherent method of the same
+  name wins over a trait method, so adding the correct `report_progress` would
+  have broken those call sites whatever we did with the trait. The removed
+  behaviour was a specification violation, and the trait was never reachable
+  from the `turbomcp` facade.
+
+- **`turbomcp-wasm`** (2 major) — the `report_progress` → `log_progress` rename,
+  which registers as one method removed and one added. Same root cause: the old
+  name had to be freed for the inherent method. The console-logging behaviour is
+  unchanged and available under the new name.
+
+- **`turbomcp-client`** (1 major) — `constructible_struct_adds_field` on
+  `HandlerRegistry.elicitation_complete`. This is the same lint 3.4.0 hit with
+  `ErrorContext`, and the same reasoning applies: the handler has to live
+  somewhere, every existing field on the struct is public, and so no addition
+  can be non-breaking. A downstream writing `HandlerRegistry { roots,
+  elicitation, log, … }` as an exhaustive literal stops compiling. The struct
+  derives `Default`, in-tree construction goes through `HandlerRegistry::new()`,
+  and the documented path has always been the `set_*_handler` methods, so the
+  realistic blast radius is nil.
+
+Everything else is additive. Notably `turbomcp-core` and `turbomcp-types` are
+both clean: the progress token lives in the existing `RequestContext::metadata`
+map behind `progress_token()` rather than in a new struct field, specifically to
+avoid repeating the `ErrorContext` argument on a far more widely constructed
+type, and `Root` moved crates without changing its shape.
+
 ## [3.4.0] - 2026-09-14
 
 A downstream team filed seven gaps in the handler contract — places where what a

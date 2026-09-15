@@ -54,6 +54,36 @@ pub struct ServerInfo {
     pub resources: Vec<ResourceInfo>,
     /// Prompt handlers
     pub prompts: Vec<PromptInfo>,
+    /// Optional extension-point handlers discovered from marker attributes.
+    pub extensions: ExtensionHandlers,
+}
+
+/// The `McpHandler` methods a server can opt into with a marker attribute.
+///
+/// Each is `None` unless the impl block declares the corresponding marker, in
+/// which case `#[server]` generates an override *and* advertises the matching
+/// capability. Leaving one unset keeps the trait default, which reports
+/// `capability_not_supported` — so what a server claims during initialization
+/// always matches what it can actually serve.
+#[derive(Default)]
+pub struct ExtensionHandlers {
+    /// `#[completion]` → `complete` + `completions` capability.
+    pub completion: Option<ExtensionHandler>,
+    /// `#[subscribe]` → `subscribe` + `resources.subscribe` capability.
+    pub subscribe: Option<ExtensionHandler>,
+    /// `#[unsubscribe]` → `unsubscribe`.
+    pub unsubscribe: Option<ExtensionHandler>,
+    /// `#[set_level]` → `set_log_level` + `logging` capability.
+    pub set_level: Option<ExtensionHandler>,
+}
+
+/// A single marker-attributed method.
+pub struct ExtensionHandler {
+    /// Name of the user's method to call.
+    pub fn_name: Ident,
+    /// Whether the signature takes a `&RequestContext` after its value
+    /// parameter, so the generated call passes the right number of arguments.
+    pub takes_ctx: bool,
 }
 
 /// Resource handler info.
@@ -265,6 +295,7 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
     let mut tools = Vec::new();
     let mut resources = Vec::new();
     let mut prompts = Vec::new();
+    let mut extensions = ExtensionHandlers::default();
 
     // Analyze methods
     for item in &impl_block.items {
@@ -317,6 +348,23 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
                         icons: prompt_attrs.icons,
                     });
                     break;
+                } else if let Some(slot) = extension_slot(attr, &mut extensions) {
+                    if slot.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            attr,
+                            format!(
+                                "duplicate #[{}] handler; a server may declare at most one",
+                                attr.path()
+                                    .get_ident()
+                                    .map_or_else(|| "extension".to_string(), ToString::to_string)
+                            ),
+                        ));
+                    }
+                    *slot = Some(ExtensionHandler {
+                        fn_name: method.sig.ident.clone(),
+                        takes_ctx: signature_takes_context(&method.sig),
+                    });
+                    break;
                 }
             }
         }
@@ -334,6 +382,39 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
         tools,
         resources,
         prompts,
+        extensions,
+    })
+}
+
+/// Map a marker attribute to its slot in [`ExtensionHandlers`].
+///
+/// Returns `None` for attributes that are not extension markers, so the caller
+/// can keep scanning.
+fn extension_slot<'a>(
+    attr: &syn::Attribute,
+    extensions: &'a mut ExtensionHandlers,
+) -> Option<&'a mut Option<ExtensionHandler>> {
+    if attr.path().is_ident("completion") {
+        Some(&mut extensions.completion)
+    } else if attr.path().is_ident("subscribe") {
+        Some(&mut extensions.subscribe)
+    } else if attr.path().is_ident("unsubscribe") {
+        Some(&mut extensions.unsubscribe)
+    } else if attr.path().is_ident("set_level") {
+        Some(&mut extensions.set_level)
+    } else {
+        None
+    }
+}
+
+/// Whether a marker-attributed method accepts a `&RequestContext`.
+///
+/// The context parameter is optional on every extension handler, so the
+/// generated dispatch has to know whether to pass it.
+fn signature_takes_context(sig: &syn::Signature) -> bool {
+    sig.inputs.iter().any(|arg| match arg {
+        syn::FnArg::Typed(pat_type) => is_request_context_type(&pat_type.ty),
+        syn::FnArg::Receiver(_) => false,
     })
 }
 
@@ -603,7 +684,12 @@ fn extract_doc_comments(attrs: &[syn::Attribute]) -> Option<String> {
     }
 }
 
-/// Strip #[tool], #[resource], and #[prompt] attributes from impl items.
+/// Strip the handler marker attributes from impl items.
+///
+/// Every marker `#[server]` understands must be listed here: the markers are
+/// also declared as proc-macro attributes purely so that using one outside a
+/// `#[server]` block produces a helpful error, and any that survive into the
+/// emitted impl would expand to that error.
 fn strip_handler_attributes(impl_block: &ItemImpl) -> ItemImpl {
     let mut stripped = impl_block.clone();
     for item in &mut stripped.items {
@@ -612,6 +698,10 @@ fn strip_handler_attributes(impl_block: &ItemImpl) -> ItemImpl {
                 !attr.path().is_ident("tool")
                     && !attr.path().is_ident("resource")
                     && !attr.path().is_ident("prompt")
+                    && !attr.path().is_ident("completion")
+                    && !attr.path().is_ident("subscribe")
+                    && !attr.path().is_ident("unsubscribe")
+                    && !attr.path().is_ident("set_level")
             });
             // Strip #[description] from parameter attributes — the macro has already
             // extracted their values for schema generation, so they must not survive
@@ -626,6 +716,175 @@ fn strip_handler_attributes(impl_block: &ItemImpl) -> ItemImpl {
         }
     }
     stripped
+}
+
+/// Generate the `McpHandler` overrides for the marker-attributed methods.
+///
+/// Only the markers actually present produce an override; the rest keep the
+/// trait default, which answers `capability_not_supported`. That pairing is
+/// what keeps [`generate_capabilities`] honest.
+fn generate_extension_handlers(
+    extensions: &ExtensionHandlers,
+    turbomcp: &TokenStream,
+) -> TokenStream {
+    let core = quote! { #turbomcp::__macro_support::turbomcp_core };
+    let json = quote! { #turbomcp::__macro_support::serde_json };
+
+    // `resources/subscribe` and `resources/unsubscribe` share a shape: take a
+    // URI string, return unit.
+    let uri_handler = |handler: &ExtensionHandler, trait_fn: Ident| {
+        let fn_name = &handler.fn_name;
+        let call = if handler.takes_ctx {
+            quote! { self.#fn_name(uri.to_string(), ctx).await }
+        } else {
+            quote! { self.#fn_name(uri.to_string()).await }
+        };
+        quote! {
+            fn #trait_fn<'a>(
+                &'a self,
+                uri: &'a str,
+                ctx: &'a #core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #core::error::McpResult<()>>
+                + #core::marker::MaybeSend + 'a {
+                async move {
+                    let _ = ctx;
+                    #call
+                }
+            }
+        }
+    };
+
+    let subscribe = extensions
+        .subscribe
+        .as_ref()
+        .map(|h| uri_handler(h, syn::parse_quote!(subscribe)));
+    let unsubscribe = extensions
+        .unsubscribe
+        .as_ref()
+        .map(|h| uri_handler(h, syn::parse_quote!(unsubscribe)));
+
+    let set_level = extensions.set_level.as_ref().map(|handler| {
+        let fn_name = &handler.fn_name;
+        let call = if handler.takes_ctx {
+            quote! { self.#fn_name(level.to_string(), ctx).await }
+        } else {
+            quote! { self.#fn_name(level.to_string()).await }
+        };
+        quote! {
+            fn set_log_level<'a>(
+                &'a self,
+                level: &'a str,
+                ctx: &'a #core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #core::error::McpResult<()>>
+                + #core::marker::MaybeSend + 'a {
+                async move {
+                    let _ = ctx;
+                    #call
+                }
+            }
+        }
+    });
+
+    let completion = extensions.completion.as_ref().map(|handler| {
+        let fn_name = &handler.fn_name;
+        let call = if handler.takes_ctx {
+            quote! { self.#fn_name(params, ctx).await }
+        } else {
+            quote! { self.#fn_name(params).await }
+        };
+        quote! {
+            fn complete<'a>(
+                &'a self,
+                params: #json::Value,
+                ctx: &'a #core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #core::error::McpResult<#json::Value>>
+                + #core::marker::MaybeSend + 'a {
+                async move {
+                    let _ = ctx;
+                    #call
+                }
+            }
+        }
+    });
+
+    quote! {
+        #subscribe
+        #unsubscribe
+        #set_level
+        #completion
+    }
+}
+
+/// Generate `server_capabilities`, inferred from what the server can serve.
+///
+/// Tools, resources, and prompts are advertised when the impl block declares
+/// any; `completions`, `logging`, and `resources.subscribe` are advertised only
+/// when the corresponding marker attribute supplied a handler. A server
+/// therefore never claims a capability whose method would answer
+/// `capability_not_supported`.
+fn generate_capabilities(info: &ServerInfo, turbomcp: &TokenStream) -> TokenStream {
+    let types = quote! { #turbomcp::__macro_support::turbomcp_types };
+
+    let has_tools = !info.tools.is_empty();
+    let has_resources = !info.resources.is_empty();
+    let has_prompts = !info.prompts.is_empty();
+    let subscribe = info.extensions.subscribe.is_some();
+
+    let tools_code = has_tools.then(|| {
+        quote! {
+            capabilities.tools = Some(#types::ToolsCapabilities {
+                list_changed: Some(true),
+            });
+        }
+    });
+
+    // `subscribe` alone is enough to advertise the resources capability: a
+    // server can expose only templated or dynamic resources.
+    let resources_code = (has_resources || subscribe).then(|| {
+        let subscribe_value = if subscribe {
+            quote! { Some(true) }
+        } else {
+            quote! { None }
+        };
+        quote! {
+            capabilities.resources = Some(#types::ResourcesCapabilities {
+                subscribe: #subscribe_value,
+                list_changed: Some(true),
+            });
+        }
+    });
+
+    let prompts_code = has_prompts.then(|| {
+        quote! {
+            capabilities.prompts = Some(#types::PromptsCapabilities {
+                list_changed: Some(true),
+            });
+        }
+    });
+
+    let completions_code = info.extensions.completion.is_some().then(|| {
+        quote! {
+            capabilities.completions = Some(#types::CompletionCapabilities::default());
+        }
+    });
+
+    let logging_code = info.extensions.set_level.is_some().then(|| {
+        quote! {
+            capabilities.logging = Some(#types::LoggingCapabilities::default());
+        }
+    });
+
+    quote! {
+        fn server_capabilities(&self) -> #types::ServerCapabilities {
+            let mut capabilities = #types::ServerCapabilities::default();
+            #tools_code
+            #resources_code
+            #prompts_code
+            #completions_code
+            #logging_code
+            capabilities
+        }
+    }
 }
 
 /// Generate code for the meta field (tags and version).
@@ -1063,6 +1322,9 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         }
     });
 
+    let extension_code = generate_extension_handlers(&info.extensions, &turbomcp);
+    let capabilities_code = generate_capabilities(info, &turbomcp);
+
     quote! {
         // Keep the original impl block with handler attributes stripped
         #stripped_impl_block
@@ -1079,6 +1341,10 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             }
 
             #instructions_code
+
+            #capabilities_code
+
+            #extension_code
 
             fn list_tools(&self) -> Vec<#turbomcp::__macro_support::turbomcp_types::Tool> {
                 vec![#(#tool_list_code),*]

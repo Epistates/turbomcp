@@ -845,6 +845,48 @@ pub trait ToolListChangedHandler: Send + Sync + std::fmt::Debug {
     ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
 }
 
+/// Handler for `notifications/elicitation/complete` notifications.
+///
+/// Sent by a server when an out-of-band interaction started by a URL mode
+/// elicitation has finished. Receiving it lets a client retry a request that
+/// failed with `URLElicitationRequiredError`, or update its UI.
+///
+/// Per the specification a client **MUST** ignore notifications referencing
+/// unknown or already-completed ids, and **SHOULD** still offer manual retry in
+/// case the notification never arrives.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use turbomcp_client::handlers::{ElicitationCompleteHandler, HandlerResult};
+/// use std::{future::Future, pin::Pin};
+///
+/// #[derive(Debug)]
+/// struct MyCompletionHandler;
+///
+/// impl ElicitationCompleteHandler for MyCompletionHandler {
+///     fn handle_elicitation_complete(
+///         &self,
+///         elicitation_id: String,
+///     ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+///         Box::pin(async move {
+///             println!("Out-of-band interaction {elicitation_id} finished");
+///             Ok(())
+///         })
+///     }
+/// }
+/// ```
+pub trait ElicitationCompleteHandler: Send + Sync + std::fmt::Debug {
+    /// Handle completion of a URL mode elicitation.
+    ///
+    /// `elicitation_id` is the identifier from the originating
+    /// `elicitation/create` request.
+    fn handle_elicitation_complete(
+        &self,
+        elicitation_id: String,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
+}
+
 // ============================================================================
 // PROGRESS HANDLER TRAIT
 // ============================================================================
@@ -936,6 +978,9 @@ pub struct HandlerRegistry {
 
     /// Progress handler for progress notifications
     pub progress: Option<Arc<dyn ProgressHandler>>,
+
+    /// Handler for URL mode elicitation completion notifications
+    pub elicitation_complete: Option<Arc<dyn ElicitationCompleteHandler>>,
 }
 
 impl HandlerRegistry {
@@ -1000,6 +1045,15 @@ impl HandlerRegistry {
     pub fn set_progress_handler(&mut self, handler: Arc<dyn ProgressHandler>) {
         debug!("Registering progress handler");
         self.progress = Some(handler);
+    }
+
+    /// Register a URL mode elicitation completion handler
+    pub fn set_elicitation_complete_handler(
+        &mut self,
+        handler: Arc<dyn ElicitationCompleteHandler>,
+    ) {
+        debug!("Registering elicitation complete handler");
+        self.elicitation_complete = Some(handler);
     }
 
     /// Check if a roots handler is registered
@@ -1072,6 +1126,18 @@ impl HandlerRegistry {
     #[must_use]
     pub fn has_progress_handler(&self) -> bool {
         self.progress.is_some()
+    }
+
+    /// Check if a URL mode elicitation completion handler is registered
+    #[must_use]
+    pub fn has_elicitation_complete_handler(&self) -> bool {
+        self.elicitation_complete.is_some()
+    }
+
+    /// Get the URL mode elicitation completion handler if registered
+    #[must_use]
+    pub fn get_elicitation_complete_handler(&self) -> Option<Arc<dyn ElicitationCompleteHandler>> {
+        self.elicitation_complete.clone()
     }
 
     /// Get the progress handler if registered
