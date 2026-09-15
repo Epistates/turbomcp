@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `roots.listChanged`, so one declaration is now correct on all three wires
   instead of the same hand-written blob going to each.
 
+### Security
+
+- `rustls` 0.23.41 → 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
+  were accepted across encryption-level boundaries, so a peer could send in
+  plaintext what should have been encrypted. The transcript stays
+  authenticated, so this does not let an attacker alter or complete a
+  handshake. Pulls `aws-lc-rs` 1.18.1 and `rustls-webpki` 0.103.15 with it.
+
 ### Fixed
 
 - The server checks client *sub*-capabilities, not just the top-level key.
