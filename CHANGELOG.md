@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `roots.listChanged`, so one declaration is now correct on all three wires
   instead of the same hand-written blob going to each.
 
+### Fixed
+
+- The server checks client *sub*-capabilities, not just the top-level key.
+  URL-mode elicitation went to clients that had declared only `elicitation`,
+  which strands the user on a consent page the client never opens, exactly as
+  sending an undeclared capability would. Form mode stays gated on the bare
+  capability, because `2025-06-18` has no sub-capabilities to declare.
+
 ### Changed
 
 - **Breaking:** `ClientHandler` is replaced by four per-feature traits —

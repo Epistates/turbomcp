@@ -433,10 +433,15 @@ impl ClientHandle {
                 .clone()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
         });
+        // URL mode is its own declaration: a form-only client has nowhere to
+        // send the user. Form mode is *not* gated the same way — `2025-06-18`
+        // has no sub-capabilities at all, so bare `elicitation` has to keep
+        // meaning "I can render a form" or every client on that revision
+        // breaks. Only the mode a client has to opt into is checked for.
         let raw = self
             .obtain(
                 key,
-                "elicitation",
+                "elicitation.url",
                 elicit_url_request_value(&params, elicitation_id),
             )
             .await?;
@@ -577,15 +582,25 @@ impl ClientHandle {
 
     // ---- internals ---------------------------------------------------------
 
+    /// Whether the client declared `capability`, which may be a dotted path
+    /// into a sub-capability (`elicitation.url`, `sampling.tools`).
+    ///
+    /// Testing only the top-level key was not enough. `elicitation` and
+    /// `sampling` each carry sub-objects that say *which* variant the client
+    /// can service — a client declaring `elicitation.form` and nothing else
+    /// renders a form and cannot open a consent page — and sending the variant
+    /// it did not declare strands the interaction exactly as sending an
+    /// undeclared capability would.
     fn require_capability(&self, capability: &str) -> McpResult<()> {
         if let HandleMode::Unavailable(reason) = self.inner.mode {
             return Err(McpError::internal(reason));
         }
-        let declared = self
-            .inner
-            .client_capabilities
-            .as_ref()
-            .is_some_and(|caps| caps.get(capability).is_some());
+        let declared = self.inner.client_capabilities.as_ref().is_some_and(|caps| {
+            capability
+                .split('.')
+                .try_fold(caps, |node, segment| node.get(segment))
+                .is_some()
+        });
         if declared {
             Ok(())
         } else {
@@ -986,7 +1001,8 @@ mod tests {
     async fn elicit_url_records_url_mode_request() {
         let handle = ClientHandle::mrtr(
             "",
-            Some(json!({ "elicitation": {} })),
+            // URL mode is declared explicitly; bare `elicitation` is form.
+            Some(json!({ "elicitation": { "url": {} } })),
             BTreeMap::new(),
             None,
             false,
@@ -1305,7 +1321,13 @@ mod tests {
             "sess",
             connection,
             Arc::clone(&pending),
-            Some(json!({ "elicitation": {}, "sampling": {}, "roots": {} })),
+            // A fully-capable client, URL mode included — the bidi tests drive
+            // both elicitation modes.
+            Some(json!({
+                "elicitation": { "form": {}, "url": {} },
+                "sampling": {},
+                "roots": {}
+            })),
         );
         (handle, pending, rx, guard)
     }
@@ -1514,13 +1536,57 @@ mod tests {
         );
     }
 
+    /// A form-only client is not sent somewhere it cannot go.
+    ///
+    /// `elicitation` and `elicitation.url` are different declarations: the
+    /// sub-capability says the client can hand the user off to a consent page.
+    /// Checking only the top-level key sent URL mode to clients that render
+    /// forms and nothing else, which strands the interaction exactly as
+    /// sending an undeclared capability would.
+    #[tokio::test]
+    async fn url_mode_is_refused_when_only_form_was_declared() {
+        let handle = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": { "form": {} } })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        let err = handle
+            .elicit_url(
+                "k",
+                neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go"),
+            )
+            .await
+            .expect_err("a form-only client cannot open a URL");
+        assert!(
+            matches!(&err, McpError::MissingRequiredCapability(c) if c == "elicitation.url"),
+            "{err:?}"
+        );
+        // Form mode still works: `2025-06-18` has no sub-capabilities at all,
+        // so bare `elicitation` has to keep meaning "I can render a form".
+        let form_only = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": {} })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        assert!(matches!(
+            form_only
+                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .await,
+            Err(McpError::InputRequired)
+        ));
+    }
+
     /// URL-mode elicitation resolves from the retry's cached response too —
     /// the path a real OAuth consent round trip returns on.
     #[tokio::test]
     async fn elicit_url_resolves_from_the_retry_response() {
         let handle = ClientHandle::mrtr(
             "",
-            Some(json!({ "elicitation": {} })),
+            Some(json!({ "elicitation": { "url": {} } })),
             BTreeMap::from([("k".to_owned(), json!({ "action": "accept" }))]),
             None,
             false,
