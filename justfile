@@ -284,8 +284,14 @@ test:
   cargo clippy -p turbomcp -- -D warnings
   echo "Step 4/8: Testing non-default foundation configs (no_std core/protocol, no-simd codec)..."
   cargo test -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features
-  echo "Step 5/8: Checking formatting on all code..."
+  echo "Step 5/8: Checking formatting on all code (workspace + excluded crates)..."
   cargo fmt --all -- --check
+  # `--all` stops at the workspace, and the excluded crates have their own CI
+  # jobs that run `cargo fmt -- --check`. Skipping them here meant a gate that
+  # passed locally and failed on push, for formatting alone.
+  cd crates/turbomcp-conformance && cargo fmt -- --check
+  cd crates/turbomcp-interop && cargo fmt -- --check
+  cd fuzz && cargo fmt -- --check
   echo "Step 6/8: Verifying wasm portability (no_std foundation, default + no-default)..."
   cargo build -p turbomcp-core -p turbomcp-protocol --target wasm32-unknown-unknown
   cargo build -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features --target wasm32-unknown-unknown
@@ -407,6 +413,10 @@ filter PATTERN:
 fmt:
   @echo "Formatting code..."
   cargo fmt --all
+  # The excluded crates are outside `--all` but inside CI's fmt check.
+  cd crates/turbomcp-conformance && cargo fmt
+  cd crates/turbomcp-interop && cargo fmt
+  cd fuzz && cargo fmt
   @echo "Code formatting completed"
 
 # Check code formatting without making changes
@@ -414,6 +424,9 @@ fmt:
 fmt-check:
   @echo "Checking code formatting..."
   cargo fmt --all -- --check
+  cd crates/turbomcp-conformance && cargo fmt -- --check
+  cd crates/turbomcp-interop && cargo fmt -- --check
+  cd fuzz && cargo fmt -- --check
 
 # Run clippy linter
 [group: 'quality']

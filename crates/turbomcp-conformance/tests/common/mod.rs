@@ -155,7 +155,10 @@ impl Everything {
     ///
     /// Named for the harness. Until it existed the check answered "unknown
     /// tool" and scored itself untestable, which is not the same as passing.
-    #[tool(name = "test_logging_tool", description = "Log at every level, then finish")]
+    #[tool(
+        name = "test_logging_tool",
+        description = "Log at every level, then finish"
+    )]
     async fn test_logging_tool(&self, ctx: &CallToolContext) -> McpResult<String> {
         ctx.log.debug(json!({ "message": "starting" })).await;
         ctx.log.info(json!({ "message": "working" })).await;
