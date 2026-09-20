@@ -44,7 +44,7 @@ use tokio::sync::{mpsc, watch};
 use turbomcp_core::{
     CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcResponse, ProtocolVersion, RequestId,
 };
-use turbomcp_protocol::methods::notification;
+use turbomcp_protocol::methods::{notification, request};
 use turbomcp_service::{Transport, mcp_headers};
 
 use crate::client::{Client, ClientBuilder};
@@ -60,6 +60,71 @@ pub enum HttpClientError {
 }
 
 const SESSION_HEADER: &str = "mcp-session-id";
+
+/// Re-establish an expired session — once, however many requests noticed it.
+///
+/// Returns whether the caller should retry: `true` when a live session is now
+/// in place (this call established it, or a concurrent one already had) and
+/// `false` when there is no handshake to replay.
+async fn recover_session(shared: &Arc<Shared>, sent: Option<&str>) -> Result<bool, String> {
+    let _single_flight = shared.recovery.lock().await;
+    // Whoever held the lock first may have replaced the session already, in
+    // which case this request only needs re-sending against the new one.
+    let current = shared.session.lock().expect("session mutex").clone();
+    if let Some(current) = &current
+        && Some(current.as_str()) != sent
+    {
+        return Ok(true);
+    }
+    let Some(handshake) = shared.handshake.lock().expect("handshake lock").clone() else {
+        return Ok(false);
+    };
+    *shared.session.lock().expect("session mutex") = None;
+    reinitialize(shared, &handshake).await?;
+    Ok(true)
+}
+
+/// Re-establish an expired session by replaying the handshake, with no session
+/// id attached.
+///
+/// Deliberately bypasses `pump`: this POST must not itself attempt session
+/// recovery, and its response frames are the handshake's, which the typed
+/// client above already saw the first time and must not see again. Only the
+/// new `Mcp-Session-Id` is kept.
+async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Result<(), String> {
+    let body = serde_json::to_string(handshake).map_err(|e| format!("encode failed: {e}"))?;
+    let mut req = shared
+        .http
+        .post(&shared.url)
+        .header(ACCEPT, "application/json, text/event-stream")
+        .header(CONTENT_TYPE, "application/json")
+        .body(body);
+    if let Some(source) = &shared.bearer
+        && let Some(token) = source.bearer().await
+    {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("re-initialize failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("re-initialize answered {}", resp.status()));
+    }
+    let Some(sid) = resp
+        .headers()
+        .get(SESSION_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+    else {
+        return Err("re-initialize established no session".into());
+    };
+    *shared.session.lock().expect("session mutex") = Some(sid);
+    // Drain the body so the connection can be reused; the frames are a repeat
+    // of a handshake the client has already processed.
+    let _ = bounded_body(resp, &shared.limits).await;
+    Ok(())
+}
 
 /// How long to wait before re-opening the standalone stream when the server
 /// sends no `retry:` of its own.
@@ -143,6 +208,17 @@ struct Shared {
     limits: HttpClientLimits,
     url: String,
     session: Mutex<Option<String>>,
+    /// The `initialize` frame this connection handshook with, kept so an
+    /// expired session can be replaced the way the spec requires: a *new*
+    /// `InitializeRequest` with no session id attached. Replaying the original
+    /// re-negotiates identically, so the typed client's cached view of the
+    /// handshake stays true.
+    handshake: Mutex<Option<JsonRpcMessage>>,
+    /// Serializes session recovery. Several POSTs can be in flight against one
+    /// expired session and all of them 404; each re-handshaking independently
+    /// would mint a session per concurrent request, leaving every one but the
+    /// last talking to a session the server has already replaced.
+    recovery: tokio::sync::Mutex<()>,
     /// The negotiated protocol version last seen on an outbound signal —
     /// the `MCP-Protocol-Version` header fallback for messages that carry no
     /// signal of their own (responses to server requests, notifications).
@@ -295,6 +371,8 @@ impl HttpClientTransport {
                 limits: HttpClientLimits::default(),
                 url: url.into(),
                 session: Mutex::new(None),
+                handshake: Mutex::new(None),
+                recovery: tokio::sync::Mutex::new(()),
                 version: Mutex::new(None),
                 inbound_tx,
                 listening: AtomicBool::new(false),
@@ -373,6 +451,13 @@ impl Transport for HttpClientTransport {
         {
             self.shared.abort_post(&id);
             return Ok(());
+        }
+        // Remember the handshake so an expired session can be re-established
+        // without the typed client above having to know sessions exist.
+        if let JsonRpcMessage::Request(r) = &msg
+            && r.method == request::INITIALIZE
+        {
+            *self.shared.handshake.lock().expect("handshake lock") = Some(msg.clone());
         }
 
         // POST and pump the response in the background so the driver can keep
@@ -514,9 +599,9 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
         .header(ACCEPT, "application/json, text/event-stream")
         .header(CONTENT_TYPE, "application/json")
         .body(body);
-    if let Some(sid) = shared.session.lock().expect("session mutex").clone() {
-        req = req.header(SESSION_HEADER, sid);
-    }
+    // The session header is applied per *attempt*, not baked into the
+    // template: a 404 means the session is gone, and the retry after
+    // re-handshaking has to carry the new id rather than the dead one.
     // `MCP-Protocol-Version` is required on every POST (both versions'
     // transports specs; on `2025-11-25` from the first post-`initialize`
     // request onward — the handshake itself negotiates in-band).
@@ -556,6 +641,10 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
         if let Some(token) = &token {
             attempt = attempt.bearer_auth(token);
         }
+        let sent_session = shared.session.lock().expect("session mutex").clone();
+        if let Some(sid) = &sent_session {
+            attempt = attempt.header(SESSION_HEADER, sid);
+        }
         let resp = attempt
             .send()
             .await
@@ -582,6 +671,27 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
             .and_then(|v| v.get("error").cloned())
             .and_then(|v| serde_json::from_value(v).ok());
         let mut message = format!("http status {status}");
+        // "When a client receives HTTP 404 in response to a request containing
+        // an `Mcp-Session-Id`, it MUST start a new session by sending a new
+        // `InitializeRequest` without a session ID attached." Clearing the id
+        // alone is not enough — the next POST would go out sessionless and be
+        // refused as uninitialized — so the handshake this transport already
+        // watched go past is replayed, and the original request retried once
+        // against the session that establishes.
+        if status.as_u16() == 404 && sent_session.is_some() && attempts < 3 {
+            match recover_session(shared, sent_session.as_deref()).await {
+                Ok(true) => {
+                    attempts += 1;
+                    continue;
+                }
+                // Nothing to replay: this connection never ran a handshake, so
+                // the 404 is the answer.
+                Ok(false) => {}
+                Err(e) => {
+                    message = format!("{message}: session expired, re-initialize failed: {e}")
+                }
+            }
+        }
         if matches!(status.as_u16(), 401 | 403)
             && attempts < 3
             && let Some(source) = &shared.bearer
@@ -840,9 +950,20 @@ async fn listen(shared: Arc<Shared>) {
             }
             Ok(resp) => {
                 let status = resp.status();
-                if matches!(status.as_u16(), 404 | 405 | 501) {
+                // 405/501 mean this server has no standalone stream, which is
+                // permanent. 404 on a session-bearing GET means the *session*
+                // is gone, which is recoverable and must not be mistaken for
+                // the former — doing so silently killed the server→client
+                // channel for the rest of the connection. The next POST
+                // re-handshakes; retrying here picks the stream back up on the
+                // session it establishes.
+                if matches!(status.as_u16(), 405 | 501) {
                     tracing::debug!(%status, "server does not offer a standalone sse stream");
                     return;
+                }
+                if status.as_u16() == 404 {
+                    *shared.session.lock().expect("session mutex") = None;
+                    tracing::debug!("standalone sse stream: session expired; awaiting a new one");
                 }
                 tracing::debug!(%status, "standalone sse stream rejected; retrying");
             }
@@ -1088,6 +1209,8 @@ mod tests {
             limits: HttpClientLimits::default(),
             url: "http://unused/mcp".into(),
             session: Mutex::new(None),
+            handshake: Mutex::new(None),
+            recovery: tokio::sync::Mutex::new(()),
             version: Mutex::new(None),
             inbound_tx: mpsc::channel(1).0,
             listening: AtomicBool::new(false),

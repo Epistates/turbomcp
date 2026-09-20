@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An expired legacy HTTP session is re-established instead of failing the call.
+  There was no 404 branch at all: the failure reached the caller and the dead
+  `Mcp-Session-Id` was replayed on every later POST forever, against a server
+  that answers 404 to exactly that. The standalone GET stream was worse — it
+  folded 404 in with 405/501 as "no standalone stream" and returned for good,
+  silently killing the server→client channel. The transport now remembers the
+  handshake and replays it with no session id attached, as the spec requires,
+  then retries the original request. Recovery is single-flight, so concurrent
+  404s share one new session rather than minting one each.
 - `initialize` no longer negotiates to `2026-07-28`, a revision that defines no
   `InitializeResult`. The echo path had no statefulness guard, so a client
   asking for the stateless revision by name got a success it could not act on;
