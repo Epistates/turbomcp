@@ -200,7 +200,9 @@ pub enum TaskSupport {
 /// The `#[tool]` macro builds these from a method signature: `input_schema`
 /// and `output_schema` are constructed by generated schema derivation code, so the advertised
 /// contract can't drift from the handler that serves it.
-#[derive(Clone, Debug)]
+///
+/// (`PartialEq` only: the schemas are [`Value`]s, which may hold floats.)
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Tool {
     /// Programmatic identifier (what `tools/call` references).
@@ -1396,6 +1398,1119 @@ impl ElicitOutcome {
     #[must_use]
     pub fn accepted(&self) -> bool {
         self.action == ElicitAction::Accept
+    }
+}
+
+// ---- roots (`roots/list`) ------------------------------------------------------
+
+/// A filesystem boundary the client exposes to the server.
+///
+/// "This **MUST** be a `file://` URI" — the one shape rule the roots spec
+/// states, and the reason parsing goes through [`Root::from_wire`] rather than
+/// a bare deserialize: a root is a *permission* statement, so a server that
+/// accepted `https://…` or a bare path would be acting on a boundary the
+/// client never drew.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Root {
+    /// The root's `file://` URI.
+    pub uri: String,
+    /// Optional human-readable name.
+    pub name: Option<String>,
+    /// Arbitrary `_meta`. Empty = absent on the wire.
+    pub meta: Map<String, Value>,
+}
+
+impl Root {
+    /// A root at `uri`, which must be a `file://` URI — anything else is
+    /// `None`, because there is no sound way to interpret it.
+    pub fn new(uri: impl Into<String>) -> Option<Self> {
+        let uri = uri.into();
+        uri.starts_with("file://").then_some(Self {
+            uri,
+            name: None,
+            meta: Map::new(),
+        })
+    }
+
+    /// Set the display name (builder style).
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Parse one wire root, rejecting a non-`file://` URI.
+    #[must_use]
+    pub fn from_wire(value: &Value) -> Option<Self> {
+        let root = Self::new(value.get("uri")?.as_str()?)?;
+        Some(Self {
+            name: value.get("name").and_then(Value::as_str).map(Into::into),
+            meta: value
+                .get("_meta")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            ..root
+        })
+    }
+
+    /// Parse a `roots/list` result, dropping entries that are not `file://`
+    /// URIs. Dropping rather than failing is deliberate: one malformed root
+    /// should not cost the handler the roots the client got right.
+    #[must_use]
+    pub fn list_from_wire(value: &Value) -> Vec<Self> {
+        value
+            .get("roots")
+            .and_then(Value::as_array)
+            .map(|roots| roots.iter().filter_map(Self::from_wire).collect())
+            .unwrap_or_default()
+    }
+
+    /// Render a `roots/list` result from a set of roots.
+    #[must_use]
+    pub fn list_to_wire(roots: &[Self]) -> Value {
+        let mut out = Map::new();
+        out.insert(
+            "roots".into(),
+            Value::Array(roots.iter().map(Self::to_wire).collect()),
+        );
+        Value::Object(out)
+    }
+
+    /// Render one root.
+    #[must_use]
+    pub fn to_wire(&self) -> Value {
+        let mut out = Map::new();
+        out.insert("uri".into(), Value::String(self.uri.clone()));
+        if let Some(n) = &self.name {
+            out.insert("name".into(), Value::String(n.clone()));
+        }
+        if !self.meta.is_empty() {
+            out.insert("_meta".into(), Value::Object(self.meta.clone()));
+        }
+        Value::Object(out)
+    }
+}
+
+// ---- sampling (`sampling/createMessage`) ---------------------------------------
+
+/// Why a sampling conversation could not be put on a wire.
+///
+/// Sampling is the one neutral family whose rendering is fallible, and
+/// deliberately so. `2025-06-18` predates multi-block messages and agentic
+/// sampling entirely; quietly dropping a `ToolUse` block to fit would hand the
+/// model a conversation with a hole in it, and neither end could tell. The
+/// spec's two tool-use MUSTs are checked here for the same reason — a
+/// half-answered tool call is not something a provider API can be handed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SamplingError {
+    /// The target revision's schema has no shape for this.
+    Unsupported {
+        /// What could not be rendered.
+        feature: String,
+        /// The revision it was being rendered for.
+        version: ProtocolVersion,
+    },
+    /// The conversation breaks one of the spec's tool-use rules.
+    Invalid(String),
+}
+
+impl core::fmt::Display for SamplingError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Unsupported { feature, version } => {
+                write!(f, "{feature} cannot be represented on {version}")
+            }
+            Self::Invalid(why) => f.write_str(why),
+        }
+    }
+}
+
+impl core::error::Error for SamplingError {}
+
+/// A tool call the model wants to make (`ToolUseContent`).
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct ToolUse {
+    /// Correlation id; the answering [`ToolResult`] repeats it as
+    /// [`tool_use_id`](ToolResult::tool_use_id).
+    pub id: String,
+    /// The tool to call.
+    pub name: String,
+    /// Arguments, conforming to the tool's input schema.
+    pub input: Map<String, Value>,
+    /// Arbitrary `_meta`; clients SHOULD carry it into subsequent turns, since
+    /// providers key their prompt caches off it. Empty = absent on the wire.
+    pub meta: Map<String, Value>,
+}
+
+impl ToolUse {
+    /// A call to `name`, correlated by `id`, with no arguments yet.
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            input: Map::new(),
+            meta: Map::new(),
+        }
+    }
+
+    /// Set the call arguments (builder style).
+    #[must_use]
+    pub fn with_input(mut self, input: Map<String, Value>) -> Self {
+        self.input = input;
+        self
+    }
+
+    /// Add one `_meta` entry (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+}
+
+/// The outcome of a [`ToolUse`], fed back into the next turn
+/// (`ToolResultContent`).
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct ToolResult {
+    /// The [`ToolUse::id`] this answers.
+    pub tool_use_id: String,
+    /// Unstructured result content, the same shape a `tools/call` returns.
+    pub content: Vec<Content>,
+    /// Structured result, conforming to the tool's `outputSchema` if it has one.
+    pub structured_content: Map<String, Value>,
+    /// Whether the call failed; the content then describes the failure.
+    pub is_error: Option<bool>,
+    /// Arbitrary `_meta`, preserved across turns like [`ToolUse::meta`].
+    pub meta: Map<String, Value>,
+}
+
+impl ToolResult {
+    /// A successful result for the call with this id.
+    pub fn new(tool_use_id: impl Into<String>, content: Vec<Content>) -> Self {
+        Self {
+            tool_use_id: tool_use_id.into(),
+            content,
+            ..Self::default()
+        }
+    }
+
+    /// A failed result: `is_error` set, with `message` as the content.
+    pub fn error(tool_use_id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            tool_use_id: tool_use_id.into(),
+            content: alloc::vec![Content::text(message)],
+            is_error: Some(true),
+            ..Self::default()
+        }
+    }
+
+    /// Attach a structured result (builder style).
+    #[must_use]
+    pub fn with_structured_content(mut self, structured: Map<String, Value>) -> Self {
+        self.structured_content = structured;
+        self
+    }
+}
+
+/// A block inside a [`SamplingMessage`].
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum SamplingContent {
+    /// Text, image or audio. `SamplingMessageContentBlock` is those three plus
+    /// the two tool blocks below — an embedded resource or a resource link is
+    /// not in the union on any revision, so rendering one is a
+    /// [`SamplingError`] rather than a block no client can parse.
+    Media(Content),
+    /// The model asked to call a tool. `2025-11-25` and later.
+    ToolUse(ToolUse),
+    /// The outcome of a tool call. `2025-11-25` and later. Boxed: it carries a
+    /// whole content vector, which would otherwise size every text block in
+    /// every message.
+    ToolResult(Box<ToolResult>),
+}
+
+impl SamplingContent {
+    /// A text block.
+    pub fn text(s: impl Into<String>) -> Self {
+        Self::Media(Content::text(s))
+    }
+
+    /// An image block from base64 data and a MIME type.
+    pub fn image(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self::Media(Content::image(data, mime_type))
+    }
+
+    /// An audio block from base64 data and a MIME type.
+    pub fn audio(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self::Media(Content::audio(data, mime_type))
+    }
+
+    /// A tool-call block.
+    pub fn tool_use(call: ToolUse) -> Self {
+        Self::ToolUse(call)
+    }
+
+    /// A tool-result block.
+    pub fn tool_result(result: ToolResult) -> Self {
+        Self::ToolResult(Box::new(result))
+    }
+
+    /// The call id, if this is a [`ToolUse`].
+    #[must_use]
+    pub fn tool_use_id(&self) -> Option<&str> {
+        match self {
+            Self::ToolUse(u) => Some(&u.id),
+            _ => None,
+        }
+    }
+
+    /// The id this answers, if this is a [`ToolResult`].
+    #[must_use]
+    pub fn answers_tool_use(&self) -> Option<&str> {
+        match self {
+            Self::ToolResult(r) => Some(&r.tool_use_id),
+            _ => None,
+        }
+    }
+}
+
+/// One message in a sampling conversation.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct SamplingMessage {
+    /// Who authored it.
+    pub role: Role,
+    /// Its content blocks. A lone block renders as a bare object — the only
+    /// shape `2025-06-18` accepts, and one every later client reads too —
+    /// while several render as an array.
+    pub content: Vec<SamplingContent>,
+    /// Arbitrary `_meta`. `2025-11-25` and later; empty = absent on the wire.
+    pub meta: Map<String, Value>,
+}
+
+impl SamplingMessage {
+    /// A message carrying the given blocks.
+    #[must_use]
+    pub fn new(role: Role, content: Vec<SamplingContent>) -> Self {
+        Self {
+            role,
+            content,
+            meta: Map::new(),
+        }
+    }
+
+    /// A message carrying one text block.
+    pub fn text(role: Role, text: impl Into<String>) -> Self {
+        Self::new(role, alloc::vec![SamplingContent::text(text)])
+    }
+
+    /// Add one `_meta` entry (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+}
+
+/// How much surrounding MCP context to attach to the prompt.
+///
+/// [`ThisServer`](Self::ThisServer) and [`AllServers`](Self::AllServers) are
+/// soft-deprecated: servers SHOULD NOT send them unless the client declared
+/// `sampling.context`, which the server-side handle enforces before the
+/// request leaves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IncludeContext {
+    /// No extra context. The default, and the only value that is safe to send
+    /// to a client which declared bare `sampling`.
+    #[default]
+    None,
+    /// Context from the calling server only.
+    ThisServer,
+    /// Context from every server the client is connected to.
+    AllServers,
+}
+
+impl IncludeContext {
+    /// The wire string.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::ThisServer => "thisServer",
+            Self::AllServers => "allServers",
+        }
+    }
+
+    /// Parse a wire string; unknown values are `None`.
+    #[must_use]
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "none" => Some(Self::None),
+            "thisServer" => Some(Self::ThisServer),
+            "allServers" => Some(Self::AllServers),
+            _ => None,
+        }
+    }
+}
+
+/// How the model may use the offered tools.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolChoice {
+    /// The model decides. The wire default.
+    #[default]
+    Auto,
+    /// The model must use at least one tool before finishing.
+    Required,
+    /// The model must not use any tool.
+    None,
+}
+
+impl ToolChoice {
+    /// The wire string.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Required => "required",
+            Self::None => "none",
+        }
+    }
+
+    /// Parse a wire string; unknown values are `None`.
+    #[must_use]
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "auto" => Some(Self::Auto),
+            "required" => Some(Self::Required),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
+}
+
+/// Server hints for which model to pick. Advisory — the client MAY ignore them.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct ModelPreferences {
+    /// Model-name substrings, most preferred first (`claude-3-5-sonnet`,
+    /// `sonnet`, `claude`). A wire hint with no `name` says nothing, so it is
+    /// dropped on the way in rather than becoming an empty hint.
+    pub hints: Vec<String>,
+    /// 0…1: how much cost matters.
+    pub cost_priority: Option<f64>,
+    /// 0…1: how much latency matters.
+    pub speed_priority: Option<f64>,
+    /// 0…1: how much capability matters.
+    pub intelligence_priority: Option<f64>,
+}
+
+impl ModelPreferences {
+    /// Preferences that hint at the given model names, in order.
+    pub fn hinting<I, S>(hints: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            hints: hints.into_iter().map(Into::into).collect(),
+            ..Self::default()
+        }
+    }
+}
+
+/// Params of `sampling/createMessage`: the conversation to continue.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct CreateMessageParams {
+    /// The conversation so far.
+    pub messages: Vec<SamplingMessage>,
+    /// Cap on tokens sampled; the client MAY sample fewer.
+    pub max_tokens: i64,
+    /// System prompt; the client MAY modify or drop it.
+    pub system_prompt: Option<String>,
+    /// How much MCP context to attach. Needs the client's `sampling.context`
+    /// for anything but [`IncludeContext::None`].
+    pub include_context: Option<IncludeContext>,
+    /// Sampling temperature.
+    pub temperature: Option<f64>,
+    /// Sequences that stop generation.
+    pub stop_sequences: Vec<String>,
+    /// Provider-specific passthrough metadata.
+    pub metadata: Map<String, Value>,
+    /// Model selection hints.
+    pub model_preferences: Option<ModelPreferences>,
+    /// Tools the model may call. Needs the client's `sampling.tools`, and has
+    /// no shape before `2025-11-25`.
+    pub tools: Vec<Tool>,
+    /// How the model may use [`tools`](Self::tools). Needs `sampling.tools`.
+    pub tool_choice: Option<ToolChoice>,
+}
+
+impl CreateMessageParams {
+    /// A request to continue `messages`, sampling at most `max_tokens`.
+    #[must_use]
+    pub fn new(messages: Vec<SamplingMessage>, max_tokens: i64) -> Self {
+        Self {
+            messages,
+            max_tokens,
+            ..Self::default()
+        }
+    }
+
+    /// Set the system prompt (builder style).
+    #[must_use]
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Ask for MCP context to be attached (builder style).
+    #[must_use]
+    pub fn with_include_context(mut self, include: IncludeContext) -> Self {
+        self.include_context = Some(include);
+        self
+    }
+
+    /// Set the sampling temperature (builder style).
+    #[must_use]
+    pub fn with_temperature(mut self, temperature: f64) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    /// Set the stop sequences (builder style).
+    #[must_use]
+    pub fn with_stop_sequences(mut self, stop: Vec<String>) -> Self {
+        self.stop_sequences = stop;
+        self
+    }
+
+    /// Set the model preferences (builder style).
+    #[must_use]
+    pub fn with_model_preferences(mut self, prefs: ModelPreferences) -> Self {
+        self.model_preferences = Some(prefs);
+        self
+    }
+
+    /// Offer tools to the model (builder style). Agentic sampling: the client
+    /// must have declared `sampling.tools`.
+    #[must_use]
+    pub fn with_tools(mut self, tools: Vec<Tool>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    /// Constrain how the model uses the offered tools (builder style).
+    #[must_use]
+    pub fn with_tool_choice(mut self, choice: ToolChoice) -> Self {
+        self.tool_choice = Some(choice);
+        self
+    }
+
+    /// Set provider passthrough metadata (builder style).
+    #[must_use]
+    pub fn with_metadata(mut self, metadata: Map<String, Value>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    /// Whether this request needs the client's `sampling.tools` capability.
+    #[must_use]
+    pub fn uses_tools(&self) -> bool {
+        !self.tools.is_empty() || self.tool_choice.is_some()
+    }
+
+    /// Whether this request needs the client's `sampling.context` capability.
+    #[must_use]
+    pub fn uses_context(&self) -> bool {
+        !matches!(self.include_context, None | Some(IncludeContext::None))
+    }
+
+    /// Check the two tool-use rules the spec states as MUSTs.
+    ///
+    /// A message carrying tool results must carry *only* tool results (provider
+    /// APIs put them on a dedicated role), and every tool use must be answered
+    /// by the very next message, one result per call, before the conversation
+    /// moves on. [`to_wire`](Self::to_wire) runs this, so a malformed
+    /// conversation cannot reach a client by forgetting to ask.
+    pub fn validate(&self) -> Result<(), SamplingError> {
+        validate_sampling_messages(&self.messages)
+    }
+
+    /// Render for `version`, or say why it cannot be rendered.
+    pub fn to_wire(&self, version: &ProtocolVersion) -> Result<Value, SamplingError> {
+        self.validate()?;
+        let legacy_or_newer = !matches!(version, ProtocolVersion::V2025_06_18);
+        if !legacy_or_newer && self.uses_tools() {
+            return Err(SamplingError::Unsupported {
+                feature: "agentic sampling (`tools` / `toolChoice`)".into(),
+                version: version.clone(),
+            });
+        }
+        let mut messages = Vec::with_capacity(self.messages.len());
+        for m in &self.messages {
+            messages.push(sampling_message_wire(m, version)?);
+        }
+        let mut out = Map::new();
+        out.insert("messages".into(), Value::Array(messages));
+        out.insert("maxTokens".into(), Value::from(self.max_tokens));
+        if let Some(p) = &self.system_prompt {
+            out.insert("systemPrompt".into(), Value::String(p.clone()));
+        }
+        if let Some(c) = self.include_context {
+            out.insert("includeContext".into(), Value::String(c.as_str().into()));
+        }
+        if let Some(t) = self.temperature
+            && let Some(n) = serde_json::Number::from_f64(t)
+        {
+            out.insert("temperature".into(), Value::Number(n));
+        }
+        if !self.stop_sequences.is_empty() {
+            out.insert(
+                "stopSequences".into(),
+                Value::Array(
+                    self.stop_sequences
+                        .iter()
+                        .map(|s| Value::String(s.clone()))
+                        .collect(),
+                ),
+            );
+        }
+        if !self.metadata.is_empty() {
+            out.insert("metadata".into(), Value::Object(self.metadata.clone()));
+        }
+        if let Some(p) = &self.model_preferences {
+            out.insert("modelPreferences".into(), model_preferences_wire(p));
+        }
+        if !self.tools.is_empty() {
+            let mut tools = Vec::with_capacity(self.tools.len());
+            for t in &self.tools {
+                tools.push(tool_wire(t.clone(), version)?);
+            }
+            out.insert("tools".into(), Value::Array(tools));
+        }
+        if let Some(c) = self.tool_choice {
+            let mut choice = Map::new();
+            choice.insert("mode".into(), Value::String(c.as_str().into()));
+            out.insert("toolChoice".into(), Value::Object(choice));
+        }
+        Ok(Value::Object(out))
+    }
+
+    /// Parse inbound params. Version-agnostic and tolerant of both the bare-
+    /// object and array forms of `content`: what a client must reject is
+    /// decided by its declared capabilities, not by re-deriving the revision.
+    pub fn from_wire(value: &Value) -> Result<Self, SamplingError> {
+        let obj = value
+            .as_object()
+            .ok_or_else(|| SamplingError::Invalid("sampling params must be an object".into()))?;
+        let messages = obj
+            .get("messages")
+            .and_then(Value::as_array)
+            .ok_or_else(|| SamplingError::Invalid("sampling params need `messages`".into()))?
+            .iter()
+            .map(sampling_message_from_wire)
+            .collect::<Result<Vec<_>, _>>()?;
+        let max_tokens = obj
+            .get("maxTokens")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| SamplingError::Invalid("sampling params need `maxTokens`".into()))?;
+        Ok(Self {
+            messages,
+            max_tokens,
+            system_prompt: obj
+                .get("systemPrompt")
+                .and_then(Value::as_str)
+                .map(Into::into),
+            include_context: obj
+                .get("includeContext")
+                .and_then(Value::as_str)
+                .and_then(IncludeContext::from_wire),
+            temperature: obj.get("temperature").and_then(Value::as_f64),
+            stop_sequences: obj
+                .get("stopSequences")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(Into::into))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            metadata: obj
+                .get("metadata")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            model_preferences: obj.get("modelPreferences").map(model_preferences_from_wire),
+            tools: obj
+                .get("tools")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(tool_from_wire).collect())
+                .unwrap_or_default(),
+            tool_choice: obj
+                .get("toolChoice")
+                .and_then(|c| c.get("mode"))
+                .and_then(Value::as_str)
+                .and_then(ToolChoice::from_wire),
+        })
+    }
+}
+
+/// Result of `sampling/createMessage`: the model's turn.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct CreateMessageResult {
+    /// Always `Assistant` in practice — the model authored it.
+    pub role: Role,
+    /// What the model produced. `ToolUse` blocks mean it wants to call tools,
+    /// and pair with `stop_reason: "toolUse"`.
+    pub content: Vec<SamplingContent>,
+    /// The model that generated it.
+    pub model: String,
+    /// Why sampling stopped: `endTurn`, `stopSequence`, `maxTokens`, `toolUse`,
+    /// or a provider-specific string.
+    pub stop_reason: Option<String>,
+    /// Arbitrary `_meta`. Empty = absent on the wire.
+    pub meta: Map<String, Value>,
+}
+
+impl CreateMessageResult {
+    /// A result carrying the given blocks.
+    pub fn new(model: impl Into<String>, content: Vec<SamplingContent>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content,
+            model: model.into(),
+            stop_reason: None,
+            meta: Map::new(),
+        }
+    }
+
+    /// A plain text answer that ended the turn.
+    pub fn text(model: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            stop_reason: Some("endTurn".into()),
+            ..Self::new(model, alloc::vec![SamplingContent::text(text)])
+        }
+    }
+
+    /// Set the stop reason (builder style).
+    #[must_use]
+    pub fn with_stop_reason(mut self, reason: impl Into<String>) -> Self {
+        self.stop_reason = Some(reason.into());
+        self
+    }
+
+    /// The tool calls the model asked for, in order.
+    pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
+        self.content.iter().filter_map(|c| match c {
+            SamplingContent::ToolUse(u) => Some(u),
+            _ => None,
+        })
+    }
+
+    /// Render for `version`, or say why it cannot be rendered.
+    pub fn to_wire(&self, version: &ProtocolVersion) -> Result<Value, SamplingError> {
+        let mut out = Map::new();
+        out.insert("role".into(), Value::String(role_wire(self.role).into()));
+        out.insert(
+            "content".into(),
+            sampling_content_wire(&self.content, version)?,
+        );
+        out.insert("model".into(), Value::String(self.model.clone()));
+        if let Some(r) = &self.stop_reason {
+            out.insert("stopReason".into(), Value::String(r.clone()));
+        }
+        if !self.meta.is_empty() && !matches!(version, ProtocolVersion::V2025_06_18) {
+            out.insert("_meta".into(), Value::Object(self.meta.clone()));
+        }
+        Ok(Value::Object(out))
+    }
+
+    /// Parse an inbound result, tolerating both `content` forms.
+    pub fn from_wire(value: &Value) -> Result<Self, SamplingError> {
+        let obj = value
+            .as_object()
+            .ok_or_else(|| SamplingError::Invalid("sampling result must be an object".into()))?;
+        let model = obj
+            .get("model")
+            .and_then(Value::as_str)
+            .ok_or_else(|| SamplingError::Invalid("sampling result needs `model`".into()))?
+            .into();
+        let content = sampling_content_from_wire(obj.get("content").unwrap_or(&Value::Null))?;
+        if content.iter().any(|c| c.answers_tool_use().is_some()) {
+            return Err(SamplingError::Invalid(
+                "a sampling result is the assistant's turn, so it cannot carry tool results".into(),
+            ));
+        }
+        Ok(Self {
+            role: obj
+                .get("role")
+                .and_then(Value::as_str)
+                .and_then(role_from_wire)
+                .unwrap_or(Role::Assistant),
+            content,
+            model,
+            stop_reason: obj
+                .get("stopReason")
+                .and_then(Value::as_str)
+                .map(Into::into),
+            meta: obj
+                .get("_meta")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// The spec's two tool-use MUSTs, checked over a whole conversation.
+///
+/// In two passes, so the complaint names the real problem: an unbalanced
+/// conversation whose answer is *also* mixed should be reported as mixed, which
+/// is the thing the author can act on.
+fn validate_sampling_messages(messages: &[SamplingMessage]) -> Result<(), SamplingError> {
+    // "When a user message contains tool results, it MUST contain ONLY tool
+    // results" — provider APIs put them on a dedicated role, so a mixed message
+    // has nowhere to go.
+    for (i, message) in messages.iter().enumerate() {
+        let results = message
+            .content
+            .iter()
+            .filter(|c| c.answers_tool_use().is_some())
+            .count();
+        if results > 0 && results != message.content.len() {
+            return Err(SamplingError::Invalid(alloc::format!(
+                "message {i} mixes tool results with other content; a message \
+                 carrying tool results must carry nothing else"
+            )));
+        }
+    }
+
+    for (i, message) in messages.iter().enumerate() {
+        let pending: Vec<&str> = message
+            .content
+            .iter()
+            .filter_map(SamplingContent::tool_use_id)
+            .collect();
+        if pending.is_empty() {
+            continue;
+        }
+        // "Every assistant message containing ToolUseContent blocks MUST be
+        // followed by a user message that consists entirely of
+        // ToolResultContent blocks … before any other message."
+        let Some(answer) = messages.get(i + 1) else {
+            return Err(SamplingError::Invalid(alloc::format!(
+                "message {i} makes {} tool call(s) that the conversation never \
+                 answers; every tool use must be resolved before sampling continues",
+                pending.len()
+            )));
+        };
+        let answered: BTreeMap<&str, ()> = answer
+            .content
+            .iter()
+            .filter_map(|c| c.answers_tool_use().map(|id| (id, ())))
+            .collect();
+        if answered.len() != answer.content.len() {
+            return Err(SamplingError::Invalid(alloc::format!(
+                "message {} must consist entirely of tool results, because \
+                 message {i} makes tool calls",
+                i + 1
+            )));
+        }
+        for id in pending {
+            if !answered.contains_key(id) {
+                return Err(SamplingError::Invalid(alloc::format!(
+                    "tool call `{id}` in message {i} has no matching tool result \
+                     in message {}",
+                    i + 1
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `{ role, content, _meta? }` for one message.
+fn sampling_message_wire(
+    message: &SamplingMessage,
+    version: &ProtocolVersion,
+) -> Result<Value, SamplingError> {
+    let mut out = Map::new();
+    out.insert("role".into(), Value::String(role_wire(message.role).into()));
+    out.insert(
+        "content".into(),
+        sampling_content_wire(&message.content, version)?,
+    );
+    // `SamplingMessage._meta` arrived with `2025-11-25`.
+    if !message.meta.is_empty() && !matches!(version, ProtocolVersion::V2025_06_18) {
+        out.insert("_meta".into(), Value::Object(message.meta.clone()));
+    }
+    Ok(Value::Object(out))
+}
+
+/// A lone block renders bare, several render as an array. `2025-06-18` has no
+/// array form at all, so more than one block is a step-down failure there
+/// rather than a truncation.
+fn sampling_content_wire(
+    blocks: &[SamplingContent],
+    version: &ProtocolVersion,
+) -> Result<Value, SamplingError> {
+    let single_only = matches!(version, ProtocolVersion::V2025_06_18);
+    if single_only && blocks.len() > 1 {
+        return Err(SamplingError::Unsupported {
+            feature: "a sampling message with more than one content block".into(),
+            version: version.clone(),
+        });
+    }
+    let mut rendered = Vec::with_capacity(blocks.len());
+    for b in blocks {
+        rendered.push(sampling_block_wire(b, version)?);
+    }
+    Ok(match rendered.len() {
+        1 => rendered.remove(0),
+        _ => Value::Array(rendered),
+    })
+}
+
+fn sampling_block_wire(
+    block: &SamplingContent,
+    version: &ProtocolVersion,
+) -> Result<Value, SamplingError> {
+    let tool_blocks = !matches!(version, ProtocolVersion::V2025_06_18);
+    match block {
+        SamplingContent::Media(
+            c @ (Content::Text { .. } | Content::Image { .. } | Content::Audio { .. }),
+        ) => content_block_wire(c.clone(), version),
+        SamplingContent::Media(_) => Err(SamplingError::Unsupported {
+            feature: "an embedded resource or resource link in a sampling message".into(),
+            version: version.clone(),
+        }),
+        _ if !tool_blocks => Err(SamplingError::Unsupported {
+            feature: "tool-use content in a sampling message".into(),
+            version: version.clone(),
+        }),
+        SamplingContent::ToolUse(u) => {
+            let mut out = Map::new();
+            out.insert("type".into(), Value::String("tool_use".into()));
+            out.insert("id".into(), Value::String(u.id.clone()));
+            out.insert("name".into(), Value::String(u.name.clone()));
+            out.insert("input".into(), Value::Object(u.input.clone()));
+            if !u.meta.is_empty() {
+                out.insert("_meta".into(), Value::Object(u.meta.clone()));
+            }
+            Ok(Value::Object(out))
+        }
+        SamplingContent::ToolResult(r) => {
+            let mut content = Vec::with_capacity(r.content.len());
+            for c in &r.content {
+                content.push(content_block_wire(c.clone(), version)?);
+            }
+            let mut out = Map::new();
+            out.insert("type".into(), Value::String("tool_result".into()));
+            out.insert("toolUseId".into(), Value::String(r.tool_use_id.clone()));
+            out.insert("content".into(), Value::Array(content));
+            if !r.structured_content.is_empty() {
+                out.insert(
+                    "structuredContent".into(),
+                    Value::Object(r.structured_content.clone()),
+                );
+            }
+            if let Some(e) = r.is_error {
+                out.insert("isError".into(), Value::Bool(e));
+            }
+            if !r.meta.is_empty() {
+                out.insert("_meta".into(), Value::Object(r.meta.clone()));
+            }
+            Ok(Value::Object(out))
+        }
+    }
+}
+
+/// One [`Content`] block on `version`'s wire, reusing the same conversions
+/// every other content position uses so a sampling block and a tool-result
+/// block cannot drift apart.
+fn content_block_wire(content: Content, version: &ProtocolVersion) -> Result<Value, SamplingError> {
+    let json = match version {
+        ProtocolVersion::V2026_07_28 => serde_json::to_value(v0728::ContentBlock::from(content)),
+        ProtocolVersion::V2025_06_18 => {
+            serde_json::to_value(v06::ContentBlock::from(legacy::ContentBlock::from(content)))
+        }
+        _ => serde_json::to_value(legacy::ContentBlock::from(content)),
+    };
+    json.map_err(|e| SamplingError::Invalid(alloc::format!("content block is not JSON: {e}")))
+}
+
+fn tool_wire(tool: Tool, version: &ProtocolVersion) -> Result<Value, SamplingError> {
+    let json = match version {
+        ProtocolVersion::V2026_07_28 => serde_json::to_value(v0728::Tool::from(tool)),
+        ProtocolVersion::V2025_06_18 => serde_json::to_value(v06::Tool::from(tool)),
+        _ => serde_json::to_value(legacy::Tool::from(tool)),
+    };
+    json.map_err(|e| SamplingError::Invalid(alloc::format!("tool is not JSON: {e}")))
+}
+
+fn tool_from_wire(value: &Value) -> Option<Tool> {
+    serde_json::from_value::<legacy::Tool>(value.clone())
+        .ok()
+        .map(Into::into)
+}
+
+fn model_preferences_wire(prefs: &ModelPreferences) -> Value {
+    let mut out = Map::new();
+    if !prefs.hints.is_empty() {
+        out.insert(
+            "hints".into(),
+            Value::Array(
+                prefs
+                    .hints
+                    .iter()
+                    .map(|h| {
+                        let mut hint = Map::new();
+                        hint.insert("name".into(), Value::String(h.clone()));
+                        Value::Object(hint)
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    for (key, value) in [
+        ("costPriority", prefs.cost_priority),
+        ("speedPriority", prefs.speed_priority),
+        ("intelligencePriority", prefs.intelligence_priority),
+    ] {
+        if let Some(v) = value
+            && let Some(n) = serde_json::Number::from_f64(v)
+        {
+            out.insert(key.into(), Value::Number(n));
+        }
+    }
+    Value::Object(out)
+}
+
+fn model_preferences_from_wire(value: &Value) -> ModelPreferences {
+    ModelPreferences {
+        hints: value
+            .get("hints")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|h| h.get("name").and_then(Value::as_str).map(Into::into))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        cost_priority: value.get("costPriority").and_then(Value::as_f64),
+        speed_priority: value.get("speedPriority").and_then(Value::as_f64),
+        intelligence_priority: value.get("intelligencePriority").and_then(Value::as_f64),
+    }
+}
+
+fn sampling_message_from_wire(value: &Value) -> Result<SamplingMessage, SamplingError> {
+    Ok(SamplingMessage {
+        role: value
+            .get("role")
+            .and_then(Value::as_str)
+            .and_then(role_from_wire)
+            .ok_or_else(|| SamplingError::Invalid("a sampling message needs `role`".into()))?,
+        content: sampling_content_from_wire(value.get("content").unwrap_or(&Value::Null))?,
+        meta: value
+            .get("_meta")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default(),
+    })
+}
+
+fn sampling_content_from_wire(value: &Value) -> Result<Vec<SamplingContent>, SamplingError> {
+    match value {
+        Value::Array(blocks) => blocks.iter().map(sampling_block_from_wire).collect(),
+        Value::Null => Err(SamplingError::Invalid(
+            "a sampling message needs `content`".into(),
+        )),
+        one => Ok(alloc::vec![sampling_block_from_wire(one)?]),
+    }
+}
+
+fn sampling_block_from_wire(value: &Value) -> Result<SamplingContent, SamplingError> {
+    match value.get("type").and_then(Value::as_str) {
+        Some("tool_use") => Ok(SamplingContent::ToolUse(ToolUse {
+            id: value
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| SamplingError::Invalid("a tool_use block needs `id`".into()))?
+                .into(),
+            name: value
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| SamplingError::Invalid("a tool_use block needs `name`".into()))?
+                .into(),
+            input: value
+                .get("input")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            meta: value
+                .get("_meta")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+        })),
+        Some("tool_result") => Ok(SamplingContent::ToolResult(Box::new(ToolResult {
+            tool_use_id: value
+                .get("toolUseId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    SamplingError::Invalid("a tool_result block needs `toolUseId`".into())
+                })?
+                .into(),
+            content: value
+                .get("content")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(content_block_from_wire).collect())
+                .unwrap_or_default(),
+            structured_content: value
+                .get("structuredContent")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            is_error: value.get("isError").and_then(Value::as_bool),
+            meta: value
+                .get("_meta")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+        }))),
+        _ => content_block_from_wire(value)
+            .map(SamplingContent::Media)
+            .ok_or_else(|| SamplingError::Invalid("unrecognized sampling content block".into())),
+    }
+}
+
+/// Parse one content block through the `2025-11-25` wire, which is the widest
+/// of the three for the kinds sampling allows.
+fn content_block_from_wire(value: &Value) -> Option<Content> {
+    serde_json::from_value::<legacy::ContentBlock>(value.clone())
+        .ok()
+        .map(Into::into)
+}
+
+fn role_wire(role: Role) -> &'static str {
+    match role {
+        Role::User => "user",
+        Role::Assistant => "assistant",
+    }
+}
+
+fn role_from_wire(s: &str) -> Option<Role> {
+    match s {
+        "user" => Some(Role::User),
+        "assistant" => Some(Role::Assistant),
+        _ => None,
     }
 }
 
@@ -4103,5 +5218,239 @@ mod tests {
         let wire: v0728::ContentBlock = content.clone().into();
         let back: Content = wire.into();
         assert_eq!(back, content);
+    }
+
+    // ---- sampling ------------------------------------------------------------
+
+    /// One conversation, three wires, and the shape each one accepts.
+    ///
+    /// A lone block renders bare rather than as a one-element array: that is
+    /// the only form `2025-06-18` defines, and every later client reads it too,
+    /// so there is nothing to gain from the array.
+    #[test]
+    fn a_single_block_message_renders_bare_on_every_wire() {
+        let params =
+            CreateMessageParams::new(alloc::vec![SamplingMessage::text(Role::User, "hi")], 64);
+        for version in ProtocolVersion::SUPPORTED {
+            let wire = params.to_wire(version).expect("plain text is universal");
+            assert_eq!(
+                wire["messages"][0]["content"],
+                json!({ "type": "text", "text": "hi" }),
+                "{version}"
+            );
+            assert_eq!(wire["maxTokens"], 64, "{version}");
+        }
+    }
+
+    /// `2025-06-18` predates multi-block content, agentic sampling and message
+    /// `_meta`; each is refused rather than dropped, because a conversation
+    /// with a hole in it is answered wrongly instead of failing.
+    #[test]
+    fn the_2025_06_18_step_down_refuses_rather_than_truncates() {
+        let two_blocks = CreateMessageParams::new(
+            alloc::vec![SamplingMessage::new(
+                Role::User,
+                alloc::vec![
+                    SamplingContent::text("see this"),
+                    SamplingContent::image("aGk=", "image/png"),
+                ],
+            )],
+            64,
+        );
+        let agentic = CreateMessageParams::new(Vec::new(), 64)
+            .with_tools(alloc::vec![Tool::new("echo", json!({ "type": "object" }))]);
+
+        for params in [&two_blocks, &agentic] {
+            assert!(matches!(
+                params.to_wire(&ProtocolVersion::V2025_06_18),
+                Err(SamplingError::Unsupported { .. })
+            ));
+            assert!(params.to_wire(&ProtocolVersion::V2025_11_25).is_ok());
+            assert!(params.to_wire(&ProtocolVersion::V2026_07_28).is_ok());
+        }
+
+        // Message `_meta` is dropped rather than refused: it is advisory
+        // metadata, so losing it costs a cache hint, not the conversation.
+        let with_meta = CreateMessageParams::new(
+            alloc::vec![
+                SamplingMessage::text(Role::User, "hi").with_meta_entry("x/cache", json!("k")),
+            ],
+            64,
+        );
+        let older = with_meta.to_wire(&ProtocolVersion::V2025_06_18).unwrap();
+        assert!(older["messages"][0].get("_meta").is_none());
+        let newer = with_meta.to_wire(&ProtocolVersion::V2025_11_25).unwrap();
+        assert_eq!(newer["messages"][0]["_meta"]["x/cache"], "k");
+    }
+
+    /// An embedded resource is in no revision's `SamplingMessageContentBlock`,
+    /// so it is refused everywhere rather than emitted as a block the client
+    /// cannot parse.
+    #[test]
+    fn a_resource_block_is_not_sampling_content_on_any_wire() {
+        let params = CreateMessageParams::new(
+            alloc::vec![SamplingMessage::new(
+                Role::User,
+                alloc::vec![SamplingContent::Media(Content::resource(
+                    ResourceContents::text("file:///a", "x"),
+                ))],
+            )],
+            8,
+        );
+        for version in ProtocolVersion::SUPPORTED {
+            assert!(
+                matches!(
+                    params.to_wire(version),
+                    Err(SamplingError::Unsupported { .. })
+                ),
+                "{version}"
+            );
+        }
+    }
+
+    /// The two tool-use MUSTs, and the round trip of a balanced conversation.
+    #[test]
+    fn tool_conversations_are_checked_and_round_trip() {
+        let call = SamplingMessage::new(
+            Role::Assistant,
+            alloc::vec![
+                SamplingContent::tool_use(ToolUse::new("c1", "echo")),
+                SamplingContent::tool_use(ToolUse::new("c2", "echo")),
+            ],
+        );
+        let one_answer = SamplingMessage::new(
+            Role::User,
+            alloc::vec![SamplingContent::tool_result(ToolResult::new(
+                "c1",
+                alloc::vec![Content::text("42")],
+            ))],
+        );
+        let both = SamplingMessage::new(
+            Role::User,
+            alloc::vec![
+                SamplingContent::tool_result(ToolResult::new(
+                    "c1",
+                    alloc::vec![Content::text("42")]
+                )),
+                SamplingContent::tool_result(ToolResult::error("c2", "boom")),
+            ],
+        );
+
+        // A call left unanswered, and a call only half answered.
+        for messages in [
+            alloc::vec![call.clone()],
+            alloc::vec![call.clone(), one_answer],
+        ] {
+            assert!(matches!(
+                CreateMessageParams::new(messages, 64).validate(),
+                Err(SamplingError::Invalid(_))
+            ));
+        }
+
+        let balanced = CreateMessageParams::new(alloc::vec![call, both], 64);
+        balanced.validate().expect("every call is answered");
+        let wire = balanced.to_wire(&ProtocolVersion::V2025_11_25).unwrap();
+        assert_eq!(wire["messages"][0]["content"][0]["type"], "tool_use");
+        assert_eq!(wire["messages"][1]["content"][1]["isError"], true);
+
+        let back = CreateMessageParams::from_wire(&wire).expect("round trip");
+        assert_eq!(back.messages, balanced.messages);
+    }
+
+    /// Params and results survive the wire in both directions, including the
+    /// fields the older revisions share.
+    #[test]
+    fn sampling_params_and_results_round_trip() {
+        let params =
+            CreateMessageParams::new(alloc::vec![SamplingMessage::text(Role::User, "hi")], 32)
+                .with_system_prompt("be brief")
+                .with_temperature(0.25)
+                .with_stop_sequences(alloc::vec!["STOP".into()])
+                .with_include_context(IncludeContext::ThisServer)
+                .with_model_preferences(ModelPreferences::hinting(["sonnet"]))
+                .with_tool_choice(ToolChoice::Required);
+
+        let wire = params.to_wire(&ProtocolVersion::V2026_07_28).unwrap();
+        assert_eq!(wire["includeContext"], "thisServer");
+        assert_eq!(wire["toolChoice"], json!({ "mode": "required" }));
+        assert_eq!(wire["modelPreferences"]["hints"][0]["name"], "sonnet");
+        assert_eq!(CreateMessageParams::from_wire(&wire).unwrap(), params);
+
+        let result = CreateMessageResult::new(
+            "m",
+            alloc::vec![SamplingContent::tool_use(ToolUse::new("c1", "echo"))],
+        )
+        .with_stop_reason("toolUse");
+        let wire = result.to_wire(&ProtocolVersion::V2025_11_25).unwrap();
+        assert_eq!(wire["stopReason"], "toolUse");
+        assert_eq!(CreateMessageResult::from_wire(&wire).unwrap(), result);
+        assert_eq!(result.tool_uses().count(), 1);
+
+        // A result is the assistant's turn, so it cannot carry tool results.
+        assert!(
+            CreateMessageResult::from_wire(&json!({
+                "model": "m",
+                "role": "assistant",
+                "content": [{ "type": "tool_result", "toolUseId": "c1", "content": [] }],
+            }))
+            .is_err()
+        );
+    }
+
+    /// Which sub-capability a request needs is a property of the request.
+    #[test]
+    fn a_requests_declared_needs_come_from_what_it_carries() {
+        let plain = CreateMessageParams::new(Vec::new(), 8);
+        assert!(!plain.uses_tools() && !plain.uses_context());
+        assert!(
+            !plain
+                .clone()
+                .with_include_context(IncludeContext::None)
+                .uses_context(),
+            "`none` is the undeclared-safe value"
+        );
+        assert!(
+            plain
+                .clone()
+                .with_include_context(IncludeContext::AllServers)
+                .uses_context()
+        );
+        assert!(
+            plain
+                .clone()
+                .with_tool_choice(ToolChoice::None)
+                .uses_tools()
+        );
+        assert!(
+            plain
+                .with_tools(alloc::vec![Tool::new("t", json!({}))])
+                .uses_tools()
+        );
+    }
+
+    // ---- roots ---------------------------------------------------------------
+
+    /// "This MUST be a `file://` URI." A root is a permission statement, so a
+    /// non-file one is refused at construction and dropped on parse rather
+    /// than handed to a handler that would act on it.
+    #[test]
+    fn only_file_uri_roots_exist() {
+        assert!(Root::new("file:///work").is_some());
+        for bad in ["https://example.com", "/work", "FILE:///work", ""] {
+            assert!(Root::new(bad).is_none(), "{bad}");
+        }
+
+        let roots = Root::list_from_wire(&json!({ "roots": [
+            { "uri": "file:///ok", "name": "ok" },
+            { "uri": "https://example.com/evil" },
+            { "name": "no uri at all" },
+        ]}));
+        assert_eq!(roots.len(), 1, "only the file:// root survives");
+        assert_eq!(roots[0].uri, "file:///ok");
+        assert_eq!(roots[0].name.as_deref(), Some("ok"));
+        assert_eq!(
+            Root::list_to_wire(&roots),
+            json!({ "roots": [{ "uri": "file:///ok", "name": "ok" }] })
+        );
     }
 }

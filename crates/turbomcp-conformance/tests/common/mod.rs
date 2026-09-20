@@ -17,6 +17,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use turbomcp::prelude::*;
 
+/// A one-turn sampling conversation: the shape every sampling scenario here
+/// asks for.
+fn ask(prompt: &str, max_tokens: i64) -> neutral::CreateMessageParams {
+    neutral::CreateMessageParams::new(
+        vec![neutral::SamplingMessage::text(neutral::Role::User, prompt)],
+        max_tokens,
+    )
+}
+
+/// The text the model answered with, or a placeholder. The scenarios score
+/// that we answered and in what shape, not what the text says.
+fn sampled_text(result: &neutral::CreateMessageResult) -> String {
+    result
+        .content
+        .iter()
+        .find_map(|block| match block {
+            neutral::SamplingContent::Media(neutral::Content::Text { text, .. }) => Some(text),
+            _ => None,
+        })
+        .cloned()
+        .unwrap_or_else(|| "(sampled)".to_owned())
+}
+
 /// A 1x1 transparent PNG, base64 (image tool / prompt / mixed content).
 pub const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
@@ -164,23 +187,9 @@ impl Everything {
     ) -> McpResult<String> {
         let result = ctx
             .client
-            .create_message(
-                "test_sampling",
-                json!({
-                    "messages": [{
-                        "role": "user",
-                        "content": { "type": "text", "text": prompt }
-                    }],
-                    "maxTokens": 64
-                }),
-            )
+            .create_message("test_sampling", ask(&prompt, 64))
             .await?;
-        Ok(result
-            .get("content")
-            .and_then(|c| c.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("(sampled)")
-            .to_string())
+        Ok(sampled_text(&result))
     }
 
     /// A tool whose input schema exercises the JSON Schema 2020-12 vocabulary
@@ -370,21 +379,10 @@ impl Everything {
             .client
             .create_message(
                 "capital_question",
-                json!({
-                    "messages": [{
-                        "role": "user",
-                        "content": { "type": "text", "text": "What is the capital of France?" }
-                    }],
-                    "maxTokens": 100
-                }),
+                ask("What is the capital of France?", 100),
             )
             .await?;
-        Ok(answer
-            .get("content")
-            .and_then(|c| c.get("text"))
-            .and_then(Value::as_str)
-            .unwrap_or("(sampled)")
-            .to_string())
+        Ok(sampled_text(&answer))
     }
 
     /// A3: one `roots/list` input request, keyed `client_roots`.
@@ -394,11 +392,7 @@ impl Everything {
         &self,
         ctx: &CallToolContext,
     ) -> McpResult<String> {
-        let roots = ctx.client.list_roots("client_roots").await?;
-        let count = roots
-            .get("roots")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
+        let count = ctx.client.list_roots("client_roots").await?.len();
         Ok(format!("client reported {count} root(s)"))
     }
 
@@ -463,16 +457,7 @@ impl Everything {
             .await;
         let greeting = ctx
             .client
-            .create_message(
-                "greeting",
-                json!({
-                    "messages": [{
-                        "role": "user",
-                        "content": { "type": "text", "text": "Generate a greeting" }
-                    }],
-                    "maxTokens": 50
-                }),
-            )
+            .create_message("greeting", ask("Generate a greeting", 50))
             .await;
         let roots = ctx.client.list_roots("client_roots").await;
         // Any one still outstanding aborts the execution; the dispatcher ships
@@ -572,23 +557,9 @@ impl Everything {
     ) -> McpResult<String> {
         let answer = ctx
             .client
-            .create_message(
-                "sampling_only",
-                json!({
-                    "messages": [{
-                        "role": "user",
-                        "content": { "type": "text", "text": "Say hello" }
-                    }],
-                    "maxTokens": 50
-                }),
-            )
+            .create_message("sampling_only", ask("Say hello", 50))
             .await?;
-        Ok(answer
-            .get("content")
-            .and_then(|c| c.get("text"))
-            .and_then(Value::as_str)
-            .unwrap_or("(sampled)")
-            .to_string())
+        Ok(sampled_text(&answer))
     }
 
     /// SEP-2575: a tool that needs a client capability, so a caller that did
@@ -599,18 +570,9 @@ impl Everything {
     async fn test_missing_capability(&self, ctx: &CallToolContext) -> McpResult<String> {
         let answer = ctx
             .client
-            .create_message(
-                "needs_sampling",
-                json!({
-                    "messages": [{
-                        "role": "user",
-                        "content": { "type": "text", "text": "ping" }
-                    }],
-                    "maxTokens": 16
-                }),
-            )
+            .create_message("needs_sampling", ask("ping", 16))
             .await?;
-        Ok(answer.to_string())
+        Ok(sampled_text(&answer))
     }
 
     /// SEP-2243: a tool with an `#[mcp_header]` parameter, so the custom-header

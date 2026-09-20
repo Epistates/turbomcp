@@ -92,15 +92,18 @@ impl ElicitationHandler for Basic {
 
 #[turbomcp::client::async_trait]
 impl SamplingHandler for Basic {
-    async fn create_message(&self, _params: Value) -> turbomcp::client::ClientResult<Value> {
+    async fn create_message(
+        &self,
+        _params: neutral::CreateMessageParams,
+    ) -> turbomcp::client::ClientResult<neutral::CreateMessageResult> {
         Ok(sample_message())
     }
 }
 
 #[turbomcp::client::async_trait]
 impl RootsHandler for Basic {
-    async fn list_roots(&self) -> turbomcp::client::ClientResult<Value> {
-        Ok(serde_json::json!({ "roots": [] }))
+    async fn list_roots(&self) -> turbomcp::client::ClientResult<Vec<neutral::Root>> {
+        Ok(Vec::new())
     }
 }
 
@@ -134,15 +137,18 @@ impl ElicitationHandler for AutoAnswer {
 
 #[turbomcp::client::async_trait]
 impl SamplingHandler for AutoAnswer {
-    async fn create_message(&self, _params: Value) -> turbomcp::client::ClientResult<Value> {
+    async fn create_message(
+        &self,
+        _params: neutral::CreateMessageParams,
+    ) -> turbomcp::client::ClientResult<neutral::CreateMessageResult> {
         Ok(sample_message())
     }
 }
 
 #[turbomcp::client::async_trait]
 impl RootsHandler for AutoAnswer {
-    async fn list_roots(&self) -> turbomcp::client::ClientResult<Value> {
-        Ok(serde_json::json!({ "roots": [] }))
+    async fn list_roots(&self) -> turbomcp::client::ClientResult<Vec<neutral::Root>> {
+        Ok(Vec::new())
     }
 }
 
@@ -150,13 +156,11 @@ impl RootsHandler for AutoAnswer {
 ///
 /// The scenarios score that we answered and the shape we answered in, not the
 /// text, so there is nothing to gain from pretending to have a model here.
-fn sample_message() -> Value {
-    serde_json::json!({
-        "role": "assistant",
-        "content": { "type": "text", "text": "conformance-client sampling stub" },
-        "model": "turbomcp-conformance-stub",
-        "stopReason": "endTurn"
-    })
+fn sample_message() -> neutral::CreateMessageResult {
+    neutral::CreateMessageResult::text(
+        "turbomcp-conformance-stub",
+        "conformance-client sampling stub",
+    )
 }
 
 // ─── Connecting ──────────────────────────────────────────────────────────────

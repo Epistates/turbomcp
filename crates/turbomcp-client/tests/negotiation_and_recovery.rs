@@ -315,18 +315,17 @@ async fn packaged_sampling_and_roots_reach_the_handler_and_return() {
     }
     #[async_trait]
     impl SamplingHandler for Sampler {
-        async fn create_message(&self, _params: Value) -> Result<Value, ClientError> {
-            Ok(json!({
-                "role": "assistant",
-                "content": { "type": "text", "text": "sampled" },
-                "model": "test-model"
-            }))
+        async fn create_message(
+            &self,
+            _params: neutral::CreateMessageParams,
+        ) -> Result<neutral::CreateMessageResult, ClientError> {
+            Ok(neutral::CreateMessageResult::text("test-model", "sampled"))
         }
     }
     #[async_trait]
     impl RootsHandler for Sampler {
-        async fn list_roots(&self) -> Result<Value, ClientError> {
-            Ok(json!({ "roots": [] }))
+        async fn list_roots(&self) -> Result<Vec<neutral::Root>, ClientError> {
+            Ok(Vec::new())
         }
     }
 
@@ -343,7 +342,7 @@ async fn packaged_sampling_and_roots_reach_the_handler_and_return() {
                     first_call = false;
                     Some(input_required_body(json!({
                         "k-sample": { "method": "sampling/createMessage",
-                                      "params": { "messages": [] } },
+                                      "params": { "messages": [], "maxTokens": 64 } },
                         "k-roots": { "method": "roots/list" }
                     })))
                 } else {
@@ -562,8 +561,12 @@ async fn a_roots_client_declares_and_emits_list_changed() {
     struct Watched;
     #[async_trait]
     impl RootsHandler for Watched {
-        async fn list_roots(&self) -> Result<Value, ClientError> {
-            Ok(json!({ "roots": [{ "uri": "file:///work", "name": "work" }] }))
+        async fn list_roots(&self) -> Result<Vec<neutral::Root>, ClientError> {
+            Ok(vec![
+                neutral::Root::new("file:///work")
+                    .expect("a file URI")
+                    .with_name("work"),
+            ])
         }
         fn list_changed(&self) -> bool {
             true

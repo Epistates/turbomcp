@@ -36,7 +36,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use sha2::Sha256;
 use tokio::sync::oneshot;
-use turbomcp_core::{JsonRpcRequest, JsonRpcResponse, McpError, McpResult, RequestId};
+use turbomcp_core::{
+    JsonRpcRequest, JsonRpcResponse, McpError, McpResult, ProtocolVersion, RequestId,
+};
 use turbomcp_protocol::methods::request;
 use turbomcp_protocol::neutral;
 
@@ -256,6 +258,12 @@ enum HandleMode {
 
 struct Inner {
     mode: HandleMode,
+    /// The revision this session negotiated.
+    ///
+    /// [`HandleMode`] is not a substitute: `Bidi` covers `2025-11-25` *and*
+    /// `2025-06-18`, which differ on what a server→client request may carry.
+    /// Without this the older wire silently received `2025-11-25` shapes.
+    version: ProtocolVersion,
     /// The connection this request arrived on (empty when unknown). Used to
     /// address the initiating client for out-of-band notifications — the
     /// elicitation spec's MUST ("only ... the client that initiated").
@@ -302,6 +310,9 @@ impl ClientHandle {
         Self {
             inner: Arc::new(Inner {
                 mode: HandleMode::Unavailable(reason),
+                // Nothing is ever rendered on this handle; every call fails
+                // before it reaches a wire.
+                version: ProtocolVersion::LATEST,
                 connection: String::new(),
                 client_capabilities: None,
                 responses: BTreeMap::new(),
@@ -335,6 +346,8 @@ impl ClientHandle {
         Self {
             inner: Arc::new(Inner {
                 mode: HandleMode::Mrtr,
+                // MRTR is the 2026-07-28 delivery model and no other.
+                version: ProtocolVersion::V2026_07_28,
                 connection: connection.to_owned(),
                 client_capabilities,
                 responses: merged,
@@ -357,6 +370,8 @@ impl ClientHandle {
         Self {
             inner: Arc::new(Inner {
                 mode: HandleMode::TaskMediated { slot },
+                // Task-mediated input is the 2026-07-28 Tasks extension.
+                version: ProtocolVersion::V2026_07_28,
                 connection: String::new(),
                 client_capabilities,
                 responses: BTreeMap::new(),
@@ -368,12 +383,15 @@ impl ClientHandle {
         }
     }
 
-    /// A legacy-path inline-bidi handle bound to one session.
+    /// A legacy-path inline-bidi handle bound to one session, on `version`
+    /// (`2025-11-25` or `2025-06-18` — the two differ in what a server→client
+    /// request may carry, so the handle has to know which).
     pub(crate) fn bidi(
         session: &str,
         connection: &str,
         pending: Arc<PendingRequests>,
         client_capabilities: Option<Value>,
+        version: ProtocolVersion,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -382,6 +400,7 @@ impl ClientHandle {
                     connection: connection.to_owned(),
                     pending,
                 },
+                version,
                 connection: connection.to_owned(),
                 client_capabilities,
                 responses: BTreeMap::new(),
@@ -485,13 +504,12 @@ impl ClientHandle {
     /// `elicitationId` on the request and the paired
     /// `notifications/elicitation/complete`.
     ///
-    /// Only `2025-11-25` does, which the mode already tells us — `Bidi` is the
-    /// legacy inline-bidirectional path, while `Mrtr` and `TaskMediated` are
-    /// both `2026-07-28`. The frozen `2026-07-28` schema has neither field nor
-    /// notification (the RC briefly had both), so sending either on the draft
-    /// wire would be inventing protocol.
+    /// Only `2025-11-25` does. The frozen `2026-07-28` schema has neither field
+    /// nor notification (the RC briefly had both) and `2025-06-18` predates
+    /// URL-mode elicitation entirely, so sending either anywhere else would be
+    /// inventing protocol.
     fn wire_carries_elicitation_id(&self) -> bool {
-        matches!(self.inner.mode, HandleMode::Bidi { .. })
+        matches!(self.inner.version, ProtocolVersion::V2025_11_25)
     }
 
     /// The legacy session this handle is bound to, if any (draft handles are
@@ -544,11 +562,17 @@ impl ClientHandle {
 
     /// Ask the client to sample its LLM (`sampling/createMessage`).
     ///
-    /// Params/result are raw wire values; typed bindings come with the client
-    /// work (Phase 9). Functional in both protocol versions despite the
-    /// upstream deprecation marking (AUDIT F10).
-    #[deprecated(note = "marked deprecated upstream; still functional in both versions")]
-    pub async fn create_message(&self, key: &str, params: Value) -> McpResult<Value> {
+    /// The conversation is rendered for *this session's* revision: `2025-06-18`
+    /// has no multi-block messages and no agentic sampling, so a request that
+    /// needs either is refused here rather than being truncated into something
+    /// the model would answer wrongly. Functional on all three revisions
+    /// despite the upstream deprecation marking (AUDIT F10).
+    #[deprecated(note = "marked deprecated upstream; still functional in every version")]
+    pub async fn create_message(
+        &self,
+        key: &str,
+        params: neutral::CreateMessageParams,
+    ) -> McpResult<neutral::CreateMessageResult> {
         // "Servers MUST NOT send tool-enabled sampling requests to Clients
         // that have not declared support for tool use via the `sampling.tools`
         // capability" (2026-07-28 client/sampling.mdx, same on 2025-11-25).
@@ -556,16 +580,33 @@ impl ClientHandle {
         // says send only `none`. Which capability this request needs is a
         // property of the request, so it is read off the params rather than
         // fixed at the call site.
-        let capability = required_sampling_capability(&params);
-        self.request_raw(key, request::SAMPLING_CREATE_MESSAGE, capability, params)
-            .await
+        let capability = if params.uses_tools() {
+            "sampling.tools"
+        } else if params.uses_context() {
+            "sampling.context"
+        } else {
+            "sampling"
+        };
+        let wire = params.to_wire(&self.inner.version).map_err(sampling_err)?;
+        let raw = self
+            .request_raw(key, request::SAMPLING_CREATE_MESSAGE, capability, wire)
+            .await?;
+        neutral::CreateMessageResult::from_wire(&raw).map_err(|e| {
+            McpError::invalid_params(format!("invalid sampling/createMessage result: {e}"))
+        })
     }
 
     /// Ask the client for its filesystem roots (`roots/list`).
-    #[deprecated(note = "marked deprecated upstream; still functional in both versions")]
-    pub async fn list_roots(&self, key: &str) -> McpResult<Value> {
-        self.request_raw(key, request::ROOTS_LIST, "roots", json!({}))
-            .await
+    ///
+    /// Entries whose `uri` is not a `file://` URI are dropped: the spec makes
+    /// that scheme a MUST, and a handler that trusted an arbitrary scheme here
+    /// would be reading whatever the client named.
+    #[deprecated(note = "marked deprecated upstream; still functional in every version")]
+    pub async fn list_roots(&self, key: &str) -> McpResult<Vec<neutral::Root>> {
+        let raw = self
+            .request_raw(key, request::ROOTS_LIST, "roots", json!({}))
+            .await?;
+        Ok(neutral::Root::list_from_wire(&raw))
     }
 
     /// Stash typed resume state for the retry execution (PLAN MR-6). It is
@@ -828,28 +869,11 @@ async fn send_and_await(
     }
 }
 
-/// The wire `InputRequest` object for a form-mode elicitation.
-/// Which sampling capability a `sampling/createMessage` request needs.
-///
-/// `tools` outranks `context`: a request carrying both is refused naming the
-/// one the client is most likely to be missing, and a client that declared
-/// `tools` but not `context` still gets caught on the retry. Nothing here
-/// invents a requirement — a request using neither feature needs only bare
-/// `sampling`, which is what every client declaring the capability has.
-fn required_sampling_capability(params: &Value) -> &'static str {
-    if params.get("tools").is_some() || params.get("toolChoice").is_some() {
-        return "sampling.tools";
-    }
-    // `includeContext: "none"` is the undeclared-safe value, and an absent
-    // field means the same thing.
-    let wants_context = params
-        .get("includeContext")
-        .and_then(Value::as_str)
-        .is_some_and(|c| c != "none");
-    if wants_context {
-        return "sampling.context";
-    }
-    "sampling"
+/// A conversation this session's wire cannot carry is the handler's mistake
+/// rather than the client's, so it surfaces with the reason spelled out instead
+/// of a truncated request the model would answer wrongly.
+fn sampling_err(e: neutral::SamplingError) -> McpError {
+    McpError::invalid_params(format!("sampling/createMessage: {e}"))
 }
 
 fn elicit_request_value(params: &neutral::ElicitParams) -> Value {
@@ -1138,7 +1162,13 @@ mod tests {
 
         // No connection (a handle whose transport never named one) is a no-op,
         // not an error: the notification is a spec MAY.
-        let orphan = ClientHandle::bidi("sess", "", Arc::new(PendingRequests::default()), None);
+        let orphan = ClientHandle::bidi(
+            "sess",
+            "",
+            Arc::new(PendingRequests::default()),
+            None,
+            ProtocolVersion::V2025_11_25,
+        );
         assert!(!orphan.notify_elicitation_complete("eid-1").await);
     }
 
@@ -1356,9 +1386,10 @@ mod tests {
             // both elicitation modes.
             Some(json!({
                 "elicitation": { "form": {}, "url": {} },
-                "sampling": {},
+                "sampling": { "context": {}, "tools": {} },
                 "roots": {}
             })),
+            ProtocolVersion::V2025_11_25,
         );
         (handle, pending, rx, guard)
     }
@@ -1438,6 +1469,7 @@ mod tests {
             "never-registered",
             pending,
             Some(json!({ "elicitation": {} })),
+            ProtocolVersion::V2025_11_25,
         );
         let err = handle
             .elicit("k", neutral::ElicitParams::new("?", json!({})))
@@ -1583,30 +1615,40 @@ mod tests {
             None,
             false,
         );
-        for (params, want) in [
-            (json!({ "messages": [], "tools": [] }), "sampling.tools"),
+        let offered = alloc_tool();
+        for (label, params, want) in [
             (
-                json!({ "messages": [], "toolChoice": { "mode": "auto" } }),
+                "tools",
+                neutral::CreateMessageParams::new(Vec::new(), 16).with_tools(vec![offered.clone()]),
                 "sampling.tools",
             ),
             (
-                json!({ "messages": [], "includeContext": "allServers" }),
+                "toolChoice",
+                neutral::CreateMessageParams::new(Vec::new(), 16)
+                    .with_tool_choice(neutral::ToolChoice::Auto),
+                "sampling.tools",
+            ),
+            (
+                "includeContext",
+                neutral::CreateMessageParams::new(Vec::new(), 16)
+                    .with_include_context(neutral::IncludeContext::AllServers),
                 "sampling.context",
             ),
         ] {
             let err = plain
-                .create_message("k", params.clone())
+                .create_message("k", params)
                 .await
                 .expect_err("undeclared sub-capability");
             assert!(
                 matches!(&err, McpError::MissingRequiredCapability(c) if c == want),
-                "{params} -> {err:?}"
+                "{label} -> {err:?}"
             );
         }
         // Plain sampling, and the undeclared-safe context value, still go out.
         for params in [
-            json!({ "messages": [] }),
-            json!({ "messages": [], "includeContext": "none" }),
+            neutral::CreateMessageParams::new(Vec::new(), 16),
+            neutral::CreateMessageParams::new(Vec::new(), 16)
+                .with_include_context(neutral::IncludeContext::None),
         ] {
             assert!(matches!(
                 plain.create_message("k", params).await,
@@ -1623,7 +1665,146 @@ mod tests {
         );
         assert!(matches!(
             agentic
-                .create_message("k", json!({ "messages": [], "tools": [] }))
+                .create_message(
+                    "k",
+                    neutral::CreateMessageParams::new(Vec::new(), 16).with_tools(vec![offered])
+                )
+                .await,
+            Err(McpError::InputRequired)
+        ));
+    }
+
+    /// A one-tool catalogue for the sampling tests.
+    fn alloc_tool() -> neutral::Tool {
+        neutral::Tool::new("echo", json!({ "type": "object" }))
+    }
+
+    /// `2025-06-18` has no agentic sampling and no multi-block messages.
+    ///
+    /// Before the handle knew its revision, `Bidi` meant "legacy" and both
+    /// wires got the `2025-11-25` shape: a `2025-06-18` client was handed
+    /// `tools`, `toolChoice` and content arrays its schema does not define.
+    #[tokio::test]
+    #[allow(deprecated)] // still functional on every wire; see the method docs
+    async fn the_2025_06_18_wire_refuses_what_it_cannot_express() {
+        let caps = json!({ "sampling": { "tools": {}, "context": {} } });
+        let older = ClientHandle::bidi(
+            "sess",
+            "no-writer",
+            Arc::new(PendingRequests::default()),
+            Some(caps.clone()),
+            ProtocolVersion::V2025_06_18,
+        );
+        let multi = neutral::SamplingMessage::new(
+            neutral::Role::User,
+            vec![
+                neutral::SamplingContent::text("look at this"),
+                neutral::SamplingContent::image("aGk=", "image/png"),
+            ],
+        );
+        for params in [
+            neutral::CreateMessageParams::new(Vec::new(), 16).with_tools(vec![alloc_tool()]),
+            neutral::CreateMessageParams::new(vec![multi.clone()], 16),
+        ] {
+            let err = older
+                .create_message("k", params)
+                .await
+                .expect_err("2025-06-18 cannot carry this");
+            assert!(
+                matches!(&err, McpError::InvalidParams(m) if m.contains("2025-06-18")),
+                "{err:?}"
+            );
+        }
+
+        // The same requests are fine on 2025-11-25: they get as far as the
+        // missing server→client channel, which is the next failure along.
+        let newer = ClientHandle::bidi(
+            "sess",
+            "no-writer",
+            Arc::new(PendingRequests::default()),
+            Some(caps),
+            ProtocolVersion::V2025_11_25,
+        );
+        for params in [
+            neutral::CreateMessageParams::new(Vec::new(), 16).with_tools(vec![alloc_tool()]),
+            neutral::CreateMessageParams::new(vec![multi], 16),
+        ] {
+            let err = newer
+                .create_message("k", params)
+                .await
+                .expect_err("no writer is registered");
+            assert!(matches!(err, McpError::Transport(_)), "{err:?}");
+        }
+    }
+
+    /// The spec's two tool-use MUSTs are enforced before anything is sent.
+    #[tokio::test]
+    #[allow(deprecated)] // still functional on every wire; see the method docs
+    async fn an_unbalanced_tool_conversation_never_reaches_the_client() {
+        let handle = ClientHandle::mrtr(
+            "",
+            Some(json!({ "sampling": { "tools": {} } })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        let call = neutral::SamplingMessage::new(
+            neutral::Role::Assistant,
+            vec![neutral::SamplingContent::tool_use(neutral::ToolUse::new(
+                "call-1", "echo",
+            ))],
+        );
+
+        // A tool call the conversation never answers.
+        let err = handle
+            .create_message(
+                "k",
+                neutral::CreateMessageParams::new(vec![call.clone()], 16),
+            )
+            .await
+            .expect_err("unanswered tool call");
+        assert!(
+            matches!(&err, McpError::InvalidParams(m) if m.contains("never answers")),
+            "{err:?}"
+        );
+
+        // An answer that mixes a tool result with other content.
+        let mixed = neutral::SamplingMessage::new(
+            neutral::Role::User,
+            vec![
+                neutral::SamplingContent::tool_result(neutral::ToolResult::new(
+                    "call-1",
+                    vec![neutral::Content::text("42")],
+                )),
+                neutral::SamplingContent::text("and also"),
+            ],
+        );
+        let err = handle
+            .create_message(
+                "k",
+                neutral::CreateMessageParams::new(vec![call.clone(), mixed], 16),
+            )
+            .await
+            .expect_err("mixed tool-result message");
+        assert!(
+            matches!(&err, McpError::InvalidParams(m) if m.contains("must carry nothing else")),
+            "{err:?}"
+        );
+
+        // Balanced: the call is answered by a results-only message, so the
+        // request gets as far as being recorded for the retry.
+        let answer = neutral::SamplingMessage::new(
+            neutral::Role::User,
+            vec![neutral::SamplingContent::tool_result(
+                neutral::ToolResult::new("call-1", vec![neutral::Content::text("42")]),
+            )],
+        );
+        assert!(matches!(
+            handle
+                .create_message(
+                    "k",
+                    neutral::CreateMessageParams::new(vec![call, answer], 16)
+                )
                 .await,
             Err(McpError::InputRequired)
         ));
@@ -1709,7 +1890,15 @@ mod tests {
             false,
         );
         assert!(matches!(
-            handle.create_message("s", json!({ "messages": [] })).await,
+            handle
+                .create_message(
+                    "s",
+                    neutral::CreateMessageParams::new(
+                        vec![neutral::SamplingMessage::text(neutral::Role::User, "hi")],
+                        64,
+                    ),
+                )
+                .await,
             Err(McpError::InputRequired)
         ));
         assert!(matches!(
@@ -1719,7 +1908,14 @@ mod tests {
 
         let collected = handle.collected();
         assert_eq!(collected["s"]["method"], "sampling/createMessage");
-        assert_eq!(collected["s"]["params"], json!({ "messages": [] }));
+        assert_eq!(
+            collected["s"]["params"],
+            json!({
+                "messages": [{ "role": "user", "content": { "type": "text", "text": "hi" } }],
+                "maxTokens": 64,
+            }),
+            "a lone content block renders bare, which every revision reads"
+        );
         assert_eq!(collected["r"]["method"], "roots/list");
 
         // Undeclared is refused (SEP-2322 MUST NOT), per capability.
@@ -1731,7 +1927,8 @@ mod tests {
             false,
         );
         assert!(matches!(
-            bare.create_message("s", json!({})).await,
+            bare.create_message("s", neutral::CreateMessageParams::new(Vec::new(), 16))
+                .await,
             Err(McpError::MissingRequiredCapability(c)) if c == "sampling"
         ));
     }

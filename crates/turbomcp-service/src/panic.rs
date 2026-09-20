@@ -36,29 +36,44 @@ pub async fn catch_handler_panic<F>(
 where
     F: Future<Output = Result<Option<JsonRpcMessage>, ProtocolError>>,
 {
-    // `AssertUnwindSafe`: the only state that outlives the unwind is `id`, and
-    // the caller drops the service clone the future borrowed from.
-    match AssertUnwindSafe(fut).catch_unwind().await {
+    match catch_panic(fut).await {
         Ok(outcome) => outcome,
-        Err(payload) => {
-            let detail = panic_detail(&*payload);
-            match id {
-                Some(id) => {
-                    tracing::error!(
-                        panic = detail,
-                        request_id = ?id,
-                        "handler panicked; answering -32603"
-                    );
-                    let err = ProtocolError::Internal("handler panicked".to_owned());
-                    Ok(Some(err.into_response(id).into()))
-                }
-                None => {
-                    tracing::error!(panic = detail, "handler panicked on a notification");
-                    Ok(None)
-                }
+        Err(detail) => match id {
+            Some(id) => {
+                tracing::error!(
+                    panic = detail,
+                    request_id = ?id,
+                    "handler panicked; answering -32603"
+                );
+                let err = ProtocolError::Internal("handler panicked".to_owned());
+                Ok(Some(err.into_response(id).into()))
             }
-        }
+            None => {
+                tracing::error!(panic = detail, "handler panicked on a notification");
+                Ok(None)
+            }
+        },
     }
+}
+
+/// Run `fut`, returning the rendered panic payload instead of unwinding.
+///
+/// The catch is the shared part; the two directions shape the failure
+/// differently (a server answers a `ProtocolError`, a client-serving handler a
+/// `JsonRpcError`), so each builds its own response from the detail.
+///
+/// # Errors
+/// The rendered panic payload, when `fut` panicked.
+pub async fn catch_panic<F>(fut: F) -> Result<F::Output, String>
+where
+    F: Future,
+{
+    // `AssertUnwindSafe`: nothing the future borrowed is observed after the
+    // unwind — the caller drops its clones and builds a fresh response.
+    AssertUnwindSafe(fut)
+        .catch_unwind()
+        .await
+        .map_err(|payload| panic_detail(&*payload).to_owned())
 }
 
 /// Best-effort readable form of a panic payload (`panic!` produces a `&str` or

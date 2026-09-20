@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
-use turbomcp_core::JsonRpcError;
+use turbomcp_core::{JsonRpcError, ProtocolVersion};
 use turbomcp_protocol::methods::request;
 use turbomcp_protocol::neutral;
 
@@ -80,9 +80,14 @@ pub trait ElicitationHandler: Send + Sync + 'static {
 /// Answers `sampling/createMessage`: registering one declares `sampling`.
 #[async_trait]
 pub trait SamplingHandler: Send + Sync + 'static {
-    /// Run an LLM turn. `params`/return are raw JSON until the sampling-typing
-    /// pass lands.
-    async fn create_message(&self, params: Value) -> ClientResult<Value>;
+    /// Run an LLM turn over `params.messages` and return the model's reply.
+    ///
+    /// Returning [`ClientError::Rpc`] lets the handler pick the JSON-RPC code
+    /// the server sees; anything else becomes `-32603`.
+    async fn create_message(
+        &self,
+        params: neutral::CreateMessageParams,
+    ) -> ClientResult<neutral::CreateMessageResult>;
 
     /// Which sampling features this client honours, declared as
     /// `sampling.context` / `sampling.tools`.
@@ -100,7 +105,12 @@ pub trait SamplingHandler: Send + Sync + 'static {
 #[async_trait]
 pub trait RootsHandler: Send + Sync + 'static {
     /// The roots this client exposes to the server.
-    async fn list_roots(&self) -> ClientResult<Value>;
+    ///
+    /// A [`Root`](neutral::Root) can only be built from a `file://` URI, which
+    /// is the one shape rule the roots spec states — a root is a permission
+    /// statement, and a server acting on `https://…` would be acting on a
+    /// boundary this client never drew.
+    async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>>;
 
     /// Whether this client emits `notifications/roots/list_changed` when its
     /// roots change, declared as `roots.listChanged`.
@@ -191,8 +201,12 @@ impl ClientHandlers {
 /// delivery models answer identically. A method whose handler is unregistered
 /// answers `-32601`: the client never declared it, so the server should not
 /// have asked, and claiming otherwise would hide the mismatch.
+///
+/// `version` is the session's negotiated revision, which decides how a result
+/// is rendered — `2025-06-18` has no multi-block sampling content.
 pub(crate) async fn dispatch_server_request(
     handlers: &ClientHandlers,
+    version: &ProtocolVersion,
     method: &str,
     params: Option<Value>,
 ) -> Result<Value, JsonRpcError> {
@@ -239,28 +253,34 @@ pub(crate) async fn dispatch_server_request(
                 .sampling
                 .as_ref()
                 .ok_or_else(|| not_supported(method))?;
-            let params = params.unwrap_or(Value::Null);
+            let params = neutral::CreateMessageParams::from_wire(&params.unwrap_or(Value::Null))
+                .map_err(|e| invalid_params(&e.to_string()))?;
             // "The client MUST return an error if this field is provided but
             // ClientCapabilities.sampling.tools is not declared" — the server
             // is supposed to have checked, so this is the backstop for one
             // that did not. `includeContext` carries the same promise.
             let declared = handler.capability();
-            if !declared.tools
-                && (params.get("tools").is_some() || params.get("toolChoice").is_some())
-            {
+            if !declared.tools && params.uses_tools() {
                 return Err(invalid_params("this client did not declare sampling.tools"));
             }
-            if !declared.context
-                && params
-                    .get("includeContext")
-                    .and_then(Value::as_str)
-                    .is_some_and(|c| c != "none")
-            {
+            if !declared.context && params.uses_context() {
                 return Err(invalid_params(
                     "this client did not declare sampling.context",
                 ));
             }
-            handler.create_message(params).await.map_err(handler_error)
+            // The conversation the server sent has to obey the tool-use MUSTs
+            // too; answering an unbalanced one would hand the model a prompt
+            // with a hole in it and blame the reply on this client.
+            params
+                .validate()
+                .map_err(|e| invalid_params(&e.to_string()))?;
+            let result = handler
+                .create_message(params)
+                .await
+                .map_err(handler_error)?;
+            result
+                .to_wire(version)
+                .map_err(|e| internal_error(&e.to_string()))
         }
         request::ROOTS_LIST => handlers
             .roots
@@ -268,6 +288,7 @@ pub(crate) async fn dispatch_server_request(
             .ok_or_else(|| not_supported(method))?
             .list_roots()
             .await
+            .map(|roots| neutral::Root::list_to_wire(&roots))
             .map_err(handler_error),
         other => Err(JsonRpcError {
             code: -32601,
@@ -369,9 +390,26 @@ fn internal_error(msg: &str) -> JsonRpcError {
 }
 
 #[cfg(test)]
+mod test_support {
+    use super::{ClientHandlers, JsonRpcError, ProtocolVersion, Value, dispatch_server_request};
+
+    /// Dispatch on `2025-11-25`, the widest of the stateful wires — the tests
+    /// that care about the revision name it themselves.
+    pub(super) async fn dispatch(
+        handlers: &ClientHandlers,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, JsonRpcError> {
+        dispatch_server_request(handlers, &ProtocolVersion::V2025_11_25, method, params).await
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use turbomcp_protocol::neutral::{ElicitationCapability, RootsCapability, SamplingCapability};
+
+    use crate::handler::test_support::dispatch;
 
     struct FormOnly;
     #[async_trait]
@@ -393,8 +431,11 @@ mod tests {
     }
     #[async_trait]
     impl SamplingHandler for Agentic {
-        async fn create_message(&self, _p: Value) -> ClientResult<Value> {
-            Ok(json!({}))
+        async fn create_message(
+            &self,
+            _p: neutral::CreateMessageParams,
+        ) -> ClientResult<neutral::CreateMessageResult> {
+            Ok(neutral::CreateMessageResult::text("test-model", "ok"))
         }
         fn capability(&self) -> SamplingCapability {
             SamplingCapability::new().with_tools(true)
@@ -402,8 +443,8 @@ mod tests {
     }
     #[async_trait]
     impl RootsHandler for Agentic {
-        async fn list_roots(&self) -> ClientResult<Value> {
-            Ok(json!({ "roots": [] }))
+        async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>> {
+            Ok(Vec::new())
         }
         fn list_changed(&self) -> bool {
             true
@@ -458,11 +499,11 @@ mod tests {
             elicitation: Some(Arc::new(FormOnly)),
             ..ClientHandlers::default()
         };
-        let err = dispatch_server_request(&handlers, request::SAMPLING_CREATE_MESSAGE, None)
+        let err = dispatch(&handlers, request::SAMPLING_CREATE_MESSAGE, None)
             .await
             .expect_err("sampling was never registered");
         assert_eq!(err.code, -32601);
-        let err = dispatch_server_request(&handlers, request::ROOTS_LIST, None)
+        let err = dispatch(&handlers, request::ROOTS_LIST, None)
             .await
             .expect_err("roots was never registered");
         assert_eq!(err.code, -32601);
@@ -473,6 +514,8 @@ mod tests {
 mod must_tests {
     use super::*;
     use turbomcp_protocol::neutral::SamplingCapability;
+
+    use crate::handler::test_support::dispatch;
 
     struct FormClient;
     #[async_trait]
@@ -485,15 +528,21 @@ mod must_tests {
     struct PlainSampler;
     #[async_trait]
     impl SamplingHandler for PlainSampler {
-        async fn create_message(&self, _p: Value) -> ClientResult<Value> {
-            Ok(json!({ "role": "assistant", "content": {}, "model": "m" }))
+        async fn create_message(
+            &self,
+            _p: neutral::CreateMessageParams,
+        ) -> ClientResult<neutral::CreateMessageResult> {
+            Ok(neutral::CreateMessageResult::text("m", "hello"))
         }
     }
 
     struct PickySampler;
     #[async_trait]
     impl SamplingHandler for PickySampler {
-        async fn create_message(&self, _p: Value) -> ClientResult<Value> {
+        async fn create_message(
+            &self,
+            _p: neutral::CreateMessageParams,
+        ) -> ClientResult<neutral::CreateMessageResult> {
             Err(ClientError::Rpc(JsonRpcError {
                 code: -32602,
                 message: "messages must be non-empty".into(),
@@ -519,7 +568,7 @@ mod must_tests {
     /// tells the server something untrue and hides the misconfiguration.
     #[tokio::test]
     async fn an_undeclared_elicitation_mode_is_invalid_params() {
-        let err = dispatch_server_request(
+        let err = dispatch(
             &form_only(),
             request::ELICITATION_CREATE,
             Some(json!({ "mode": "url", "message": "Sign in", "url": "https://e.example" })),
@@ -532,7 +581,7 @@ mod must_tests {
         // falling through to the form branch would answer a question that was
         // not asked.
         for mode in [json!("URL"), json!("voice"), json!(7)] {
-            let err = dispatch_server_request(
+            let err = dispatch(
                 &form_only(),
                 request::ELICITATION_CREATE,
                 Some(json!({ "mode": mode, "message": "?" })),
@@ -548,7 +597,7 @@ mod must_tests {
             json!({ "mode": "form", "message": "?" }),
         ] {
             assert!(
-                dispatch_server_request(&form_only(), request::ELICITATION_CREATE, Some(params))
+                dispatch(&form_only(), request::ELICITATION_CREATE, Some(params))
                     .await
                     .is_ok()
             );
@@ -564,12 +613,13 @@ mod must_tests {
             sampling: Some(Arc::new(PlainSampler)),
             ..ClientHandlers::default()
         };
+        let tool = json!({ "name": "echo", "inputSchema": { "type": "object" } });
         for params in [
-            json!({ "messages": [], "tools": [] }),
-            json!({ "messages": [], "toolChoice": { "mode": "auto" } }),
-            json!({ "messages": [], "includeContext": "allServers" }),
+            json!({ "messages": [], "maxTokens": 8, "tools": [tool] }),
+            json!({ "messages": [], "maxTokens": 8, "toolChoice": { "mode": "auto" } }),
+            json!({ "messages": [], "maxTokens": 8, "includeContext": "allServers" }),
         ] {
-            let err = dispatch_server_request(
+            let err = dispatch(
                 &plain,
                 request::SAMPLING_CREATE_MESSAGE,
                 Some(params.clone()),
@@ -580,15 +630,85 @@ mod must_tests {
         }
         // What it did declare still works, and so does the safe context value.
         for params in [
-            json!({ "messages": [] }),
-            json!({ "messages": [], "includeContext": "none" }),
+            json!({ "messages": [], "maxTokens": 8 }),
+            json!({ "messages": [], "maxTokens": 8, "includeContext": "none" }),
         ] {
             assert!(
-                dispatch_server_request(&plain, request::SAMPLING_CREATE_MESSAGE, Some(params))
+                dispatch(&plain, request::SAMPLING_CREATE_MESSAGE, Some(params))
                     .await
                     .is_ok()
             );
         }
+    }
+
+    /// Params the revision cannot have produced are `-32602`, not a turn the
+    /// model answers. `maxTokens` is required by every revision's schema, and
+    /// an unbalanced tool conversation is a MUST on both sides.
+    #[tokio::test]
+    async fn malformed_sampling_params_are_refused_before_the_handler_runs() {
+        let plain = ClientHandlers {
+            sampling: Some(Arc::new(PlainSampler)),
+            ..ClientHandlers::default()
+        };
+        let unanswered = json!({
+            "maxTokens": 8,
+            "messages": [{
+                "role": "assistant",
+                "content": [{ "type": "tool_use", "id": "c1", "name": "echo", "input": {} }],
+            }],
+        });
+        for params in [
+            json!({ "messages": [] }),
+            json!({ "maxTokens": 8 }),
+            unanswered,
+        ] {
+            let err = dispatch(
+                &plain,
+                request::SAMPLING_CREATE_MESSAGE,
+                Some(params.clone()),
+            )
+            .await
+            .expect_err("malformed sampling params");
+            assert_eq!(err.code, -32602, "{params}");
+        }
+    }
+
+    /// Roots that are not `file://` URIs never reach the server: the scheme is
+    /// the one thing the roots spec makes a MUST, and a root is a permission
+    /// statement rather than a hint.
+    #[tokio::test]
+    async fn only_file_uri_roots_go_on_the_wire() {
+        struct Mixed;
+        #[async_trait]
+        impl RootsHandler for Mixed {
+            async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>> {
+                Ok(vec![
+                    neutral::Root::new("file:///workspace").expect("a file URI"),
+                    neutral::Root::new("file:///tmp/scratch")
+                        .expect("a file URI")
+                        .with_name("scratch"),
+                ])
+            }
+        }
+        assert!(
+            neutral::Root::new("https://example.com").is_none(),
+            "a non-file root cannot even be constructed"
+        );
+
+        let handlers = ClientHandlers {
+            roots: Some(Arc::new(Mixed)),
+            ..ClientHandlers::default()
+        };
+        let out = dispatch(&handlers, request::ROOTS_LIST, None)
+            .await
+            .expect("roots is registered");
+        assert_eq!(
+            out,
+            json!({ "roots": [
+                { "uri": "file:///workspace" },
+                { "uri": "file:///tmp/scratch", "name": "scratch" },
+            ]})
+        );
     }
 
     /// A handler that chose a JSON-RPC code keeps it. Flattening every error to
@@ -600,10 +720,10 @@ mod must_tests {
             sampling: Some(Arc::new(PickySampler)),
             ..ClientHandlers::default()
         };
-        let err = dispatch_server_request(
+        let err = dispatch(
             &picky,
             request::SAMPLING_CREATE_MESSAGE,
-            Some(json!({ "messages": [], "tools": [] })),
+            Some(json!({ "messages": [], "maxTokens": 8 })),
         )
         .await
         .expect_err("the handler rejected it");

@@ -31,7 +31,7 @@ mod transport;
 pub use auth::{AuthDecision, AuthFuture, HttpAuthenticator};
 pub use error::{ProtocolError, mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
 pub use middleware::{Tracing, TracingLayer};
-pub use panic::catch_handler_panic;
+pub use panic::{catch_handler_panic, catch_panic};
 pub use ratelimit::{GovernorRateLimiter, RateKey, RateLimiter};
 pub use serve::{ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, TerminateFuture};

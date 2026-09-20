@@ -690,6 +690,7 @@ fn mrtr_handle<W: WireFamily>(
                 connection_id(req.params.as_ref()).unwrap_or_default(),
                 Arc::clone(pending),
                 ctx.client_capabilities.clone(),
+                W::VERSION,
             ),
             None => ClientHandle::unavailable("no session for inline bidirectional requests"),
         });

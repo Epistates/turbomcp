@@ -268,6 +268,11 @@ impl ClientBuilder {
             },
         };
 
+        // The actor spawns before the handshake, so it learns the revision
+        // here. It shapes the *replies* to server→client requests, which differ
+        // between wires.
+        conn.set_negotiated_version(outcome.version.clone());
+
         // Precompute the modern `_meta` envelope (protocol version + identity)
         // merged into every request on the stateless draft path.
         let mut request_meta = Map::new();
@@ -1290,14 +1295,19 @@ impl Client {
                                 .and_then(Value::as_str)
                                 .unwrap_or_default();
                             let req_params = req.get("params").cloned();
-                            let answer = dispatch_server_request(handler, req_method, req_params)
-                                .await
-                                .map_err(|e| {
-                                    ClientError::Protocol(format!(
-                                        "input handler failed: {}",
-                                        e.message
-                                    ))
-                                })?;
+                            let answer = dispatch_server_request(
+                                handler,
+                                &self.version,
+                                req_method,
+                                req_params,
+                            )
+                            .await
+                            .map_err(|e| {
+                                ClientError::Protocol(format!(
+                                    "input handler failed: {}",
+                                    e.message
+                                ))
+                            })?;
                             answered.insert(key.clone());
                             responses.insert(key.clone(), answer);
                         }
@@ -1419,11 +1429,15 @@ impl Client {
                         .and_then(Value::as_str)
                         .unwrap_or_default();
                     let req_params = req.get("params").cloned();
-                    let answer = dispatch_server_request(handler, req_method, req_params)
-                        .await
-                        .map_err(|e| {
-                            ClientError::Protocol(format!("input handler failed: {}", e.message))
-                        })?;
+                    let answer =
+                        dispatch_server_request(handler, &self.version, req_method, req_params)
+                            .await
+                            .map_err(|e| {
+                                ClientError::Protocol(format!(
+                                    "input handler failed: {}",
+                                    e.message
+                                ))
+                            })?;
                     responses.insert(key.clone(), answer);
                 }
             }

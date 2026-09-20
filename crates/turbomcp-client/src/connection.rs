@@ -39,7 +39,7 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use turbomcp_core::{
-    JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId, meta,
+    JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, ProtocolVersion, RequestId, meta,
 };
 use turbomcp_protocol::methods::{notification, request};
 use turbomcp_service::Transport;
@@ -66,6 +66,13 @@ struct Inner {
     next_id: AtomicI64,
     /// How long [`Connection::request`] waits before giving up.
     request_timeout: Duration,
+    /// The revision this session settled on, shared with the actor.
+    ///
+    /// The actor starts before the handshake does, so this is written once the
+    /// negotiation resolves. It decides how a *reply* to a server→client
+    /// request is shaped, which differs by revision — `2025-06-18` sampling
+    /// results carry one content block, not a list.
+    negotiated: Arc<Mutex<ProtocolVersion>>,
     shutdown: tokio_util::sync::CancellationToken,
     done: tokio_util::sync::CancellationToken,
     admission: tokio::sync::Semaphore,
@@ -153,13 +160,17 @@ impl Connection {
         let weak_out = tx.downgrade();
         let shutdown = tokio_util::sync::CancellationToken::new();
         let done = tokio_util::sync::CancellationToken::new();
+        let negotiated = Arc::new(Mutex::new(ProtocolVersion::LATEST));
         tokio::spawn(actor(
             transport,
             rx,
-            Arc::clone(&pending),
-            weak_out,
-            handler,
-            cache,
+            SessionState {
+                pending: Arc::clone(&pending),
+                handler,
+                weak_out,
+                cache,
+                negotiated: Arc::clone(&negotiated),
+            },
             (shutdown.clone(), done.clone()),
         ));
         Self {
@@ -168,11 +179,22 @@ impl Connection {
                 pending,
                 next_id: AtomicI64::new(1),
                 request_timeout,
+                negotiated,
                 shutdown,
                 done,
                 admission: tokio::sync::Semaphore::new(1024),
             }),
         }
+    }
+
+    /// Record the revision the handshake settled on, so replies to
+    /// server→client requests are shaped for it.
+    pub(crate) fn set_negotiated_version(&self, version: ProtocolVersion) {
+        *self
+            .inner
+            .negotiated
+            .lock()
+            .expect("negotiated version mutex poisoned") = version;
     }
 
     /// Cancel this connection and wait for its owned tasks and transport to
@@ -351,13 +373,27 @@ impl Drop for AbandonGuard<'_> {
 }
 
 /// The connection actor: owns the transport, multiplexes both directions.
+/// Everything the actor and its inbound router need beyond the transport
+/// itself: what a frame might complete, who answers it, and how to reply.
+struct SessionState {
+    /// In-flight requests awaiting a response.
+    pending: Arc<Pending>,
+    /// How this client answers server→client requests.
+    handler: ClientHandlers,
+    /// Where a spawned handler task writes its reply. Weak so that dropping
+    /// every `Connection` still closes the channel.
+    weak_out: mpsc::WeakSender<JsonRpcMessage>,
+    /// The SEP-2549 response cache, invalidated on inbound notifications.
+    cache: Option<Arc<ResponseCache>>,
+    /// The revision the handshake settled on: written once, read per inbound
+    /// server→client request to shape the reply.
+    negotiated: Arc<Mutex<ProtocolVersion>>,
+}
+
 async fn actor<T>(
     mut transport: T,
     mut outbound: mpsc::Receiver<JsonRpcMessage>,
-    pending: Arc<Pending>,
-    weak_out: mpsc::WeakSender<JsonRpcMessage>,
-    handler: ClientHandlers,
-    cache: Option<Arc<ResponseCache>>,
+    state: SessionState,
     lifecycle: (
         tokio_util::sync::CancellationToken,
         tokio_util::sync::CancellationToken,
@@ -406,7 +442,7 @@ async fn actor<T>(
                             JsonRpcMessage::Response(r) => transport.take_http_failure(&r.id),
                             _ => None,
                         };
-                        if let Some(reply) = route_inbound(msg, failure, &pending, &handler, &weak_out, &cache, &mut callbacks) {
+                        if let Some(reply) = route_inbound(msg, failure, &state, &mut callbacks) {
                             tokio::select! {
                                 () = shutdown.cancelled() => break,
                                 result = tokio::time::timeout(Duration::from_secs(30), transport.send(reply)) => {
@@ -433,7 +469,11 @@ async fn actor<T>(
     // this receiver open during transport.close allowed a late registration
     // to enqueue successfully after the only pending cleanup had already run.
     outbound.close();
-    pending.lock().expect("pending mutex poisoned").clear();
+    state
+        .pending
+        .lock()
+        .expect("pending mutex poisoned")
+        .clear();
 
     // Shut the transport down deliberately rather than by drop. Each transport
     // owes the peer something on the way out that dropping a socket does not
@@ -453,12 +493,16 @@ async fn actor<T>(
 fn route_inbound(
     msg: JsonRpcMessage,
     failure: Option<turbomcp_service::HttpFailure>,
-    pending: &Arc<Pending>,
-    handler: &ClientHandlers,
-    weak_out: &mpsc::WeakSender<JsonRpcMessage>,
-    cache: &Option<Arc<ResponseCache>>,
+    state: &SessionState,
     callbacks: &mut tokio::task::JoinSet<()>,
 ) -> Option<JsonRpcMessage> {
+    let SessionState {
+        pending,
+        handler,
+        weak_out,
+        cache,
+        negotiated,
+    } = state;
     match msg {
         JsonRpcMessage::Response(resp) => {
             complete_pending(resp, pending, failure);
@@ -526,13 +570,40 @@ fn route_inbound(
             false => {
                 let handlers = handler.clone();
                 let weak_out = weak_out.clone();
+                let version = negotiated
+                    .lock()
+                    .expect("negotiated version mutex poisoned")
+                    .clone();
                 callbacks.spawn(async move {
                     let id = req.id.clone();
-                    let reply =
-                        match dispatch_server_request(&handlers, &req.method, req.params).await {
-                            Ok(value) => JsonRpcResponse::success(id, value),
-                            Err(err) => JsonRpcResponse::error(id, err),
-                        };
+                    // A user handler that panics used to take the reply down
+                    // with it: the task unwound before the send below, and the
+                    // server sat out its own 120s timeout with no way to tell a
+                    // buggy client from a slow human. Every request gets an
+                    // answer, even a `-32603` one.
+                    let outcome = turbomcp_service::catch_panic(dispatch_server_request(
+                        &handlers,
+                        &version,
+                        &req.method,
+                        req.params,
+                    ))
+                    .await
+                    .unwrap_or_else(|detail| {
+                        tracing::error!(
+                            panic = detail,
+                            method = %req.method,
+                            "client handler panicked; answering -32603"
+                        );
+                        Err(JsonRpcError {
+                            code: -32603,
+                            message: "client handler panicked".to_owned(),
+                            data: None,
+                        })
+                    });
+                    let reply = match outcome {
+                        Ok(value) => JsonRpcResponse::success(id, value),
+                        Err(err) => JsonRpcResponse::error(id, err),
+                    };
                     if let Some(tx) = weak_out.upgrade() {
                         let _ = tx.send(JsonRpcMessage::Response(reply)).await;
                     }
