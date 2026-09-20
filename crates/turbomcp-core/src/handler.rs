@@ -508,6 +508,33 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
         }
     }
 
+    // ===== Pagination =====
+
+    /// Maximum entries per page for `tools/list`, `resources/list`,
+    /// `resources/templates/list` and `prompts/list`.
+    ///
+    /// `None` — the default — means the server returns its whole catalogue in
+    /// one response and never emits `nextCursor`. Pagination is optional for
+    /// servers, so that is conformant, and it is the safe default: a client
+    /// that does not follow cursors would silently see a truncated catalogue if
+    /// paging were switched on underneath it.
+    ///
+    /// Override to opt in. The router then pages the list, mints an opaque
+    /// cursor, and rejects a malformed or foreign one with `-32602`:
+    ///
+    /// ```rust,ignore
+    /// fn page_size(&self) -> Option<usize> {
+    ///     Some(100)
+    /// }
+    /// ```
+    ///
+    /// A server whose catalogue is too large to materialise at all wants a
+    /// different shape than this — page it inside `list_tools` and keep the
+    /// cursor yourself — but for everything else this is the whole feature.
+    fn page_size(&self) -> Option<usize> {
+        None
+    }
+
     // ===== Client Notifications =====
 
     /// Called when the client reports that its filesystem roots changed.

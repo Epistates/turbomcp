@@ -267,6 +267,32 @@ pub mod methods {
     pub const ROOTS_LIST_CHANGED: &str = "notifications/roots/list_changed";
 }
 
+/// The eight logging severities MCP defines, in ascending order.
+///
+/// Taken from RFC 5424 and closed in the schema: `logging/setLevel` accepts
+/// nothing outside this set, and a `notifications/message` carries one of them.
+/// Ordered least to most severe so an index comparison answers "is this at
+/// least as severe as the client's minimum?".
+pub const LOG_LEVELS: [&str; 8] = [
+    "debug",
+    "info",
+    "notice",
+    "warning",
+    "error",
+    "critical",
+    "alert",
+    "emergency",
+];
+
+/// Severity rank of a log level, or `None` if it is not one of [`LOG_LEVELS`].
+///
+/// Higher is more severe. A server filtering its own output emits a message
+/// when its rank is `>=` the rank the client asked for.
+#[must_use]
+pub fn log_level_rank(level: &str) -> Option<usize> {
+    LOG_LEVELS.iter().position(|candidate| *candidate == level)
+}
+
 /// Keys TurboMCP writes into MCP `_meta` maps.
 ///
 /// MCP reserves `_meta` for data the client application consumes rather than
@@ -305,18 +331,33 @@ pub mod error_codes {
     pub const INTERNAL_ERROR: i32 = -32603;
     /// URL elicitation required (-32042)
     pub const URL_ELICITATION_REQUIRED: i32 = -32042;
-    /// Tool not found (-32001)
-    pub const TOOL_NOT_FOUND: i32 = -32001;
-    /// Tool execution error (-32002)
-    pub const TOOL_EXECUTION_ERROR: i32 = -32002;
-    /// Prompt not found (-32003)
-    pub const PROMPT_NOT_FOUND: i32 = -32003;
-    /// Resource not found (-32004)
-    pub const RESOURCE_NOT_FOUND: i32 = -32004;
-    /// Resource access denied (-32005)
+    /// Unknown tool (-32602).
+    ///
+    /// The tools spec shows `-32602 Unknown tool: …` for a name the server does
+    /// not serve. Was `-32001` before 3.5.0.
+    pub const TOOL_NOT_FOUND: i32 = -32602;
+    /// A tool ran and failed (-32603).
+    ///
+    /// Per SEP-1303 this should normally be a *successful* response with
+    /// `isError: true` rather than a protocol error at all; when it must be one,
+    /// it is an internal error. Was `-32002` before 3.5.0, which collided with
+    /// the spec's resource-not-found code.
+    pub const TOOL_EXECUTION_ERROR: i32 = -32603;
+    /// Invalid prompt name (-32602).
+    ///
+    /// Named explicitly by the prompts spec. Was `-32003` before 3.5.0.
+    pub const PROMPT_NOT_FOUND: i32 = -32602;
+    /// Resource not found (-32002).
+    ///
+    /// One of only two codes MCP assigns for itself. Was `-32004` before 3.5.0.
+    pub const RESOURCE_NOT_FOUND: i32 = -32002;
+    /// Resource access denied (-32005) — a TurboMCP extension, not spec-assigned.
     pub const RESOURCE_ACCESS_DENIED: i32 = -32005;
-    /// Capability not supported (-32006)
-    pub const CAPABILITY_NOT_SUPPORTED: i32 = -32006;
+    /// Capability not supported (-32601).
+    ///
+    /// The completion spec spells this out: "Method not found: -32601
+    /// (Capability not supported)". Was `-32006` before 3.5.0.
+    pub const CAPABILITY_NOT_SUPPORTED: i32 = -32601;
     /// Protocol version mismatch (-32007)
     pub const PROTOCOL_VERSION_MISMATCH: i32 = -32007;
     /// Authentication required (-32008)

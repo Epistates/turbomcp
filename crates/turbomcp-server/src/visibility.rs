@@ -1306,6 +1306,12 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
         async move { self.inner.set_log_level(level, ctx).await }
     }
 
+    /// Autocomplete is reachability-bearing: completing against a hidden
+    /// prompt or resource would confirm it exists and leak its argument values,
+    /// which is exactly what hiding is meant to prevent. The reference is
+    /// therefore gated by the same rules as `get_prompt` / `read_resource`, and
+    /// a hidden target is reported as not found rather than as forbidden — so a
+    /// hidden component stays indistinguishable from one that never existed.
     fn complete<'a>(
         &'a self,
         params: serde_json::Value,
@@ -1313,7 +1319,39 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     ) -> impl std::future::Future<Output = McpResult<serde_json::Value>>
     + turbomcp_core::marker::MaybeSend
     + 'a {
-        async move { self.inner.complete(params, ctx).await }
+        async move {
+            match params.get("ref") {
+                Some(reference)
+                    if reference.get("type").and_then(|v| v.as_str()) == Some("ref/prompt") =>
+                {
+                    if let Some(name) = reference.get("name").and_then(|v| v.as_str()) {
+                        let visible = match self.registered_prompt(name) {
+                            Some(prompt) => self.is_prompt_enabled(&prompt, ctx.session_id()),
+                            None => self.is_unregistered_prompt_gettable(name),
+                        };
+                        if !visible {
+                            return Err(McpError::prompt_not_found(name));
+                        }
+                    }
+                }
+                Some(reference)
+                    if reference.get("type").and_then(|v| v.as_str()) == Some("ref/resource") =>
+                {
+                    if let Some(uri) = reference.get("uri").and_then(|v| v.as_str()) {
+                        let visible = match self.registered_resource(uri) {
+                            Some(resource) => self.is_resource_enabled(&resource, ctx.session_id()),
+                            None => self.is_unregistered_resource_readable(uri),
+                        };
+                        if !visible {
+                            return Err(McpError::resource_not_found(uri));
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            self.inner.complete(params, ctx).await
+        }
     }
 
     fn on_roots_list_changed<'a>(

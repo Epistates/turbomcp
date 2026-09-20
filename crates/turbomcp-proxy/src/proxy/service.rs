@@ -350,8 +350,7 @@ fn server_capabilities_from_spec(
     spec: &crate::introspection::ServerCapabilities,
 ) -> turbomcp_protocol::types::ServerCapabilities {
     use turbomcp_protocol::types::{
-        CompletionCapabilities, LoggingCapabilities, PromptsCapabilities, ResourcesCapabilities,
-        ServerCapabilities, ToolsCapabilities,
+        PromptsCapabilities, ResourcesCapabilities, ServerCapabilities, ToolsCapabilities,
     };
 
     ServerCapabilities {
@@ -362,14 +361,24 @@ fn server_capabilities_from_spec(
             .resources
             .as_ref()
             .map(|resources| ResourcesCapabilities {
-                subscribe: resources.subscribe,
+                // `subscribe` is deliberately dropped rather than mirrored: the
+                // proxy forwards neither `resources/subscribe` nor the
+                // backend's `notifications/resources/updated`, so claiming it
+                // would promise updates that never arrive.
+                subscribe: None,
                 list_changed: resources.list_changed,
             }),
         prompts: spec.prompts.as_ref().map(|prompts| PromptsCapabilities {
             list_changed: prompts.list_changed,
         }),
-        logging: spec.logging.as_ref().map(|_| LoggingCapabilities {}),
-        completions: spec.completions.as_ref().map(|_| CompletionCapabilities {}),
+        // A capability the proxy advertises is one a client will use against
+        // the *proxy*, not the backend. Mirroring the backend's declaration
+        // only works for capabilities the proxy actually relays; it forwards
+        // neither `logging/setLevel` nor `completion/complete`, so both would
+        // answer "capability not supported" to a client that took the
+        // advertisement at face value.
+        logging: None,
+        completions: None,
         experimental: spec.experimental.clone(),
         ..Default::default()
     }

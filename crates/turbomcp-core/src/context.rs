@@ -100,6 +100,31 @@ impl core::fmt::Display for TransportType {
     }
 }
 
+/// Per-session minimum log severity, set by `logging/setLevel`.
+///
+/// The level has to outlive the request that set it — the client sets it once
+/// and it governs every later `notifications/message` on that session — so it
+/// cannot live in the per-request metadata map the way the progress token does.
+///
+/// Keyed by session id, and therefore `std`-only; `no_std` builds have no
+/// session store and treat every level as wanted, which the spec permits
+/// ("The receiver MAY ...").
+#[cfg(feature = "std")]
+static MIN_LOG_LEVEL: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, usize>>,
+> = std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
+/// Forget a session's minimum log level.
+///
+/// Call when a session ends; otherwise the entry lives for the process. The
+/// transports that own session lifetime are the right callers.
+#[cfg(feature = "std")]
+pub fn clear_min_log_level(session_id: &str) {
+    if let Ok(mut map) = MIN_LOG_LEVEL.write() {
+        map.remove(session_id);
+    }
+}
+
 /// Metadata slot holding the client's `_meta.progressToken` for this request.
 ///
 /// Kept in [`RequestContext::metadata`] rather than as a struct field so the
@@ -496,6 +521,51 @@ impl RequestContext {
     #[inline]
     pub fn wants_progress(&self) -> bool {
         self.progress_token().is_some()
+    }
+
+    /// Record the minimum log severity this session wants.
+    ///
+    /// Called by the router once `logging/setLevel` has been accepted, so that
+    /// [`wants_log`](Self::wants_log) can filter later notifications. No-op
+    /// without a session id, since there is nothing to key on.
+    #[cfg(feature = "std")]
+    pub fn set_min_log_level(&self, level: &str) {
+        let (Some(session_id), Some(rank)) =
+            (self.session_id.as_ref(), crate::log_level_rank(level))
+        else {
+            return;
+        };
+        if let Ok(mut map) = MIN_LOG_LEVEL.write() {
+            map.insert(session_id.clone(), rank);
+        }
+    }
+
+    /// Whether a message at `level` should be sent to this client.
+    ///
+    /// `true` until the client asks for something narrower with
+    /// `logging/setLevel`, and `true` for any level name outside the eight the
+    /// spec defines — filtering is a courtesy, and silently dropping an
+    /// unrecognised level would be worse than sending it.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn wants_log(&self, level: &str) -> bool {
+        let Some(rank) = crate::log_level_rank(level) else {
+            return true;
+        };
+        let Some(session_id) = self.session_id.as_ref() else {
+            return true;
+        };
+        match MIN_LOG_LEVEL.read() {
+            Ok(map) => map.get(session_id).is_none_or(|minimum| rank >= *minimum),
+            Err(_) => true,
+        }
+    }
+
+    /// `no_std` builds keep no session store, so nothing is filtered.
+    #[cfg(not(feature = "std"))]
+    #[must_use]
+    pub fn wants_log(&self, _level: &str) -> bool {
+        true
     }
 
     /// All HTTP headers, if the transport captured any.

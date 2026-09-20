@@ -543,7 +543,10 @@ async fn post_init_requests_allow_missing_protocol_header_after_negotiation() {
 
     assert_eq!(call_response.status(), StatusCode::OK);
     let body: serde_json::Value = call_response.json().await.unwrap();
-    assert_eq!(body["error"]["code"], -32001);
+    // The point here is that the request was *routed* despite the missing
+    // header; the tool simply does not exist. tools.mdx assigns -32602 to an
+    // unknown tool name.
+    assert_eq!(body["error"]["code"], -32602);
 
     handle.abort();
 }

@@ -364,3 +364,43 @@ fn content_types_are_reachable_without_depending_on_turbomcp_types() {
     assert_eq!(block.as_text(), Some("hi"));
     assert!(matches!(block, Content::Text(TextContent { .. })));
 }
+
+// ── 8. Wire error codes follow the specification's assignments ─────────────
+
+/// MCP assigns exactly two codes of its own — `-32002` (resource not found)
+/// and `-32042` — and otherwise names standard JSON-RPC codes for specific
+/// conditions. Before 3.5.0 TurboMCP used a homegrown `-32001..-32006` scheme
+/// that both diverged from those names and reused `-32002` for a failed tool
+/// call, so a client keying off the code read a tool failure as a missing
+/// resource.
+#[test]
+fn error_codes_match_the_spec_assignments() {
+    use turbomcp_core::error::ErrorKind;
+
+    let code = |kind: ErrorKind| McpError::new(kind, "x").jsonrpc_error_code();
+
+    // resources.mdx: "Resource not found: -32002"
+    assert_eq!(code(ErrorKind::ResourceNotFound), -32002);
+    // tools.mdx shows -32602 for an unknown tool name.
+    assert_eq!(code(ErrorKind::ToolNotFound), -32602);
+    // prompts.mdx: "Invalid prompt name: -32602 (Invalid params)"
+    assert_eq!(code(ErrorKind::PromptNotFound), -32602);
+    // completion.mdx: "Method not found: -32601 (Capability not supported)"
+    assert_eq!(code(ErrorKind::CapabilityNotSupported), -32601);
+    // A tool that ran and failed is an internal error, and must NOT squat on
+    // the resource-not-found code.
+    assert_eq!(code(ErrorKind::ToolExecutionFailed), -32603);
+    assert_ne!(code(ErrorKind::ToolExecutionFailed), -32002);
+}
+
+/// Codes from the pre-3.5.0 scheme are still understood on the way in, so a
+/// peer running an older TurboMCP is read correctly.
+#[test]
+fn legacy_turbomcp_codes_are_still_understood_on_ingress() {
+    use turbomcp_core::error::ErrorKind;
+
+    assert_eq!(ErrorKind::from_i32(-32002), ErrorKind::ResourceNotFound);
+    assert_eq!(ErrorKind::from_i32(-32004), ErrorKind::ResourceNotFound);
+    assert_eq!(ErrorKind::from_i32(-32003), ErrorKind::PromptNotFound);
+    assert_eq!(ErrorKind::from_i32(-32001), ErrorKind::ToolNotFound);
+}

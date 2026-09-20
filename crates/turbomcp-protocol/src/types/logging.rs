@@ -54,6 +54,13 @@ pub struct LoggingNotification {
     /// Optional logger name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logger: Option<String>,
+    /// Optional metadata (`LoggingMessageNotificationParams._meta`).
+    ///
+    /// Without this field serde silently discarded anything a peer attached,
+    /// and the loss was irrecoverable — the notification had already been
+    /// deserialized by the time a handler saw it.
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Spec-faithful name for `notifications/message` — same wire shape as
@@ -81,6 +88,7 @@ pub type LoggingMessageNotification = LoggingNotification;
 ///     progress: 50.0,
 ///     total: Some(100.0),
 ///     message: Some("Processing files...".to_string()),
+///     _meta: None,
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,4 +109,8 @@ pub struct ProgressNotification {
     /// Optional human-readable progress message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+
+    /// Optional metadata (`ProgressNotificationParams._meta`).
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }

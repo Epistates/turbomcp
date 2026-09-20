@@ -86,5 +86,6 @@ async fn test_handler_dispatch() {
         .call_tool("unknown", Value::Null, &ctx)
         .await
         .unwrap_err();
-    assert_eq!(err.jsonrpc_code(), -32001); // Tool not found code
+    // tools.mdx shows an unknown tool name as -32602, not a bespoke code.
+    assert_eq!(err.jsonrpc_code(), -32602);
 }

@@ -353,6 +353,18 @@ impl RichContextExt for RequestContext {
             return Ok(());
         }
 
+        // Honour the client's `logging/setLevel`. Emitting below the level it
+        // asked for is not a protocol error, but it is noise the client
+        // explicitly declined, so it is dropped here rather than sent.
+        let level_name = serde_json::to_value(level)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned));
+        if let Some(name) = level_name.as_deref()
+            && !self.wants_log(name)
+        {
+            return Ok(());
+        }
+
         let mut params = serde_json::json!({
             "level": level,
             "data": message.into(),

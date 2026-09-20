@@ -222,9 +222,12 @@ async fn undeclared_extension_points_still_report_unsupported() {
         ("logging/setLevel", serde_json::json!({ "level": "debug" })),
     ] {
         let response = request(&Bare, method, params).await;
+        // -32601: the completion spec spells this out as "Method not found:
+        // -32601 (Capability not supported)", and an unsupported optional
+        // method is exactly that.
         assert_eq!(
-            response["error"]["code"], -32006,
-            "{method} should report capability_not_supported, got {response}"
+            response["error"]["code"], -32601,
+            "{method} should report capability_not_supported as -32601, got {response}"
         );
     }
 }
@@ -377,7 +380,7 @@ async fn logging_can_be_declared_without_a_set_level_handler() {
         serde_json::json!({ "level": "debug" }),
     )
     .await;
-    assert_eq!(response["error"]["code"], -32006);
+    assert_eq!(response["error"]["code"], -32601);
 }
 
 /// And `#[set_level]` still implies it, so neither signal is load-bearing alone.
@@ -385,4 +388,168 @@ async fn logging_can_be_declared_without_a_set_level_handler() {
 async fn set_level_still_implies_the_logging_capability() {
     let caps = capabilities_of(&Full::default()).await;
     assert!(caps["logging"].is_object(), "got {caps}");
+}
+
+// ── logging/setLevel is validated, stored, and applied ─────────────────────
+
+/// The eight RFC 5424 severities are a closed set in the schema, so anything
+/// else is invalid params rather than something to hand a user's handler.
+#[tokio::test]
+async fn set_level_rejects_levels_outside_the_spec() {
+    let server = Full::default();
+
+    for bad in ["verbose", "trace", "DEBUG", "", "warn"] {
+        let response = request(
+            &server,
+            "logging/setLevel",
+            serde_json::json!({ "level": bad }),
+        )
+        .await;
+        assert_eq!(
+            response["error"]["code"], -32602,
+            "level {bad:?} should be rejected, got {response}"
+        );
+    }
+    assert!(
+        server.levels.lock().unwrap().is_empty(),
+        "an invalid level must never reach the handler"
+    );
+
+    // All eight legal levels are accepted.
+    for good in [
+        "debug",
+        "info",
+        "notice",
+        "warning",
+        "error",
+        "critical",
+        "alert",
+        "emergency",
+    ] {
+        let response = request(
+            &server,
+            "logging/setLevel",
+            serde_json::json!({ "level": good }),
+        )
+        .await;
+        assert!(
+            response["error"].is_null(),
+            "level {good} rejected: {response}"
+        );
+    }
+}
+
+/// Accepting a level and then ignoring it is worse than refusing it: the client
+/// believes its output is filtered when it is not.
+#[tokio::test]
+async fn the_set_level_actually_filters_emitted_messages() {
+    use turbomcp_core::session::{McpSession, SessionFuture};
+    use turbomcp_protocol::context::RichContextExt;
+    use turbomcp_protocol::types::LogLevel;
+
+    #[derive(Debug, Default)]
+    struct Recorder {
+        sent: Mutex<Vec<serde_json::Value>>,
+    }
+    impl McpSession for Recorder {
+        fn call<'a>(
+            &'a self,
+            _m: &'a str,
+            _p: serde_json::Value,
+        ) -> SessionFuture<'a, serde_json::Value> {
+            Box::pin(async { Ok(serde_json::Value::Null) })
+        }
+        fn notify<'a>(&'a self, _m: &'a str, params: serde_json::Value) -> SessionFuture<'a, ()> {
+            Box::pin(async move {
+                self.sent.lock().unwrap().push(params);
+                Ok(())
+            })
+        }
+    }
+
+    let session = Arc::new(Recorder::default());
+    let ctx = RequestContext::stdio()
+        .with_session_id("filter-session")
+        .with_session(session.clone() as Arc<dyn McpSession>);
+
+    // Before any setLevel, everything is emitted.
+    ctx.log(LogLevel::Debug, "before", None).await.unwrap();
+    assert_eq!(session.sent.lock().unwrap().len(), 1);
+
+    // Ask for `error` and above.
+    let server = Full::default();
+    server
+        .handle_request(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "logging/setLevel",
+                "params": { "level": "error" }
+            }),
+            ctx.clone(),
+        )
+        .await
+        .unwrap();
+
+    ctx.log(LogLevel::Debug, "dropped", None).await.unwrap();
+    ctx.log(LogLevel::Info, "dropped", None).await.unwrap();
+    assert_eq!(
+        session.sent.lock().unwrap().len(),
+        1,
+        "messages below the requested level must be suppressed"
+    );
+
+    ctx.log(LogLevel::Error, "kept", None).await.unwrap();
+    ctx.log(LogLevel::Critical, "kept", None).await.unwrap();
+    assert_eq!(
+        session.sent.lock().unwrap().len(),
+        3,
+        "at or above the requested level must still be sent"
+    );
+
+    turbomcp_core::context::clear_min_log_level("filter-session");
+}
+
+// ── completion/complete params are validated ───────────────────────────────
+
+/// `ref` and `argument` are both schema-required, and `argument` requires
+/// string `name` and `value`. Validating centrally means a `#[completion]`
+/// handler can index the shape it was promised instead of re-checking it.
+#[tokio::test]
+async fn completion_params_are_validated_before_the_handler() {
+    let server = Full::default();
+
+    let malformed = [
+        serde_json::json!({}),
+        serde_json::json!({ "argument": { "name": "topic", "value": "r" } }),
+        serde_json::json!({ "ref": { "type": "ref/prompt" },
+                            "argument": { "name": "topic", "value": "r" } }),
+        serde_json::json!({ "ref": { "type": "ref/resource" },
+                            "argument": { "name": "topic", "value": "r" } }),
+        serde_json::json!({ "ref": { "type": "ref/nonsense", "name": "explain" },
+                            "argument": { "name": "topic", "value": "r" } }),
+        serde_json::json!({ "ref": { "type": "ref/prompt", "name": "explain" } }),
+        serde_json::json!({ "ref": { "type": "ref/prompt", "name": "explain" },
+                            "argument": { "name": "topic" } }),
+        serde_json::json!({ "ref": { "type": "ref/prompt", "name": "explain" },
+                            "argument": { "name": "topic", "value": 7 } }),
+    ];
+
+    for params in malformed {
+        let response = request(&server, "completion/complete", params.clone()).await;
+        assert_eq!(
+            response["error"]["code"], -32602,
+            "should be invalid params: {params}"
+        );
+    }
+
+    // A ref/resource request is equally valid and must still reach the handler.
+    let ok = request(
+        &server,
+        "completion/complete",
+        serde_json::json!({
+            "ref": { "type": "ref/resource", "uri": "mem://{id}" },
+            "argument": { "name": "id", "value": "a" }
+        }),
+    )
+    .await;
+    assert!(ok["error"].is_null(), "got {ok}");
 }

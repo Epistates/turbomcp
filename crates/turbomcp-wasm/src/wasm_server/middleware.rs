@@ -572,7 +572,6 @@ impl MiddlewareStack {
             "prompts/get" => self.handle_prompts_get(req, ctx).await,
 
             // Logging
-            "logging/setLevel" => self.handle_logging_set_level(req),
 
             // Unknown method
             _ => JsonRpcResponse::error(
@@ -637,10 +636,6 @@ impl MiddlewareStack {
     }
 
     fn handle_ping(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
-        JsonRpcResponse::success(req.id.clone(), serde_json::json!({}))
-    }
-
-    fn handle_logging_set_level(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
         JsonRpcResponse::success(req.id.clone(), serde_json::json!({}))
     }
 

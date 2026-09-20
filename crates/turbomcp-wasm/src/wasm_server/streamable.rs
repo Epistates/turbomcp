@@ -634,7 +634,6 @@ impl<S: SessionStore> StreamableHandler<S> {
             "resources/read" => self.handle_resources_read(req, headers).await,
             "prompts/list" => self.handle_prompts_list(req),
             "prompts/get" => self.handle_prompts_get(req, headers).await,
-            "logging/setLevel" => JsonRpcResponse::success(req.id.clone(), serde_json::json!({})),
             _ => JsonRpcResponse::error(
                 req.id.clone(),
                 error_codes::METHOD_NOT_FOUND,

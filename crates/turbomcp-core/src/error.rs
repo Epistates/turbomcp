@@ -599,14 +599,33 @@ impl McpError {
             // Serialization is a server-side bug; map to Internal so it doesn't
             // collide on the wire with user-visible parameter validation errors.
             ErrorKind::Internal | ErrorKind::Serialization => -32603,
-            // MCP specific
+            // MCP specific.
+            //
+            // The specification assigns exactly two codes of its own —
+            // `-32002` (resource not found) and `-32042` (URL elicitation
+            // required) — and otherwise tells servers to use the standard
+            // JSON-RPC codes for named conditions:
+            //
+            //   tools.mdx      unknown tool            -> -32602
+            //   prompts.mdx    invalid prompt name     -> -32602
+            //   prompts.mdx    missing required args   -> -32602
+            //   resources.mdx  resource not found      -> -32002
+            //   completion.mdx capability unsupported  -> -32601
+            //
+            // `ErrorKind` stays richer than the wire; the code is the lossy
+            // projection of it. Tool failures additionally carry the exact kind
+            // in `_meta` under `io.turbomcp/errorKind`, so nothing is lost to a
+            // client that wants the detail.
             ErrorKind::UserRejected => -1,
-            ErrorKind::ToolNotFound => -32001,
-            ErrorKind::ToolExecutionFailed => -32002,
-            ErrorKind::PromptNotFound => -32003,
-            ErrorKind::ResourceNotFound => -32004,
+            ErrorKind::ToolNotFound => -32602,
+            // NOT -32002: that is the spec's resource-not-found code, and
+            // reusing it here made a failed tool call look like a missing
+            // resource to any client keying off the code.
+            ErrorKind::ToolExecutionFailed => -32603,
+            ErrorKind::PromptNotFound => -32602,
+            ErrorKind::ResourceNotFound => -32002,
             ErrorKind::ResourceAccessDenied => -32005,
-            ErrorKind::CapabilityNotSupported => -32006,
+            ErrorKind::CapabilityNotSupported => -32601,
             ErrorKind::ProtocolVersionMismatch => -32007,
             ErrorKind::UrlElicitationRequired => -32042,
             ErrorKind::Authentication => -32008,
@@ -668,10 +687,13 @@ impl ErrorKind {
     #[must_use]
     pub fn from_i32(code: i32) -> Self {
         match code {
-            // MCP-specific
+            // MCP-specific. `-32002` is the specification's resource-not-found
+            // code; the -32001/-32003/-32004 codes are TurboMCP's own pre-3.5.0
+            // scheme, still accepted on ingress so a peer running an older
+            // TurboMCP is understood correctly.
             -1 => Self::UserRejected,
             -32001 => Self::ToolNotFound,
-            -32002 => Self::ToolExecutionFailed,
+            -32002 => Self::ResourceNotFound,
             -32003 => Self::PromptNotFound,
             -32004 => Self::ResourceNotFound,
             -32005 => Self::ResourceAccessDenied,
@@ -833,7 +855,9 @@ mod tests {
 
     #[test]
     fn test_jsonrpc_codes() {
-        assert_eq!(McpError::tool_not_found("x").jsonrpc_code(), -32001);
+        // The spec names the code for each condition; see the egress map.
+        assert_eq!(McpError::tool_not_found("x").jsonrpc_code(), -32602);
+        assert_eq!(McpError::resource_not_found("x").jsonrpc_code(), -32002);
         assert_eq!(McpError::invalid_params("x").jsonrpc_code(), -32602);
         assert_eq!(McpError::internal("x").jsonrpc_code(), -32603);
     }
@@ -865,9 +889,11 @@ mod tests {
     // H-15: ErrorKind::from_i32 maps all known codes
     #[test]
     fn test_error_kind_from_i32() {
-        // MCP-specific codes
+        // -32002 is the spec's resource-not-found code. The rest are
+        // TurboMCP's pre-3.5.0 scheme, still understood on ingress so an older
+        // TurboMCP peer is read correctly.
         assert_eq!(ErrorKind::from_i32(-32001), ErrorKind::ToolNotFound);
-        assert_eq!(ErrorKind::from_i32(-32002), ErrorKind::ToolExecutionFailed);
+        assert_eq!(ErrorKind::from_i32(-32002), ErrorKind::ResourceNotFound);
         assert_eq!(ErrorKind::from_i32(-32003), ErrorKind::PromptNotFound);
         assert_eq!(ErrorKind::from_i32(-32004), ErrorKind::ResourceNotFound);
         assert_eq!(ErrorKind::from_i32(-32005), ErrorKind::ResourceAccessDenied);

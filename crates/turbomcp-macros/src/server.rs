@@ -58,6 +58,8 @@ pub struct ServerInfo {
     pub extensions: ExtensionHandlers,
     /// Whether `#[server(logging)]` asked for the `logging` capability.
     pub logging: bool,
+    /// `#[server(page_size = N)]`, if given.
+    pub page_size: Option<TokenStream>,
 }
 
 /// The `McpHandler` methods a server can opt into with a marker attribute.
@@ -176,6 +178,8 @@ pub struct ServerAttrs {
     pub icons: Vec<syn::Expr>,
     /// Bare `logging` flag: declare the `logging` capability.
     pub logging: bool,
+    /// `page_size = N`: paginate the list methods at N entries.
+    pub page_size: Option<syn::Expr>,
 }
 
 impl ServerAttrs {
@@ -196,6 +200,7 @@ impl ServerAttrs {
             ref mut website_url,
             ref mut icons,
             ref mut logging,
+            ref mut page_size,
         } = attrs;
 
         let parser = syn::meta::parser(|meta| {
@@ -221,6 +226,8 @@ impl ServerAttrs {
                     )?
                     .into_iter()
                     .collect();
+            } else if meta.path.is_ident("page_size") {
+                *page_size = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("logging") {
                 // A bare flag, not a key=value: `#[server(name = "x", logging)]`.
                 // The `logging` capability means "this server emits
@@ -400,6 +407,7 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
         prompts,
         extensions,
         logging: attrs.logging,
+        page_size: attrs.page_size.as_ref().map(|expr| quote!(#expr)),
     })
 }
 
@@ -1368,6 +1376,17 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         }
     });
 
+    // Pagination is opt-in: without this the trait default returns `None` and
+    // the server hands back its whole catalogue, which is conformant and is the
+    // safe default for clients that do not follow cursors.
+    let page_size_code = info.page_size.as_ref().map(|size| {
+        quote! {
+            fn page_size(&self) -> ::std::option::Option<usize> {
+                ::std::option::Option::Some(#size)
+            }
+        }
+    });
+
     let extension_code = generate_extension_handlers(&info.extensions, &turbomcp);
     let capabilities_code = generate_capabilities(info, &turbomcp);
 
@@ -1389,6 +1408,8 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             #instructions_code
 
             #capabilities_code
+
+            #page_size_code
 
             #extension_code
 

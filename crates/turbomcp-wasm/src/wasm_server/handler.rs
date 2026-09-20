@@ -267,7 +267,6 @@ impl<'a> McpHandler<'a> {
             "prompts/get" => self.handle_prompts_get(req, ctx.clone()).await,
 
             // Logging (MCP standard)
-            "logging/setLevel" => self.handle_logging_set_level(req),
 
             // Unknown method
             _ => JsonRpcResponse::error(
@@ -329,13 +328,6 @@ impl<'a> McpHandler<'a> {
 
     /// Handle ping request
     fn handle_ping(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
-        JsonRpcResponse::success(req.id.clone(), serde_json::json!({}))
-    }
-
-    /// Handle logging/setLevel request
-    fn handle_logging_set_level(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
-        // Cloudflare Workers don't have traditional logging levels
-        // Accept the request but it's effectively a no-op
         JsonRpcResponse::success(req.id.clone(), serde_json::json!({}))
     }
 

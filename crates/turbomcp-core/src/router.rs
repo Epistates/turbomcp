@@ -73,6 +73,59 @@ fn progress_token(request: &JsonRpcIncoming) -> Option<Value> {
     }
 }
 
+/// Apply a page of a list result and mint the cursor for the next one.
+///
+/// Cursors are opaque to clients — the spec says so explicitly, and forbids
+/// them from parsing one — so the encoding is ours to choose. It carries the
+/// list kind alongside the offset (`"tools:100"`) purely so a cursor handed
+/// back to the wrong method is caught rather than silently reinterpreted as an
+/// offset into a different list.
+///
+/// Returns `Err` for a cursor that is malformed, belongs to another method, or
+/// points past the end. The spec's own guidance is `-32602` for an invalid
+/// cursor, and failing loudly beats serving page one again, which a client
+/// walking pages would read as an infinite list.
+fn paginate<T>(
+    items: alloc::vec::Vec<T>,
+    kind: &str,
+    cursor: Option<&str>,
+    page_size: Option<usize>,
+) -> Result<(alloc::vec::Vec<T>, Option<alloc::string::String>), McpError> {
+    let offset = match cursor {
+        None => 0,
+        Some(raw) => {
+            let parsed = raw
+                .split_once(':')
+                .filter(|(cursor_kind, _)| *cursor_kind == kind)
+                .and_then(|(_, offset)| offset.parse::<usize>().ok());
+            match parsed {
+                Some(offset) if offset <= items.len() => offset,
+                _ => {
+                    return Err(McpError::invalid_params(alloc::format!(
+                        "invalid cursor for {kind}/list"
+                    )));
+                }
+            }
+        }
+    };
+
+    // No page size configured: the server does not paginate, so hand back
+    // everything from the offset and mint no cursor.
+    let Some(page_size) = page_size.filter(|size| *size > 0) else {
+        return Ok((items.into_iter().skip(offset).collect(), None));
+    };
+
+    let mut remaining = items.into_iter().skip(offset);
+    let page: alloc::vec::Vec<T> = remaining.by_ref().take(page_size).collect();
+    let next = if remaining.next().is_some() {
+        // `next()` consumed one, so the following page starts after it.
+        Some(alloc::format!("{kind}:{}", offset + page.len()))
+    } else {
+        None
+    };
+    Ok((page, next))
+}
+
 /// Configuration for request routing.
 ///
 /// This provides minimal configuration that works on all platforms.
@@ -200,17 +253,34 @@ pub async fn route_request<H: McpHandler>(
 
         // Tool methods
         "tools/list" => {
-            let tools = handler.list_tools();
-            let result = serde_json::json!({ "tools": tools });
-            JsonRpcOutgoing::success(id, result)
+            let cursor = request
+                .params
+                .as_ref()
+                .and_then(|params| params.get("cursor"))
+                .and_then(|value| value.as_str());
+            match paginate(handler.list_tools(), "tools", cursor, handler.page_size()) {
+                Ok((tools, next_cursor)) => {
+                    let mut result = serde_json::json!({ "tools": tools });
+                    if let Some(next) = next_cursor {
+                        result["nextCursor"] = serde_json::Value::String(next);
+                    }
+                    JsonRpcOutgoing::success(id, result)
+                }
+                Err(err) => JsonRpcOutgoing::error(id, err),
+            }
         }
 
         "tools/call" => {
             let params = request.params.unwrap_or_default();
-            let name = params
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
+            // `name` is schema-required. Defaulting it to "" turned a malformed
+            // request into a lookup for the empty name, which then reported
+            // "not found" — a different error, about a different thing.
+            let Some(name) = params.get("name").and_then(|v| v.as_str()) else {
+                return JsonRpcOutgoing::error(
+                    id,
+                    McpError::invalid_params("tools/call requires a string 'name' parameter"),
+                );
+            };
             let args = params.get("arguments").cloned().unwrap_or_default();
 
             match handler.call_tool(name, args, ctx).await {
@@ -230,23 +300,60 @@ pub async fn route_request<H: McpHandler>(
 
         // Resource methods
         "resources/list" => {
-            let resources = handler.list_resources();
-            let result = serde_json::json!({ "resources": resources });
-            JsonRpcOutgoing::success(id, result)
+            let cursor = request
+                .params
+                .as_ref()
+                .and_then(|params| params.get("cursor"))
+                .and_then(|value| value.as_str());
+            match paginate(
+                handler.list_resources(),
+                "resources",
+                cursor,
+                handler.page_size(),
+            ) {
+                Ok((resources, next_cursor)) => {
+                    let mut result = serde_json::json!({ "resources": resources });
+                    if let Some(next) = next_cursor {
+                        result["nextCursor"] = serde_json::Value::String(next);
+                    }
+                    JsonRpcOutgoing::success(id, result)
+                }
+                Err(err) => JsonRpcOutgoing::error(id, err),
+            }
         }
 
         "resources/templates/list" => {
-            let resource_templates = handler.list_resource_templates();
-            let result = serde_json::json!({ "resourceTemplates": resource_templates });
-            JsonRpcOutgoing::success(id, result)
+            let cursor = request
+                .params
+                .as_ref()
+                .and_then(|params| params.get("cursor"))
+                .and_then(|value| value.as_str());
+            match paginate(
+                handler.list_resource_templates(),
+                "resourceTemplates",
+                cursor,
+                handler.page_size(),
+            ) {
+                Ok((resource_templates, next_cursor)) => {
+                    let mut result = serde_json::json!({ "resourceTemplates": resource_templates });
+                    if let Some(next) = next_cursor {
+                        result["nextCursor"] = serde_json::Value::String(next);
+                    }
+                    JsonRpcOutgoing::success(id, result)
+                }
+                Err(err) => JsonRpcOutgoing::error(id, err),
+            }
         }
 
         "resources/read" => {
             let params = request.params.unwrap_or_default();
-            let uri = params
-                .get("uri")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
+            // Schema-required; see the note in the `tools/call` arm.
+            let Some(uri) = params.get("uri").and_then(|v| v.as_str()) else {
+                return JsonRpcOutgoing::error(
+                    id,
+                    McpError::invalid_params("resources/read requires a string 'uri' parameter"),
+                );
+            };
 
             match handler.read_resource(uri, ctx).await {
                 Ok(result) => match serde_json::to_value(&result) {
@@ -265,17 +372,37 @@ pub async fn route_request<H: McpHandler>(
 
         // Prompt methods
         "prompts/list" => {
-            let prompts = handler.list_prompts();
-            let result = serde_json::json!({ "prompts": prompts });
-            JsonRpcOutgoing::success(id, result)
+            let cursor = request
+                .params
+                .as_ref()
+                .and_then(|params| params.get("cursor"))
+                .and_then(|value| value.as_str());
+            match paginate(
+                handler.list_prompts(),
+                "prompts",
+                cursor,
+                handler.page_size(),
+            ) {
+                Ok((prompts, next_cursor)) => {
+                    let mut result = serde_json::json!({ "prompts": prompts });
+                    if let Some(next) = next_cursor {
+                        result["nextCursor"] = serde_json::Value::String(next);
+                    }
+                    JsonRpcOutgoing::success(id, result)
+                }
+                Err(err) => JsonRpcOutgoing::error(id, err),
+            }
         }
 
         "prompts/get" => {
             let params = request.params.unwrap_or_default();
-            let name = params
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
+            // Schema-required; see the note in the `tools/call` arm.
+            let Some(name) = params.get("name").and_then(|v| v.as_str()) else {
+                return JsonRpcOutgoing::error(
+                    id,
+                    McpError::invalid_params("prompts/get requires a string 'name' parameter"),
+                );
+            };
             let args = params.get("arguments").cloned();
 
             match handler.get_prompt(name, args, ctx).await {
@@ -382,8 +509,29 @@ pub async fn route_request<H: McpHandler>(
             let Some(level) = params.get("level").and_then(|v| v.as_str()) else {
                 return JsonRpcOutgoing::error(id, McpError::invalid_params("Missing level"));
             };
+            // The eight RFC 5424 severities are a closed set in the schema, so
+            // anything else is invalid params — not something to hand to a
+            // user's handler, which would otherwise have to re-validate it or
+            // silently store a level that means nothing.
+            if !crate::LOG_LEVELS.contains(&level) {
+                return JsonRpcOutgoing::error(
+                    id,
+                    McpError::invalid_params(alloc::format!(
+                        "Invalid log level '{level}'; expected one of {}",
+                        crate::LOG_LEVELS.join(", ")
+                    )),
+                );
+            }
             match handler.set_log_level(level, ctx).await {
-                Ok(()) => JsonRpcOutgoing::success(id, serde_json::json!({})),
+                Ok(()) => {
+                    // Record it so `notifications/message` below this severity
+                    // is suppressed for the rest of the session. Without this
+                    // the level was accepted and then ignored, which is worse
+                    // than refusing it: the client believes it is filtered.
+                    #[cfg(feature = "std")]
+                    ctx.set_min_log_level(level);
+                    JsonRpcOutgoing::success(id, serde_json::json!({}))
+                }
                 Err(err) => JsonRpcOutgoing::error(id, err),
             }
         }
@@ -391,6 +539,70 @@ pub async fn route_request<H: McpHandler>(
         // Completions
         "completion/complete" => {
             let params = request.params.unwrap_or_default();
+
+            // Capability first, params second. A server that does not do
+            // completions should answer "method not found" whatever the params
+            // look like — validating them first would imply the method exists
+            // and merely got bad input.
+            if handler.server_capabilities().completions.is_none() {
+                return JsonRpcOutgoing::error(
+                    id,
+                    McpError::capability_not_supported("completion/complete"),
+                );
+            }
+
+            // `ref` and `argument` are both schema-required, and `argument`
+            // requires `name` and `value`. Validating here means every
+            // `#[completion]` handler can index the shape it was promised
+            // instead of re-checking it, and a malformed request is answered
+            // as invalid params rather than reaching user code.
+            let Some(reference) = params.get("ref") else {
+                return JsonRpcOutgoing::error(
+                    id,
+                    McpError::invalid_params("completion/complete requires a 'ref' parameter"),
+                );
+            };
+            match reference.get("type").and_then(|v| v.as_str()) {
+                Some("ref/prompt") => {
+                    if reference.get("name").and_then(|v| v.as_str()).is_none() {
+                        return JsonRpcOutgoing::error(
+                            id,
+                            McpError::invalid_params("ref/prompt requires a string 'name'"),
+                        );
+                    }
+                }
+                Some("ref/resource") => {
+                    if reference.get("uri").and_then(|v| v.as_str()).is_none() {
+                        return JsonRpcOutgoing::error(
+                            id,
+                            McpError::invalid_params("ref/resource requires a string 'uri'"),
+                        );
+                    }
+                }
+                other => {
+                    return JsonRpcOutgoing::error(
+                        id,
+                        McpError::invalid_params(alloc::format!(
+                            "unsupported completion ref type {:?}; expected \
+                             'ref/prompt' or 'ref/resource'",
+                            other.unwrap_or("<missing>")
+                        )),
+                    );
+                }
+            }
+            let argument_ok = params.get("argument").is_some_and(|argument| {
+                argument.get("name").and_then(|v| v.as_str()).is_some()
+                    && argument.get("value").and_then(|v| v.as_str()).is_some()
+            });
+            if !argument_ok {
+                return JsonRpcOutgoing::error(
+                    id,
+                    McpError::invalid_params(
+                        "completion/complete requires 'argument' with string 'name' and 'value'",
+                    ),
+                );
+            }
+
             match handler.complete(params, ctx).await {
                 Ok(value) => JsonRpcOutgoing::success(id, value),
                 Err(err) => JsonRpcOutgoing::error(id, err),

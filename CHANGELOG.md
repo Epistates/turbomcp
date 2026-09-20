@@ -298,6 +298,74 @@ trip. All nine are addressed.
   there is no way to tell them apart, so that is now a warning, and
   `validate_elicit_result_for_request` applies the rule exactly.
 
+### Optional features and enforcement
+
+Beyond the broken MUSTs and the fragile behaviours, the audit catalogued
+optional features that were unimplemented or unreachable. These close the ones
+where the gap was visible on the wire.
+
+- **Error codes now follow the specification's assignments.** MCP assigns
+  exactly two codes of its own — `-32002` (resource not found) and `-32042` —
+  and otherwise names standard JSON-RPC codes for specific conditions. TurboMCP
+  used a homegrown `-32001..-32006` scheme that diverged from those names *and*
+  reused `-32002` for a failed tool call, so a client keying off the code read a
+  tool failure as a missing resource. The mapping is now:
+
+  | Condition | Was | Now | Source |
+  |---|---|---|---|
+  | Resource not found | `-32004` | `-32002` | `resources.mdx` |
+  | Unknown tool | `-32001` | `-32602` | `tools.mdx` |
+  | Invalid prompt name | `-32003` | `-32602` | `prompts.mdx` |
+  | Capability not supported | `-32006` | `-32601` | `completion.mdx` |
+  | Tool ran and failed | `-32002` | `-32603` | — (must vacate `-32002`) |
+
+  `ErrorKind` stays richer than the wire; the code is its lossy projection, and
+  a failed tool call still carries the exact kind in `_meta` under
+  `io.turbomcp/errorKind`. The retired codes are still understood on *ingress*,
+  so a peer running an older TurboMCP is read correctly.
+
+- **Schema-required parameters are enforced.** `tools/call`, `resources/read`
+  and `prompts/get` defaulted a missing `name`/`uri` to the empty string and
+  then reported "not found" — a different error about a different thing. They
+  now answer `-32602` naming the missing member. `completion/complete` validates
+  its `ref` and `argument` shape the same way, after first checking the
+  capability: a server that does not do completions answers "method not found"
+  whatever the params look like, rather than implying the method exists.
+
+- **`logging/setLevel` is validated, stored, and applied.** The level was
+  accepted as any string and then discarded — nothing filtered the server's
+  output, so a client believed it had quieted a server that was still emitting
+  everything. The eight RFC 5424 severities are now enforced (`-32602`
+  otherwise), the accepted level is remembered per session, and
+  `notifications/message` below it is suppressed. `_meta` also round-trips on
+  both the logging and progress notifications, where serde had been dropping it
+  irrecoverably.
+
+- **Pagination.** `McpHandler::page_size` and `#[server(page_size = N)]` opt a
+  server into paging `tools/list`, `resources/list`,
+  `resources/templates/list` and `prompts/list`, minting an opaque `nextCursor`.
+  The default stays `None` — returning the whole catalogue is conformant, and
+  switching paging on underneath a client that does not follow cursors would
+  silently shrink what it can see. Independent of that, a *supplied* cursor is
+  now honoured: previously it was ignored entirely, so a client walking pages
+  was served page one forever. A malformed cursor, or one minted by a different
+  list method, is rejected with `-32602` rather than reinterpreted as an offset
+  into the wrong collection.
+
+- **Capabilities stopped over-claiming.** `turbomcp-proxy` mirrored the
+  backend's `logging`, `completions` and `resources.subscribe` declarations
+  while forwarding none of them, so a client that believed the advertisement got
+  "capability not supported" from the proxy. The WASM servers answered
+  `logging/setLevel` with a fabricated success while declaring no `logging`
+  capability at all; those arms are deleted, so the method now reports itself
+  unsupported, which is the truth.
+
+- **Autocomplete respects visibility.** `completion/complete` was the one
+  reachability-bearing method `VisibilityLayer` did not gate, so completing
+  against a hidden prompt or resource confirmed it existed and leaked its
+  argument values. A hidden target is now reported as *not found*, keeping it
+  indistinguishable from one that never existed.
+
 ### Changed
 
 - **`RichContextExt::report_progress` and `report_progress_with_token` are

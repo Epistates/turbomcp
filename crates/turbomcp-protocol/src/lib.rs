@@ -407,6 +407,9 @@ mod tests {
     #[test]
     fn test_error_codes() {
         assert_eq!(error_codes::PARSE_ERROR, -32700);
-        assert_eq!(error_codes::TOOL_NOT_FOUND, -32001);
+        // tools.mdx shows `-32602 Unknown tool: …`, not a bespoke code.
+        assert_eq!(error_codes::TOOL_NOT_FOUND, -32602);
+        // One of only two codes MCP assigns for itself.
+        assert_eq!(error_codes::RESOURCE_NOT_FOUND, -32002);
     }
 }
