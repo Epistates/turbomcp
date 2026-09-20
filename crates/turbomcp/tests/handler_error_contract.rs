@@ -404,3 +404,81 @@ fn legacy_turbomcp_codes_are_still_understood_on_ingress() {
     assert_eq!(ErrorKind::from_i32(-32003), ErrorKind::PromptNotFound);
     assert_eq!(ErrorKind::from_i32(-32001), ErrorKind::ToolNotFound);
 }
+
+// ── 9. Prompt errors propagate for ANY error type ─────────────────────────
+
+/// 3.4.0 made a prompt returning `Err(McpError)` propagate instead of
+/// rendering as a user message. The detection only recognised `McpResult<T>`
+/// and `Result<T, McpError>`, so a handler with any other error type still
+/// fell to the blanket conversion and produced a *successful* prompt whose
+/// text read "Error: …" — indistinguishable from a real render, and handed to
+/// the model to act on.
+#[tokio::test]
+async fn prompt_errors_propagate_for_non_mcp_error_types() {
+    #[derive(Debug)]
+    struct CustomError(&'static str);
+
+    impl std::fmt::Display for CustomError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "custom failure: {}", self.0)
+        }
+    }
+
+    #[derive(Clone)]
+    struct Custom;
+
+    #[server(name = "custom", version = "1.0.0")]
+    impl Custom {
+        #[prompt]
+        async fn render(
+            &self,
+            topic: String,
+            _ctx: &RequestContext,
+        ) -> Result<PromptResult, CustomError> {
+            if topic.is_empty() {
+                return Err(CustomError("empty topic"));
+            }
+            Ok(PromptResult::user(format!("about {topic}")))
+        }
+    }
+
+    let response = Custom
+        .handle_request(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+                "params": { "name": "render", "arguments": { "topic": "" } }
+            }),
+            RequestContext::stdio(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        response.get("result").is_none() || response["result"].is_null(),
+        "a failed render must not be a successful response: {response}"
+    );
+    assert_eq!(response["error"]["code"], -32603, "got {response}");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("custom failure"),
+        "the cause should survive: {response}"
+    );
+
+    // The success path is untouched.
+    let ok = Custom
+        .handle_request(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 2, "method": "prompts/get",
+                "params": { "name": "render", "arguments": { "topic": "tides" } }
+            }),
+            RequestContext::stdio(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ok["result"]["messages"][0]["content"]["text"],
+        "about tides"
+    );
+}

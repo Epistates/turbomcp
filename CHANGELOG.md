@@ -366,6 +366,51 @@ where the gap was visible on the wire.
   argument values. A hidden target is now reported as *not found*, keeping it
   indistinguishable from one that never existed.
 
+### Resources, prompts, roots, elicitation
+
+- **A composite's resource URIs now round-trip.** `list_resources` presented a
+  mount's URIs prefixed and `read_resource` stripped the prefix on the way in,
+  but results travelling *out* passed through verbatim — so a read echoed the
+  mount's own unprefixed URI, and a `resource_link` in a tool result or an
+  embedded resource in a prompt message carried a URI matching no mount. A URI
+  a client receives is now always one it can hand straight back.
+
+- **`#[resource(mime_type = "…")]` reaches the read.** It was advertised in
+  `resources/list` and then dropped: the conversion can only guess from the body
+  (`text/plain`, `application/octet-stream`), so the catalogue and the content
+  described the same resource differently and a client trusting the listing
+  mis-parsed the body. `ResourceResult::with_mime_type` is the seam.
+
+- **The 2025-06-18 downgrade strips `icons` from content blocks.** Only the list
+  methods were filtered, but `resource_link` blocks are a flattened `Resource`
+  and embedded resources nest one — so the 11-25-only field leaked through every
+  tool result, prompt message and resource read.
+
+- **Prompt errors propagate for any error type.** 3.4.0 stopped a prompt
+  returning `Err` from rendering as a user message, but only recognised
+  `McpResult<T>` and `Result<T, McpError>`. Every other error type still fell to
+  the blanket conversion and produced a *successful* prompt whose text read
+  "Error: …" — indistinguishable from a real render, and handed to the model to
+  act on. Any `Result`-shaped return now propagates, converting the error on the
+  way.
+
+- **A client with no roots handler answers `-32601`** rather than an empty
+  array. No handler means the `roots` capability was never declared, and "I
+  support roots and have none" is a different statement — one that stops a
+  server telling the two apart.
+
+- **URL-mode elicitation is properly closed on the client.**
+  `notifications/elicitation/complete` was forwarded for any id at all; the
+  spec requires ignoring unknown or already-completed ones, since otherwise
+  anything able to inject a notification can drive a client's retry logic with
+  an id it invented. Ids are now tracked from the originating request and
+  consumed on completion. `ElicitationResponse::accept_without_content` also
+  expresses the URL-mode consent shape, where `content` is omitted by design.
+
+- **The client rejects prompt arguments the schema forbids.**
+  `GetPromptRequestParams.arguments` is typed `{ [key: string]: string }`;
+  numbers and objects were transmitted and left for the server to refuse.
+
 ### Changed
 
 - **`RichContextExt::report_progress` and `report_progress_with_token` are

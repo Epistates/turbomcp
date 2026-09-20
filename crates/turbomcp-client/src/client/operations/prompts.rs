@@ -178,6 +178,29 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::invalid_request("Prompt name cannot be empty"));
         }
 
+        // `GetPromptRequestParams.arguments` is typed
+        // `{ [key: string]: string }`: prompt arguments are strings, and a
+        // number or object here is rejected by a strict server. `PromptInput`
+        // is a `Value` map for historical reasons, so the check happens at the
+        // send rather than in the type — caught locally with a message naming
+        // the offending key, instead of as an opaque error from the peer.
+        if let Some(arguments) = &arguments
+            && let Some((key, value)) = arguments.iter().find(|(_, value)| !value.is_string())
+        {
+            return Err(Error::invalid_request(format!(
+                "prompt argument '{key}' must be a string, got {}; \
+                 MCP types prompt arguments as string-valued",
+                match value {
+                    serde_json::Value::Null => "null",
+                    serde_json::Value::Bool(_) => "a boolean",
+                    serde_json::Value::Number(_) => "a number",
+                    serde_json::Value::Array(_) => "an array",
+                    serde_json::Value::Object(_) => "an object",
+                    serde_json::Value::String(_) => unreachable!(),
+                }
+            )));
+        }
+
         // Send prompts/get request with full argument support
         let request = GetPromptRequest {
             name: name.to_string(),

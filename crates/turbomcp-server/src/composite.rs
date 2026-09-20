@@ -470,6 +470,34 @@ impl CompositeHandler {
         format!("{}://{}", prefix, uri_template)
     }
 
+    /// Rewrite resource URIs inside outgoing content blocks.
+    ///
+    /// `list_resources` presents a mount's URIs prefixed, and `read_resource`
+    /// strips the prefix back off on the way in — but results travelling *out*
+    /// were passed through verbatim. A `resource_link` in a tool result, or an
+    /// embedded resource in a prompt message, therefore carried the mount's
+    /// own unprefixed URI, which the client cannot read back: sending it to
+    /// `resources/read` fails to match any mount.
+    fn prefix_uris_in_content(prefix: &str, blocks: &mut [turbomcp_types::Content]) {
+        use turbomcp_types::Content;
+        for block in blocks {
+            match block {
+                Content::ResourceLink(link) => {
+                    link.uri = Self::prefix_resource_uri(prefix, &link.uri);
+                }
+                Content::Resource(embedded) => match &mut embedded.resource {
+                    turbomcp_types::ResourceContents::Text(text) => {
+                        text.uri = Self::prefix_resource_uri(prefix, &text.uri);
+                    }
+                    turbomcp_types::ResourceContents::Blob(blob) => {
+                        blob.uri = Self::prefix_resource_uri(prefix, &blob.uri);
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+
     /// Prefix a prompt name.
     fn prefix_prompt_name(prefix: &str, name: &str) -> String {
         format!("{}_{}", prefix, name)
@@ -680,10 +708,12 @@ impl McpHandler for CompositeHandler {
                 .find_handler(prefix)
                 .ok_or_else(|| McpError::tool_not_found(name))?;
 
-            handler
+            let mut result = handler
                 .handler
                 .dyn_call_tool(original_name, args, ctx)
-                .await
+                .await?;
+            Self::prefix_uris_in_content(prefix, &mut result.content);
+            Ok(result)
         }
     }
 
@@ -703,7 +733,21 @@ impl McpHandler for CompositeHandler {
                 .find_handler(prefix)
                 .ok_or_else(|| McpError::resource_not_found(uri))?;
 
-            handler.handler.dyn_read_resource(original_uri, ctx).await
+            let mut result = handler.handler.dyn_read_resource(original_uri, ctx).await?;
+            // Echo back the URI the client actually asked for, not the mount's
+            // internal one — a client comparing them would otherwise see a
+            // resource it never requested.
+            for entry in &mut result.contents {
+                match entry {
+                    turbomcp_types::ResourceContents::Text(text) => {
+                        text.uri = Self::prefix_resource_uri(prefix, &text.uri);
+                    }
+                    turbomcp_types::ResourceContents::Blob(blob) => {
+                        blob.uri = Self::prefix_resource_uri(prefix, &blob.uri);
+                    }
+                }
+            }
+            Ok(result)
         }
     }
 
@@ -723,10 +767,16 @@ impl McpHandler for CompositeHandler {
                 .find_handler(prefix)
                 .ok_or_else(|| McpError::prompt_not_found(name))?;
 
-            handler
+            let mut result = handler
                 .handler
                 .dyn_get_prompt(original_name, args, ctx)
-                .await
+                .await?;
+            // Prompt messages can embed resources too; same reasoning as
+            // `call_tool`.
+            for message in &mut result.messages {
+                Self::prefix_uris_in_content(prefix, core::slice::from_mut(&mut message.content));
+            }
+            Ok(result)
         }
     }
 
@@ -1172,6 +1222,47 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.messages.is_empty());
+    }
+
+    /// A URI a mount returns must be one the client can hand straight back to
+    /// `resources/read`. `list_resources` presents them prefixed and
+    /// `read_resource` strips the prefix on the way in, but results travelling
+    /// *out* used to pass through verbatim — so a read echoed the mount's own
+    /// unprefixed URI, which then matched no mount on the next request.
+    #[tokio::test]
+    async fn returned_resource_uris_can_be_read_back() {
+        let composite = CompositeHandler::new("test", "1.0.0")
+            .try_mount(WeatherHandler, "weather")
+            .unwrap();
+        let ctx = RequestContext::new();
+
+        // What the catalogue advertises.
+        let listed = composite.list_resources();
+        let advertised = listed
+            .iter()
+            .find(|r| r.uri.contains("api/current"))
+            .expect("resource should be listed");
+        assert_eq!(advertised.uri, "weather://api/current");
+
+        // Reading it echoes the same URI back, not the mount's internal one.
+        let result = composite
+            .read_resource(&advertised.uri, &ctx)
+            .await
+            .expect("advertised URI must be readable");
+        let echoed = match &result.contents[0] {
+            turbomcp_types::ResourceContents::Text(text) => text.uri.clone(),
+            turbomcp_types::ResourceContents::Blob(blob) => blob.uri.clone(),
+        };
+        assert_eq!(
+            echoed, advertised.uri,
+            "the URI a read returns must be the one the client asked for"
+        );
+
+        // And it round-trips: feeding it back in works.
+        composite
+            .read_resource(&echoed, &ctx)
+            .await
+            .expect("the echoed URI must itself be readable");
     }
 
     /// Mounted names are `{prefix}_{name}`, so nested prefixes can mint the

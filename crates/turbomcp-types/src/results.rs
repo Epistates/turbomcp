@@ -177,6 +177,26 @@ impl ResourceResult {
         }
     }
 
+    /// Override the MIME type on every entry of this result.
+    ///
+    /// The constructors guess (`text/plain` for text, `application/octet-stream`
+    /// for blobs) because they only see the body. A `#[resource]` that declares
+    /// `mime_type = "application/json"` advertises that in `resources/list`, so
+    /// the read must agree — otherwise the catalogue and the content describe
+    /// the resource differently and a client that trusts the listing
+    /// mis-parses the body.
+    #[must_use]
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        let mime_type = mime_type.into();
+        for entry in &mut self.contents {
+            match entry {
+                ResourceContents::Text(text) => text.mime_type = Some(mime_type.clone()),
+                ResourceContents::Blob(blob) => blob.mime_type = Some(mime_type.clone()),
+            }
+        }
+        self
+    }
+
     /// Create a JSON resource result.
     pub fn json<T: Serialize>(
         uri: impl Into<String>,

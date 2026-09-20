@@ -170,6 +170,36 @@ impl VersionAdapter for V2025_06_18Adapter {
                 strip_from_array(&mut result, "resourceTemplates", &["icons"]);
                 result
             }
+            // Content blocks carry `icons` too, copied from the source
+            // `Resource` into `resource_link` and embedded-resource blocks.
+            // Stripping only the list methods left the field leaking through
+            // every tool result and prompt message.
+            "tools/call" => {
+                if let Some(Value::Array(blocks)) = result.get_mut("content") {
+                    for block in blocks.iter_mut() {
+                        strip_content_block_11_25_fields(block);
+                    }
+                }
+                result
+            }
+            "prompts/get" => {
+                if let Some(Value::Array(messages)) = result.get_mut("messages") {
+                    for message in messages.iter_mut() {
+                        if let Some(content) = message.get_mut("content") {
+                            strip_content_block_11_25_fields(content);
+                        }
+                    }
+                }
+                result
+            }
+            "resources/read" => {
+                if let Some(Value::Array(contents)) = result.get_mut("contents") {
+                    for entry in contents.iter_mut() {
+                        strip_keys(entry, &["icons"]);
+                    }
+                }
+                result
+            }
             _ => result,
         }
     }
@@ -255,6 +285,23 @@ fn strip_keys(value: &mut Value, keys: &[&str]) {
         for key in keys {
             map.remove(*key);
         }
+    }
+}
+
+/// Strip 2025-11-25-only fields from a single content block.
+///
+/// `resource_link` blocks are a flattened `Resource`, and embedded resources
+/// nest one under `resource`, so both can carry `icons` (SEP-973) into a wire
+/// revision that has no such field.
+fn strip_content_block_11_25_fields(block: &mut Value) {
+    match block.get("type").and_then(|t| t.as_str()) {
+        Some("resource_link") => strip_keys(block, &["icons"]),
+        Some("resource") => {
+            if let Some(resource) = block.get_mut("resource") {
+                strip_keys(resource, &["icons"]);
+            }
+        }
+        _ => {}
     }
 }
 

@@ -342,6 +342,27 @@ impl ElicitationResponse {
     ///
     /// Use this when you already have a `serde_json::Value` (object) — avoids the
     /// `HashMap` conversion round-trip done by [`ElicitationResponse::accept`].
+    /// Accept with no content — the shape a URL-mode consent takes.
+    ///
+    /// For URL mode the interaction happens out of band, so the spec omits
+    /// `content` entirely: `{"action": "accept"}` is the complete answer, and
+    /// it means "the user consented to opening the URL", not "the interaction
+    /// finished". Completion arrives later as
+    /// `notifications/elicitation/complete`.
+    ///
+    /// Use [`accept`](Self::accept) or [`accept_value`](Self::accept_value) for
+    /// form mode, where content is required.
+    #[must_use]
+    pub fn accept_without_content() -> Self {
+        Self {
+            inner: turbomcp_protocol::types::ElicitResult {
+                action: ElicitationAction::Accept,
+                content: None,
+                meta: None,
+            },
+        }
+    }
+
     #[must_use]
     pub fn accept_value(content: serde_json::Value) -> Self {
         Self {

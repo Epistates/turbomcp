@@ -128,6 +128,10 @@ pub struct PromptInfo {
     /// Whether the handler returns `McpResult`/`Result<_, McpError>`, in which
     /// case an `Err` propagates instead of being rendered as a message.
     pub returns_mcp_error: bool,
+    /// Whether the handler is `Result`-shaped at all. A fallible prompt whose
+    /// error type is *not* `McpError` still has to propagate rather than render
+    /// — it is just converted on the way.
+    pub returns_result: bool,
     /// Function name
     pub fn_name: Ident,
     /// Tags for categorization
@@ -364,6 +368,7 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
                         description,
                         arguments,
                         returns_mcp_error: returns_mcp_error(&method.sig),
+                        returns_result: returns_result(&method.sig),
                         fn_name,
                         tags: prompt_attrs.tags,
                         version: prompt_attrs.version,
@@ -535,6 +540,28 @@ fn extract_resource_attrs(attr: &syn::Attribute) -> Result<ResourceAttrInfo, syn
 /// turbomcp_core::error::McpError>` both count). Anything else — a bare value,
 /// or a `Result` over some other error type — is left on the legacy conversion
 /// path, where the error can only become display text.
+/// Whether a handler's return type is `Result`-shaped at all.
+///
+/// Deliberately an exact-ident check on the last path segment, so `Result` and
+/// `McpResult` match while `-> PromptResult` — which is a success type, not a
+/// fallible one — does not.
+///
+/// [`returns_mcp_error`] is the narrower question: whether the error type is
+/// already `McpError` and so needs no conversion.
+fn returns_result(sig: &syn::Signature) -> bool {
+    let syn::ReturnType::Type(_, ty) = &sig.output else {
+        return false;
+    };
+    let syn::Type::Path(type_path) = ty.as_ref() else {
+        return false;
+    };
+    type_path
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Result" || segment.ident == "McpResult")
+}
+
 fn returns_mcp_error(sig: &syn::Signature) -> bool {
     let syn::ReturnType::Type(_, ty) = &sig.output else {
         return false;
@@ -1255,6 +1282,16 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         let uri_template = &resource.uri_template;
         let fn_name = &resource.fn_name;
 
+        // A declared `mime_type` is advertised in `resources/list`, so the read
+        // has to agree with it. The `IntoResourceResult` conversions can only
+        // guess from the body (`text/plain`, `application/octet-stream`), which
+        // left the catalogue and the content describing the same resource
+        // differently.
+        let mime_override = match &resource.mime_type {
+            Some(mime) => quote! { .with_mime_type(#mime) },
+            None => quote! {},
+        };
+
         // Each body is boxed for the same reason as the tool arms: they all
         // share one `read_resource` state machine.
         let dispatch = quote! {
@@ -1262,7 +1299,10 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 #turbomcp::__macro_support::turbomcp_types::ResourceResult
             > = ::std::boxed::Box::pin(async {
                 match self.#fn_name(uri.to_string(), ctx).await {
-                    Ok(r) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
+                    Ok(r) => Ok(
+                        #turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)
+                            #mime_override
+                    ),
                     Err(e) => Err(e),
                 }
             }).await;
@@ -1345,6 +1385,20 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 match result {
                     Ok(value) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(value)),
                     Err(e) => Err(e),
+                }
+            }
+        } else if prompt.returns_result {
+            // Fallible, but with some other error type. It still propagates —
+            // the failure is converted rather than rendered, so a failed prompt
+            // never arrives as a user message the model is asked to act on.
+            quote! {
+                match result {
+                    Ok(value) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(value)),
+                    Err(e) => Err(
+                        #turbomcp::__macro_support::turbomcp_core::error::McpError::internal(
+                            ::std::string::ToString::to_string(&e)
+                        )
+                    ),
                 }
             }
         } else {

@@ -68,6 +68,15 @@ pub(super) struct ClientInner<T: Transport + 'static> {
     /// ✅ Semaphore for bounded concurrency of request/notification handlers
     /// Limits concurrent server-initiated request handlers to prevent resource exhaustion
     pub(super) handler_semaphore: Arc<Semaphore>,
+
+    /// Elicitation ids from URL-mode requests this client has accepted and
+    /// not yet seen completed.
+    ///
+    /// The spec requires a client to ignore
+    /// `notifications/elicitation/complete` for an unknown or
+    /// already-completed id — otherwise a server (or anything able to inject a
+    /// notification) can drive a client's retry logic with an id it invented.
+    pub(super) pending_url_elicitations: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 /// The core MCP client implementation
@@ -202,6 +211,7 @@ impl<T: Transport + 'static> Client<T> {
                 sampling_handler: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
+                pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
             }),
         };
 
@@ -254,6 +264,7 @@ impl<T: Transport + 'static> Client<T> {
                 sampling_handler: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
+                pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
             }),
         };
 
@@ -793,12 +804,23 @@ impl<T: Transport + 'static> Client<T> {
                 // Clone the handler Arc to avoid holding mutex across await
                 let handler_opt = self.inner.handlers.lock().roots.clone();
 
-                let roots_result = if let Some(handler) = handler_opt {
-                    handler.handle_roots_request().await
-                } else {
-                    // No handler - return empty list per MCP spec
-                    Ok(Vec::new())
+                // No handler means the client never declared the `roots`
+                // capability — `get_roots_capabilities` returns `None` in
+                // exactly that case. An empty array would read as "I support
+                // roots and have none", which is a different statement, and one
+                // that stops a server from distinguishing "no roots" from "this
+                // client does not do roots".
+                let Some(handler) = handler_opt else {
+                    let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                        code: -32601,
+                        message: "Roots not supported - no handler registered".to_string(),
+                        data: None,
+                    };
+                    self.send_response(JsonRpcResponse::error_response(error, request.id))
+                        .await?;
+                    return Ok(());
                 };
+                let roots_result = handler.handle_roots_request().await;
 
                 match roots_result {
                     Ok(roots) => {
@@ -885,6 +907,17 @@ impl<T: Transport + 'static> Client<T> {
                         ))
                         .await?;
                         return Ok(());
+                    }
+
+                    // Remember the id so a later completion notification can be
+                    // matched to a request this client actually received.
+                    if let turbomcp_protocol::types::ElicitRequestParams::Url(url_params) =
+                        &proto_params
+                    {
+                        self.inner
+                            .pending_url_elicitations
+                            .lock()
+                            .insert(url_params.elicitation_id.clone());
                     }
 
                     // Wrap protocol params with ID for handler (preserves type safety!)
