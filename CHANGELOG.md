@@ -240,6 +240,64 @@ The rest, briefly:
   the WASM/Worker entry points told every client `2025-11-25` regardless of
   what it asked for, then sent it fields that revision alone defines.
 
+### Hardening
+
+The same audit flagged nine behaviours that were conformant but fragile — latent
+hangs, silent drops, enforcement that a hostile or merely unusual peer could
+trip. All nine are addressed.
+
+- **A panicking handler produced no response at all.** Handler dispatch is
+  spawned, and a panic unwound the task before the response was sent, so the
+  client waited on an id that would never be answered — and most MCP clients
+  have no per-request timeout, which made that wait permanent. All four
+  transports now route through a shared helper that converts a panic into
+  `-32603`; the connection survives, and the panic is logged in full while the
+  client sees only a summary.
+
+- **One malformed capability erased all the others.** Client capabilities were
+  deserialized in a single shot with a silent fallback to
+  `ClientCapabilities::default()`, so one unparseable sibling — an unknown
+  sub-capability, a draft extension, simply a newer peer — made the server
+  believe the client had declared *nothing*, and every server-initiated call
+  then failed with `capability_not_supported`. Parsed field by field now, which
+  is what the spec's "ignore what you do not understand" implies.
+
+- **Auto-pagination truncated lists silently.** All four client loops stopped on
+  an empty page even when the server had sent a `nextCursor`. `nextCursor` is
+  the only end-of-results signal the spec defines, and an empty page carrying
+  one is legal — a server may filter a page down to nothing. They also now stop
+  on a repeated cursor rather than burning the page budget. Separately, the
+  proxy's four introspection loops were unbounded with no page cap and no
+  repeat guard, leaving memory and time under a foreign server's control.
+
+- **The client sent a hardcoded `MCP-Protocol-Version`.** It came from
+  compile-time config and was never updated from the handshake, so a client that
+  negotiated `2025-06-18` still advertised `2025-11-25` on every subsequent
+  request. The negotiated version is now captured from the `initialize`
+  response and used thereafter.
+
+- **`ToolResult::with_structured` could write a non-object** into
+  `structuredContent` — the one path that skipped the guard every sibling
+  applies.
+
+- **Nested composite mount prefixes could shadow a tool.** Names are minted
+  `{prefix}_{name}`, so mounting at `x` (exposing `y_z`) alongside `x_y`
+  (exposing `z`) produced two entries both named `x_y_z`; routing picks the
+  longest prefix, so one tool became permanently unreachable with no error
+  anywhere. Mount now rejects nesting and validates the prefix charset.
+
+- **`notifications/roots/list_changed` was classed as an invalid
+  client-to-server message** by the direction validator, whose lists were
+  sampled rather than complete — and which also listed
+  `notifications/tools/updated`, a method MCP does not define. Both directions
+  are now enumerated in full.
+
+- **`validate_elicit_result` rejected a conformant URL-mode accept.** Content is
+  required on `accept` for *form* mode and omitted for URL mode, where
+  `{"action": "accept"}` is the whole correct answer; judged without the request
+  there is no way to tell them apart, so that is now a warning, and
+  `validate_elicit_result_for_request` applies the rule exactly.
+
 ### Changed
 
 - **`RichContextExt::report_progress` and `report_progress_with_token` are

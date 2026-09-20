@@ -187,22 +187,61 @@ fn test_priority_range_validation_multiple_errors() {
     );
 }
 
-/// Test Gap #9: ElicitResult content validation per schema.json:634
+/// `ElicitResult` does not say which mode produced it, and the content rule
+/// differs: required on `accept` for form mode, omitted for URL mode, where
+/// `{"action": "accept"}` is the whole correct answer. Judged alone this can
+/// only be a warning — erroring would reject every valid URL-mode consent.
 #[test]
-fn test_elicit_result_accept_requires_content() {
+fn test_elicit_result_accept_without_content_warns_without_the_request() {
     let validator = ProtocolValidator::new();
 
-    // Accept without content = ERROR
-    let invalid = ElicitResult {
+    let accept_no_content = ElicitResult {
         action: ElicitationAction::Accept,
         content: None,
         meta: None,
     };
 
-    let result = validator.validate_elicit_result(&invalid);
-    assert!(!result.is_valid(), "Accept without content should fail");
-    assert_eq!(result.errors().len(), 1);
+    let result = validator.validate_elicit_result(&accept_no_content);
+    assert!(
+        result.is_valid(),
+        "cannot be an error without knowing the mode: this is a valid URL-mode accept"
+    );
+    assert_eq!(result.warnings().len(), 1);
+    assert_eq!(result.warnings()[0].code, "MISSING_CONTENT_ON_ACCEPT");
+}
+
+/// Given the request, the rule can be applied exactly.
+#[test]
+fn test_elicit_result_content_rule_is_exact_with_the_request() {
+    use turbomcp_protocol::types::{ElicitRequestParams, ElicitRequestURLParams};
+
+    let validator = ProtocolValidator::new();
+    let accept_no_content = ElicitResult {
+        action: ElicitationAction::Accept,
+        content: None,
+        meta: None,
+    };
+
+    // Form mode: content is required, so this is an error.
+    let form = ElicitRequestParams::form("Your name?", serde_json::json!({"type": "object"}));
+    let result = validator.validate_elicit_result_for_request(&accept_no_content, &form);
+    assert!(!result.is_valid(), "form-mode accept must carry content");
     assert_eq!(result.errors()[0].code, "MISSING_CONTENT_ON_ACCEPT");
+
+    // URL mode: the same result is correct and must validate clean.
+    let url = ElicitRequestParams::Url(ElicitRequestURLParams {
+        message: "Authorize access".into(),
+        url: "https://example.com/authorize".into(),
+        elicitation_id: "e-1".into(),
+        task: None,
+        meta: None,
+    });
+    let result = validator.validate_elicit_result_for_request(&accept_no_content, &url);
+    assert!(
+        result.is_valid() && result.warnings().is_empty(),
+        "URL-mode accept carries no content by design, got {:?}",
+        result.warnings()
+    );
 }
 
 #[test]

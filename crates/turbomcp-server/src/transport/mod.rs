@@ -18,12 +18,74 @@
 
 mod line;
 
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use futures::FutureExt;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+use turbomcp_core::error::McpError;
+use turbomcp_core::handler::McpHandler;
 use turbomcp_types::{ClientCapabilities, ProtocolVersion};
+
+use crate::context::RequestContext;
+use crate::router::{self, JsonRpcIncoming, JsonRpcOutgoing};
+
+/// Route a request, turning a handler panic into a JSON-RPC error response.
+///
+/// A panicking handler previously produced **no response at all**: the spawned
+/// task unwound before reaching the send, so the client was left waiting on an
+/// id that would never be answered. Most MCP clients have no per-request
+/// timeout, which makes that wait permanent.
+///
+/// A panic is a server fault, so it is reported as one (`-32603`). The panic
+/// payload is logged in full but only summarised to the client, since it can
+/// contain internal detail.
+pub(crate) async fn route_catching_panics<H: McpHandler>(
+    handler: &H,
+    request: JsonRpcIncoming,
+    ctx: &RequestContext,
+    version: &ProtocolVersion,
+) -> JsonRpcOutgoing {
+    let id = request.id.clone();
+    let method = request.method.clone();
+
+    match AssertUnwindSafe(router::route_request_versioned(
+        handler, request, ctx, version,
+    ))
+    .catch_unwind()
+    .await
+    {
+        Ok(response) => response,
+        Err(payload) => {
+            let detail = panic_detail(&payload);
+            tracing::error!(
+                method = %method,
+                panic = %detail,
+                "Handler panicked; answering with an internal error"
+            );
+            // `id` is `None` for a notification, and an error with no id is
+            // suppressed by `should_send()` — correct, since notifications
+            // take no reply.
+            JsonRpcOutgoing::error(
+                id,
+                McpError::internal(format!("Handler panicked while serving {method}")),
+            )
+        }
+    }
+}
+
+/// Best-effort readable form of a panic payload, for the server's own log.
+fn panic_detail(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "non-string panic payload".to_string()
+    }
+}
 
 /// RAII guard that removes a pending-handler entry from the per-connection
 /// cancellation registry when dropped.
@@ -101,14 +163,46 @@ pub(crate) fn request_id_key(id: &Value) -> Option<String> {
     serde_json::to_string(id).ok()
 }
 
+/// Read the client's declared capabilities out of the `initialize` params.
+///
+/// Deserialized **field by field** rather than in one shot. Capabilities are
+/// independent declarations, and the spec has each side ignore what it does not
+/// understand; a single unparseable sibling — an unknown sub-capability, a
+/// draft extension, a peer that is simply newer — must not erase the rest.
+///
+/// The all-or-nothing version silently returned `ClientCapabilities::default()`
+/// for the whole object, so one odd field made the server believe the client
+/// had declared *nothing*, and every server-initiated call then failed with
+/// `capability_not_supported`.
 pub(crate) fn client_capabilities_from_initialize_params(
     params: Option<&Value>,
 ) -> ClientCapabilities {
-    params
-        .and_then(|params| params.get("capabilities"))
-        .cloned()
-        .and_then(|capabilities| serde_json::from_value(capabilities).ok())
-        .unwrap_or_default()
+    let Some(caps) = params.and_then(|params| params.get("capabilities")) else {
+        return ClientCapabilities::default();
+    };
+
+    // The whole object first: the common case, and it preserves any field the
+    // per-field pass below does not name.
+    if let Ok(parsed) = serde_json::from_value::<ClientCapabilities>(caps.clone()) {
+        return parsed;
+    }
+
+    let mut out = ClientCapabilities::default();
+    let field = |name: &str| caps.get(name).cloned();
+    out.roots = field("roots").and_then(|v| serde_json::from_value(v).ok());
+    out.sampling = field("sampling").and_then(|v| serde_json::from_value(v).ok());
+    out.elicitation = field("elicitation").and_then(|v| serde_json::from_value(v).ok());
+    out.experimental = field("experimental").and_then(|v| serde_json::from_value(v).ok());
+    out.tasks = field("tasks").and_then(|v| serde_json::from_value(v).ok());
+
+    tracing::debug!(
+        "client capabilities did not deserialize as a whole; recovered per field: \
+         roots={} sampling={} elicitation={}",
+        out.roots.is_some(),
+        out.sampling.is_some(),
+        out.elicitation.is_some(),
+    );
+    out
 }
 
 #[cfg(feature = "stdio")]

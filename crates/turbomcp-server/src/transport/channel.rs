@@ -470,7 +470,7 @@ async fn run_server_loop<H: McpHandler>(
                                     // RAII cleanup runs on every exit path,
                                     // including handler panic.
                                     let _guard = guard;
-                                    let response = router::route_request_versioned(
+                                    let response = super::route_catching_panics(
                                         &h, request, &ctx, &version,
                                     )
                                     .await;

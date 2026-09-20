@@ -26,6 +26,14 @@ use super::spec::{
 };
 use crate::error::{ProxyError, ProxyResult};
 
+/// Upper bound on pages walked when introspecting a backend.
+///
+/// The backend is a foreign server: it may repeat a cursor, or hand out a new
+/// one forever. Without a bound, introspection is a memory and time sink
+/// controlled entirely by the other side. 1000 pages is far past any real
+/// catalogue while still terminating.
+const MAX_PAGINATION_PAGES: usize = 1000;
+
 /// MCP Server Introspector
 ///
 /// Discovers server capabilities by performing MCP protocol handshake
@@ -192,7 +200,7 @@ impl McpIntrospector {
         let mut all_tools = Vec::new();
         let mut cursor: Option<Cursor> = None;
 
-        loop {
+        for _ in 0..MAX_PAGINATION_PAGES {
             trace!(cursor = ?cursor, "Fetching tools page");
 
             let request = ListToolsRequest {
@@ -247,10 +255,12 @@ impl McpIntrospector {
             }
 
             // Check for next page
-            if let Some(next_cursor) = result.next_cursor {
-                cursor = Some(next_cursor);
-            } else {
-                break;
+            match result.next_cursor {
+                // Stop on a repeated cursor: a backend that hands back the
+                // same one is not advancing, and following it would just burn
+                // the page budget.
+                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+                _ => break,
             }
         }
 
@@ -267,7 +277,7 @@ impl McpIntrospector {
         let mut all_templates = Vec::new();
         let mut cursor: Option<Cursor> = None;
 
-        loop {
+        for _ in 0..MAX_PAGINATION_PAGES {
             trace!(cursor = ?cursor, "Fetching resources page");
 
             let request = ListResourcesRequest {
@@ -305,15 +315,17 @@ impl McpIntrospector {
             }
 
             // Check for next page
-            if let Some(next_cursor) = result.next_cursor {
-                cursor = Some(next_cursor);
-            } else {
-                break;
+            match result.next_cursor {
+                // Stop on a repeated cursor: a backend that hands back the
+                // same one is not advancing, and following it would just burn
+                // the page budget.
+                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+                _ => break,
             }
         }
 
         let mut cursor: Option<Cursor> = None;
-        loop {
+        for _ in 0..MAX_PAGINATION_PAGES {
             trace!(cursor = ?cursor, "Fetching resource templates page");
 
             let request = ListResourceTemplatesRequest {
@@ -354,10 +366,12 @@ impl McpIntrospector {
                 });
             }
 
-            if let Some(next_cursor) = result.next_cursor {
-                cursor = Some(next_cursor);
-            } else {
-                break;
+            match result.next_cursor {
+                // Stop on a repeated cursor: a backend that hands back the
+                // same one is not advancing, and following it would just burn
+                // the page budget.
+                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+                _ => break,
             }
         }
 
@@ -375,7 +389,7 @@ impl McpIntrospector {
         let mut all_prompts = Vec::new();
         let mut cursor: Option<Cursor> = None;
 
-        loop {
+        for _ in 0..MAX_PAGINATION_PAGES {
             trace!(cursor = ?cursor, "Fetching prompts page");
 
             let request = ListPromptsRequest {
@@ -414,10 +428,12 @@ impl McpIntrospector {
             }
 
             // Check for next page
-            if let Some(next_cursor) = result.next_cursor {
-                cursor = Some(next_cursor);
-            } else {
-                break;
+            match result.next_cursor {
+                // Stop on a repeated cursor: a backend that hands back the
+                // same one is not advancing, and following it would just burn
+                // the page budget.
+                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+                _ => break,
             }
         }
 

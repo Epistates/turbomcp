@@ -420,9 +420,18 @@ impl ProtocolValidator {
         ctx.into_result()
     }
 
-    /// Validate elicitation result (content required for 'accept' action)
+    /// Validate an elicitation result on its own, without the request.
     ///
-    /// Per the current MCP schema, content is only present when action is `accept`.
+    /// `ElicitResult` does not record which mode produced it, and the content
+    /// rule differs by mode: `content` is required on `accept` for **form**
+    /// mode, and omitted entirely for **URL** mode, where the interaction
+    /// happens out of band and `{"action": "accept"}` is the complete and
+    /// correct answer. Without the request there is no way to tell them apart,
+    /// so a missing `content` is a *warning* here rather than an error that
+    /// would reject every legitimate URL-mode consent.
+    ///
+    /// Use [`Self::validate_elicit_result_for_request`] when the originating
+    /// request is available — it applies the rule exactly.
     pub fn validate_elicit_result(&self, result: &crate::types::ElicitResult) -> ValidationResult {
         let mut ctx = ValidationContext::new();
 
@@ -431,9 +440,62 @@ impl ProtocolValidator {
         match result.action {
             ElicitationAction::Accept => {
                 if result.content.is_none() {
+                    ctx.add_warning(
+                        "MISSING_CONTENT_ON_ACCEPT",
+                        "ElicitResult has no content on 'accept'; required for form mode, \
+                         but correct for URL mode. Use validate_elicit_result_for_request \
+                         to check this precisely."
+                            .to_string(),
+                        Some("content".to_string()),
+                    );
+                }
+            }
+            ElicitationAction::Decline | ElicitationAction::Cancel => {
+                if result.content.is_some() {
+                    ctx.add_warning(
+                        "UNEXPECTED_CONTENT",
+                        format!(
+                            "Content should not be present when action is '{:?}'",
+                            result.action
+                        ),
+                        Some("content".to_string()),
+                    );
+                }
+            }
+        }
+
+        ctx.into_result()
+    }
+
+    /// Validate an elicitation result against the request that produced it.
+    ///
+    /// Knowing the mode makes the content rule exact: required on `accept` for
+    /// form mode (schema.ts `ElicitResult.content`), omitted for URL mode.
+    pub fn validate_elicit_result_for_request(
+        &self,
+        result: &crate::types::ElicitResult,
+        params: &crate::types::ElicitRequestParams,
+    ) -> ValidationResult {
+        let mut ctx = ValidationContext::new();
+
+        use crate::types::{ElicitRequestParams, ElicitationAction};
+
+        match result.action {
+            ElicitationAction::Accept => {
+                if matches!(params, ElicitRequestParams::Form(_)) && result.content.is_none() {
                     ctx.add_error(
                         "MISSING_CONTENT_ON_ACCEPT",
-                        "ElicitResult must have content when action is 'accept'".to_string(),
+                        "ElicitResult must have content when a form-mode elicitation is accepted"
+                            .to_string(),
+                        Some("content".to_string()),
+                    );
+                }
+                if matches!(params, ElicitRequestParams::Url(_)) && result.content.is_some() {
+                    ctx.add_warning(
+                        "UNEXPECTED_CONTENT",
+                        "URL-mode elicitation results carry no content; the interaction \
+                         happens out of band"
+                            .to_string(),
                         Some("content".to_string()),
                     );
                 }

@@ -271,3 +271,124 @@ async fn unsolicited_responses_are_ignored() {
         "stray response poisoned the stream"
     );
 }
+
+/// A panicking handler must still produce a response. Before 3.5.0 the spawned
+/// task unwound before reaching the send, so the client waited forever on an id
+/// that would never be answered — and most MCP clients have no per-request
+/// timeout, which made that wait permanent.
+#[tokio::test]
+async fn a_panicking_handler_still_answers() {
+    #[derive(Clone)]
+    struct Panicky;
+
+    impl McpHandler for Panicky {
+        fn server_info(&self) -> ServerInfo {
+            ServerInfo::new("panicky", "1.0.0")
+        }
+        fn list_tools(&self) -> Vec<Tool> {
+            vec![Tool {
+                name: "boom".to_string(),
+                ..Default::default()
+            }]
+        }
+        fn list_resources(&self) -> Vec<Resource> {
+            Vec::new()
+        }
+        fn list_prompts(&self) -> Vec<Prompt> {
+            Vec::new()
+        }
+        fn call_tool<'a>(
+            &'a self,
+            _name: &'a str,
+            _args: Value,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ToolResult>> + Send + 'a {
+            async move { panic!("handler exploded") }
+        }
+        fn read_resource<'a>(
+            &'a self,
+            uri: &'a str,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ResourceResult>> + Send + 'a {
+            async move { Err(McpError::resource_not_found(uri)) }
+        }
+        fn get_prompt<'a>(
+            &'a self,
+            name: &'a str,
+            _args: Option<Value>,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<PromptResult>> + Send + 'a {
+            async move { Err(McpError::prompt_not_found(name)) }
+        }
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    let bind = addr.to_string();
+    let serve = bind.clone();
+    tokio::spawn(async move {
+        let _ = turbomcp_server::transport::websocket::run(&Panicky, &serve).await;
+    });
+    for _ in 0..100 {
+        if TcpListener::bind(addr).await.is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let (mut socket, _) = tokio_tungstenite::connect_async(&format!("ws://{bind}/ws"))
+        .await
+        .expect("failed to connect");
+
+    socket
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "clientInfo": { "name": "t", "version": "1" },
+                    "capabilities": {}
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let _ = recv_json(&mut socket).await;
+
+    socket
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                "params": { "name": "boom", "arguments": {} }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    // The point of the test: this returns rather than timing out.
+    let response = recv_json(&mut socket).await;
+    assert_eq!(
+        response["id"], 7,
+        "the panic must be answered on its own id"
+    );
+    assert_eq!(
+        response["error"]["code"], -32603,
+        "a panic is a server fault, got {response}"
+    );
+
+    // And the connection survives it.
+    socket
+        .send(Message::Text(
+            json!({ "jsonrpc": "2.0", "id": 8, "method": "ping" })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(recv_json(&mut socket).await["id"], 8);
+}

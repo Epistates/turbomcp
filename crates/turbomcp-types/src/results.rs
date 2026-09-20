@@ -109,9 +109,19 @@ impl ToolResult {
     }
 
     /// Add structured content to the result.
+    ///
+    /// `structuredContent` is typed `{ [key: string]: unknown }` in every MCP
+    /// revision this SDK speaks, so a non-object value is dropped rather than
+    /// written — an array or scalar there makes the whole result invalid, and
+    /// strict clients reject it. This matches [`Self::json`] and the `Json<T>`
+    /// handler wrapper, which apply the same guard.
+    ///
+    /// Use [`Self::with_content`] to carry a non-object payload as text.
     #[must_use]
     pub fn with_structured<T: Serialize>(mut self, value: &T) -> Self {
-        self.structured_content = serde_json::to_value(value).ok();
+        self.structured_content = serde_json::to_value(value)
+            .ok()
+            .and_then(structured_content_if_object);
         self
     }
 

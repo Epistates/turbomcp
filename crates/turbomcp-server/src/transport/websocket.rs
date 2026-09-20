@@ -669,7 +669,7 @@ async fn handle_websocket<H: McpHandler>(
                     // RAII cleanup runs on every exit path, including handler
                     // panic.
                     let _guard = guard;
-                    let response = router::route_request_versioned(
+                    let response = super::route_catching_panics(
                         &handler_clone, parsed, &ctx, &version,
                     )
                     .await;

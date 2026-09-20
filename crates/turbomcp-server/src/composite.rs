@@ -324,6 +324,57 @@ impl CompositeHandler {
         self
     }
 
+    /// Check a prefix before mounting.
+    ///
+    /// Beyond rejecting an exact duplicate, this rejects prefixes that *nest*.
+    /// Mounted names are minted as `{prefix}_{name}`, so mounting at `x`
+    /// (exposing a tool `y_z`) alongside `x_y` (exposing `z`) produces two
+    /// entries both called `x_y_z`. `tools/list` then advertises a duplicate
+    /// name, and because routing picks the longest matching prefix, every call
+    /// for it reaches the second mount — the first tool becomes permanently
+    /// unreachable, with no error anywhere.
+    ///
+    /// The charset check keeps minted names inside the one MCP allows for tool
+    /// names, so a prefix cannot produce a name a client will reject.
+    fn validate_prefix(&self, prefix: &str) -> Result<(), String> {
+        if prefix.is_empty() || prefix.len() > 64 {
+            return Err(format!(
+                "prefix '{prefix}' must be between 1 and 64 characters"
+            ));
+        }
+        if !prefix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+        {
+            return Err(format!(
+                "prefix '{prefix}' may contain only A-Z a-z 0-9 _ - . so that the \
+                 names it mints stay valid MCP tool names"
+            ));
+        }
+
+        for mounted in self.handlers.iter() {
+            let other = mounted.prefix.as_str();
+            if other == prefix {
+                return Err(format!(
+                    "duplicate prefix '{prefix}' - each mounted handler must have a unique prefix"
+                ));
+            }
+            let nests = prefix
+                .strip_prefix(other)
+                .is_some_and(|rest| rest.starts_with('_'))
+                || other
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('_'));
+            if nests {
+                return Err(format!(
+                    "prefix '{prefix}' nests with already-mounted '{other}'; one could mint \
+                     the same tool name as the other and silently shadow it"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Mount a handler with the given prefix (panicking variant).
     ///
     /// All tools, resources, and prompts from the handler will be namespaced
@@ -353,12 +404,8 @@ impl CompositeHandler {
     pub fn mount<H: McpHandler>(mut self, handler: H, prefix: impl Into<String>) -> Self {
         let prefix = prefix.into();
 
-        // Validate no duplicate prefixes
-        if self.handlers.iter().any(|h| h.prefix == prefix) {
-            panic!(
-                "CompositeHandler: duplicate prefix '{}' - each mounted handler must have a unique prefix",
-                prefix
-            );
+        if let Err(e) = self.validate_prefix(&prefix) {
+            panic!("CompositeHandler: {e}");
         }
 
         let handlers = Arc::make_mut(&mut self.handlers);
@@ -386,12 +433,7 @@ impl CompositeHandler {
     ) -> Result<Self, String> {
         let prefix = prefix.into();
 
-        if self.handlers.iter().any(|h| h.prefix == prefix) {
-            return Err(format!(
-                "duplicate prefix '{}' - each mounted handler must have a unique prefix",
-                prefix
-            ));
-        }
+        self.validate_prefix(&prefix)?;
 
         let handlers = Arc::make_mut(&mut self.handlers);
         handlers.push(MountedHandler {
@@ -1130,6 +1172,48 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.messages.is_empty());
+    }
+
+    /// Mounted names are `{prefix}_{name}`, so nested prefixes can mint the
+    /// same name twice. `tools/list` would then advertise a duplicate and
+    /// routing — longest prefix wins — would send every call to one mount,
+    /// leaving the other's tool permanently unreachable with no error.
+    #[test]
+    fn test_nested_prefixes_are_rejected() {
+        let result = CompositeHandler::new("test", "1.0.0")
+            .try_mount(WeatherHandler, "x")
+            .unwrap()
+            .try_mount(WeatherHandler, "x_y");
+        let err = result.unwrap_err();
+        assert!(err.contains("nests"), "got: {err}");
+
+        // Rejected in either mount order.
+        let result = CompositeHandler::new("test", "1.0.0")
+            .try_mount(WeatherHandler, "x_y")
+            .unwrap()
+            .try_mount(WeatherHandler, "x");
+        assert!(result.unwrap_err().contains("nests"));
+    }
+
+    /// A shared leading substring is only a problem at an underscore boundary;
+    /// `xy` and `x` cannot collide, so they must still be allowed.
+    #[test]
+    fn test_merely_overlapping_prefixes_are_allowed() {
+        let composite = CompositeHandler::new("test", "1.0.0")
+            .try_mount(WeatherHandler, "x")
+            .unwrap()
+            .try_mount(WeatherHandler, "xy")
+            .unwrap();
+        assert_eq!(composite.handlers.len(), 2);
+    }
+
+    /// A prefix outside the tool-name charset would mint names clients reject.
+    #[test]
+    fn test_invalid_prefix_charset_is_rejected() {
+        for bad in ["we ather", "weather!", "wéather", ""] {
+            let result = CompositeHandler::new("test", "1.0.0").try_mount(WeatherHandler, bad);
+            assert!(result.is_err(), "prefix {bad:?} should have been rejected");
+        }
     }
 
     #[test]

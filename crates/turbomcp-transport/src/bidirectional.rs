@@ -76,14 +76,31 @@ impl ProtocolDirectionValidator {
     /// Create a new validator with MCP protocol rules
     pub fn new() -> Self {
         Self {
+            // These lists gate real traffic, so an omission reads as a
+            // protocol violation for a perfectly legal message. They are
+            // enumerated in full against the 2025-11-25 method set rather than
+            // sampled.
             client_to_server: vec![
                 "initialize".to_string(),
+                // The router accepts the bare form too, so both are listed.
                 "initialized".to_string(),
+                "notifications/initialized".to_string(),
+                "notifications/roots/list_changed".to_string(),
+                "tools/list".to_string(),
                 "tools/call".to_string(),
+                "resources/list".to_string(),
+                "resources/templates/list".to_string(),
                 "resources/read".to_string(),
+                "resources/subscribe".to_string(),
+                "resources/unsubscribe".to_string(),
+                "prompts/list".to_string(),
                 "prompts/get".to_string(),
                 "completion/complete".to_string(),
-                "resources/templates/list".to_string(),
+                "logging/setLevel".to_string(),
+                "tasks/list".to_string(),
+                "tasks/get".to_string(),
+                "tasks/cancel".to_string(),
+                "tasks/result".to_string(),
             ],
             server_to_client: vec![
                 "sampling/createMessage".to_string(),
@@ -91,7 +108,13 @@ impl ProtocolDirectionValidator {
                 "elicitation/create".to_string(),
                 "notifications/message".to_string(),
                 "notifications/resources/updated".to_string(),
-                "notifications/tools/updated".to_string(),
+                // `notifications/tools/updated` used to sit here; no such
+                // method exists in MCP. The three list-changed notifications
+                // are the real ones.
+                "notifications/tools/list_changed".to_string(),
+                "notifications/resources/list_changed".to_string(),
+                "notifications/prompts/list_changed".to_string(),
+                "notifications/elicitation/complete".to_string(),
             ],
             bidirectional: vec![
                 "ping".to_string(),

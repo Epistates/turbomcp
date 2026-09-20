@@ -61,11 +61,16 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         let mut all_tools = Vec::new();
         let mut cursor = None;
         for _ in 0..MAX_PAGINATION_PAGES {
-            let result = self.list_tools_paginated(cursor).await?;
-            let page_empty = result.tools.is_empty();
+            let result = self.list_tools_paginated(cursor.clone()).await?;
             all_tools.extend(result.tools);
             match result.next_cursor {
-                Some(c) if !page_empty => cursor = Some(c),
+                // `nextCursor` is the only end-of-results signal the spec
+                // defines. An empty page that still carries one is legal — a
+                // server may filter a page down to nothing — and stopping
+                // there silently truncated the list. The second guard catches
+                // a server that repeats a cursor forever, which would
+                // otherwise spin to the page cap.
+                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
                 _ => break,
             }
         }

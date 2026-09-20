@@ -456,7 +456,7 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                         // entry on every exit path, including a
                                         // panic in the handler.
                                         let _guard = guard;
-                                        let response = router::route_request_versioned(
+                                        let response = super::route_catching_panics(
                                             &handler, request, &ctx, &version,
                                         )
                                         .await;

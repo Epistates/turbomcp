@@ -274,6 +274,14 @@ pub struct StreamableHttpClientTransport {
     /// Session ID from server
     session_id: Arc<RwLock<Option<String>>>,
 
+    /// Protocol version actually negotiated with this server.
+    ///
+    /// The transport spec requires post-initialize requests to carry the
+    /// version "negotiated during initialization", not a compile-time guess.
+    /// `None` until the `initialize` response is seen, at which point the
+    /// configured default stops being used.
+    negotiated_version: Arc<RwLock<Option<String>>>,
+
     /// Last event ID for resumability
     last_event_id: Arc<RwLock<Option<String>>>,
 
@@ -438,6 +446,7 @@ impl StreamableHttpClientTransport {
             _event_emitter: event_emitter,
             message_endpoint: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
+            negotiated_version: Arc::new(RwLock::new(None)),
             last_event_id: Arc::new(RwLock::new(None)),
             sse_receiver: Arc::new(Mutex::new(sse_rx)),
             sse_sender: sse_tx,
@@ -517,6 +526,30 @@ impl StreamableHttpClientTransport {
     }
 
     /// Build request headers
+    /// Record the protocol version from an `initialize` response.
+    ///
+    /// The server may answer with a version other than the one requested —
+    /// that is the negotiation the lifecycle spec prescribes — and every later
+    /// request has to carry *that* version in `MCP-Protocol-Version`. Anything
+    /// that is not an initialize result is ignored, so this is safe to call on
+    /// every response body.
+    async fn capture_negotiated_version(&self, body: &[u8]) {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+            return;
+        };
+        if let Some(version) = value
+            .get("result")
+            .and_then(|r| r.get("protocolVersion"))
+            .and_then(|v| v.as_str())
+        {
+            let mut negotiated = self.negotiated_version.write().await;
+            if negotiated.as_deref() != Some(version) {
+                debug!("Negotiated MCP protocol version: {version}");
+                *negotiated = Some(version.to_string());
+            }
+        }
+    }
+
     async fn build_headers(&self, accept: &str) -> header::HeaderMap {
         let mut headers = header::HeaderMap::new();
 
@@ -525,7 +558,16 @@ impl StreamableHttpClientTransport {
             headers.insert(header::ACCEPT, accept_value);
         }
 
-        if let Ok(protocol_value) = header::HeaderValue::from_str(&self.config.protocol_version) {
+        // Prefer what was actually negotiated; the configured value is only a
+        // pre-handshake default. Sending a version the server never agreed to
+        // invites a 400 from any server that validates the header.
+        let protocol_version = self
+            .negotiated_version
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| self.config.protocol_version.clone());
+        if let Ok(protocol_value) = header::HeaderValue::from_str(&protocol_version) {
             headers.insert("MCP-Protocol-Version", protocol_value);
         }
 
@@ -1125,6 +1167,8 @@ impl Transport for StreamableHttpClientTransport {
 
                 // Validate response size against configured limits (v2.2.0+)
                 validate_response_size(response_bytes.len(), &self.config.limits)?;
+
+                self.capture_negotiated_version(&response_bytes).await;
 
                 let response_message = TransportMessage::new(
                     MessageId::from("http-response".to_string()),
