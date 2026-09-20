@@ -58,6 +58,7 @@ pub struct ServerBuilder<S> {
     cache: Option<CachePolicies>,
     state_key: Option<[u8; 32]>,
     visibility: Option<Arc<dyn crate::VisibilityPolicy>>,
+    roots_changed: Option<Arc<crate::dispatcher::RootsChangedHandler>>,
 }
 
 impl<S: McpServerCore> ServerBuilder<S> {
@@ -76,6 +77,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             cache: None,
             state_key: None,
             visibility: None,
+            roots_changed: None,
         }
     }
 
@@ -95,6 +97,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             cache: None,
             state_key: None,
             visibility: None,
+            roots_changed: None,
         }
     }
 
@@ -213,6 +216,30 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
+    /// Run `handler` when a client reports that its roots changed
+    /// (`notifications/roots/list_changed`).
+    ///
+    /// This is the only list-changed notification that travels *client→server*,
+    /// and without an observer it was logged and dropped: a server could read
+    /// the client's roots once, cache them, and never hear that they moved —
+    /// which is the whole reason a client declares `roots.listChanged`.
+    ///
+    /// The handler's job is to *invalidate*, not to re-read. A notification
+    /// carries no [`ClientHandle`](crate::ClientHandle), so the new roots are
+    /// fetched with `ctx.client.list_roots(…)` from the next request that needs
+    /// them. It runs inline on the dispatch path, so keep it cheap.
+    ///
+    /// The [`RequestContext`](turbomcp_core::RequestContext) identifies whose
+    /// roots moved (identity and trace context from the notification's `_meta`).
+    #[must_use]
+    pub fn on_roots_changed(
+        mut self,
+        handler: impl Fn(&turbomcp_core::RequestContext) + Send + Sync + 'static,
+    ) -> Self {
+        self.roots_changed = Some(Arc::new(handler));
+        self
+    }
+
     /// Register the `tools/*` capability (requires `S: WithTools`).
     #[must_use]
     pub fn with_tools(mut self) -> Self
@@ -324,6 +351,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             cache,
             state_key,
             visibility,
+            roots_changed,
         } = self;
         if *tasks {
             return Some("with_tasks");
@@ -351,6 +379,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if visibility.is_some() {
             return Some("with_visibility");
+        }
+        if roots_changed.is_some() {
+            return Some("on_roots_changed");
         }
         None
     }
@@ -383,6 +414,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if let Some(policy) = self.visibility {
             dispatcher = dispatcher.with_visibility(policy);
+        }
+        if let Some(handler) = self.roots_changed {
+            dispatcher = dispatcher.on_roots_changed(handler);
         }
         dispatcher
     }

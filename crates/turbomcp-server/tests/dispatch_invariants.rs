@@ -616,3 +616,49 @@ async fn malformed_cancellations_are_swallowed() {
         assert!(reply.is_none(), "case {i} drew a reply: {reply:?}");
     }
 }
+
+/// `notifications/roots/list_changed` reaches a registered observer.
+///
+/// It is the one list-changed notification that travels client→server, and it
+/// was logged and dropped: a server could read the client's roots, cache them,
+/// and never hear that they moved — which is the whole reason a client
+/// declares `roots.listChanged`.
+#[tokio::test]
+async fn roots_list_changed_reaches_a_registered_observer() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&seen);
+    let mut svc = turbomcp_server::ServerBuilder::from_parts(Kitchen, MethodRouter::new())
+        .on_roots_changed(move |_ctx| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        })
+        .build();
+
+    let reply = svc
+        .ready()
+        .await
+        .unwrap()
+        .call(JsonRpcMessage::Notification(
+            turbomcp_core::JsonRpcNotification::new("notifications/roots/list_changed", None),
+        ))
+        .await
+        .unwrap();
+    assert!(reply.is_none(), "a notification draws no reply");
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+
+    // Without an observer it is still a no-op, not an error.
+    let reply = kitchen()
+        .ready()
+        .await
+        .unwrap()
+        .call(JsonRpcMessage::Notification(
+            turbomcp_core::JsonRpcNotification::new("notifications/roots/list_changed", None),
+        ))
+        .await
+        .unwrap();
+    assert!(reply.is_none());
+}

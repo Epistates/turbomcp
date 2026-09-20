@@ -112,7 +112,13 @@ struct Shared {
     /// and therefore reach. `None` (the default) shows everything.
     visibility: crate::visibility::Policy,
     validators: Arc<crate::catalog::Validators>,
+    /// Observer for `notifications/roots/list_changed`, if one was registered.
+    roots_changed: Option<Arc<RootsChangedHandler>>,
 }
+
+/// What a server runs when a client's roots change. See
+/// [`ServerBuilder::on_roots_changed`](crate::ServerBuilder::on_roots_changed).
+pub type RootsChangedHandler = dyn Fn(&RequestContext) + Send + Sync;
 
 /// One `x-mcp-header` annotation: the `{name}` portion of the
 /// `Mcp-Param-{name}` header (lowercased for the case-insensitive comparison
@@ -351,6 +357,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 cache: CachePolicies::default(),
                 visibility: None,
                 validators: Arc::new(crate::catalog::Validators::default()),
+                roots_changed: None,
             },
         }
     }
@@ -361,6 +368,14 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn with_visibility(mut self, policy: Arc<dyn crate::VisibilityPolicy>) -> Self {
         self.shared.visibility = Some(policy);
+        self
+    }
+
+    /// Observe `notifications/roots/list_changed`. See
+    /// [`ServerBuilder::on_roots_changed`](crate::ServerBuilder::on_roots_changed).
+    #[must_use]
+    pub fn on_roots_changed(mut self, handler: Arc<RootsChangedHandler>) -> Self {
+        self.shared.roots_changed = Some(handler);
         self
     }
 
@@ -563,7 +578,7 @@ async fn handle<S: McpServerCore>(
             }
         }
         JsonRpcMessage::Notification(n) => {
-            handle_notification(&shared.inflight, &shared.subs, &n);
+            handle_notification(&shared, &n);
             Ok(None)
         }
         JsonRpcMessage::Response(resp) => {
@@ -586,11 +601,8 @@ struct RawCancelledParams {
     reason: Option<String>,
 }
 
-fn handle_notification(
-    inflight: &InFlightRegistry,
-    subs: &SubscriptionRegistry,
-    n: &JsonRpcNotification,
-) {
+fn handle_notification(shared: &Shared, n: &JsonRpcNotification) {
+    let (inflight, subs) = (&shared.inflight, &shared.subs);
     match n.method.as_str() {
         methods::notification::CANCELLED => {
             // Fire-and-forget per spec: malformed params, unknown ids, and
@@ -627,8 +639,26 @@ fn handle_notification(
         methods::notification::INITIALIZED => {
             tracing::debug!("received notifications/initialized");
         }
+        // The one list-changed notification that travels client→server. It was
+        // logged and dropped: a server could learn the client's roots, cache
+        // them, and never hear that they moved — which is the entire purpose
+        // of `roots.listChanged`, and the reason a client declares it.
+        methods::notification::ROOTS_LIST_CHANGED => match &shared.roots_changed {
+            Some(handler) => handler(&notification_context(n)),
+            None => tracing::debug!("roots changed, but no observer is registered"),
+        },
         other => tracing::debug!(method = other, "unhandled notification"),
     }
+}
+
+/// The [`RequestContext`] a notification carries: identity and trace context
+/// from its `_meta`, so an observer can tell *which* client's roots moved.
+fn notification_context(n: &JsonRpcNotification) -> RequestContext {
+    build_context(&JsonRpcRequest::new(
+        RequestId::from(0i64),
+        n.method.clone(),
+        n.params.clone(),
+    ))
 }
 
 async fn handle_request<S: McpServerCore>(
