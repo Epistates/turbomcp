@@ -1067,6 +1067,22 @@ impl Transport for StreamableHttpClientTransport {
                 .await
                 .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
 
+            // A 404 on a request that carried `Mcp-Session-Id` means the
+            // server no longer knows that session — it restarted, or the
+            // session expired. The spec's remedy is to start a NEW session by
+            // re-initializing, so the stale id is cleared here. Keeping it
+            // would wedge the transport permanently: every subsequent POST
+            // resends the dead id and gets another 404.
+            if response.status() == reqwest::StatusCode::NOT_FOUND
+                && self.session_id.read().await.is_some()
+            {
+                *self.session_id.write().await = None;
+                return Err(TransportError::ConnectionFailed(
+                    "MCP session expired (HTTP 404); re-initialize to start a new session"
+                        .to_string(),
+                ));
+            }
+
             if !response.status().is_success() {
                 return Err(TransportError::ConnectionFailed(format!(
                     "POST failed: {}",

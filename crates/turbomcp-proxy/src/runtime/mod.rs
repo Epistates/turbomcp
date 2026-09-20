@@ -1346,9 +1346,12 @@ impl RuntimeProxy {
                     .await
                     .map_err(|e| McpError::internal(e.to_string()))?;
 
-                Ok(serde_json::json!({
-                    "contents": contents
-                }))
+                // Already a `ReadResourceResult` (`{ "contents": [...] }`) —
+                // re-wrapping made `contents` an object where the spec
+                // requires an array. See the matching note in proxy/service.rs.
+                serde_json::to_value(contents).map_err(|e| {
+                    McpError::internal(format!("Failed to serialize resource contents: {e}"))
+                })
             }
 
             // Prompts

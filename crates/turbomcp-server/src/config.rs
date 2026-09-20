@@ -347,11 +347,18 @@ impl Default for ProtocolConfig {
     /// different version than the client requested; defaulting to the full
     /// stable set unblocks older clients while still preferring the newest.
     /// Use [`Self::strict`] to restore the old single-version behavior.
+    ///
+    /// `allow_fallback` is on because the lifecycle spec makes it mandatory:
+    /// "If the server supports the requested protocol version, it MUST respond
+    /// with the same version. Otherwise, the server MUST respond with another
+    /// protocol version it supports." Refusing the handshake outright is not
+    /// one of the permitted outcomes — the client is the party that decides
+    /// whether the offered version is acceptable.
     fn default() -> Self {
         Self {
             preferred_version: ProtocolVersion::LATEST.clone(),
             supported_versions: ProtocolVersion::STABLE.to_vec(),
-            allow_fallback: false,
+            allow_fallback: true,
         }
     }
 }
@@ -372,12 +379,14 @@ impl ProtocolConfig {
     ///
     /// The preferred version is the latest stable. Older clients are accepted
     /// and responses are filtered through the appropriate version adapter.
+    /// A version outside the stable set is answered with the preferred one
+    /// rather than an error, as the lifecycle spec requires.
     #[must_use]
     pub fn multi_version() -> Self {
         Self {
             preferred_version: ProtocolVersion::LATEST.clone(),
             supported_versions: ProtocolVersion::STABLE.to_vec(),
-            allow_fallback: false,
+            allow_fallback: true,
         }
     }
 
@@ -881,12 +890,33 @@ mod tests {
         assert_eq!(config.negotiate(None), Some(ProtocolVersion::V2025_11_25));
     }
 
+    /// The lifecycle spec gives a server two choices for a version it does not
+    /// support, and refusing the handshake is not one of them: it MUST answer
+    /// with a version it does support and let the client decide.
     #[test]
-    fn test_protocol_negotiation_unknown_version() {
+    fn test_protocol_negotiation_unknown_version_falls_back() {
         let config = ProtocolConfig::default();
-        assert_eq!(config.negotiate(Some("unknown-version")), None);
+        assert_eq!(
+            config.negotiate(Some("unknown-version")),
+            Some(ProtocolVersion::V2025_11_25)
+        );
     }
 
+    /// The real-world case: clients still pinned to retired spec revisions.
+    /// Before 3.5.0 these could not connect to a TurboMCP server at all.
+    #[test]
+    fn test_protocol_negotiation_retired_versions_fall_back() {
+        let config = ProtocolConfig::default();
+        for retired in ["2024-11-05", "2025-03-26"] {
+            assert_eq!(
+                config.negotiate(Some(retired)),
+                Some(ProtocolVersion::V2025_11_25),
+                "{retired} should be offered the latest supported version"
+            );
+        }
+    }
+
+    /// `strict` remains an explicit opt-out of lenient negotiation.
     #[test]
     fn test_protocol_negotiation_strict() {
         let config = ProtocolConfig::strict("2025-11-25");

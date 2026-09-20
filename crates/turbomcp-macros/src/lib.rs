@@ -523,6 +523,31 @@ pub fn set_level(_args: TokenStream, input: TokenStream) -> TokenStream {
     marker_outside_server("set_level", input)
 }
 
+/// Marks a method as the handler for `notifications/roots/list_changed`.
+///
+/// The client sends this when the filesystem roots it exposes change. A server
+/// that caches the result of `RequestContext::list_roots` should invalidate
+/// that cache here and re-query.
+///
+/// Unlike the other optional handlers this advertises no capability: `roots` is
+/// a *client* capability, so there is nothing for the server to declare.
+///
+/// At most one `#[roots_changed]` method may exist per server.
+///
+/// # Signature
+///
+/// ```ignore
+/// #[roots_changed]
+/// async fn roots_changed(&self, ctx: &RequestContext) -> McpResult<()>
+/// ```
+///
+/// The `ctx` parameter is optional. Notifications carry no response, so a
+/// returned error is logged rather than reaching the client.
+#[proc_macro_attribute]
+pub fn roots_changed(_args: TokenStream, input: TokenStream) -> TokenStream {
+    marker_outside_server("roots_changed", input)
+}
+
 /// Shared diagnostic for the marker attributes that only mean something inside
 /// a `#[server]` impl block. They are inert there (the `#[server]` expansion
 /// strips them), so reaching the macro body at all means it was used standalone.

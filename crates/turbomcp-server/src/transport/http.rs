@@ -1052,12 +1052,19 @@ async fn resolve_session_for_request<H: McpHandler>(
         if session_id.is_some() {
             return Err(StatusCode::BAD_REQUEST);
         }
+        // A header sent here is still subject to validation. Passing `None`
+        // keeps *absence* permissive — the first POST has no negotiated
+        // version to state — while a present-but-unsupported value gets the
+        // 400 the transport spec requires, which is the signal telling a
+        // legacy client to fall back.
+        validate_protocol_header(headers, state.config.as_ref(), None)?;
         return Ok(None);
     }
 
     // MCP 2025-11-25 lifecycle permits ping before the server has responded
     // to initialize. With no session yet, route it as a sessionless request.
     if method == "ping" && session_id.is_none() {
+        validate_protocol_header(headers, state.config.as_ref(), None)?;
         return Ok(None);
     }
 

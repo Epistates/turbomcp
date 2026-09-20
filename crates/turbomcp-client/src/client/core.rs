@@ -668,11 +668,54 @@ impl<T: Transport + 'static> Client<T> {
                         turbomcp_protocol::MessageId::Uuid(u) => u.to_string(),
                     };
 
-                    let params: CreateMessageRequest =
-                        serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
-                            .map_err(|e| {
-                            Error::internal(format!("Invalid createMessage params: {}", e))
-                        })?;
+                    // A request we cannot parse still has to be ANSWERED. The
+                    // server is blocked on this id, and on the line transports
+                    // `SessionHandle::call` awaits with no timeout at all, so
+                    // propagating the error here (it is swallowed upstream)
+                    // hangs the server permanently rather than failing it.
+                    let params: CreateMessageRequest = match serde_json::from_value(
+                        request.params.clone().unwrap_or(serde_json::Value::Null),
+                    ) {
+                        Ok(params) => params,
+                        Err(e) => {
+                            let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                                code: -32602,
+                                message: format!("Invalid createMessage params: {}", e),
+                                data: None,
+                            };
+                            self.send_response(JsonRpcResponse::error_response(
+                                error,
+                                request.id.clone(),
+                            ))
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+
+                    // Tool-enabled sampling is a 2025-11-25 addition gated on
+                    // the client having declared `sampling.tools`. Accepting it
+                    // regardless would hand a handler written for plain
+                    // sampling a request it will silently ignore the tools in.
+                    if (params.tools.is_some() || params.tool_choice.is_some())
+                        && self
+                            .get_sampling_capabilities()
+                            .and_then(|caps| caps.tools)
+                            .is_none()
+                    {
+                        let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                            code: -32602,
+                            message: "client sampling.tools capability required for \
+                                      tool-enabled sampling/createMessage"
+                                .to_string(),
+                            data: None,
+                        };
+                        self.send_response(JsonRpcResponse::error_response(
+                            error,
+                            request.id.clone(),
+                        ))
+                        .await?;
+                        return Ok(());
+                    }
 
                     match handler.handle_create_message(request_id, params).await {
                         Ok(result) => {
@@ -786,12 +829,63 @@ impl<T: Transport + 'static> Client<T> {
                 // Clone handler Arc before await to avoid holding mutex across await
                 let handler_opt = self.inner.handlers.lock().elicitation.clone();
                 if let Some(handler) = handler_opt {
-                    // Parse elicitation request params as MCP protocol type
+                    // As with sampling: answer rather than propagate. A server
+                    // blocked in `ctx.elicit_form()` / `elicit_url()` has no
+                    // timeout on the line transports, so silence wedges it.
                     let proto_params: turbomcp_protocol::types::ElicitRequestParams =
-                        serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
-                            .map_err(|e| {
-                            Error::internal(format!("Invalid elicitation params: {}", e))
-                        })?;
+                        match serde_json::from_value(
+                            request.params.clone().unwrap_or(serde_json::Value::Null),
+                        ) {
+                            Ok(params) => params,
+                            Err(e) => {
+                                let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                                    code: -32602,
+                                    message: format!("Invalid elicitation params: {}", e),
+                                    data: None,
+                                };
+                                self.send_response(JsonRpcResponse::error_response(
+                                    error,
+                                    request.id.clone(),
+                                ))
+                                .await?;
+                                return Ok(());
+                            }
+                        };
+
+                    // Servers MUST NOT send a mode the client did not declare,
+                    // so a client that only does forms has to say so rather
+                    // than hand a URL-mode request to a form handler — which
+                    // sees `requested_schema: None` and typically accepts with
+                    // empty content, reading to the server as consent.
+                    let declared = self.get_elicitation_capabilities();
+                    let mode_supported = match &proto_params {
+                        turbomcp_protocol::types::ElicitRequestParams::Form(_) => {
+                            declared.as_ref().is_some_and(|c| c.supports_form())
+                        }
+                        turbomcp_protocol::types::ElicitRequestParams::Url(_) => {
+                            declared.as_ref().is_some_and(|c| c.supports_url())
+                        }
+                    };
+                    if !mode_supported {
+                        let mode = match &proto_params {
+                            turbomcp_protocol::types::ElicitRequestParams::Form(_) => "form",
+                            turbomcp_protocol::types::ElicitRequestParams::Url(_) => "url",
+                        };
+                        let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                            code: -32602,
+                            message: format!(
+                                "client did not declare elicitation.{mode}; \
+                                 servers must not send undeclared elicitation modes"
+                            ),
+                            data: None,
+                        };
+                        self.send_response(JsonRpcResponse::error_response(
+                            error,
+                            request.id.clone(),
+                        ))
+                        .await?;
+                        return Ok(());
+                    }
 
                     // Wrap protocol params with ID for handler (preserves type safety!)
                     let handler_request =

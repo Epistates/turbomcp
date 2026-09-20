@@ -149,12 +149,13 @@ impl<H: McpHandler> LineTransportRunner<H> {
     /// outgoing server-to-client requests concurrently.
     pub async fn run<R, W, F>(
         &self,
-        mut reader: R,
+        reader: R,
         mut writer: W,
         ctx_factory: F,
     ) -> Result<(), McpError>
     where
-        R: LineReader,
+        // `'static` so the reader can own the stream on its own task.
+        R: LineReader + 'static,
         W: LineWriter,
         F: Fn() -> RequestContext,
     {
@@ -184,24 +185,61 @@ impl<H: McpHandler> LineTransportRunner<H> {
         // before any other requests are processed, and prevents duplicate init.
         let mut session_state = SessionState::Uninitialized;
 
-        let mut line = String::new();
+        // Read on a dedicated task rather than inside the `select!` below.
+        //
+        // `AsyncBufReadExt::read_line` is explicitly NOT cancel safe: tokio
+        // documents that when it loses a `select!` race, "some data may have
+        // been partially read, and this data is lost". The other arms here are
+        // fed by concurrently spawned handler tasks, so losing that race is
+        // routine — any request that does not arrive in a single poll (large
+        // `tools/call` arguments, TCP segmentation, a pipe write split across
+        // syscalls) could silently lose its prefix and desynchronise the
+        // stream.
+        //
+        // Moving the read onto its own task takes it out of the select
+        // entirely: nothing ever cancels it mid-line, and the loop awaits
+        // `recv()`, which IS cancel safe.
+        let (line_tx, mut line_rx) = mpsc::channel::<std::io::Result<String>>(32);
+        tokio::spawn(async move {
+            let mut reader = reader;
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        // Send error means the transport loop is gone.
+                        if line_tx.send(Ok(line)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = line_tx.send(Err(e)).await;
+                        break;
+                    }
+                }
+            }
+        });
 
         loop {
             tokio::select! {
                 biased;
 
                 // Incoming from client
-                res = reader.read_line(&mut line) => {
-                    let bytes_read = res.map_err(|e| McpError::internal(format!("Failed to read line: {e}")))?;
-                    if bytes_read == 0 { break; }
+                maybe_line = line_rx.recv() => {
+                    // Channel closed: the reader task hit EOF or an error it
+                    // already reported.
+                    let Some(line_result) = maybe_line else { break };
+                    let line = line_result
+                        .map_err(|e| McpError::internal(format!("Failed to read line: {e}")))?;
 
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
-                        line.clear();
                         continue;
                     }
 
-                    // Check message size limit to prevent DoS
+                    // Check message size limit to prevent DoS. Reported as an
+                    // error and skipped, so an oversized frame does not take
+                    // the connection down with it.
                     if line.len() > MAX_MESSAGE_SIZE {
                         self.send_error(
                             &mut writer,
@@ -210,7 +248,6 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                 "Message exceeds maximum size of {MAX_MESSAGE_SIZE} bytes",
                             )),
                         ).await?;
-                        line.clear();
                         continue;
                     }
 
@@ -219,7 +256,6 @@ impl<H: McpHandler> LineTransportRunner<H> {
                         Ok(v) => v,
                         Err(e) => {
                             self.send_error(&mut writer, None, McpError::parse_error(e.to_string())).await?;
-                            line.clear();
                             continue;
                         }
                     };
@@ -260,7 +296,6 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                             ),
                                         )
                                         .await?;
-                                        line.clear();
                                         continue;
                                     }
 
@@ -376,7 +411,6 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                                 )
                                                 .await?;
                                             }
-                                            line.clear();
                                             continue;
                                         }
                                     };
@@ -436,7 +470,6 @@ impl<H: McpHandler> LineTransportRunner<H> {
                             }
                         }
                     }
-                    line.clear();
                 }
 
                 // Outgoing server-to-client requests/notifications.

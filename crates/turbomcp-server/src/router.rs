@@ -57,6 +57,10 @@ pub async fn route_request_with_config<H: McpHandler>(
     config: Option<&ServerConfig>,
 ) -> JsonRpcOutgoing {
     if request.is_notification() {
+        // Delegate to the shared dispatcher rather than acking outright: this
+        // router short-circuits before reaching the core one, so a hook wired
+        // only there would never fire on any native transport.
+        turbomcp_core::router::dispatch_notification(handler, &request, ctx).await;
         return JsonRpcOutgoing::notification_ack();
     }
 
@@ -217,6 +221,10 @@ pub async fn route_request_versioned<H: McpHandler>(
     negotiated_version: &turbomcp_types::ProtocolVersion,
 ) -> JsonRpcOutgoing {
     if request.is_notification() {
+        // This is the path transports use once initialize has completed, which
+        // is precisely when client notifications arrive, so the hook dispatch
+        // matters more here than anywhere else.
+        turbomcp_core::router::dispatch_notification(handler, &request, ctx).await;
         return JsonRpcOutgoing::notification_ack();
     }
 

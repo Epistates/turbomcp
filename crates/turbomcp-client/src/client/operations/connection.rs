@@ -131,4 +131,24 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             .send_cancellation(request_id, reason)
             .await
     }
+
+    /// Tell the server this client's filesystem roots changed.
+    ///
+    /// Sends `notifications/roots/list_changed`. Registering a roots handler
+    /// makes the client declare `roots.listChanged: true`, which is a promise
+    /// that this notification will arrive when the set changes — and a
+    /// well-behaved server (rmcp-based ones included) responds by caching the
+    /// root list rather than re-polling it. Without a way to send this, that
+    /// promise could not be kept and the server's cache went stale silently.
+    ///
+    /// Call it after changing whatever backs your
+    /// [`RootsHandler`](crate::handlers::RootsHandler); the server is expected
+    /// to answer with a fresh `roots/list`.
+    pub async fn notify_roots_list_changed(&self) -> Result<()> {
+        tracing::debug!("Sending notifications/roots/list_changed");
+        self.inner
+            .protocol
+            .notify("notifications/roots/list_changed", None)
+            .await
+    }
 }

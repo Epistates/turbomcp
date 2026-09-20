@@ -128,9 +128,14 @@ impl ProxyService {
                     .await
                     .map_err(proxy_error_to_mcp)?;
 
-                Ok(serde_json::json!({
-                    "contents": contents
-                }))
+                // `read_resource` already returns a `ReadResourceResult`, i.e.
+                // a `{ "contents": [...] }` object. Wrapping it again made
+                // `contents` an OBJECT, but the spec types it as an ARRAY, so
+                // every read through the proxy failed to deserialize in any
+                // typed client.
+                serde_json::to_value(contents).map_err(|e| {
+                    McpError::internal(format!("Failed to serialize resource contents: {e}"))
+                })
             }
 
             // Prompts

@@ -56,6 +56,8 @@ pub struct ServerInfo {
     pub prompts: Vec<PromptInfo>,
     /// Optional extension-point handlers discovered from marker attributes.
     pub extensions: ExtensionHandlers,
+    /// Whether `#[server(logging)]` asked for the `logging` capability.
+    pub logging: bool,
 }
 
 /// The `McpHandler` methods a server can opt into with a marker attribute.
@@ -75,6 +77,9 @@ pub struct ExtensionHandlers {
     pub unsubscribe: Option<ExtensionHandler>,
     /// `#[set_level]` → `set_log_level` + `logging` capability.
     pub set_level: Option<ExtensionHandler>,
+    /// `#[roots_changed]` → `on_roots_list_changed`. Advertises nothing:
+    /// `roots` is a client capability, not a server one.
+    pub roots_changed: Option<ExtensionHandler>,
 }
 
 /// A single marker-attributed method.
@@ -169,6 +174,8 @@ pub struct ServerAttrs {
     pub website_url: Option<syn::Expr>,
     /// Icon source URIs (SEP-973)
     pub icons: Vec<syn::Expr>,
+    /// Bare `logging` flag: declare the `logging` capability.
+    pub logging: bool,
 }
 
 impl ServerAttrs {
@@ -188,6 +195,7 @@ impl ServerAttrs {
             ref mut instructions,
             ref mut website_url,
             ref mut icons,
+            ref mut logging,
         } = attrs;
 
         let parser = syn::meta::parser(|meta| {
@@ -213,6 +221,14 @@ impl ServerAttrs {
                     )?
                     .into_iter()
                     .collect();
+            } else if meta.path.is_ident("logging") {
+                // A bare flag, not a key=value: `#[server(name = "x", logging)]`.
+                // The `logging` capability means "this server emits
+                // notifications/message". That is independent of implementing
+                // `logging/setLevel`, so it cannot be inferred from
+                // `#[set_level]` alone — a server may emit logs without letting
+                // clients change the level.
+                *logging = true;
             } else if meta.path.is_ident("transports") {
                 // v3: The `transports` attribute was removed.
                 //
@@ -383,6 +399,7 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
         resources,
         prompts,
         extensions,
+        logging: attrs.logging,
     })
 }
 
@@ -402,6 +419,8 @@ fn extension_slot<'a>(
         Some(&mut extensions.unsubscribe)
     } else if attr.path().is_ident("set_level") {
         Some(&mut extensions.set_level)
+    } else if attr.path().is_ident("roots_changed") {
+        Some(&mut extensions.roots_changed)
     } else {
         None
     }
@@ -702,6 +721,7 @@ fn strip_handler_attributes(impl_block: &ItemImpl) -> ItemImpl {
                     && !attr.path().is_ident("subscribe")
                     && !attr.path().is_ident("unsubscribe")
                     && !attr.path().is_ident("set_level")
+                    && !attr.path().is_ident("roots_changed")
             });
             // Strip #[description] from parameter attributes — the macro has already
             // extracted their values for schema generation, so they must not survive
@@ -807,11 +827,34 @@ fn generate_extension_handlers(
         }
     });
 
+    // Takes no value parameter — the notification carries none.
+    let roots_changed = extensions.roots_changed.as_ref().map(|handler| {
+        let fn_name = &handler.fn_name;
+        let call = if handler.takes_ctx {
+            quote! { self.#fn_name(ctx).await }
+        } else {
+            quote! { self.#fn_name().await }
+        };
+        quote! {
+            fn on_roots_list_changed<'a>(
+                &'a self,
+                ctx: &'a #core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #core::error::McpResult<()>>
+                + #core::marker::MaybeSend + 'a {
+                async move {
+                    let _ = ctx;
+                    #call
+                }
+            }
+        }
+    });
+
     quote! {
         #subscribe
         #unsubscribe
         #set_level
         #completion
+        #roots_changed
     }
 }
 
@@ -868,7 +911,10 @@ fn generate_capabilities(info: &ServerInfo, turbomcp: &TokenStream) -> TokenStre
         }
     });
 
-    let logging_code = info.extensions.set_level.is_some().then(|| {
+    // Either signal is enough: implementing `logging/setLevel` implies the
+    // server does logging, and `#[server(logging)]` covers the server that
+    // emits `notifications/message` without letting clients set a level.
+    let logging_code = (info.extensions.set_level.is_some() || info.logging).then(|| {
         quote! {
             capabilities.logging = Some(#types::LoggingCapabilities::default());
         }

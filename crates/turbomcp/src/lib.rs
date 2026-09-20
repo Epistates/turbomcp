@@ -135,7 +135,8 @@ pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
 // Re-export macros
 pub use turbomcp_macros::{
-    completion, description, prompt, resource, server, set_level, subscribe, tool, unsubscribe,
+    completion, description, prompt, resource, roots_changed, server, set_level, subscribe, tool,
+    unsubscribe,
 };
 
 // Re-export core types
@@ -327,7 +328,8 @@ pub mod __macro_support {
 pub mod prelude {
     // Macros
     pub use super::{
-        completion, description, prompt, resource, server, set_level, subscribe, tool, unsubscribe,
+        completion, description, prompt, resource, roots_changed, server, set_level, subscribe,
+        tool, unsubscribe,
     };
 
     // Version info

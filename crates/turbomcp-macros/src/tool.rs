@@ -401,9 +401,64 @@ impl ToolInfo {
             title: attrs.title,
             icons: attrs.icons,
             annotations: attrs.annotations,
-            output_schema: attrs.output_schema,
+            // An explicit `output_schema = T` always wins; otherwise infer it
+            // from a `Json<T>` return, which is the wrapper whose whole purpose
+            // is typed output.
+            output_schema: attrs
+                .output_schema
+                .or_else(|| infer_output_schema_type(&item.sig)),
         })
     }
+}
+
+/// Infer the output-schema source type from a handler that returns `Json<T>`.
+///
+/// Recognises `Json<T>`, `McpResult<Json<T>>`, and `Result<Json<T>, E>`, which
+/// covers how the wrapper is actually written. Any other return type yields
+/// `None`: a tool that returns a bare `String` has no schema to advertise, and
+/// guessing one would be worse than staying silent.
+///
+/// The declaration is still gated at runtime on the schema describing an object
+/// (see `generate_output_schema_code`), because the spec requires a tool that
+/// declares `outputSchema` to return conforming `structuredContent`, and
+/// `structuredContent` is typed `{ [key: string]: unknown }` in every wire this
+/// SDK speaks. Declaring a schema for a `Json<Vec<_>>` would promise something
+/// the result is forbidden to deliver.
+fn infer_output_schema_type(sig: &Signature) -> Option<Type> {
+    let syn::ReturnType::Type(_, ty) = &sig.output else {
+        return None;
+    };
+    json_payload_type(ty)
+}
+
+/// Unwrap one `Result`/`McpResult` layer, then match `Json<T>` and return `T`.
+fn json_payload_type(ty: &Type) -> Option<Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+
+    let first_generic = |seg: &syn::PathSegment| -> Option<Type> {
+        let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+            return None;
+        };
+        args.args.iter().find_map(|arg| match arg {
+            syn::GenericArgument::Type(t) => Some(t.clone()),
+            _ => None,
+        })
+    };
+
+    if segment.ident == "Json" {
+        return first_generic(segment);
+    }
+
+    // `McpResult<Json<T>>` / `Result<Json<T>, E>` — recurse into the Ok type.
+    if segment.ident == "McpResult" || segment.ident == "Result" {
+        let ok_ty = first_generic(segment)?;
+        return json_payload_type(&ok_ty);
+    }
+
+    None
 }
 
 /// Extract doc comments from attributes.
@@ -816,7 +871,18 @@ pub fn generate_output_schema_code(ty: &Option<Type>, krate: &TokenStream) -> To
             let schema = #krate::__macro_support::schemars::schema_for!(#ty);
             let value = #krate::__macro_support::serde_json::to_value(&schema)
                 .unwrap_or(#krate::__macro_support::serde_json::Value::Null);
-            Some(#krate::__macro_support::turbomcp_types::ToolOutputSchema::from_value(value))
+            // Declaring `outputSchema` obliges the tool to return conforming
+            // `structuredContent`, and that field is typed
+            // `{ [key: string]: unknown }` in every wire this SDK speaks. A
+            // schema for a non-object payload could therefore never be
+            // satisfied, so it is not advertised — matching the same
+            // object test that decides whether `structuredContent` is
+            // populated at all, so the promise and the payload cannot diverge.
+            if value.get("type").and_then(|t| t.as_str()) == Some("object") {
+                Some(#krate::__macro_support::turbomcp_types::ToolOutputSchema::from_value(value))
+            } else {
+                None
+            }
         }
     }
 }

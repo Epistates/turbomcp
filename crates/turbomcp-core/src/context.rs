@@ -646,6 +646,49 @@ impl RequestContext {
         Ok(parsed.roots)
     }
 
+    /// Tell subscribers that a resource's contents changed.
+    ///
+    /// Sends `notifications/resources/updated`. This is the obligation a server
+    /// takes on by declaring `resources.subscribe` (via `#[subscribe]`): having
+    /// accepted a subscription, it must emit this when the resource changes.
+    ///
+    /// The URI may name a sub-resource of the one the client actually
+    /// subscribed to.
+    pub async fn notify_resource_updated(&self, uri: impl Into<String>) -> McpResult<()> {
+        self.notify_client(
+            "notifications/resources/updated",
+            serde_json::json!({ "uri": uri.into() }),
+        )
+        .await
+    }
+
+    /// Tell the client the tool list changed, so it should re-list.
+    ///
+    /// Only meaningful for servers advertising `tools.listChanged`.
+    pub async fn notify_tools_list_changed(&self) -> McpResult<()> {
+        self.notify_client("notifications/tools/list_changed", serde_json::json!({}))
+            .await
+    }
+
+    /// Tell the client the resource list changed, so it should re-list.
+    ///
+    /// Only meaningful for servers advertising `resources.listChanged`.
+    pub async fn notify_resources_list_changed(&self) -> McpResult<()> {
+        self.notify_client(
+            "notifications/resources/list_changed",
+            serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Tell the client the prompt list changed, so it should re-list.
+    ///
+    /// Only meaningful for servers advertising `prompts.listChanged`.
+    pub async fn notify_prompts_list_changed(&self) -> McpResult<()> {
+        self.notify_client("notifications/prompts/list_changed", serde_json::json!({}))
+            .await
+    }
+
     /// Signal that an out-of-band URL elicitation has finished.
     ///
     /// Sends `notifications/elicitation/complete` with the `elicitationId` from

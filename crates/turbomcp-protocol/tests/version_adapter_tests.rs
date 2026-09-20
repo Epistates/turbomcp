@@ -309,8 +309,8 @@ fn test_v2025_06_18_strips_all_tool_fields() {
         "execution must be stripped"
     );
     assert!(
-        tool.get("outputSchema").is_none(),
-        "outputSchema must be stripped"
+        tool.get("outputSchema").is_some(),
+        "outputSchema is a 2025-06-18 field and must survive the downgrade"
     );
 
     // Should remain (existed in 2025-06-18)
@@ -693,7 +693,10 @@ fn test_e2e_tools_list_response_v2025_06_18() {
     let t1 = &filtered["tools"][0];
     assert_eq!(t1["name"], "calculator");
     assert_eq!(t1["title"], "Calculator");
-    assert!(t1.get("outputSchema").is_none());
+    assert!(
+        t1.get("outputSchema").is_some(),
+        "outputSchema is a 2025-06-18 field"
+    );
     assert!(t1.get("icons").is_none());
     assert!(t1.get("execution").is_none());
     assert!(t1.get("annotations").is_some());

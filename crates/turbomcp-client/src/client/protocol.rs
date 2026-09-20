@@ -194,9 +194,18 @@ impl<T: Transport + 'static> ProtocolClient<T> {
                     // Best-effort `notifications/cancelled` so a compliant
                     // server can stop in-flight work. Failure to send is
                     // logged and ignored — the local timeout still wins.
-                    let _ = self
-                        .send_cancellation(&request_id, Some("client request timeout"))
-                        .await;
+                    //
+                    // `initialize` is exempt: the cancellation utility says the
+                    // initialize request MUST NOT be cancelled. A slow
+                    // handshake — cold start, OAuth discovery, a large index —
+                    // is exactly when this timeout fires, so without the guard
+                    // the client emits a forbidden notification precisely when
+                    // it is most likely to be observed.
+                    if method != "initialize" {
+                        let _ = self
+                            .send_cancellation(&request_id, Some("client request timeout"))
+                            .await;
+                    }
                     let err = turbomcp_transport::TransportError::RequestTimeout {
                         operation: format!("{}()", method),
                         timeout: request_timeout,

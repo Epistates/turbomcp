@@ -108,7 +108,9 @@ impl VersionAdapter for V2025_11_25Adapter {
 /// - `description`, `websiteUrl` on Implementation/ServerInfo
 /// - `tasks` capability
 /// - URL mode elicitation (capability and methods)
-/// - `outputSchema` on Tool
+///
+/// `outputSchema` is deliberately NOT stripped: it is part of the 2025-06-18
+/// `Tool` schema, introduced in that revision together with `structuredContent`.
 #[derive(Debug)]
 pub struct V2025_06_18Adapter;
 
@@ -148,11 +150,12 @@ impl VersionAdapter for V2025_06_18Adapter {
                 result
             }
             "tools/list" => {
-                strip_from_array(
-                    &mut result,
-                    "tools",
-                    &["icons", "execution", "outputSchema"],
-                );
+                // `outputSchema` is NOT stripped: it is part of the 2025-06-18
+                // `Tool` schema, landing in that revision alongside
+                // `structuredContent`. Removing it left 06-18 clients receiving
+                // structured output with nothing to validate it against.
+                // `icons` (SEP-973) and `execution` are genuinely 11-25-only.
+                strip_from_array(&mut result, "tools", &["icons", "execution"]);
                 result
             }
             "prompts/list" => {
@@ -447,8 +450,8 @@ mod tests {
             "execution should be stripped"
         );
         assert!(
-            tool.get("outputSchema").is_none(),
-            "outputSchema should be stripped"
+            tool.get("outputSchema").is_some(),
+            "outputSchema is a 2025-06-18 field and must survive the downgrade"
         );
     }
 

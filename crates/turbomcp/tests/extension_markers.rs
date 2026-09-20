@@ -40,11 +40,17 @@ impl Full {
         Ok(serde_json::json!({ "completion": { "values": values } }))
     }
 
-    /// Takes the context, to prove the optional parameter is wired.
+    /// Takes the context, to prove the optional parameter is wired — and uses
+    /// it to honour the subscription immediately, which is the whole point of
+    /// accepting one.
     #[subscribe]
     async fn watch(&self, uri: String, ctx: &RequestContext) -> McpResult<()> {
         assert!(!ctx.request_id().is_empty());
-        self.subscriptions.lock().unwrap().push(uri);
+        self.subscriptions.lock().unwrap().push(uri.clone());
+        // A server that accepts a subscription owes the client updates.
+        // Failing here would mean the transport has no session, which is not
+        // an error for the subscription itself.
+        let _ = ctx.notify_resource_updated(uri).await;
         Ok(())
     }
 
@@ -221,4 +227,162 @@ async fn undeclared_extension_points_still_report_unsupported() {
             "{method} should report capability_not_supported, got {response}"
         );
     }
+}
+
+// ── The obligation a subscription creates ──────────────────────────────────
+
+/// Accepting a subscription commits the server to sending updates. This pins
+/// that `notify_resource_updated` puts the spec's shape on the wire, since
+/// before 3.5.0 the only way to honour `#[subscribe]` was to hand-write the
+/// method string.
+#[tokio::test]
+async fn subscribing_delivers_a_conformant_resource_updated_notification() {
+    use turbomcp_core::session::{McpSession, SessionFuture};
+
+    #[derive(Debug, Default)]
+    struct Recorder {
+        sent: Mutex<Vec<(String, serde_json::Value)>>,
+    }
+
+    impl McpSession for Recorder {
+        fn call<'a>(
+            &'a self,
+            _m: &'a str,
+            _p: serde_json::Value,
+        ) -> SessionFuture<'a, serde_json::Value> {
+            Box::pin(async { Ok(serde_json::Value::Null) })
+        }
+        fn notify<'a>(
+            &'a self,
+            method: &'a str,
+            params: serde_json::Value,
+        ) -> SessionFuture<'a, ()> {
+            Box::pin(async move {
+                self.sent.lock().unwrap().push((method.to_string(), params));
+                Ok(())
+            })
+        }
+    }
+
+    let session = Arc::new(Recorder::default());
+    let ctx = RequestContext::stdio().with_session(session.clone() as Arc<dyn McpSession>);
+
+    let server = Full::default();
+    let response = server
+        .handle_request(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "resources/subscribe",
+                "params": { "uri": "mem://watched" }
+            }),
+            ctx,
+        )
+        .await
+        .unwrap();
+    assert!(response["error"].is_null(), "got {response}");
+
+    let sent = session.sent.lock().unwrap().clone();
+    assert_eq!(
+        sent.len(),
+        1,
+        "the subscription should have produced one update"
+    );
+    assert_eq!(sent[0].0, "notifications/resources/updated");
+    // `uri` is the only required param, and it must be the subscribed resource.
+    assert_eq!(sent[0].1["uri"], "mem://watched");
+}
+
+// ── #[roots_changed] ───────────────────────────────────────────────────────
+
+/// `McpHandler::on_roots_list_changed` shipped in 3.5.0, but the macro
+/// generates a fixed method set — so without a marker it was unreachable for
+/// macro-built servers, the same sealed-impl problem the other markers solve.
+#[tokio::test]
+async fn roots_changed_marker_reaches_the_handler() {
+    #[derive(Clone, Default)]
+    struct Watcher {
+        invalidations: Arc<Mutex<usize>>,
+    }
+
+    #[server(name = "watcher", version = "1.0.0")]
+    impl Watcher {
+        #[tool]
+        async fn noop(&self) -> String {
+            String::new()
+        }
+
+        #[roots_changed]
+        async fn roots_changed(&self, ctx: &RequestContext) -> McpResult<()> {
+            assert!(!ctx.request_id().is_empty());
+            *self.invalidations.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    let server = Watcher::default();
+    let response = server
+        .handle_request(
+            // A notification: no id, so no response is due.
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/roots/list_changed"
+            }),
+            RequestContext::stdio(),
+        )
+        .await
+        .unwrap();
+
+    // Notifications produce an internal ack envelope that transports suppress
+    // (`should_send()` is false for it); what matters is that it carries
+    // neither a result nor an error to send back.
+    assert!(
+        response.get("result").is_none() && response.get("error").is_none(),
+        "a notification must not produce a response, got {response}"
+    );
+    assert_eq!(
+        *server.invalidations.lock().unwrap(),
+        1,
+        "the roots-changed hook should have fired"
+    );
+}
+
+// ── #[server(logging)] ─────────────────────────────────────────────────────
+
+/// The `logging` capability means "this server emits `notifications/message`",
+/// which is independent of implementing `logging/setLevel`. A server that logs
+/// but does not let clients change the level previously had no way to declare
+/// it, so it violated the rule that a server must declare what it uses.
+#[tokio::test]
+async fn logging_can_be_declared_without_a_set_level_handler() {
+    #[derive(Clone)]
+    struct Emitter;
+
+    #[server(name = "emitter", version = "1.0.0", logging)]
+    impl Emitter {
+        #[tool]
+        async fn noop(&self) -> String {
+            String::new()
+        }
+    }
+
+    let caps = capabilities_of(&Emitter).await;
+    assert!(
+        caps["logging"].is_object(),
+        "#[server(logging)] must advertise the capability, got {caps}"
+    );
+
+    // Declaring it does not fabricate a setLevel handler.
+    let response = request(
+        &Emitter,
+        "logging/setLevel",
+        serde_json::json!({ "level": "debug" }),
+    )
+    .await;
+    assert_eq!(response["error"]["code"], -32006);
+}
+
+/// And `#[set_level]` still implies it, so neither signal is load-bearing alone.
+#[tokio::test]
+async fn set_level_still_implies_the_logging_capability() {
+    let caps = capabilities_of(&Full::default()).await;
+    assert!(caps["logging"].is_object(), "got {caps}");
 }

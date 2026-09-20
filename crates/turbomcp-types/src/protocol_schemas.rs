@@ -372,48 +372,57 @@ pub enum EnumSchema {
 // URL elicitation required error payload
 // =============================================================================
 
-/// Server-to-client error payload indicating that URL-mode elicitation is
-/// required instead of form-mode. Carry this as the `data` field of a
-/// JSON-RPC error (code `-32042`) per MCP 2025-11-25 / SEP-1036.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// `data` payload of a `-32042` error telling the client that one or more URL
+/// mode elicitations must complete before the request can be retried.
+///
+/// Carry this as the `data` member of a JSON-RPC error with code
+/// [`Self::ERROR_CODE`], per MCP 2025-11-25 / SEP-1036. The spec types `data`
+/// as an object with a **required `elicitations` array**, and requires every
+/// entry to be a URL mode elicitation carrying an `elicitationId` — which is
+/// what lets the client correlate the later
+/// `notifications/elicitation/complete` and retry.
+///
+/// ```rust
+/// use turbomcp_types::{URLElicitationRequiredError, ElicitRequestURLParams};
+///
+/// let payload = URLElicitationRequiredError::single(ElicitRequestURLParams {
+///     message: "Authorize access to your files.".into(),
+///     url: "https://example.com/connect?e=550e8400".into(),
+///     elicitation_id: "550e8400".into(),
+///     task: None,
+///     meta: None,
+/// });
+/// let json = serde_json::to_value(&payload).unwrap();
+/// assert!(json["elicitations"].is_array());
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct URLElicitationRequiredError {
-    /// The URL the user should open out-of-band.
-    pub url: String,
-    /// Optional human-readable description of what is being requested.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Optional elicitation ID for correlating the follow-up completion
-    /// notification.
-    #[serde(rename = "elicitationId", skip_serializing_if = "Option::is_none")]
-    pub elicitation_id: Option<String>,
+    /// The elicitations that must complete before the original request can be
+    /// retried. Required, and every entry is a URL mode elicitation.
+    pub elicitations: Vec<crate::protocol::ElicitRequestURLParams>,
 }
 
 impl URLElicitationRequiredError {
-    /// Create a new URL-elicitation-required error with just the URL.
-    pub fn new(url: impl Into<String>) -> Self {
+    /// JSON-RPC error code for URL-elicitation-required.
+    pub const ERROR_CODE: i32 = -32042;
+
+    /// Require a single elicitation, the common case.
+    #[must_use]
+    pub fn single(elicitation: crate::protocol::ElicitRequestURLParams) -> Self {
         Self {
-            url: url.into(),
-            description: None,
-            elicitation_id: None,
+            elicitations: vec![elicitation],
         }
     }
 
-    /// Attach a human-readable description.
+    /// Require several elicitations to complete before retrying.
     #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
+    pub fn new(
+        elicitations: impl IntoIterator<Item = crate::protocol::ElicitRequestURLParams>,
+    ) -> Self {
+        Self {
+            elicitations: elicitations.into_iter().collect(),
+        }
     }
-
-    /// Attach a correlation ID for the out-of-band completion notification.
-    #[must_use]
-    pub fn with_elicitation_id(mut self, id: impl Into<String>) -> Self {
-        self.elicitation_id = Some(id.into());
-        self
-    }
-
-    /// JSON-RPC error code for URL-elicitation-required.
-    pub const ERROR_CODE: i32 = -32042;
 }
 
 #[cfg(test)]
@@ -509,15 +518,42 @@ mod tests {
         }
     }
 
+    fn url_params(id: &str) -> crate::protocol::ElicitRequestURLParams {
+        crate::protocol::ElicitRequestURLParams {
+            message: "Please sign in".into(),
+            url: "https://example.com/oauth".into(),
+            elicitation_id: id.into(),
+            task: None,
+            meta: None,
+        }
+    }
+
+    /// The spec types `data` as an object whose `elicitations` array is
+    /// REQUIRED; a flat `{url, description}` is unreadable to a conformant
+    /// client, which looks for `data.elicitations[]`.
     #[test]
     fn url_elicitation_required_error_round_trip() {
-        let err = URLElicitationRequiredError::new("https://example.com/oauth")
-            .with_description("Please sign in")
-            .with_elicitation_id("e-123");
-        let json = serde_json::to_string(&err).unwrap();
-        assert!(json.contains("\"elicitationId\":\"e-123\""));
-        let back: URLElicitationRequiredError = serde_json::from_str(&json).unwrap();
+        let err = URLElicitationRequiredError::single(url_params("e-123"));
+        let json = serde_json::to_value(&err).unwrap();
+
+        let entries = json["elicitations"]
+            .as_array()
+            .expect("`elicitations` must be an array");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["elicitationId"], "e-123");
+        assert_eq!(entries[0]["url"], "https://example.com/oauth");
+        assert_eq!(entries[0]["message"], "Please sign in");
+
+        let back: URLElicitationRequiredError = serde_json::from_value(json).unwrap();
         assert_eq!(err, back);
         assert_eq!(URLElicitationRequiredError::ERROR_CODE, -32042);
+    }
+
+    /// The error may require more than one interaction before a retry.
+    #[test]
+    fn url_elicitation_required_error_carries_several() {
+        let err = URLElicitationRequiredError::new([url_params("a"), url_params("b")]);
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["elicitations"].as_array().unwrap().len(), 2);
     }
 }

@@ -1045,6 +1045,25 @@ impl<H: McpHandler> VisibilityLayer<H> {
     }
 
     /// Enable components with the given tags for a specific session.
+    ///
+    /// # This changes the catalogue, so tell the client
+    ///
+    /// A server built by `#[server]` advertises `tools.listChanged` (and the
+    /// resource and prompt equivalents), which promises a notification whenever
+    /// the list changes — and this is the one moment it actually does. A client
+    /// that listed tools at startup will otherwise never learn that the set it
+    /// can see just changed.
+    ///
+    /// The layer cannot send that itself: it wraps a handler and has no
+    /// [`McpSession`](turbomcp_core::session::McpSession) of its own. The
+    /// caller does, via the request context that prompted the change:
+    ///
+    /// ```rust,ignore
+    /// layer.enable_for_session(ctx.session_id().unwrap(), &["admin".into()]);
+    /// ctx.notify_tools_list_changed().await?;
+    /// ```
+    ///
+    /// Send only the notifications for kinds whose visible set actually moved.
     pub fn enable_for_session(&self, session_id: &str, tags: &[String]) {
         let mut entry = self
             .session_enabled

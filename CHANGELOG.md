@@ -75,6 +75,7 @@ impossible. This release opens them.
   | `#[subscribe]` | `resources/subscribe` | `resources.subscribe` |
   | `#[unsubscribe]` | `resources/unsubscribe` | — |
   | `#[set_level]` | `logging/setLevel` | `logging` |
+  | `#[roots_changed]` | `notifications/roots/list_changed` | — (`roots` is a *client* capability) |
 
   Declaring one generates the override *and* flips the matching capability;
   omitting it keeps the trait default, which answers `capability_not_supported`,
@@ -90,6 +91,29 @@ impossible. This release opens them.
   parked handler. Client capabilities are captured at `initialize`. This lands
   sampling, both elicitation modes, `list_roots`, and notifications on the one
   transport that had none.
+
+- **`Json<T>` now advertises its `outputSchema`.** 3.4.0 made `Json<T>` populate
+  `structuredContent`; the schema describing that content still had to be
+  declared by hand with `#[tool(output_schema = T)]`, so clients had nothing to
+  validate against. The schema is now inferred from the return type — `Json<T>`,
+  `McpResult<Json<T>>`, and `Result<Json<T>, E>` — with an explicit
+  `output_schema =` still winning where given.
+
+  Declaring `outputSchema` is a promise: the spec requires a tool that declares
+  one to return conforming `structuredContent`, and that field is typed
+  `{ [key: string]: unknown }` on every wire this SDK speaks. So the declaration
+  is gated on the schema describing an *object*, using the same test that
+  decides whether `structuredContent` gets populated at all. A `Json<Vec<_>>`
+  therefore advertises nothing and sends its data as text, rather than promising
+  a shape the result is forbidden to deliver. The two decisions cannot diverge,
+  and a test asserts exactly that across every return shape.
+
+- **Typed notification helpers** on `RequestContext`:
+  `notify_resource_updated(uri)`, `notify_tools_list_changed()`,
+  `notify_resources_list_changed()`, and `notify_prompts_list_changed()`.
+  `notify_resource_updated` in particular is the obligation `#[subscribe]` takes
+  on — having accepted a subscription, a server has to emit the update — and
+  writing that method string by hand was the only way to honour it.
 
 - **`RequestContext::notify_elicitation_complete`** sends
   `notifications/elicitation/complete`, closing the URL-mode elicitation loop so
@@ -117,6 +141,16 @@ impossible. This release opens them.
   notification arriving after completion. Outgoing session commands are now
   drained first on WebSocket and on the line transports (STDIO, TCP, Unix).
 
+- **Client notifications never reached their handler on native transports.**
+  `turbomcp-server` wraps the core router with its own, and both of its entry
+  points — including `route_request_versioned`, the one transports use once
+  initialize has completed, which is exactly when client notifications arrive —
+  short-circuited notifications to an ack *before* delegating. So
+  `on_roots_list_changed` fired only for WASM and direct `turbomcp-core` users.
+  Dispatch now lives in one shared `turbomcp_core::router::dispatch_notification`
+  that every router calls, so wiring a future hook cannot again reach some
+  transports and not others.
+
 - **`VisibilityLayer` and `CompositeHandler` silently dropped four handler
   methods.** Neither forwarded `complete`, `subscribe`, `unsubscribe`, or
   `set_log_level`, so wrapping a server in either disabled those features
@@ -127,6 +161,84 @@ impossible. This release opens them.
   one that does not exist. `CompositeHandler` routes `subscribe`/`unsubscribe`
   by URI prefix and `complete` by the reference in its params, and broadcasts
   `set_log_level` and `on_roots_list_changed` to every mount.
+
+### Specification conformance
+
+After the work above, TurboMCP 3.x was audited against the MCP specification
+feature by feature — lifecycle, tools, resources, prompts, sampling,
+elicitation, roots, completion, logging, progress, cancellation, ping,
+pagination, transports, and the `_meta`/security rules — across both wires it
+serves, with every finding independently re-checked before being accepted.
+Sixteen broken MUSTs came out of it. All sixteen are fixed here.
+
+The three with the widest blast radius:
+
+- **A server refused clients on older spec revisions instead of offering one it
+  supports.** `allow_fallback` defaulted to `false`, so a client asking for
+  `2024-11-05` or `2025-03-26` — legacy Claude Desktop configs, MCP Inspector
+  defaults, older SDK clients — got a hard JSON-RPC error on the *first*
+  message and could not connect at all. The lifecycle spec allows exactly two
+  outcomes, and refusing is neither: "If the server supports the requested
+  protocol version, it MUST respond with the same version. Otherwise, the
+  server MUST respond with another protocol version it supports." Deciding
+  whether the offer is acceptable is the *client's* call. The fallback
+  machinery already existed; it was switched off.
+
+- **The stdio/TCP/Unix reader could silently lose part of a message.**
+  `AsyncBufReadExt::read_line` is documented as *not* cancel safe — when it
+  loses a `tokio::select!` race, "some data may have been partially read, and
+  this data is lost" — and the other arms of that select are fed by
+  concurrently spawned handler tasks, so losing the race is routine rather than
+  exotic. Any request that did not arrive in a single poll could lose its
+  prefix and desynchronise the stream. Reading now happens on its own task,
+  which takes it out of the select entirely; the loop awaits `recv()`, which is
+  cancel safe.
+
+- **A malformed server-to-client request got no answer at all.** When
+  `sampling/createMessage` or `elicitation/create` params failed to
+  deserialize, the client propagated the error to a caller that discarded it,
+  so nothing was ever sent back. The server stayed blocked on that id — and on
+  the line transports `SessionHandle::call` awaits with no timeout, so the hang
+  was permanent. Both paths now answer `-32602`.
+
+The rest, briefly:
+
+- `outputSchema` was stripped from every tool for 2025-06-18 clients, but
+  `outputSchema` is *in* the 2025-06-18 `Tool` schema — it arrived in that
+  revision alongside `structuredContent`. Those clients received structured
+  output with nothing to validate it against. Three tests had pinned the
+  mistake.
+- `URLElicitationRequiredError` carried a flat `{url, description}` where the
+  spec requires `data: { elicitations: [...] }` with a **required** array, so a
+  conformant client could not read the URL or correlate the completion
+  notification. The correct entry type already existed in the crate.
+- The client answered `-32601 Method not found` to a server `ping`, making a
+  healthy client look dead to the very mechanism that checks liveness.
+- The client cancelled its own `initialize` on timeout, which the cancellation
+  utility forbids outright — and a slow handshake is exactly when that fires.
+- A server emitting `notifications/message` could not declare the `logging`
+  capability, because it was gated solely on `#[set_level]`. Logging means "this
+  server emits log messages", which is independent of letting clients set a
+  level; `#[server(..., logging)]` now declares it.
+- The client advertised `roots.listChanged: true` with no API able to send the
+  notification, so a server that cached roots on that promise was never told
+  they changed. `Client::notify_roots_list_changed` closes it.
+- The client accepted tool-enabled sampling and undeclared elicitation modes it
+  had never advertised — the latter handing a URL-mode request to a form
+  handler, which sees no schema and typically accepts with empty content, which
+  reads to the server as consent.
+- HTTP `404` on a session-bearing request was treated as a generic failure
+  rather than "this session is gone", so after a server restart the client
+  resent the dead id forever instead of re-initializing.
+- The Streamable HTTP server never validated `MCP-Protocol-Version` on
+  `initialize` or a sessionless `ping` — the two paths that returned before the
+  validator ran.
+- `turbomcp-proxy` wrapped an already-wrapped `resources/read` result, making
+  `contents` an object where the spec types it as an array. Every resource read
+  through the proxy was undeserialisable by any typed client.
+- The core router ignored the client's requested `protocolVersion` entirely, so
+  the WASM/Worker entry points told every client `2025-11-25` regardless of
+  what it asked for, then sent it fields that revision alone defines.
 
 ### Changed
 
@@ -238,27 +350,6 @@ read the upgrade.
   data the client application consumes rather than the model. Applies to
   argument-validation failures too. Available to hand-written handlers as
   `McpError::to_tool_result`, and the key names as `turbomcp_core::meta_keys`.
-
-- **`McpError::with_data`** attaches a `serde_json::Value` that reaches the
-  client: as the JSON-RPC error object's `data` member, which was hard-coded to
-  `None`, and as `io.turbomcp/errorData` in a tool result's `_meta`. Nothing
-  else in the error is forwarded verbatim — `operation`, `component`, and
-  `source_location` stay server-side — so this is the one place to put a field
-  path, a retry hint, or a validation report.
-
-  > **Release decision required.** The payload is stored as a new public field
-  > on `turbomcp_core::error::ErrorContext`, and `cargo semver-checks` classes
-  > that as a **major** break (`constructible_struct_adds_field`): a downstream
-  > writing `ErrorContext { operation, component, request_id }` as an exhaustive
-  > literal stops compiling. There is no additive alternative — the value needs
-  > somewhere to live, and every field of both `McpError` and `ErrorContext` is
-  > already public. Nothing in this repository constructs the struct that way,
-  > and the documented path has always been the `with_*` builders, so the real
-  > blast radius is likely zero. Either accept it, or drop `ErrorContext.data`
-  > plus `McpError::{with_data, data}` and the `data:` line in
-  > `From<McpError> for JsonRpcError` to keep this release a minor; the rest of
-  > the changelog is unaffected, and the whole workspace is otherwise clean
-  > against the 3.4.0 baseline.
 
 - **`McpError::with_data`** attaches a `serde_json::Value` that reaches the
   client: as the JSON-RPC error object's `data` member, which was hard-coded to

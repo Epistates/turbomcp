@@ -36,6 +36,26 @@ use crate::handler::McpHandler;
 use crate::jsonrpc::{JsonRpcIncoming, JsonRpcOutgoing};
 use turbomcp_types::ServerInfo;
 
+/// Deliver a client notification to its handler hook, if it has one.
+///
+/// Notifications get no response, so nothing is returned and a failing hook is
+/// swallowed; unrecognised notifications are ignored, per the spec's
+/// instruction to tolerate them.
+///
+/// This is public because `turbomcp-server` wraps this module with its own
+/// router that short-circuits notifications before delegating here. Both call
+/// this, so wiring a new hook is a one-line change in one place instead of a
+/// change that silently applies to only some transports.
+pub async fn dispatch_notification<H: McpHandler>(
+    handler: &H,
+    request: &JsonRpcIncoming,
+    ctx: &RequestContext,
+) {
+    if request.method == "notifications/roots/list_changed" {
+        let _ = handler.on_roots_list_changed(ctx).await;
+    }
+}
+
 /// Lift `params._meta.progressToken` off an incoming request.
 ///
 /// Per the MCP progress utility the token is `string | number`; anything else
@@ -100,13 +120,7 @@ pub async fn route_request<H: McpHandler>(
     config: &RouteConfig<'_>,
 ) -> JsonRpcOutgoing {
     if request.is_notification() {
-        // Notifications get no response, but some of them the server can act
-        // on. Dispatch those before acking; the rest are ignored, per the
-        // spec's instruction to tolerate unrecognised notifications.
-        if request.method == "notifications/roots/list_changed" {
-            // Nothing to send on failure — a notification has no reply.
-            let _ = handler.on_roots_list_changed(ctx).await;
-        }
+        dispatch_notification(handler, &request, ctx).await;
         return JsonRpcOutgoing::notification_ack();
     }
 
@@ -148,7 +162,32 @@ pub async fn route_request<H: McpHandler>(
                 );
             }
 
-            let protocol_version = config.protocol_version.unwrap_or(PROTOCOL_VERSION);
+            // Echo the client's version when it is one we support, rather than
+            // always answering with the newest. The lifecycle spec: "If the
+            // server supports the requested protocol version, it MUST respond
+            // with the same version. Otherwise, the server MUST respond with
+            // another protocol version it supports."
+            //
+            // `turbomcp-server` negotiates ahead of this and passes the result
+            // in `config.protocol_version`, so this only decides the answer for
+            // callers that route through core directly — the WASM/Worker entry
+            // points, which previously told every client "2025-11-25" no matter
+            // what it asked for, and then sent it 11-25-only fields.
+            let protocol_version = config.protocol_version.unwrap_or_else(|| {
+                params
+                    .get("protocolVersion")
+                    .and_then(|v| v.as_str())
+                    .and_then(|requested| {
+                        crate::SUPPORTED_VERSIONS
+                            .iter()
+                            .copied()
+                            .find(|supported| *supported == requested)
+                    })
+                    // Unknown version: answer with one we do support, which is
+                    // the spec's second branch. The client decides whether to
+                    // proceed or disconnect.
+                    .unwrap_or(PROTOCOL_VERSION)
+            });
             let info = handler.server_info();
             let result = build_initialize_result(&info, handler, protocol_version);
             JsonRpcOutgoing::success(id, result)
