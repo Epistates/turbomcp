@@ -1125,7 +1125,7 @@ fn missing_capability_response(id: RequestId, extension_id: &str) -> JsonRpcMess
     JsonRpcResponse::error(id, err).into()
 }
 
-fn unsupported_version(
+pub(super) fn unsupported_version(
     id: RequestId,
     requested: Option<String>,
     supported: &[ProtocolVersion],

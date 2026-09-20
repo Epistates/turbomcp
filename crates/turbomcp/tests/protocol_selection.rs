@@ -205,9 +205,13 @@ async fn a_stable_only_server_still_serves_its_own_version() {
 
 #[tokio::test]
 async fn a_draft_only_server_refuses_the_legacy_handshake() {
-    // With 2025-11-25 excluded there is no version to negotiate down to, so
-    // `initialize` answers the draft — which a legacy client will reject,
-    // which is the correct outcome: this server does not speak its protocol.
+    // With 2025-11-25 excluded there is no version to negotiate down to, and
+    // `2026-07-28` defines no `InitializeResult` — so there is no legal answer
+    // and the versioning spec makes refusing a MUST, naming what is served.
+    //
+    // Answering the draft instead was worse than merely unhelpful: on stdio the
+    // session adapter stamps the negotiated version onto every later frame, so
+    // a "successful" handshake left every subsequent request failing -32602.
     let init = call(
         DraftOnly.into_server().build(),
         JsonRpcRequest::new(
@@ -221,7 +225,39 @@ async fn a_draft_only_server_refuses_the_legacy_handshake() {
         ),
     )
     .await;
-    assert_eq!(init["result"]["protocolVersion"], DRAFT_META);
+    assert!(
+        init.get("result").is_none(),
+        "a handshake this server cannot answer must not succeed: {init}"
+    );
+    assert_eq!(init["error"]["code"], -32022);
+    assert_eq!(init["error"]["data"]["requested"], LEGACY);
+    assert_eq!(init["error"]["data"]["supported"], json!([DRAFT_META]));
+}
+
+/// The same refusal when the client asks for the stateless revision *by name*.
+///
+/// A dual-stack server does serve `2026-07-28`, so the echo path used to hand
+/// it straight back — a success whose `protocolVersion` names a revision with
+/// no handshake at all. It has to step down to a revision that has one.
+#[tokio::test]
+async fn asking_for_the_stateless_revision_by_name_does_not_echo_it() {
+    let init = call(
+        DualStack.into_server().build(),
+        JsonRpcRequest::new(
+            1,
+            "initialize",
+            Some(json!({
+                "protocolVersion": DRAFT_META,
+                "capabilities": {},
+                "clientInfo": { "name": "c", "version": "1.0" }
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(
+        init["result"]["protocolVersion"], LEGACY,
+        "must answer the latest revision that actually has a handshake"
+    );
 }
 
 #[tokio::test]

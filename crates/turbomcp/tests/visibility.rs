@@ -64,6 +64,13 @@ impl Catalog {
     async fn summarize(&self, text: String) -> String {
         text
     }
+
+    /// Answers for anything, so the only thing that can keep a hidden
+    /// component's values back is the visibility gate itself.
+    #[completion]
+    async fn complete(&self, _p: neutral::CompleteParams) -> McpResult<neutral::CompleteResult> {
+        Ok(neutral::CompleteResult::new(vec!["leaked".to_owned()]))
+    }
 }
 
 // ---- harness -----------------------------------------------------------------
@@ -374,6 +381,90 @@ async fn a_hidden_prompt_is_not_gettable() {
     )
     .await;
     assert_eq!(ok["messages"][0]["content"]["text"], json!("hi"));
+}
+
+/// Autocomplete does not disclose a component the caller cannot see.
+///
+/// Completion names a prompt or a resource template, so it is as
+/// reachability-bearing as `prompts/get` — and it was the one such method with
+/// no visibility gate. Suggesting values for a hidden prompt's arguments
+/// discloses both that it exists and what goes in it.
+#[tokio::test]
+async fn completion_does_not_leak_hidden_components() {
+    let mut svc = dispatcher(Some(hides_internal()));
+
+    let hidden = respond(
+        &mut svc,
+        as_caller(
+            1,
+            request::COMPLETION_COMPLETE,
+            json!({
+                "ref": { "type": "ref/prompt", "name": "debug_prompt" },
+                "argument": { "name": "text", "value": "" }
+            }),
+            "",
+        ),
+    )
+    .await;
+    let unknown = respond(
+        &mut svc,
+        as_caller(
+            2,
+            request::COMPLETION_COMPLETE,
+            json!({
+                "ref": { "type": "ref/prompt", "name": "no_such_prompt" },
+                "argument": { "name": "text", "value": "" }
+            }),
+            "",
+        ),
+    )
+    .await;
+    let hidden = hidden.error.expect("a hidden prompt must not autocomplete");
+    assert_eq!(
+        hidden.code,
+        unknown.error.map_or(hidden.code, |e| e.code),
+        "hidden must be indistinguishable from absent"
+    );
+    assert!(
+        hidden.message.ends_with("unknown prompt: debug_prompt"),
+        "{}",
+        hidden.message
+    );
+
+    // A hidden resource *template* is the other half of the same leak.
+    let hidden_template = respond(
+        &mut svc,
+        as_caller(
+            3,
+            request::COMPLETION_COMPLETE,
+            json!({
+                "ref": { "type": "ref/resource", "uri": "catalog://vault/{+path}" },
+                "argument": { "name": "path", "value": "" }
+            }),
+            "",
+        ),
+    )
+    .await;
+    assert!(
+        hidden_template.error.is_some(),
+        "a hidden template must not autocomplete"
+    );
+
+    // A visible prompt still completes.
+    let ok = result(
+        &mut svc,
+        as_caller(
+            4,
+            request::COMPLETION_COMPLETE,
+            json!({
+                "ref": { "type": "ref/prompt", "name": "summarize" },
+                "argument": { "name": "text", "value": "" }
+            }),
+            "",
+        ),
+    )
+    .await;
+    assert_eq!(ok["completion"]["values"][0], json!("leaked"));
 }
 
 /// The escape hatch v3's leaking session map should have been: a policy is a

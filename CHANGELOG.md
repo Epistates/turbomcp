@@ -30,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `initialize` no longer negotiates to `2026-07-28`, a revision that defines no
+  `InitializeResult`. The echo path had no statefulness guard, so a client
+  asking for the stateless revision by name got a success it could not act on;
+  a modern-only server answered every legacy client the same way. On stdio that
+  was fatal downstream: the session adapter stamps the negotiated version onto
+  every later frame, so the envelope check then failed every request with
+  `-32602`. A server serving no handshake-bearing revision now refuses with
+  `-32022` naming what it does serve, which is what the versioning spec
+  requires.
+- `completion/complete` consults the visibility policy. It was the only
+  reachability-bearing method that did not, so autocomplete disclosed both the
+  existence of a hidden prompt or resource template and its values. Hidden is
+  now indistinguishable from absent there too.
+- A non-object `outputSchema` is dropped on the step-down to `2025-11-25` /
+  `2025-06-18` instead of being emitted verbatim. `-> Json<Vec<T>>` yields
+  `{"type":"array"}`, which those schemas forbid — and the paired
+  `structuredContent` was dropped on the same call, leaving the tool
+  advertising a schema it could never satisfy.
 - Four spec MUSTs around capability gating, from an independent conformance
   audit of the v4 source:
   - A client sent an elicitation mode it never declared now answers `-32602`

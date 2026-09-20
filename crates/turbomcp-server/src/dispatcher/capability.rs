@@ -514,6 +514,37 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 Ok(p) => p,
                 Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
+            // Completion is reachability-bearing like every other method that
+            // names a component: autocompleting a hidden prompt's arguments
+            // discloses that it exists, and its values. Hidden means
+            // indistinguishable from absent, so this answers exactly what an
+            // unknown ref would — the same refusal `prompts/get` gives above.
+            // A reference kind this build cannot resolve to a component cannot
+            // be visibility-checked, so it is refused rather than waved
+            // through — the same answer `parse_complete_params` gives an
+            // unknown `ref` type, which is the only way to reach it.
+            let (component, unknown) = match &params.reference {
+                neutral::CompletionReference::Prompt { name } => (
+                    Component::Prompt(name.as_str()),
+                    McpError::invalid_params(format!("unknown prompt: {name}")),
+                ),
+                neutral::CompletionReference::ResourceTemplate { uri } => (
+                    Component::Resource(uri.as_str()),
+                    McpError::ResourceNotFound(uri.clone()),
+                ),
+                other => {
+                    let e = McpError::invalid_params(format!(
+                        "unsupported completion reference: {other:?}"
+                    ));
+                    return error_response_for(id, &W::VERSION, &e);
+                }
+            };
+            if match hidden(shared, router, &server, &ctx, component).await {
+                Ok(hidden) => hidden,
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
+            } {
+                return error_response_for(id, &W::VERSION, &unknown);
+            }
             let fut = router.dispatch_complete(server, CompleteContext::new(ctx), params);
             finish::<_, W::Complete>(id, method, &W::VERSION, fut).await
         }

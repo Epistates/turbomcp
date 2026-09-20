@@ -2229,10 +2229,22 @@ impl From<Tool> for legacy::Tool {
             input_schema,
             meta: t.meta,
             name: t.name,
-            // The legacy `ToolOutputSchema` is a closed object schema (requires
-            // `type`); a schemars-generated struct schema deserializes cleanly,
-            // and anything that doesn't is dropped rather than failing.
-            output_schema: t.output_schema.and_then(|v| serde_json::from_value(v).ok()),
+            // The legacy `ToolOutputSchema` requires `type: "object"` literally
+            // — but the generated `type_` is a plain `String`, so a schema like
+            // `{"type":"array"}` (from `-> Json<Vec<T>>`, legal on 2026-07-28
+            // where outputSchema is any JSON Schema) deserializes and would be
+            // re-emitted verbatim onto a wire that forbids it.
+            //
+            // Worse, it would be advertised and then unsatisfiable: the
+            // `CallToolResult` conversion below can only carry an *object*
+            // `structuredContent`, so a non-object result is dropped and the
+            // tool breaks "Servers MUST provide structured results that conform
+            // to this schema". Dropping the advertisement is the honest
+            // step-down — on this wire the tool returns its text mirror only.
+            output_schema: t
+                .output_schema
+                .and_then(|v| serde_json::from_value::<legacy::ToolOutputSchema>(v).ok())
+                .filter(|s| s.type_ == "object"),
             title: t.title,
         }
     }
@@ -3267,6 +3279,43 @@ mod tests {
             form_only.to_wire(ProtocolVersion::V2025_11_25),
             json!({ "elicitation": { "form": {} } }),
             "a form-only client must not read as url-capable"
+        );
+    }
+
+    /// A non-object `outputSchema` is legal on `2026-07-28` and forbidden on
+    /// the legacy wires, so it must not survive the step-down.
+    ///
+    /// `-> Json<Vec<T>>` produces `{"type":"array", …}`. The legacy
+    /// `ToolOutputSchema.type` is an unchecked `String`, so it used to
+    /// round-trip onto a wire whose schema requires the literal `"object"` —
+    /// and the paired `structuredContent` was dropped on the same call, leaving
+    /// the tool advertising a schema it could never satisfy.
+    #[test]
+    fn a_non_object_output_schema_does_not_reach_the_legacy_wires() {
+        let array = Tool::new("rows", json!({"type": "object", "properties": {}}))
+            .with_output_schema(json!({ "type": "array", "items": { "type": "string" } }));
+
+        let draft: v0728::Tool = array.clone().into();
+        assert!(
+            draft.output_schema.is_some(),
+            "2026-07-28 allows any JSON Schema, so it keeps it"
+        );
+
+        let legacy: legacy::Tool = array.into();
+        assert!(
+            legacy.output_schema.is_none(),
+            "a wire that requires type=object must not be handed type=array"
+        );
+
+        // An object schema still crosses, so this drops nothing it shouldn't.
+        let object = Tool::new("stats", json!({"type": "object", "properties": {}}))
+            .with_output_schema(
+                json!({ "type": "object", "properties": { "n": { "type": "integer" } } }),
+            );
+        let legacy: legacy::Tool = object.into();
+        assert_eq!(
+            legacy.output_schema.expect("object schemas survive").type_,
+            "object"
         );
     }
 

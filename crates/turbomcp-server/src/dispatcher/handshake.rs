@@ -49,7 +49,11 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         }
     };
 
-    let negotiated = negotiate_initialize_version(&params.protocol_version, supported);
+    // A server serving only stateless revisions has no legal `initialize`
+    // answer; refuse naming what it does serve rather than inventing one.
+    let Some(negotiated) = negotiate_initialize_version(&params.protocol_version, supported) else {
+        return super::unsupported_version(id, Some(params.protocol_version.clone()), supported);
+    };
 
     if let Some(sid) = session_id(req.params.as_ref()) {
         let client_capabilities = serde_json::to_value(&params.capabilities).unwrap_or(Value::Null);
@@ -132,18 +136,25 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
 /// The fallback is the latest *`initialize`-speaking* version, which is
 /// `2025-11-25`: the draft negotiates per-request and has no handshake to
 /// answer with.
-fn negotiate_initialize_version(requested: &str, supported: &[ProtocolVersion]) -> ProtocolVersion {
+///
+/// `None` means this server serves no `initialize`-speaking revision at all, so
+/// there is no legal answer and the caller must refuse. A stateless version can
+/// never be the answer — even when the client asked for it by name. It defines
+/// no `InitializeResult`, and answering with it produces a success the client
+/// cannot act on: on stdio the session adapter stamps that version onto every
+/// later frame, the envelope check then finds no `clientCapabilities`, and
+/// every subsequent request fails `-32602`. The versioning spec says a
+/// modern-only server MUST reject `initialize` with an error naming what it
+/// does support.
+fn negotiate_initialize_version(
+    requested: &str,
+    supported: &[ProtocolVersion],
+) -> Option<ProtocolVersion> {
     let requested = ProtocolVersion::from_wire(requested);
-    if supported.contains(&requested) {
-        return requested;
+    if requested.is_stateful() && supported.contains(&requested) {
+        return Some(requested);
     }
-    supported
-        .iter()
-        .rev()
-        .find(|v| v.is_stateful())
-        .or_else(|| supported.first())
-        .cloned()
-        .unwrap_or(ProtocolVersion::LATEST)
+    supported.iter().rev().find(|v| v.is_stateful()).cloned()
 }
 
 fn build_legacy_capabilities<S: McpServerCore>(
