@@ -549,7 +549,15 @@ impl ClientHandle {
     /// upstream deprecation marking (AUDIT F10).
     #[deprecated(note = "marked deprecated upstream; still functional in both versions")]
     pub async fn create_message(&self, key: &str, params: Value) -> McpResult<Value> {
-        self.request_raw(key, request::SAMPLING_CREATE_MESSAGE, "sampling", params)
+        // "Servers MUST NOT send tool-enabled sampling requests to Clients
+        // that have not declared support for tool use via the `sampling.tools`
+        // capability" (2026-07-28 client/sampling.mdx, same on 2025-11-25).
+        // `includeContext` is the same shape of promise: undeclared, the spec
+        // says send only `none`. Which capability this request needs is a
+        // property of the request, so it is read off the params rather than
+        // fixed at the call site.
+        let capability = required_sampling_capability(&params);
+        self.request_raw(key, request::SAMPLING_CREATE_MESSAGE, capability, params)
             .await
     }
 
@@ -821,6 +829,29 @@ async fn send_and_await(
 }
 
 /// The wire `InputRequest` object for a form-mode elicitation.
+/// Which sampling capability a `sampling/createMessage` request needs.
+///
+/// `tools` outranks `context`: a request carrying both is refused naming the
+/// one the client is most likely to be missing, and a client that declared
+/// `tools` but not `context` still gets caught on the retry. Nothing here
+/// invents a requirement — a request using neither feature needs only bare
+/// `sampling`, which is what every client declaring the capability has.
+fn required_sampling_capability(params: &Value) -> &'static str {
+    if params.get("tools").is_some() || params.get("toolChoice").is_some() {
+        return "sampling.tools";
+    }
+    // `includeContext: "none"` is the undeclared-safe value, and an absent
+    // field means the same thing.
+    let wants_context = params
+        .get("includeContext")
+        .and_then(Value::as_str)
+        .is_some_and(|c| c != "none");
+    if wants_context {
+        return "sampling.context";
+    }
+    "sampling"
+}
+
 fn elicit_request_value(params: &neutral::ElicitParams) -> Value {
     json!({
         "method": request::ELICITATION_CREATE,
@@ -1534,6 +1565,68 @@ mod tests {
             handle.collected().is_empty(),
             "a fully-answered batch records nothing"
         );
+    }
+
+    /// Tool-enabled sampling needs `sampling.tools`, and context needs
+    /// `sampling.context`.
+    ///
+    /// "Servers MUST NOT send tool-enabled sampling requests to Clients that
+    /// have not declared support for tool use." The capability a request needs
+    /// depends on what the request carries, so it is read off the params.
+    #[tokio::test]
+    #[allow(deprecated)] // still functional on both wires; see the method docs
+    async fn tool_enabled_sampling_needs_the_declared_sub_capability() {
+        let plain = ClientHandle::mrtr(
+            "",
+            Some(json!({ "sampling": {} })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        for (params, want) in [
+            (json!({ "messages": [], "tools": [] }), "sampling.tools"),
+            (
+                json!({ "messages": [], "toolChoice": { "mode": "auto" } }),
+                "sampling.tools",
+            ),
+            (
+                json!({ "messages": [], "includeContext": "allServers" }),
+                "sampling.context",
+            ),
+        ] {
+            let err = plain
+                .create_message("k", params.clone())
+                .await
+                .expect_err("undeclared sub-capability");
+            assert!(
+                matches!(&err, McpError::MissingRequiredCapability(c) if c == want),
+                "{params} -> {err:?}"
+            );
+        }
+        // Plain sampling, and the undeclared-safe context value, still go out.
+        for params in [
+            json!({ "messages": [] }),
+            json!({ "messages": [], "includeContext": "none" }),
+        ] {
+            assert!(matches!(
+                plain.create_message("k", params).await,
+                Err(McpError::InputRequired)
+            ));
+        }
+        // And a client that declared tools gets them.
+        let agentic = ClientHandle::mrtr(
+            "",
+            Some(json!({ "sampling": { "tools": {} } })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        assert!(matches!(
+            agentic
+                .create_message("k", json!({ "messages": [], "tools": [] }))
+                .await,
+            Err(McpError::InputRequired)
+        ));
     }
 
     /// A form-only client is not sent somewhere it cannot go.

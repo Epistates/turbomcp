@@ -30,6 +30,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Four spec MUSTs around capability gating, from an independent conformance
+  audit of the v4 source:
+  - A client sent an elicitation mode it never declared now answers `-32602`
+    instead of a successful `decline`. Declining says the *user* refused; the
+    user was never asked, because the client cannot open a consent page. An
+    unrecognized mode (a future revision's, or a typo) is treated the same way
+    rather than falling through to the form branch.
+  - A client refuses `tools`/`toolChoice` without `sampling.tools`, and a
+    context-bearing `includeContext` without `sampling.context`.
+  - The server picks the sampling capability from the request rather than
+    always asking for bare `sampling`, so tool-enabled sampling is never sent
+    to a client that did not declare it.
+  - `MissingRequiredClientCapabilityError` nests a dotted path back into the
+    shape `ClientCapabilities` actually has. `{"elicitation.url": {}}` is not a
+    valid value, so a client merging it declared a bogus top-level key, failed
+    the same check, and retried forever.
+- A client handler's chosen JSON-RPC error code survives. Every error was
+  flattened to `-32603`, so a handler could never answer `-32602` for params it
+  judged invalid.
 - The server checks client *sub*-capabilities, not just the top-level key.
   URL-mode elicitation went to clients that had declared only `elicitation`,
   which strands the user on a consent page the client never opens, exactly as

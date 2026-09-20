@@ -125,9 +125,19 @@ pub fn mcp_to_jsonrpc_error(err: &McpError) -> JsonRpcError {
 fn error_data(err: &McpError) -> Option<serde_json::Value> {
     match err {
         McpError::ResourceNotFound(uri) => Some(serde_json::json!({"uri":uri})),
-        McpError::MissingRequiredCapability(capability) => Some(serde_json::json!({
-            "requiredCapabilities": { capability.as_str(): {} }
-        })),
+        // The carried string may be a dotted sub-capability path
+        // (`elicitation.url`, `sampling.tools`), and `ClientCapabilities` has
+        // no key by that name — emitting it flat hands the client something it
+        // cannot merge, so it re-declares a bogus top-level key, fails the same
+        // check, and retries forever. Fold the path back into the nesting the
+        // type actually has.
+        McpError::MissingRequiredCapability(capability) => {
+            let required = capability.split('.').rev().fold(
+                serde_json::json!({}),
+                |acc, segment| serde_json::json!({ segment: acc }),
+            );
+            Some(serde_json::json!({ "requiredCapabilities": required }))
+        }
         _ => None,
     }
 }
@@ -142,5 +152,36 @@ pub fn mcp_to_jsonrpc_error_for(err: &McpError, version: &ProtocolVersion) -> Js
         code: err.jsonrpc_code_for(version),
         message: err.to_string(),
         data: error_data(err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A dotted sub-capability path has to come back as the nesting
+    /// `ClientCapabilities` actually has.
+    ///
+    /// `{"elicitation.url": {}}` is not a `ClientCapabilities` value: there is
+    /// no field by that name. A client that merges it and retries declares a
+    /// bogus top-level key, fails the same check, and loops.
+    #[test]
+    fn a_dotted_capability_path_nests() {
+        let flat = mcp_to_jsonrpc_error(&McpError::MissingRequiredCapability("sampling".into()));
+        assert_eq!(
+            flat.data,
+            Some(serde_json::json!({ "requiredCapabilities": { "sampling": {} } }))
+        );
+
+        let nested = mcp_to_jsonrpc_error(&McpError::MissingRequiredCapability(
+            "elicitation.url".into(),
+        ));
+        assert_eq!(
+            nested.data,
+            Some(serde_json::json!({
+                "requiredCapabilities": { "elicitation": { "url": {} } }
+            })),
+            "the client must be able to merge this into its own declaration"
+        );
     }
 }

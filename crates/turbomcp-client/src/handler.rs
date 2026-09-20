@@ -35,7 +35,7 @@ use turbomcp_core::JsonRpcError;
 use turbomcp_protocol::methods::request;
 use turbomcp_protocol::neutral;
 
-use crate::error::ClientResult;
+use crate::error::{ClientError, ClientResult};
 
 /// Answers `elicitation/create`: registering one declares `elicitation.form`.
 #[async_trait]
@@ -203,38 +203,90 @@ pub(crate) async fn dispatch_server_request(
                 .as_ref()
                 .ok_or_else(|| not_supported(method))?;
             // The wire discriminates on `mode`; absent means form (the shape
-            // that predates URL mode).
-            let is_url = params
+            // that predates URL mode). Anything else — a mode from a future
+            // revision, or a typo like "URL" — is a mode this client did not
+            // declare, which is the same answer as one it cannot present.
+            //
+            // "Server sends an `elicitation/create` request with a mode not
+            // declared in client capabilities: -32602" is a client MUST on
+            // both revisions that define modes. Declining instead tells the
+            // server the *user* refused, which is a different and untrue fact.
+            let outcome = match params
                 .as_ref()
                 .and_then(|p| p.get("mode"))
-                .and_then(Value::as_str)
-                == Some("url");
-            let outcome = if is_url {
-                handler.elicit_url(parse_elicit_url_params(params)?).await
-            } else {
-                handler.elicit(parse_elicit_params(params)?).await
+                .map(|m| m.as_str())
+            {
+                None | Some(Some("form")) => handler.elicit(parse_elicit_params(params)?).await,
+                Some(Some("url")) => {
+                    if !handler.supports_url_mode() {
+                        return Err(invalid_params(
+                            "this client did not declare elicitation.url",
+                        ));
+                    }
+                    handler.elicit_url(parse_elicit_url_params(params)?).await
+                }
+                Some(other) => {
+                    return Err(invalid_params(&format!(
+                        "this client did not declare elicitation mode {}",
+                        other.unwrap_or("<non-string>")
+                    )));
+                }
             };
             Ok(elicit_outcome_value(&outcome))
         }
-        request::SAMPLING_CREATE_MESSAGE => handlers
-            .sampling
-            .as_ref()
-            .ok_or_else(|| not_supported(method))?
-            .create_message(params.unwrap_or(Value::Null))
-            .await
-            .map_err(|e| internal_error(&e.to_string())),
+        request::SAMPLING_CREATE_MESSAGE => {
+            let handler = handlers
+                .sampling
+                .as_ref()
+                .ok_or_else(|| not_supported(method))?;
+            let params = params.unwrap_or(Value::Null);
+            // "The client MUST return an error if this field is provided but
+            // ClientCapabilities.sampling.tools is not declared" — the server
+            // is supposed to have checked, so this is the backstop for one
+            // that did not. `includeContext` carries the same promise.
+            let declared = handler.capability();
+            if !declared.tools
+                && (params.get("tools").is_some() || params.get("toolChoice").is_some())
+            {
+                return Err(invalid_params("this client did not declare sampling.tools"));
+            }
+            if !declared.context
+                && params
+                    .get("includeContext")
+                    .and_then(Value::as_str)
+                    .is_some_and(|c| c != "none")
+            {
+                return Err(invalid_params(
+                    "this client did not declare sampling.context",
+                ));
+            }
+            handler.create_message(params).await.map_err(handler_error)
+        }
         request::ROOTS_LIST => handlers
             .roots
             .as_ref()
             .ok_or_else(|| not_supported(method))?
             .list_roots()
             .await
-            .map_err(|e| internal_error(&e.to_string())),
+            .map_err(handler_error),
         other => Err(JsonRpcError {
             code: -32601,
             message: format!("method not found: {other}"),
             data: None,
         }),
+    }
+}
+
+/// Turn a handler's error into the JSON-RPC error to send back.
+///
+/// A handler that returned [`ClientError::Rpc`] chose a code deliberately;
+/// flattening everything to `-32603` discarded it, so a handler could never
+/// answer `-32602` for params it judged invalid. Anything else is genuinely
+/// an internal failure of this client.
+fn handler_error(err: ClientError) -> JsonRpcError {
+    match err {
+        ClientError::Rpc(rpc) => rpc,
+        other => internal_error(&other.to_string()),
     }
 }
 
@@ -414,5 +466,148 @@ mod tests {
             .await
             .expect_err("roots was never registered");
         assert_eq!(err.code, -32601);
+    }
+}
+
+#[cfg(test)]
+mod must_tests {
+    use super::*;
+    use turbomcp_protocol::neutral::SamplingCapability;
+
+    struct FormClient;
+    #[async_trait]
+    impl ElicitationHandler for FormClient {
+        async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
+            neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+        }
+    }
+
+    struct PlainSampler;
+    #[async_trait]
+    impl SamplingHandler for PlainSampler {
+        async fn create_message(&self, _p: Value) -> ClientResult<Value> {
+            Ok(json!({ "role": "assistant", "content": {}, "model": "m" }))
+        }
+    }
+
+    struct PickySampler;
+    #[async_trait]
+    impl SamplingHandler for PickySampler {
+        async fn create_message(&self, _p: Value) -> ClientResult<Value> {
+            Err(ClientError::Rpc(JsonRpcError {
+                code: -32602,
+                message: "messages must be non-empty".into(),
+                data: None,
+            }))
+        }
+        fn capability(&self) -> SamplingCapability {
+            SamplingCapability::new().with_tools(true)
+        }
+    }
+
+    fn form_only() -> ClientHandlers {
+        ClientHandlers {
+            elicitation: Some(Arc::new(FormClient)),
+            ..ClientHandlers::default()
+        }
+    }
+
+    /// A mode the client did not declare is `-32602`, not a decline.
+    ///
+    /// Declining says the *user* refused. The user was never asked, because
+    /// this client cannot open a consent page — reporting that as a refusal
+    /// tells the server something untrue and hides the misconfiguration.
+    #[tokio::test]
+    async fn an_undeclared_elicitation_mode_is_invalid_params() {
+        let err = dispatch_server_request(
+            &form_only(),
+            request::ELICITATION_CREATE,
+            Some(json!({ "mode": "url", "message": "Sign in", "url": "https://e.example" })),
+        )
+        .await
+        .expect_err("a form-only client cannot present a URL");
+        assert_eq!(err.code, -32602);
+
+        // A mode from a future revision, or a typo, is equally undeclared —
+        // falling through to the form branch would answer a question that was
+        // not asked.
+        for mode in [json!("URL"), json!("voice"), json!(7)] {
+            let err = dispatch_server_request(
+                &form_only(),
+                request::ELICITATION_CREATE,
+                Some(json!({ "mode": mode, "message": "?" })),
+            )
+            .await
+            .expect_err("unknown mode");
+            assert_eq!(err.code, -32602, "mode {mode}");
+        }
+
+        // Form mode still works, with or without the explicit discriminator.
+        for params in [
+            json!({ "message": "?" }),
+            json!({ "mode": "form", "message": "?" }),
+        ] {
+            assert!(
+                dispatch_server_request(&form_only(), request::ELICITATION_CREATE, Some(params))
+                    .await
+                    .is_ok()
+            );
+        }
+    }
+
+    /// Tool-enabled sampling is refused by a client that declared bare
+    /// `sampling`: "The client MUST return an error if this field is provided
+    /// but ClientCapabilities.sampling.tools is not declared."
+    #[tokio::test]
+    async fn tool_enabled_sampling_needs_the_declaration() {
+        let plain = ClientHandlers {
+            sampling: Some(Arc::new(PlainSampler)),
+            ..ClientHandlers::default()
+        };
+        for params in [
+            json!({ "messages": [], "tools": [] }),
+            json!({ "messages": [], "toolChoice": { "mode": "auto" } }),
+            json!({ "messages": [], "includeContext": "allServers" }),
+        ] {
+            let err = dispatch_server_request(
+                &plain,
+                request::SAMPLING_CREATE_MESSAGE,
+                Some(params.clone()),
+            )
+            .await
+            .expect_err("undeclared sampling feature");
+            assert_eq!(err.code, -32602, "{params}");
+        }
+        // What it did declare still works, and so does the safe context value.
+        for params in [
+            json!({ "messages": [] }),
+            json!({ "messages": [], "includeContext": "none" }),
+        ] {
+            assert!(
+                dispatch_server_request(&plain, request::SAMPLING_CREATE_MESSAGE, Some(params))
+                    .await
+                    .is_ok()
+            );
+        }
+    }
+
+    /// A handler that chose a JSON-RPC code keeps it. Flattening every error to
+    /// `-32603` meant a client could never answer `-32602` for params it
+    /// judged invalid.
+    #[tokio::test]
+    async fn a_handlers_chosen_error_code_survives() {
+        let picky = ClientHandlers {
+            sampling: Some(Arc::new(PickySampler)),
+            ..ClientHandlers::default()
+        };
+        let err = dispatch_server_request(
+            &picky,
+            request::SAMPLING_CREATE_MESSAGE,
+            Some(json!({ "messages": [], "tools": [] })),
+        )
+        .await
+        .expect_err("the handler rejected it");
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("non-empty"), "{}", err.message);
     }
 }
