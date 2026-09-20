@@ -425,9 +425,39 @@ impl ClientHandle {
     ) -> McpResult<neutral::ElicitOutcome> {
         params.validate().map_err(McpError::invalid_params)?;
         let raw = self
-            .obtain(key, "elicitation", elicit_request_value(&params))
+            .obtain(key, self.form_capability(), elicit_request_value(&params))
             .await?;
         parse_elicit_outcome(&raw)
+    }
+
+    /// Which capability a *form*-mode elicitation needs from this client.
+    ///
+    /// "Clients declaring the `elicitation` capability MUST support at least
+    /// one mode (`form` or `url`)", so a client may legally declare
+    /// `{"elicitation": {"url": {}}}` and render no forms at all — and sending
+    /// it one strands the user exactly as an undeclared capability would.
+    ///
+    /// But `2025-06-18` has no sub-capabilities: there, bare `elicitation` has
+    /// to keep meaning "I can render a form" or every client on that revision
+    /// breaks. So does a `2025-11-25` client that declared `{}` and named no
+    /// mode — it has said nothing to contradict. The sub-capability is
+    /// required only of a client that *did* name its modes and left `form` out.
+    fn form_capability(&self) -> &'static str {
+        if matches!(self.inner.version, ProtocolVersion::V2025_06_18) {
+            return "elicitation";
+        }
+        let named_modes = self
+            .inner
+            .client_capabilities
+            .as_ref()
+            .and_then(|caps| caps.get("elicitation"))
+            .and_then(Value::as_object)
+            .is_some_and(|modes| !modes.is_empty());
+        if named_modes {
+            "elicitation.form"
+        } else {
+            "elicitation"
+        }
     }
 
     /// Ask the user to visit a URL (URL-mode elicitation, draft `mode: "url"`).
@@ -469,10 +499,9 @@ impl ClientHandle {
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
         });
         // URL mode is its own declaration: a form-only client has nowhere to
-        // send the user. Form mode is *not* gated the same way — `2025-06-18`
-        // has no sub-capabilities at all, so bare `elicitation` has to keep
-        // meaning "I can render a form" or every client on that revision
-        // breaks. Only the mode a client has to opt into is checked for.
+        // send the user. Form mode is gated too, but more loosely — see
+        // [`form_capability`](Self::form_capability) for why bare `elicitation`
+        // still means "I render forms".
         let raw = self
             .obtain(
                 key,
@@ -546,7 +575,7 @@ impl ClientHandle {
         &self,
         requests: Vec<(&str, neutral::ElicitParams)>,
     ) -> McpResult<Vec<neutral::ElicitOutcome>> {
-        self.require_capability("elicitation")?;
+        self.require_capability(self.form_capability())?;
         if matches!(
             self.inner.mode,
             HandleMode::Bidi { .. } | HandleMode::TaskMediated { .. }
@@ -1699,6 +1728,65 @@ mod tests {
     /// A one-tool catalogue for the sampling tests.
     fn alloc_tool() -> neutral::Tool {
         neutral::Tool::new("echo", json!({ "type": "object" }))
+    }
+
+    /// A client that named its modes and left `form` out is not sent a form.
+    ///
+    /// "Clients declaring the `elicitation` capability MUST support at least
+    /// one mode", so `{"elicitation": {"url": {}}}` is a legal declaration by a
+    /// client that renders nothing — and a form strands the user there exactly
+    /// as an undeclared capability would. Bare `elicitation` still means forms,
+    /// on every revision: `2025-06-18` has no sub-capabilities to name, and a
+    /// later client that named none has said nothing to the contrary.
+    #[tokio::test]
+    async fn a_url_only_client_is_not_sent_a_form() {
+        let url_only = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": { "url": {} } })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        let err = url_only
+            .elicit("k", neutral::ElicitParams::new("?", form_schema()))
+            .await
+            .expect_err("this client renders no forms");
+        assert!(
+            matches!(&err, McpError::MissingRequiredCapability(c) if c == "elicitation.form"),
+            "{err:?}"
+        );
+
+        // Declaring the mode, or naming none at all, both get forms.
+        for caps in [
+            json!({ "elicitation": { "form": {} } }),
+            json!({ "elicitation": {} }),
+        ] {
+            let handle = ClientHandle::mrtr("", Some(caps.clone()), BTreeMap::new(), None, false);
+            assert!(
+                matches!(
+                    handle
+                        .elicit("k", neutral::ElicitParams::new("?", form_schema()))
+                        .await,
+                    Err(McpError::InputRequired)
+                ),
+                "{caps}"
+            );
+        }
+
+        // And `2025-06-18` has no sub-capabilities to name, so a sub-capability
+        // can never be required of it.
+        let older = ClientHandle::bidi(
+            "sess",
+            "no-writer",
+            Arc::new(PendingRequests::default()),
+            Some(json!({ "elicitation": {} })),
+            ProtocolVersion::V2025_06_18,
+        );
+        let err = older
+            .elicit("k", neutral::ElicitParams::new("?", form_schema()))
+            .await
+            .expect_err("no writer is registered");
+        assert!(matches!(err, McpError::Transport(_)), "{err:?}");
     }
 
     /// A form a client cannot render never leaves the server, and neither does
