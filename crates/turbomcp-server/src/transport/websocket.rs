@@ -87,9 +87,17 @@ impl McpSession for WebSocketSessionHandle {
                 .await
                 .map_err(|_| McpError::internal("Session closed"))?;
 
-            response_rx
-                .await
-                .map_err(|_| McpError::internal("Response channel closed"))?
+            // Bounded: an unanswered server-to-client request would otherwise
+            // park the handler forever, which is a hung tool call and a leaked
+            // task per occurrence, entirely at the peer's discretion.
+            match tokio::time::timeout(super::SERVER_REQUEST_TIMEOUT, response_rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err(McpError::internal("Response channel closed")),
+                Err(_) => Err(McpError::timeout(format!(
+                    "client did not answer {method} within {:?}",
+                    super::SERVER_REQUEST_TIMEOUT
+                ))),
+            }
         })
     }
 
@@ -346,337 +354,345 @@ async fn handle_websocket<H: McpHandler>(
 
     loop {
         tokio::select! {
-            biased;
+                    biased;
 
-            // Outgoing: server-to-client requests and notifications raised by
-            // handlers through `ctx.sample()` / `elicit_*()` / `notify_client()`.
-            //
-            // Polled *before* completed responses, and deliberately so. A
-            // handler emits these while it is still running, so they belong on
-            // the wire ahead of the response that concludes it — the progress
-            // utility in particular requires notifications to stop once an
-            // operation completes, which a response-first order would violate.
-            // Starvation is not a concern: this channel is bounded and only
-            // in-flight handlers write to it.
-            Some(cmd) = cmd_rx.recv() => {
-                let payload = match cmd {
-                    SessionCommand::Request { method, params, response_tx } => {
-                        if pending_requests.len() >= MAX_PENDING_REQUESTS {
-                            tracing::error!(
-                                count = pending_requests.len(),
-                                "Too many pending server-to-client requests"
+                    // Outgoing: server-to-client requests and notifications raised by
+                    // handlers through `ctx.sample()` / `elicit_*()` / `notify_client()`.
+                    //
+                    // Polled *before* completed responses, and deliberately so. A
+                    // handler emits these while it is still running, so they belong on
+                    // the wire ahead of the response that concludes it — the progress
+                    // utility in particular requires notifications to stop once an
+                    // operation completes, which a response-first order would violate.
+                    // Starvation is not a concern: this channel is bounded and only
+                    // in-flight handlers write to it.
+                    Some(cmd) = cmd_rx.recv() => {
+                        let payload = match cmd {
+                            SessionCommand::Request { method, params, response_tx } => {
+                                if pending_requests.len() >= MAX_PENDING_REQUESTS {
+                                    tracing::error!(
+                                        count = pending_requests.len(),
+                                        "Too many pending server-to-client requests"
+                                    );
+                                    let _ = response_tx.send(Err(McpError::internal(
+                                        "Too many pending server-to-client requests"
+                                    )));
+                                    continue;
+                                }
+
+                                let id = serde_json::json!(format!("s-{next_request_id}"));
+                                next_request_id += 1;
+                                pending_requests.insert(id.clone(), response_tx);
+
+                                serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "method": method,
+                                    "params": params,
+                                })
+                            }
+                            SessionCommand::Notify { method, params } => serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "method": method,
+                                "params": params,
+                            }),
+                        };
+
+                        let Ok(text) = serde_json::to_string(&payload) else {
+                            tracing::error!("Failed to serialize server-to-client message");
+                            continue;
+                        };
+                        if sender.send(Message::Text(text.into())).await.is_err() {
+                            tracing::error!("Failed to send server-to-client message");
+                            break;
+                        }
+                        continue;
+                    }
+
+                    // Outgoing: completed handler responses.
+                    Some(response) = response_rx.recv() => {
+                        if response.should_send()
+                            && let Ok(response_str) = router::serialize_response(&response)
+                            && sender.send(Message::Text(response_str.into())).await.is_err()
+                        {
+                            tracing::error!("Failed to send WebSocket response");
+                            break;
+                        }
+                        continue;
+                    }
+
+                    // Incoming: client → server frames.
+                    maybe_msg = receiver.next() => {
+                        let Some(msg) = maybe_msg else { break };
+                        let msg = match msg {
+                            Ok(msg) => msg,
+                            Err(e) => {
+                                tracing::error!("WebSocket receive error: {}", e);
+                                break;
+                            }
+                        };
+
+                        let text = match extract_text(msg) {
+                            Some(text) => text,
+                            None => continue,
+                        };
+
+                        if text.len() > max_message_size {
+                            tracing::warn!(
+                                "WebSocket message exceeds size limit ({} > {})",
+                                text.len(),
+                                max_message_size
                             );
-                            let _ = response_tx.send(Err(McpError::internal(
-                                "Too many pending server-to-client requests"
-                            )));
                             continue;
                         }
 
-                        let id = serde_json::json!(format!("s-{next_request_id}"));
-                        next_request_id += 1;
-                        pending_requests.insert(id.clone(), response_tx);
-
-                        serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "method": method,
-                            "params": params,
-                        })
-                    }
-                    SessionCommand::Notify { method, params } => serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": method,
-                        "params": params,
-                    }),
-                };
-
-                let Ok(text) = serde_json::to_string(&payload) else {
-                    tracing::error!("Failed to serialize server-to-client message");
-                    continue;
-                };
-                if sender.send(Message::Text(text.into())).await.is_err() {
-                    tracing::error!("Failed to send server-to-client message");
-                    break;
-                }
-                continue;
-            }
-
-            // Outgoing: completed handler responses.
-            Some(response) = response_rx.recv() => {
-                if response.should_send()
-                    && let Ok(response_str) = router::serialize_response(&response)
-                    && sender.send(Message::Text(response_str.into())).await.is_err()
-                {
-                    tracing::error!("Failed to send WebSocket response");
-                    break;
-                }
-                continue;
-            }
-
-            // Incoming: client → server frames.
-            maybe_msg = receiver.next() => {
-                let Some(msg) = maybe_msg else { break };
-                let msg = match msg {
-                    Ok(msg) => msg,
-                    Err(e) => {
-                        tracing::error!("WebSocket receive error: {}", e);
-                        break;
-                    }
-                };
-
-                let text = match extract_text(msg) {
-                    Some(text) => text,
-                    None => continue,
-                };
-
-                if text.len() > max_message_size {
-                    tracing::warn!(
-                        "WebSocket message exceeds size limit ({} > {})",
-                        text.len(),
-                        max_message_size
-                    );
-                    continue;
-                }
-
-                if let Some(ref limiter) = rate_limiter
-                    && !limiter.check(Some(&client_id))
-                {
-                    tracing::warn!(
-                        "Rate limit exceeded for WebSocket message from {}",
-                        client_id
-                    );
-                    let error = JsonRpcOutgoing::error(
-                        Some(serde_json::Value::Null),
-                        McpError::rate_limited("Rate limit exceeded"),
-                    );
-                    if let Ok(response_str) = router::serialize_response(&error) {
-                        let _ = sender.send(Message::Text(response_str.into())).await;
-                    }
-                    continue;
-                }
-
-                // Parse once as a generic JSON-RPC message: the frame may be a
-                // *response* to something this server asked the client, not a
-                // request. Treating those as requests would answer the client's
-                // reply with a parse error.
-                let value: serde_json::Value = match serde_json::from_str(&text) {
-                    Ok(value) => value,
-                    Err(e) => {
-                        let error = JsonRpcOutgoing::error(
-                            Some(serde_json::Value::Null),
-                            McpError::parse_error(e.to_string()),
-                        );
-                        if let Ok(error_str) = router::serialize_response(&error) {
-                            let _ = sender.send(Message::Text(error_str.into())).await;
-                        }
-                        continue;
-                    }
-                };
-
-                if let Some(id) = value.get("id")
-                    && (value.get("result").is_some() || value.get("error").is_some())
-                {
-                    if let Some(tx) = pending_requests.remove(id) {
-                        if let Some(error) = value.get("error") {
-                            let mcp_error = serde_json::from_value::<
-                                turbomcp_core::jsonrpc::JsonRpcError,
-                            >(error.clone())
-                                .map(|e| McpError::new(ErrorKind::from_i32(e.code), e.message))
-                                .unwrap_or_else(|_| {
-                                    McpError::internal("Failed to parse error response")
-                                });
-                            let _ = tx.send(Err(mcp_error));
-                        } else {
-                            let result =
-                                value.get("result").cloned().unwrap_or(serde_json::Value::Null);
-                            let _ = tx.send(Ok(result));
-                        }
-                    } else {
-                        tracing::warn!(id = %id, "Received response for unknown request ID");
-                    }
-                    continue;
-                }
-
-                let parsed = match router::parse_request_from_value(value) {
-                    Ok(req) => req,
-                    Err(e) => {
-                        let error = JsonRpcOutgoing::error(
-                            Some(serde_json::Value::Null),
-                            McpError::parse_error(e.to_string()),
-                        );
-                        if let Ok(error_str) = router::serialize_response(&error) {
-                            let _ = sender.send(Message::Text(error_str.into())).await;
-                        }
-                        continue;
-                    }
-                };
-
-                // `initialize` mutates `session_state`, so it must run inline
-                // on the loop task.
-                if parsed.method == "initialize" {
-                    // Capture what the client can do before dispatching, so
-                    // capability checks in `sample()` / `elicit_*()` have it.
-                    *session_handle.client_capabilities.write().await = Some(
-                        super::client_capabilities_from_initialize_params(parsed.params.as_ref()),
-                    );
-
-                    let ctx = RequestContext::websocket().with_session(session_handle.clone());
-                    let response = if matches!(session_state, SessionState::Initialized(_)) {
-                        JsonRpcOutgoing::error(
-                            parsed.id.clone(),
-                            McpError::invalid_request("Session already initialized"),
-                        )
-                    } else {
-                        let resp = router::route_request_with_config(
-                            &handler,
-                            parsed,
-                            &ctx,
-                            config.as_ref(),
-                        )
-                        .await;
-                        if let Some(ref result) = resp.result
-                            && let Some(v) =
-                                result.get("protocolVersion").and_then(|v| v.as_str())
+                        if let Some(ref limiter) = rate_limiter
+                            && !limiter.check(Some(&client_id))
                         {
-                            let version = ProtocolVersion::from(v);
-                            tracing::info!(
-                                version = %version,
-                                client = %client_addr,
-                                "Protocol version negotiated"
+                            tracing::warn!(
+                                "Rate limit exceeded for WebSocket message from {}",
+                                client_id
                             );
-                            session_state = SessionState::Initialized(
-                                super::InitializedSessionState::new(version),
-                            );
-                        }
-                        resp
-                    };
-                    if response.should_send()
-                        && let Ok(response_str) = router::serialize_response(&response)
-                        && sender
-                            .send(Message::Text(response_str.into()))
-                            .await
-                            .is_err()
-                    {
-                        tracing::error!("Failed to send WebSocket response");
-                        break;
-                    }
-                    continue;
-                }
-
-                // `notifications/cancelled` is consumed inline: parse the
-                // referenced request id and signal the matching handler.
-                if parsed.method == "notifications/cancelled" {
-                    if let Some(req_id) = parsed
-                        .params
-                        .as_ref()
-                        .and_then(|p| p.get("requestId"))
-                    {
-                        let key = jsonrpc_id_key(req_id);
-                        if let Some((_, token)) = pending_handlers.remove(&key) {
-                            let reason = parsed
-                                .params
-                                .as_ref()
-                                .and_then(|p| p.get("reason"))
-                                .and_then(|r| r.as_str())
-                                .unwrap_or("client requested cancellation");
-                            tracing::debug!(
-                                request_id = %key,
-                                reason = %reason,
-                                "Cancelling in-flight handler",
-                            );
-                            token.cancel();
-                        }
-                    }
-                    continue;
-                }
-
-                // `notifications/initialized` is a lifecycle no-op (no id, no
-                // response). Route it inline since there's nothing to spawn.
-                if parsed.method == "notifications/initialized" {
-                    let ctx = RequestContext::websocket().with_session(session_handle.clone());
-                    let _ = router::route_request(&handler, parsed, &ctx).await;
-                    continue;
-                }
-
-                if parsed.method == "ping"
-                    && matches!(session_state, SessionState::Uninitialized)
-                {
-                    // Lifecycle permits ping before initialize has completed.
-                    let ctx = RequestContext::websocket().with_session(session_handle.clone());
-                    let response = router::route_request(&handler, parsed, &ctx).await;
-                    if response.should_send()
-                        && let Ok(response_str) = router::serialize_response(&response)
-                        && sender.send(Message::Text(response_str.into())).await.is_err()
-                    {
-                        break;
-                    }
-                    continue;
-                }
-
-                // All other methods: enforce post-init gating, then spawn the
-                // handler so the receive loop keeps draining (notably
-                // `notifications/cancelled` from the same client).
-                let is_notification = parsed.id.is_none();
-                let version = match &mut session_state {
-                    SessionState::Initialized(session) => session.protocol_version().clone(),
-                    SessionState::Uninitialized => {
-                        if !is_notification {
                             let error = JsonRpcOutgoing::error(
-                                parsed.id.clone(),
-                                McpError::invalid_request(
-                                    "Server not initialized. Send 'initialize' first.",
-                                ),
+                                Some(serde_json::Value::Null),
+                                McpError::rate_limited("Rate limit exceeded"),
                             );
-                            if let Ok(error_str) = router::serialize_response(&error)
+                            if let Ok(response_str) = router::serialize_response(&error) {
+                                let _ = sender.send(Message::Text(response_str.into())).await;
+                            }
+                            continue;
+                        }
+
+                        // Parse once as a generic JSON-RPC message: the frame may be a
+                        // *response* to something this server asked the client, not a
+                        // request. Treating those as requests would answer the client's
+                        // reply with a parse error.
+                        let value: serde_json::Value = match serde_json::from_str(&text) {
+                            Ok(value) => value,
+                            Err(e) => {
+                                let error = JsonRpcOutgoing::error(
+                                    Some(serde_json::Value::Null),
+                                    McpError::parse_error(e.to_string()),
+                                );
+                                if let Ok(error_str) = router::serialize_response(&error) {
+                                    let _ = sender.send(Message::Text(error_str.into())).await;
+                                }
+                                continue;
+                            }
+                        };
+
+                        if let Some(id) = value.get("id")
+                            && (value.get("result").is_some() || value.get("error").is_some())
+                        {
+                            if let Some(tx) = pending_requests.remove(id) {
+                                if let Some(error) = value.get("error") {
+                                    let mcp_error = serde_json::from_value::<
+                                        turbomcp_core::jsonrpc::JsonRpcError,
+                                    >(error.clone())
+                                        .map(|e| McpError::new(ErrorKind::from_i32(e.code), e.message))
+                                        .unwrap_or_else(|_| {
+                                            McpError::internal("Failed to parse error response")
+                                        });
+                                    let _ = tx.send(Err(mcp_error));
+                                } else {
+                                    let result =
+                                        value.get("result").cloned().unwrap_or(serde_json::Value::Null);
+                                    let _ = tx.send(Ok(result));
+                                }
+                            } else {
+                                tracing::warn!(id = %id, "Received response for unknown request ID");
+                            }
+                            continue;
+                        }
+
+                        let parsed = match router::parse_request_from_value(value) {
+                            Ok(req) => req,
+                            Err(e) => {
+                                let error = JsonRpcOutgoing::error(
+                                    Some(serde_json::Value::Null),
+                                    McpError::parse_error(e.to_string()),
+                                );
+                                if let Ok(error_str) = router::serialize_response(&error) {
+                                    let _ = sender.send(Message::Text(error_str.into())).await;
+                                }
+                                continue;
+                            }
+                        };
+
+                        // `initialize` mutates `session_state`, so it must run inline
+                        // on the loop task.
+                        if parsed.method == "initialize" {
+                            // Capture what the client can do before dispatching, so
+                            // capability checks in `sample()` / `elicit_*()` have it.
+                            *session_handle.client_capabilities.write().await = Some(
+                                super::client_capabilities_from_initialize_params(parsed.params.as_ref()),
+                            );
+
+                            let ctx = RequestContext::websocket().with_session(session_handle.clone());
+                            let response = if matches!(session_state, SessionState::Initialized(_)) {
+                                JsonRpcOutgoing::error(
+                                    parsed.id.clone(),
+                                    McpError::invalid_request("Session already initialized"),
+                                )
+                            } else {
+                                let resp = router::route_request_with_config(
+                                    &handler,
+                                    parsed,
+                                    &ctx,
+                                    config.as_ref(),
+                                )
+                                .await;
+                                if let Some(ref result) = resp.result
+                                    && let Some(v) =
+                                        result.get("protocolVersion").and_then(|v| v.as_str())
+                                {
+                                    let version = ProtocolVersion::from(v);
+                                    tracing::info!(
+                                        version = %version,
+                                        client = %client_addr,
+                                        "Protocol version negotiated"
+                                    );
+                                    session_state = SessionState::Initialized(
+                                        super::InitializedSessionState::new(version),
+                                    );
+                                }
+                                resp
+                            };
+                            if response.should_send()
+                                && let Ok(response_str) = router::serialize_response(&response)
                                 && sender
-                                    .send(Message::Text(error_str.into()))
+                                    .send(Message::Text(response_str.into()))
                                     .await
                                     .is_err()
                             {
+                                tracing::error!("Failed to send WebSocket response");
                                 break;
                             }
+                            continue;
                         }
-                        continue;
+
+                        // `notifications/cancelled` is consumed inline: parse the
+                        // referenced request id and signal the matching handler.
+                        if parsed.method == "notifications/cancelled" {
+                            if let Some(req_id) = parsed
+                                .params
+                                .as_ref()
+                                .and_then(|p| p.get("requestId"))
+                            {
+                                let key = jsonrpc_id_key(req_id);
+                                if let Some((_, token)) = pending_handlers.remove(&key) {
+                                    let reason = parsed
+                                        .params
+                                        .as_ref()
+                                        .and_then(|p| p.get("reason"))
+                                        .and_then(|r| r.as_str())
+                                        .unwrap_or("client requested cancellation");
+                                    tracing::debug!(
+                                        request_id = %key,
+                                        reason = %reason,
+                                        "Cancelling in-flight handler",
+                                    );
+                                    token.cancel();
+                                }
+                            }
+                            continue;
+                        }
+
+                        // `notifications/initialized` is a lifecycle no-op (no id, no
+                        // response). Route it inline since there's nothing to spawn.
+                        if parsed.method == "notifications/initialized" {
+                            let ctx = RequestContext::websocket().with_session(session_handle.clone());
+                            let _ = router::route_request(&handler, parsed, &ctx).await;
+                            continue;
+                        }
+
+                        if parsed.method == "ping"
+                            && matches!(session_state, SessionState::Uninitialized)
+                        {
+                            // Lifecycle permits ping before initialize has completed.
+                            let ctx = RequestContext::websocket().with_session(session_handle.clone());
+                            let response = router::route_request(&handler, parsed, &ctx).await;
+                            if response.should_send()
+                                && let Ok(response_str) = router::serialize_response(&response)
+                                && sender.send(Message::Text(response_str.into())).await.is_err()
+                            {
+                                break;
+                            }
+                            continue;
+                        }
+
+                        // All other methods: enforce post-init gating, then spawn the
+                        // handler so the receive loop keeps draining (notably
+                        // `notifications/cancelled` from the same client).
+                        let is_notification = parsed.id.is_none();
+                        let version = match &mut session_state {
+                            SessionState::Initialized(session) => session.protocol_version().clone(),
+                            SessionState::Uninitialized => {
+                                if !is_notification {
+                                    let error = JsonRpcOutgoing::error(
+                                        parsed.id.clone(),
+                                        McpError::invalid_request(
+                                            "Server not initialized. Send 'initialize' first.",
+                                        ),
+                                    );
+                                    if let Ok(error_str) = router::serialize_response(&error)
+                                        && sender
+                                            .send(Message::Text(error_str.into()))
+                                            .await
+                                            .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                                continue;
+                            }
+                        };
+
+                        let handler_clone = handler.clone();
+                        let resp_tx = response_tx.clone();
+                        let token = CancellationToken::new();
+                        // Kept so the spawned task can tell whether it was cancelled
+                        // before publishing its result.
+                        let cancel_signal = token.clone();
+                        let cancel_key = parsed.id.as_ref().map(jsonrpc_id_key);
+                        if let Some(ref key) = cancel_key
+                            && pending_handlers.insert(key.clone(), token.clone()).is_some()
+                        {
+                            // Sequential id reuse is fine and no longer rejected.
+                            // *Concurrent* reuse is not: the client cannot match two
+                            // responses carrying one id, and this overwrote the first
+                            // handler's cancellation token. Report it rather than
+                            // refusing to serve.
+                            tracing::warn!(
+                                request_id = %key,
+                                "Request id reused while the first is still in flight",
+                            );
+                        }
+                        let ctx = RequestContext::websocket()
+                            .with_session(session_handle.clone())
+                            .with_cancellation_token(Arc::new(token) as Arc<dyn Cancellable>);
+        let guard = super::PendingHandlerGuard::new(
+                            Arc::clone(&pending_handlers),
+                            cancel_key,
+                        );
+
+                        tokio::spawn(async move {
+                            // RAII cleanup runs on every exit path, including handler
+                            // panic.
+                            let _guard = guard;
+                            let response = super::route_catching_panics(
+                                &handler_clone, parsed, &ctx, &version,
+                            )
+                            .await;
+                            // See the note in line.rs: a cancelled request is not
+                            // answered, otherwise cancellation only stopped the await.
+                            if cancel_signal.is_cancelled() {
+                                return;
+                            }
+                            let _ = resp_tx.send(response).await;
+                        });
                     }
-                };
-
-                let handler_clone = handler.clone();
-                let resp_tx = response_tx.clone();
-                let token = CancellationToken::new();
-                let cancel_key = parsed.id.as_ref().map(jsonrpc_id_key);
-                if let Some(ref key) = cancel_key
-                    && pending_handlers.insert(key.clone(), token.clone()).is_some()
-                {
-                    // Sequential id reuse is fine and no longer rejected.
-                    // *Concurrent* reuse is not: the client cannot match two
-                    // responses carrying one id, and this overwrote the first
-                    // handler's cancellation token. Report it rather than
-                    // refusing to serve.
-                    tracing::warn!(
-                        request_id = %key,
-                        "Request id reused while the first is still in flight",
-                    );
                 }
-                let ctx = RequestContext::websocket()
-                    .with_session(session_handle.clone())
-                    .with_cancellation_token(Arc::new(token) as Arc<dyn Cancellable>);
-                let guard = super::PendingHandlerGuard::new(
-                    Arc::clone(&pending_handlers),
-                    cancel_key,
-                );
-
-                tokio::spawn(async move {
-                    // RAII cleanup runs on every exit path, including handler
-                    // panic.
-                    let _guard = guard;
-                    let response = super::route_catching_panics(
-                        &handler_clone, parsed, &ctx, &version,
-                    )
-                    .await;
-                    let _ = resp_tx.send(response).await;
-                });
-            }
-        }
     }
 
     // Handlers awaiting a client reply will never get one now that the socket

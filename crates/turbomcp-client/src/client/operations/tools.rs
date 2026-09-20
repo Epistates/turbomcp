@@ -207,6 +207,31 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::invalid_request("Client not initialized"));
         }
 
+        self.call_tool_response_with_progress(name, arguments, task, None)
+            .await
+    }
+
+    /// `tools/call`, asking the server to report progress against `token`.
+    ///
+    /// The progress utility is opt-in from the *caller's* side: a server may
+    /// only send `notifications/progress` for a token the client supplied in
+    /// the request's `_meta`, so without this there was no way to receive any.
+    /// Register a
+    /// [`ProgressHandler`](crate::handlers::ProgressHandler) to see them.
+    ///
+    /// The token must be unique across this client's in-flight requests — it
+    /// is what correlates a notification back to the call that produced it.
+    pub async fn call_tool_response_with_progress(
+        &self,
+        name: &str,
+        arguments: Option<HashMap<String, serde_json::Value>>,
+        task: Option<TaskMetadata>,
+        progress_token: Option<serde_json::Value>,
+    ) -> Result<CallToolResponse> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
+            return Err(Error::invalid_request("Client not initialized"));
+        }
+
         let is_task_augmented = task.is_some();
         let request_data = CallToolRequest {
             name: name.to_string(),
@@ -215,10 +240,16 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             _meta: None,
         };
 
+        let mut params = serde_json::to_value(&request_data)?;
+        if let Some(token) = progress_token {
+            // `_meta.progressToken` is where the spec puts it, on any request.
+            params["_meta"] = serde_json::json!({ "progressToken": token });
+        }
+
         let raw_result: serde_json::Value = self
             .inner
             .protocol
-            .request("tools/call", Some(serde_json::to_value(&request_data)?))
+            .request("tools/call", Some(params))
             .await?;
 
         if is_task_augmented {

@@ -32,6 +32,15 @@ use turbomcp_types::{ClientCapabilities, ProtocolVersion};
 use crate::context::RequestContext;
 use crate::router::{self, JsonRpcIncoming, JsonRpcOutgoing};
 
+/// How long a server-to-client request waits for the client's reply.
+///
+/// Sampling and elicitation block a handler on the peer. Without a bound the
+/// handler waits forever on a client that never answers — a hung tool call and
+/// a leaked task per occurrence, entirely under the peer's control. Sixty
+/// seconds is long enough for a human-in-the-loop approval, which is the
+/// slowest legitimate case.
+pub(crate) const SERVER_REQUEST_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(60);
+
 /// Route a request, turning a handler panic into a JSON-RPC error response.
 ///
 /// A panicking handler previously produced **no response at all**: the spawned

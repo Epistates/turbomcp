@@ -182,9 +182,17 @@ impl McpSession for ChannelSessionHandle {
                 .await
                 .map_err(|_| McpError::internal("Session closed"))?;
 
-            response_rx
-                .await
-                .map_err(|_| McpError::internal("Response channel closed"))?
+            // Bounded: an unanswered server-to-client request would otherwise
+            // park the handler forever, which is a hung tool call and a leaked
+            // task per occurrence, entirely at the peer's discretion.
+            match tokio::time::timeout(super::SERVER_REQUEST_TIMEOUT, response_rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err(McpError::internal("Response channel closed")),
+                Err(_) => Err(McpError::timeout(format!(
+                    "client did not answer {method} within {:?}",
+                    super::SERVER_REQUEST_TIMEOUT
+                ))),
+            }
         })
     }
 
@@ -456,6 +464,9 @@ async fn run_server_loop<H: McpHandler>(
                                         "Request id reused while the first is still in flight",
                                     );
                                 }
+                                // Kept so the spawned task can tell whether it
+                                // was cancelled before publishing its result.
+                                let cancel_signal = token.clone();
                                 let ctx = RequestContext::channel()
                                     .with_session(session)
                                     .with_cancellation_token(
@@ -474,6 +485,10 @@ async fn run_server_loop<H: McpHandler>(
                                         &h, request, &ctx, &version,
                                     )
                                     .await;
+                                    // See the note in line.rs.
+                                    if cancel_signal.is_cancelled() {
+                                        return;
+                                    }
                                     let _ = resp_tx.send(response).await;
                                 });
                             }

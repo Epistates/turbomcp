@@ -392,3 +392,142 @@ async fn a_panicking_handler_still_answers() {
         .unwrap();
     assert_eq!(recv_json(&mut socket).await["id"], 8);
 }
+
+/// Cancelling a request must actually suppress its response. Before 3.5.0 the
+/// notification only signalled the token — the handler ran to completion and
+/// its result was written anyway, so the client received a reply for an id it
+/// had been told to forget, and cancellation was cosmetic.
+#[tokio::test]
+async fn a_cancelled_request_is_not_answered() {
+    #[derive(Clone)]
+    struct Slow;
+
+    impl McpHandler for Slow {
+        fn server_info(&self) -> ServerInfo {
+            ServerInfo::new("slow", "1.0.0")
+        }
+        fn list_tools(&self) -> Vec<Tool> {
+            vec![Tool {
+                name: "wait".to_string(),
+                ..Default::default()
+            }]
+        }
+        fn list_resources(&self) -> Vec<Resource> {
+            Vec::new()
+        }
+        fn list_prompts(&self) -> Vec<Prompt> {
+            Vec::new()
+        }
+        fn call_tool<'a>(
+            &'a self,
+            _name: &'a str,
+            _args: Value,
+            ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ToolResult>> + Send + 'a {
+            async move {
+                // Long enough that the cancellation lands first, and
+                // cooperative so a well-behaved handler notices.
+                for _ in 0..100 {
+                    if ctx.is_cancelled() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Ok(ToolResult::text("finished anyway"))
+            }
+        }
+        fn read_resource<'a>(
+            &'a self,
+            uri: &'a str,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ResourceResult>> + Send + 'a {
+            async move { Err(McpError::resource_not_found(uri)) }
+        }
+        fn get_prompt<'a>(
+            &'a self,
+            name: &'a str,
+            _args: Option<Value>,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<PromptResult>> + Send + 'a {
+            async move { Err(McpError::prompt_not_found(name)) }
+        }
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    let bind = addr.to_string();
+    let serve = bind.clone();
+    tokio::spawn(async move {
+        let _ = turbomcp_server::transport::websocket::run(&Slow, &serve).await;
+    });
+    for _ in 0..100 {
+        if TcpListener::bind(addr).await.is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let (mut socket, _) = tokio_tungstenite::connect_async(&format!("ws://{bind}/ws"))
+        .await
+        .expect("failed to connect");
+    socket
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "clientInfo": { "name": "t", "version": "1" },
+                    "capabilities": {}
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let _ = recv_json(&mut socket).await;
+
+    socket
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0", "id": 42, "method": "tools/call",
+                "params": { "name": "wait", "arguments": {} }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    socket
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/cancelled",
+                "params": { "requestId": 42, "reason": "user aborted" }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    // Nothing may arrive for id 42. Prove the connection is still live by
+    // round-tripping a ping and checking it is what comes back.
+    socket
+        .send(Message::Text(
+            json!({ "jsonrpc": "2.0", "id": 99, "method": "ping" })
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    let next = recv_json(&mut socket).await;
+    assert_eq!(
+        next["id"], 99,
+        "the cancelled request must not be answered; got {next}"
+    );
+}

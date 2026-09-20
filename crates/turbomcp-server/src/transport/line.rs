@@ -89,9 +89,17 @@ impl McpSession for SessionHandle {
                 .await
                 .map_err(|_| McpError::internal("Session closed"))?;
 
-            response_rx
-                .await
-                .map_err(|_| McpError::internal("Response channel closed"))?
+            // Bounded: an unanswered server-to-client request would otherwise
+            // park the handler forever, which is a hung tool call and a leaked
+            // task per occurrence, entirely at the peer's discretion.
+            match tokio::time::timeout(super::SERVER_REQUEST_TIMEOUT, response_rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) => Err(McpError::internal("Response channel closed")),
+                Err(_) => Err(McpError::timeout(format!(
+                    "client did not answer {method} within {:?}",
+                    super::SERVER_REQUEST_TIMEOUT
+                ))),
+            }
         })
     }
 
@@ -222,328 +230,341 @@ impl<H: McpHandler> LineTransportRunner<H> {
 
         loop {
             tokio::select! {
-                biased;
+                            biased;
 
-                // Incoming from client
-                maybe_line = line_rx.recv() => {
-                    // Channel closed: the reader task hit EOF or an error it
-                    // already reported.
-                    let Some(line_result) = maybe_line else { break };
-                    let line = line_result
-                        .map_err(|e| McpError::internal(format!("Failed to read line: {e}")))?;
+                            // Incoming from client
+                            maybe_line = line_rx.recv() => {
+                                // Channel closed: the reader task hit EOF or an error it
+                                // already reported.
+                                let Some(line_result) = maybe_line else { break };
+                                let line = line_result
+                                    .map_err(|e| McpError::internal(format!("Failed to read line: {e}")))?;
 
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
+                                let trimmed = line.trim();
+                                if trimmed.is_empty() {
+                                    continue;
+                                }
 
-                    // Check message size limit to prevent DoS. Reported as an
-                    // error and skipped, so an oversized frame does not take
-                    // the connection down with it.
-                    if line.len() > MAX_MESSAGE_SIZE {
-                        self.send_error(
-                            &mut writer,
-                            None,
-                            McpError::invalid_request(format!(
-                                "Message exceeds maximum size of {MAX_MESSAGE_SIZE} bytes",
-                            )),
-                        ).await?;
-                        continue;
-                    }
+                                // Check message size limit to prevent DoS. Reported as an
+                                // error and skipped, so an oversized frame does not take
+                                // the connection down with it.
+                                if line.len() > MAX_MESSAGE_SIZE {
+                                    self.send_error(
+                                        &mut writer,
+                                        None,
+                                        McpError::invalid_request(format!(
+                                            "Message exceeds maximum size of {MAX_MESSAGE_SIZE} bytes",
+                                        )),
+                                    ).await?;
+                                    continue;
+                                }
 
-                    // Try parsing as a general JSON-RPC message
-                    let value: serde_json::Value = match serde_json::from_str(trimmed) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            self.send_error(&mut writer, None, McpError::parse_error(e.to_string())).await?;
-                            continue;
-                        }
-                    };
-
-                    // Check if it's a response to one of our server-to-client requests
-                    if let Some(id) = value.get("id") && (value.get("result").is_some() || value.get("error").is_some()) {
-                        if let Some(tx) = pending_requests.remove(id) {
-                            if let Some(error) = value.get("error") {
-                                let mcp_error = serde_json::from_value::<turbomcp_core::jsonrpc::JsonRpcError>(error.clone())
-                                    .map(|e| McpError::new(ErrorKind::from_i32(e.code), e.message))
-                                    .unwrap_or_else(|_| McpError::internal("Failed to parse error response"));
-                                let _ = tx.send(Err(mcp_error));
-                            } else {
-                                let result = value.get("result").cloned().unwrap_or(serde_json::Value::Null);
-                                let _ = tx.send(Ok(result));
-                            }
-                        } else {
-                            tracing::warn!(id = %id, "Received response for unknown request ID");
-                        }
-                    } else {
-                        // Reuse the already-parsed `Value` rather than re-parsing
-                        // the raw line — saves one full JSON parse per message.
-                        match router::parse_request_from_value(value) {
-                            Ok(request) => {
-                                if request.method == "initialize" {
-                                    let client_capabilities =
-                                        super::client_capabilities_from_initialize_params(
-                                            request.params.as_ref(),
-                                        );
-
-                                    // Reject duplicate initialize per MCP spec.
-                                    if matches!(session_state, SessionState::Initialized(_)) {
-                                        self.send_error(
-                                            &mut writer,
-                                            request.id.clone(),
-                                            McpError::invalid_request(
-                                                "Session already initialized",
-                                            ),
-                                        )
-                                        .await?;
+                                // Try parsing as a general JSON-RPC message
+                                let value: serde_json::Value = match serde_json::from_str(trimmed) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        self.send_error(&mut writer, None, McpError::parse_error(e.to_string())).await?;
                                         continue;
                                     }
+                                };
 
-                                    // Handle initialize inline (not spawned) so we can
-                                    // capture the negotiated protocol version. Per the
-                                    // MCP spec, initialize is always the first request
-                                    // and the client waits for the response, so there
-                                    // is no deadlock risk from blocking the loop here.
-                                    //
-                                    // NOTE: Handlers MUST NOT call session.call() during
-                                    // initialize dispatch — the transport loop is blocked
-                                    // here and cannot process the server-to-client
-                                    // request, which would deadlock.
-                                    let ctx = ctx_factory();
-                                    let response = router::route_request_with_config(
-                                        &self.handler,
-                                        request,
-                                        &ctx,
-                                        self.config.as_ref(),
-                                    )
-                                    .await;
-
-                                    // Extract the negotiated version from a successful
-                                    // response. On failure (error response), session
-                                    // stays Uninitialized and subsequent non-init
-                                    // requests will be rejected.
-                                    if let Some(ref result) = response.result
-                                        && let Some(v) =
-                                            result.get("protocolVersion").and_then(|v| v.as_str())
-                                    {
-                                        let version = ProtocolVersion::from(v);
-                                        tracing::info!(
-                                            version = %version,
-                                            "Protocol version negotiated"
-                                        );
-                                        session_state = SessionState::Initialized(
-                                            super::InitializedSessionState::new(version),
-                                        );
-                                        *session_handle.client_capabilities.write().await =
-                                            Some(client_capabilities);
-                                    }
-
-                                    if response.should_send() {
-                                        self.send_response(&mut writer, &response).await?;
-                                    }
-                                } else if request.method == "notifications/cancelled" {
-                                    // MCP 2025-11-25 §Cancellation: signal the
-                                    // matching in-flight handler. Notifications
-                                    // have no response, so we consume here.
-                                    if let Some(req_id) = request
-                                        .params
-                                        .as_ref()
-                                        .and_then(|p| p.get("requestId"))
-                                    {
-                                        let key = jsonrpc_id_key(req_id);
-                                        if let Some((_, token)) =
-                                            pending_handlers.remove(&key)
-                                        {
-                                            let reason = request
-                                                .params
-                                                .as_ref()
-                                                .and_then(|p| p.get("reason"))
-                                                .and_then(|r| r.as_str())
-                                                .unwrap_or("client requested cancellation");
-                                            tracing::debug!(
-                                                request_id = %key,
-                                                reason = %reason,
-                                                "Cancelling in-flight handler",
-                                            );
-                                            token.cancel();
+                                // Check if it's a response to one of our server-to-client requests
+                                if let Some(id) = value.get("id") && (value.get("result").is_some() || value.get("error").is_some()) {
+                                    if let Some(tx) = pending_requests.remove(id) {
+                                        if let Some(error) = value.get("error") {
+                                            let mcp_error = serde_json::from_value::<turbomcp_core::jsonrpc::JsonRpcError>(error.clone())
+                                                .map(|e| McpError::new(ErrorKind::from_i32(e.code), e.message))
+                                                .unwrap_or_else(|_| McpError::internal("Failed to parse error response"));
+                                            let _ = tx.send(Err(mcp_error));
+                                        } else {
+                                            let result = value.get("result").cloned().unwrap_or(serde_json::Value::Null);
+                                            let _ = tx.send(Ok(result));
                                         }
-                                    }
-                                } else if request.method == "notifications/initialized" {
-                                    // Lifecycle notification — allowed pre-init.
-                                    let handler = self.handler.clone();
-                                    let resp_tx = response_tx.clone();
-                                    let ctx = ctx_factory().with_session(session_handle.clone());
-
-                                    tokio::spawn(async move {
-                                        let response = router::route_request(
-                                            &handler, request, &ctx,
-                                        )
-                                        .await;
-                                        let _ = resp_tx.send(response).await;
-                                    });
-                                } else if request.method == "ping"
-                                    && matches!(session_state, SessionState::Uninitialized)
-                                {
-                                    // Lifecycle permits ping before initialize has completed.
-                                    let ctx = ctx_factory().with_session(session_handle.clone());
-                                    let response =
-                                        router::route_request(&self.handler, request, &ctx).await;
-                                    if response.should_send() {
-                                        self.send_response(&mut writer, &response).await?;
+                                    } else {
+                                        tracing::warn!(id = %id, "Received response for unknown request ID");
                                     }
                                 } else {
-                                    // All other requests require a successful initialize.
-                                    // Notifications (id=None) MUST NOT receive responses
-                                    // per JSON-RPC 2.0, so rejection paths stay silent.
-                                    let is_notification = request.id.is_none();
-                                    let version = match &mut session_state {
-                                        SessionState::Initialized(session) => {
-                                            session.protocol_version().clone()
-                                        }
-                                        SessionState::Uninitialized => {
-                                            if !is_notification {
-                                                self.send_error(
-                                                    &mut writer,
-                                                    request.id.clone(),
-                                                    McpError::invalid_request(
-                                                        "Server not initialized. Send 'initialize' first.",
-                                                    ),
+                                    // Reuse the already-parsed `Value` rather than re-parsing
+                                    // the raw line — saves one full JSON parse per message.
+                                    match router::parse_request_from_value(value) {
+                                        Ok(request) => {
+                                            if request.method == "initialize" {
+                                                let client_capabilities =
+                                                    super::client_capabilities_from_initialize_params(
+                                                        request.params.as_ref(),
+                                                    );
+
+                                                // Reject duplicate initialize per MCP spec.
+                                                if matches!(session_state, SessionState::Initialized(_)) {
+                                                    self.send_error(
+                                                        &mut writer,
+                                                        request.id.clone(),
+                                                        McpError::invalid_request(
+                                                            "Session already initialized",
+                                                        ),
+                                                    )
+                                                    .await?;
+                                                    continue;
+                                                }
+
+                                                // Handle initialize inline (not spawned) so we can
+                                                // capture the negotiated protocol version. Per the
+                                                // MCP spec, initialize is always the first request
+                                                // and the client waits for the response, so there
+                                                // is no deadlock risk from blocking the loop here.
+                                                //
+                                                // NOTE: Handlers MUST NOT call session.call() during
+                                                // initialize dispatch — the transport loop is blocked
+                                                // here and cannot process the server-to-client
+                                                // request, which would deadlock.
+                                                let ctx = ctx_factory();
+                                                let response = router::route_request_with_config(
+                                                    &self.handler,
+                                                    request,
+                                                    &ctx,
+                                                    self.config.as_ref(),
                                                 )
-                                                .await?;
+                                                .await;
+
+                                                // Extract the negotiated version from a successful
+                                                // response. On failure (error response), session
+                                                // stays Uninitialized and subsequent non-init
+                                                // requests will be rejected.
+                                                if let Some(ref result) = response.result
+                                                    && let Some(v) =
+                                                        result.get("protocolVersion").and_then(|v| v.as_str())
+                                                {
+                                                    let version = ProtocolVersion::from(v);
+                                                    tracing::info!(
+                                                        version = %version,
+                                                        "Protocol version negotiated"
+                                                    );
+                                                    session_state = SessionState::Initialized(
+                                                        super::InitializedSessionState::new(version),
+                                                    );
+                                                    *session_handle.client_capabilities.write().await =
+                                                        Some(client_capabilities);
+                                                }
+
+                                                if response.should_send() {
+                                                    self.send_response(&mut writer, &response).await?;
+                                                }
+                                            } else if request.method == "notifications/cancelled" {
+                                                // MCP 2025-11-25 §Cancellation: signal the
+                                                // matching in-flight handler. Notifications
+                                                // have no response, so we consume here.
+                                                if let Some(req_id) = request
+                                                    .params
+                                                    .as_ref()
+                                                    .and_then(|p| p.get("requestId"))
+                                                {
+                                                    let key = jsonrpc_id_key(req_id);
+                                                    if let Some((_, token)) =
+                                                        pending_handlers.remove(&key)
+                                                    {
+                                                        let reason = request
+                                                            .params
+                                                            .as_ref()
+                                                            .and_then(|p| p.get("reason"))
+                                                            .and_then(|r| r.as_str())
+                                                            .unwrap_or("client requested cancellation");
+                                                        tracing::debug!(
+                                                            request_id = %key,
+                                                            reason = %reason,
+                                                            "Cancelling in-flight handler",
+                                                        );
+                                                        token.cancel();
+                                                    }
+                                                }
+                                            } else if request.method == "notifications/initialized" {
+                                                // Lifecycle notification — allowed pre-init.
+                                                let handler = self.handler.clone();
+                                                let resp_tx = response_tx.clone();
+                                                let ctx = ctx_factory().with_session(session_handle.clone());
+
+                                                tokio::spawn(async move {
+                                                    let response = router::route_request(
+                                                        &handler, request, &ctx,
+                                                    )
+                                                    .await;
+                                                    let _ = resp_tx.send(response).await;
+                                                });
+                                            } else if request.method == "ping"
+                                                && matches!(session_state, SessionState::Uninitialized)
+                                            {
+                                                // Lifecycle permits ping before initialize has completed.
+                                                let ctx = ctx_factory().with_session(session_handle.clone());
+                                                let response =
+                                                    router::route_request(&self.handler, request, &ctx).await;
+                                                if response.should_send() {
+                                                    self.send_response(&mut writer, &response).await?;
+                                                }
+                                            } else {
+                                                // All other requests require a successful initialize.
+                                                // Notifications (id=None) MUST NOT receive responses
+                                                // per JSON-RPC 2.0, so rejection paths stay silent.
+                                                let is_notification = request.id.is_none();
+                                                let version = match &mut session_state {
+                                                    SessionState::Initialized(session) => {
+                                                        session.protocol_version().clone()
+                                                    }
+                                                    SessionState::Uninitialized => {
+                                                        if !is_notification {
+                                                            self.send_error(
+                                                                &mut writer,
+                                                                request.id.clone(),
+                                                                McpError::invalid_request(
+                                                                    "Server not initialized. Send 'initialize' first.",
+                                                                ),
+                                                            )
+                                                            .await?;
+                                                        }
+                                                        continue;
+                                                    }
+                                                };
+
+                                                // Spawn handler on a separate task to prevent
+                                                // deadlocks when the handler uses session.call()
+                                                // for sampling/elicitation. Install a per-request
+                                                // CancellationToken into the context and register
+                                                // it so `notifications/cancelled` from the client
+                                                // can signal the handler.
+                                                let handler = self.handler.clone();
+                                                let session = session_handle.clone();
+                                                let resp_tx = response_tx.clone();
+                                                let token = CancellationToken::new();
+                                                // Kept so the spawned task can tell whether it was cancelled
+                                                // before publishing its result.
+                                                let cancel_signal = token.clone();
+                                                let cancel_key = request.id.as_ref().map(jsonrpc_id_key);
+                                                if let Some(ref key) = cancel_key
+                                                    && pending_handlers
+                                                        .insert(key.clone(), token.clone())
+                                                        .is_some()
+                                                {
+                                                    // Sequential id reuse is fine and no longer rejected.
+                                                    // *Concurrent* reuse is not: the client cannot match
+                                                    // two responses carrying one id, and this overwrote the
+                                                    // first handler's cancellation token. Report it rather
+                                                    // than refusing to serve.
+                                                    tracing::warn!(
+                                                        request_id = %key,
+                                                        "Request id reused while the first is still in flight",
+                                                    );
+                                                }
+                                                let ctx = ctx_factory()
+                                                    .with_session(session)
+                                                    .with_cancellation_token(
+                                                        Arc::new(token) as Arc<dyn Cancellable>,
+                                                    );
+            let guard = super::PendingHandlerGuard::new(
+                                                    Arc::clone(&pending_handlers),
+                                                    cancel_key,
+                                                );
+
+                                                tokio::spawn(async move {
+                                                    // RAII: the guard removes the registry
+                                                    // entry on every exit path, including a
+                                                    // panic in the handler.
+                                                    let _guard = guard;
+                                                    let response = super::route_catching_panics(
+                                                        &handler, request, &ctx, &version,
+                                                    )
+                                                    .await;
+                                                    // A cancelled request gets no response.
+                                                    // The client has already been told to
+                                                    // forget this id, so answering it now
+                                                    // is an unsolicited reply — and it is
+                                                    // what made cancellation cosmetic:
+                                                    // handlers stopped being awaited but
+                                                    // their results were sent regardless.
+                                                    if cancel_signal.is_cancelled() {
+                                                        return;
+                                                    }
+                                                    // If channel is closed the transport loop has exited; ignore.
+                                                    let _ = resp_tx.send(response).await;
+                                                });
                                             }
-                                            continue;
                                         }
-                                    };
-
-                                    // Spawn handler on a separate task to prevent
-                                    // deadlocks when the handler uses session.call()
-                                    // for sampling/elicitation. Install a per-request
-                                    // CancellationToken into the context and register
-                                    // it so `notifications/cancelled` from the client
-                                    // can signal the handler.
-                                    let handler = self.handler.clone();
-                                    let session = session_handle.clone();
-                                    let resp_tx = response_tx.clone();
-                                    let token = CancellationToken::new();
-                                    let cancel_key = request.id.as_ref().map(jsonrpc_id_key);
-                                    if let Some(ref key) = cancel_key
-                                        && pending_handlers
-                                            .insert(key.clone(), token.clone())
-                                            .is_some()
-                                    {
-                                        // Sequential id reuse is fine and no longer rejected.
-                                        // *Concurrent* reuse is not: the client cannot match
-                                        // two responses carrying one id, and this overwrote the
-                                        // first handler's cancellation token. Report it rather
-                                        // than refusing to serve.
-                                        tracing::warn!(
-                                            request_id = %key,
-                                            "Request id reused while the first is still in flight",
-                                        );
+                                        Err(e) => {
+                                            self.send_error(&mut writer, None, e).await?;
+                                        }
                                     }
-                                    let ctx = ctx_factory()
-                                        .with_session(session)
-                                        .with_cancellation_token(
-                                            Arc::new(token) as Arc<dyn Cancellable>,
-                                        );
-                                    let guard = super::PendingHandlerGuard::new(
-                                        Arc::clone(&pending_handlers),
-                                        cancel_key,
-                                    );
-
-                                    tokio::spawn(async move {
-                                        // RAII: the guard removes the registry
-                                        // entry on every exit path, including a
-                                        // panic in the handler.
-                                        let _guard = guard;
-                                        let response = super::route_catching_panics(
-                                            &handler, request, &ctx, &version,
-                                        )
-                                        .await;
-                                        // If channel is closed the transport loop has exited; ignore.
-                                        let _ = resp_tx.send(response).await;
-                                    });
                                 }
                             }
-                            Err(e) => {
-                                self.send_error(&mut writer, None, e).await?;
+
+                            // Outgoing server-to-client requests/notifications.
+                            //
+                            // Drained ahead of completed responses: a handler emits these
+                            // while it is still running, so they belong on the wire before
+                            // the response that concludes it. Progress notifications in
+                            // particular must stop once an operation completes, which a
+                            // response-first order would violate. The channel is bounded
+                            // and only in-flight handlers write to it, so responses cannot
+                            // be starved.
+                            Some(cmd) = cmd_rx.recv() => {
+                                match cmd {
+                                    SessionCommand::Request { method, params, response_tx } => {
+                                        // Guard against unbounded pending request growth
+                                        if pending_requests.len() >= MAX_PENDING_REQUESTS {
+                                            tracing::error!(
+                                                count = pending_requests.len(),
+                                                "Too many pending server-to-client requests"
+                                            );
+                                            let _ = response_tx.send(Err(McpError::internal(
+                                                "Too many pending server-to-client requests"
+                                            )));
+                                            continue;
+                                        }
+
+                                        // Use string-prefixed IDs to avoid collision with client IDs
+                                        let id = serde_json::json!(format!("s-{next_request_id}"));
+                                        next_request_id += 1;
+
+                                        pending_requests.insert(id.clone(), response_tx);
+
+                                        let request = serde_json::json!({
+                                            "jsonrpc": "2.0",
+                                            "id": id,
+                                            "method": method,
+                                            "params": params
+                                        });
+
+                                        let req_str = serde_json::to_string(&request)
+                                            .map_err(|e| McpError::internal(e.to_string()))?;
+                                        writer.write_all(req_str.as_bytes()).await
+                                            .map_err(|e| McpError::internal(format!("Failed to write: {e}")))?;
+                                        writer.write_all(b"\n").await
+                                            .map_err(|e| McpError::internal(format!("Failed to write newline: {e}")))?;
+                                        writer.flush().await
+                                            .map_err(|e| McpError::internal(format!("Failed to flush: {e}")))?;
+                                    }
+                                    SessionCommand::Notify { method, params } => {
+                                        let notification = serde_json::json!({
+                                            "jsonrpc": "2.0",
+                                            "method": method,
+                                            "params": params
+                                        });
+
+                                        let notif_str = serde_json::to_string(&notification)
+                                            .map_err(|e| McpError::internal(e.to_string()))?;
+                                        writer.write_all(notif_str.as_bytes()).await
+                                            .map_err(|e| McpError::internal(format!("Failed to write: {e}")))?;
+                                        writer.write_all(b"\n").await
+                                            .map_err(|e| McpError::internal(format!("Failed to write newline: {e}")))?;
+                                        writer.flush().await
+                                            .map_err(|e| McpError::internal(format!("Failed to flush: {e}")))?;
+                                    }
+                                }
+                            }
+
+                            // Completed handler responses ready to write back
+                            Some(response) = response_rx.recv() => {
+                                if response.should_send() {
+                                    self.send_response(&mut writer, &response).await?;
+                                }
                             }
                         }
-                    }
-                }
-
-                // Outgoing server-to-client requests/notifications.
-                //
-                // Drained ahead of completed responses: a handler emits these
-                // while it is still running, so they belong on the wire before
-                // the response that concludes it. Progress notifications in
-                // particular must stop once an operation completes, which a
-                // response-first order would violate. The channel is bounded
-                // and only in-flight handlers write to it, so responses cannot
-                // be starved.
-                Some(cmd) = cmd_rx.recv() => {
-                    match cmd {
-                        SessionCommand::Request { method, params, response_tx } => {
-                            // Guard against unbounded pending request growth
-                            if pending_requests.len() >= MAX_PENDING_REQUESTS {
-                                tracing::error!(
-                                    count = pending_requests.len(),
-                                    "Too many pending server-to-client requests"
-                                );
-                                let _ = response_tx.send(Err(McpError::internal(
-                                    "Too many pending server-to-client requests"
-                                )));
-                                continue;
-                            }
-
-                            // Use string-prefixed IDs to avoid collision with client IDs
-                            let id = serde_json::json!(format!("s-{next_request_id}"));
-                            next_request_id += 1;
-
-                            pending_requests.insert(id.clone(), response_tx);
-
-                            let request = serde_json::json!({
-                                "jsonrpc": "2.0",
-                                "id": id,
-                                "method": method,
-                                "params": params
-                            });
-
-                            let req_str = serde_json::to_string(&request)
-                                .map_err(|e| McpError::internal(e.to_string()))?;
-                            writer.write_all(req_str.as_bytes()).await
-                                .map_err(|e| McpError::internal(format!("Failed to write: {e}")))?;
-                            writer.write_all(b"\n").await
-                                .map_err(|e| McpError::internal(format!("Failed to write newline: {e}")))?;
-                            writer.flush().await
-                                .map_err(|e| McpError::internal(format!("Failed to flush: {e}")))?;
-                        }
-                        SessionCommand::Notify { method, params } => {
-                            let notification = serde_json::json!({
-                                "jsonrpc": "2.0",
-                                "method": method,
-                                "params": params
-                            });
-
-                            let notif_str = serde_json::to_string(&notification)
-                                .map_err(|e| McpError::internal(e.to_string()))?;
-                            writer.write_all(notif_str.as_bytes()).await
-                                .map_err(|e| McpError::internal(format!("Failed to write: {e}")))?;
-                            writer.write_all(b"\n").await
-                                .map_err(|e| McpError::internal(format!("Failed to write newline: {e}")))?;
-                            writer.flush().await
-                                .map_err(|e| McpError::internal(format!("Failed to flush: {e}")))?;
-                        }
-                    }
-                }
-
-                // Completed handler responses ready to write back
-                Some(response) = response_rx.recv() => {
-                    if response.should_send() {
-                        self.send_response(&mut writer, &response).await?;
-                    }
-                }
-            }
         }
 
         // Drop our response_tx so the channel closes once all spawned tasks finish

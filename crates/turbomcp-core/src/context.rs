@@ -831,7 +831,15 @@ impl RequestContext {
             params["message"] = Value::String(message.to_string());
         }
 
-        self.notify_client("notifications/progress", params).await
+        // Best-effort by design. The progress utility lets a receiver decline
+        // to send any progress at all, so an undeliverable notification must
+        // not fail the request it describes. This matters concretely on
+        // Streamable HTTP, where the session exists for every post-init
+        // request but the notification has nowhere to go until the client
+        // opens its GET/SSE stream — propagating that turned "no progress
+        // stream attached" into a failed tool call.
+        let _ = self.notify_client("notifications/progress", params).await;
+        Ok(())
     }
 
     fn require_session(&self, op: &str) -> McpResult<&Arc<dyn McpSession>> {
