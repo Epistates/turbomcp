@@ -29,32 +29,44 @@ fn table() -> &'static Mutex<HashMap<String, mpsc::Sender<JsonRpcMessage>>> {
     WRITERS.get_or_init(Mutex::default)
 }
 
-/// Unregisters its connection's writer when dropped.
+/// Unregisters its connection's writer when dropped — and only its own.
 #[must_use = "dropping the guard immediately unregisters the writer"]
 #[derive(Debug)]
 pub struct WriterGuard {
     connection_id: String,
+    /// The sender this guard installed, so drop can tell whether the table
+    /// still holds it.
+    tx: mpsc::Sender<JsonRpcMessage>,
 }
 
 impl Drop for WriterGuard {
     fn drop(&mut self) {
-        table()
-            .lock()
-            .expect("outbound writer table poisoned")
-            .remove(&self.connection_id);
+        let mut table = table().lock().expect("outbound writer table poisoned");
+        // Retract only our own registration. Not every key is unique:
+        // [`session_stream_id`] is deterministic, so a reconnecting legacy GET
+        // stream deliberately *replaces* the previous writer — and the old
+        // guard, dropping a moment later, used to remove the new one. The
+        // session then had a live SSE stream the server could no longer write
+        // to, silently, for as long as the client kept it open.
+        if table
+            .get(&self.connection_id)
+            .is_some_and(|current| current.same_channel(&self.tx))
+        {
+            table.remove(&self.connection_id);
+        }
     }
 }
 
 /// Make `tx` the ordered outbound writer for `connection_id`, for as long as
 /// the returned guard lives. Replaces any previous writer under the same id
-/// (ids are minted unique, so that only happens on misuse).
+/// (which [`session_stream_id`] relies on: one stream per session).
 pub fn register(connection_id: impl Into<String>, tx: mpsc::Sender<JsonRpcMessage>) -> WriterGuard {
     let connection_id = connection_id.into();
     table()
         .lock()
         .expect("outbound writer table poisoned")
-        .insert(connection_id.clone(), tx);
-    WriterGuard { connection_id }
+        .insert(connection_id.clone(), tx.clone());
+    WriterGuard { connection_id, tx }
 }
 
 /// The ordered outbound writer for `connection_id`, if that connection is
@@ -93,5 +105,27 @@ mod tests {
         assert!(writer("test-conn-other").is_none());
         drop(guard);
         assert!(writer("test-conn-outbound").is_none());
+    }
+
+    /// A reconnecting legacy GET stream registers under the *same* key, and the
+    /// old guard dropping afterwards must not take the new stream with it.
+    ///
+    /// It did: the session kept a live SSE stream the server could no longer
+    /// write to, silently, for as long as the client held it open.
+    #[test]
+    fn a_replaced_registration_survives_the_old_guards_drop() {
+        let key = session_stream_id("sess-replace");
+        let (first_tx, _first_rx) = mpsc::channel(1);
+        let (second_tx, mut second_rx) = mpsc::channel(1);
+
+        let first = register(&key, first_tx);
+        let _second = register(&key, second_tx);
+        drop(first);
+
+        let still_there = writer(&key).expect("the reconnecting stream is still registered");
+        still_there
+            .try_send(turbomcp_core::JsonRpcNotification::new("ping", None).into())
+            .expect("and it is the second stream's channel");
+        assert!(second_rx.try_recv().is_ok());
     }
 }

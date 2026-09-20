@@ -184,17 +184,31 @@ async fn unrecognized_version_header_is_400() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
+/// "If the server receives a request with an invalid **or unsupported**
+/// `MCP-Protocol-Version`, it MUST respond with `400 Bad Request`."
+///
+/// A published revision this build does not serve is unsupported, not merely
+/// old: tolerating `2025-03-26` meant answering it in `2025-11-25` shapes,
+/// which is not what the client asked for. The rejection names what this
+/// endpoint does serve so the client has somewhere to go.
 #[tokio::test]
-async fn recognized_older_version_header_is_tolerated() {
-    // A recognized but older published version (e.g. a long-lived client still
-    // sending `2025-03-26`) must NOT be rejected at the transport — the official
-    // conformance suite's multi-POST-stream scenario relies on this.
+async fn recognized_but_unsupported_version_header_is_400() {
     let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
-    let resp = app()
-        .oneshot(post(list, &[("mcp-protocol-version", "2025-03-26")]))
-        .await
-        .unwrap();
-    assert_ne!(resp.status(), StatusCode::BAD_REQUEST);
+    for unsupported in ["2024-11-05", "2025-03-26"] {
+        let resp = app()
+            .oneshot(post(list.clone(), &[("mcp-protocol-version", unsupported)]))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{unsupported}");
+        let v = body_json(resp).await;
+        assert_eq!(v["error"]["data"]["requested"], unsupported);
+        assert!(
+            v["error"]["data"]["supported"]
+                .as_array()
+                .is_some_and(|s| s.iter().any(|x| x == "2025-11-25")),
+            "the rejection must say what is served: {v}"
+        );
+    }
 }
 
 #[tokio::test]

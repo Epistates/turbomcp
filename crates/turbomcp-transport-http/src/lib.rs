@@ -20,12 +20,12 @@
 //!   request yields either `200 application/json` with the response, or — if
 //!   the handler emits server→client messages mid-flight (inline bidi
 //!   requests on the legacy path, progress, log messages) — a
-//!   `200 text/event-stream` *scoped to that request*: on `2025-11-25`, a
-//!   primer event first (an event ID + empty `data`, the spec's SHOULD so the
-//!   client always holds a `Last-Event-ID`; the draft dropped resumability, so
-//!   its streams are never primed), then the request-related messages as
-//!   events, then the final response, which terminates the stream
-//!   (transports spec §Sending Messages). A modern `subscriptions/listen`
+//!   `200 text/event-stream` *scoped to that request*: the request-related
+//!   messages as events, then the final response, which terminates the stream
+//!   (transports spec §Sending Messages). Events carry no `id`, which is a
+//!   MAY belonging to §Resumability and Redelivery — this endpoint does not
+//!   read `Last-Event-ID`, so advertising one would promise a replay that
+//!   never comes. A modern `subscriptions/listen`
 //!   request yields a long-lived `200 text/event-stream` instead: the
 //!   acknowledged notification first, then the opted-in change notifications.
 //!   Every SSE response carries keep-alive comments (default 15s) and
@@ -344,6 +344,7 @@ pub struct HttpConfig {
     rate_limiter: Option<Arc<dyn RateLimiter>>,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
     trusted_proxies: Vec<IpAddr>,
+    supported_versions: Vec<ProtocolVersion>,
 }
 
 impl core::fmt::Debug for HttpConfig {
@@ -359,6 +360,7 @@ impl core::fmt::Debug for HttpConfig {
             .field("rate_limiter", &self.rate_limiter.is_some())
             .field("session_terminator", &self.session_terminator.is_some())
             .field("trusted_proxies", &self.trusted_proxies)
+            .field("supported_versions", &self.supported_versions)
             .finish()
     }
 }
@@ -380,11 +382,28 @@ impl Default for HttpConfig {
             rate_limiter: None,
             session_terminator: None,
             trusted_proxies: Vec::new(),
+            supported_versions: ProtocolVersion::SUPPORTED.to_vec(),
         }
     }
 }
 
 impl HttpConfig {
+    /// The revisions this endpoint serves, for the `MCP-Protocol-Version`
+    /// check: "if the server receives a request with an invalid **or
+    /// unsupported** `MCP-Protocol-Version`, it MUST respond with `400 Bad
+    /// Request`".
+    ///
+    /// Defaults to the whole build's set. `ServeHttp::run_http` narrows it from
+    /// the dispatcher, so `#[server(protocols("2025-06-18"))]` refuses a
+    /// `2025-11-25` header instead of advertising a version it does not serve;
+    /// call this yourself when composing [`serve_http`] with your own
+    /// dispatcher.
+    #[must_use]
+    pub fn with_supported_versions(mut self, versions: Vec<ProtocolVersion>) -> Self {
+        self.supported_versions = versions;
+        self
+    }
+
     /// Bound admitted requests, including authentication and live SSE bodies.
     #[must_use]
     pub fn max_concurrent_requests(mut self, limit: usize) -> Self {
@@ -575,9 +594,35 @@ struct HttpState<S> {
     rate_limiter: Option<Arc<dyn RateLimiter>>,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
     trusted_proxies: Arc<[IpAddr]>,
+    /// The revisions this endpoint serves, for the `MCP-Protocol-Version`
+    /// check and the `supported` list its rejection carries.
+    supported_versions: Arc<[ProtocolVersion]>,
     /// The configured shutdown token; dedicated `subscriptions/listen` SSE
     /// streams end when it fires (the RC's server-side subscription close).
     shutdown: CancellationToken,
+}
+
+impl<S> HttpState<S> {
+    /// Whether this endpoint serves the revision a `MCP-Protocol-Version`
+    /// header names.
+    fn serves(&self, version: &str) -> bool {
+        let requested = ProtocolVersion::from_wire(version);
+        self.supported_versions.contains(&requested)
+    }
+
+    /// The `400` for a `MCP-Protocol-Version` this endpoint does not serve, on
+    /// the verbs that carry no JSON-RPC id to name.
+    ///
+    /// The rule is "all subsequent requests", not "all POSTs": a `GET` opening
+    /// the session's stream and a `DELETE` ending it are requests too, and a
+    /// header naming a version the server never agreed to is as wrong there.
+    fn reject_version_header(&self, headers: &HeaderMap) -> Option<Response> {
+        let version = headers
+            .get(&HEADER_PROTOCOL_VERSION)
+            .and_then(|v| v.to_str().ok())?;
+        (!self.serves(version))
+            .then(|| version_header_rejection(None, version, &self.supported_versions))
+    }
 }
 
 /// Build the configured axum [`Router`] for `service` without binding a socket —
@@ -600,6 +645,7 @@ where
         rate_limiter: config.rate_limiter.clone(),
         session_terminator: config.session_terminator.clone(),
         trusted_proxies: config.trusted_proxies.clone().into(),
+        supported_versions: config.supported_versions.clone().into(),
         shutdown: config.shutdown.clone(),
     };
     let mut app = Router::new()
@@ -744,18 +790,21 @@ where
         return rejection;
     }
 
-    // Transport spec: a `MCP-Protocol-Version` header naming an *unrecognized*
-    // version is 400. A recognized-but-older published version (e.g. an
-    // established client that keeps sending `2025-03-26`) is tolerated: a
-    // stateful session's negotiated version governs dispatch, so the transport
-    // should not reject a request bearing a real protocol version.
+    // "If the server receives a request with an invalid **or unsupported**
+    // `MCP-Protocol-Version`, it MUST respond with `400 Bad Request`."
+    //
+    // Unsupported is measured against *this server's* set, which
+    // `#[server(protocols(…))]` narrows — not against every version the crate
+    // can parse. Tolerating a real-but-unserved version (`2024-11-05`, or
+    // `2025-11-25` on a `2025-06-18`-only server) meant answering it in a wire
+    // shape the client never asked for.
     let header_version = headers
         .get(&HEADER_PROTOCOL_VERSION)
         .and_then(|v| v.to_str().ok());
     if let Some(v) = header_version
-        && !ProtocolVersion::from_wire(v).is_recognized()
+        && !state.serves(v)
     {
-        return version_header_rejection(request_id(&msg).as_ref(), v);
+        return version_header_rejection(request_id(&msg).as_ref(), v, &state.supported_versions);
     }
     // Header/body mirror validation (draft envelope): version header must
     // match a body-declared version; `Mcp-Method`/`Mcp-Name`/`Mcp-Param-*`
@@ -834,14 +883,27 @@ where
             return StatusCode::NOT_FOUND.into_response();
         }
         if !message_has_version(&msg) {
-            // Which stateful revision this session negotiated is carried by
-            // `MCP-Protocol-Version`, which both revisions require on every
-            // post-`initialize` request. Falling back to `2025-11-25` when the
-            // header is absent keeps tolerant clients (rmcp, Codex) working —
-            // but a `2025-06-18` client that sends its header must be answered
-            // in `2025-06-18` shapes, not stamped into the newer wire.
-            let session_version = header_version
-                .map(ProtocolVersion::from_wire)
+            // What this session actually negotiated, in preference order:
+            //
+            // 1. The session's stored version. The spec has the server fall
+            //    back to assuming a version only when it "has no other way to
+            //    identify the version — for example, by relying on the
+            //    protocol version negotiated during initialization", and a
+            //    live session is precisely that other way. Reading the header
+            //    first meant a client that sent something other than what it
+            //    negotiated got answered in the shape it typed, not the one
+            //    the two ends agreed on.
+            // 2. `MCP-Protocol-Version`, which both revisions require on every
+            //    post-`initialize` request, for a session this endpoint's
+            //    backend cannot look up.
+            // 3. `2025-11-25`, which keeps tolerant clients (rmcp, Codex)
+            //    working when neither is available.
+            let stored = match &state.session_terminator {
+                Some(t) => t.negotiated_version(&sid).await,
+                None => None,
+            };
+            let session_version = stored
+                .or_else(|| header_version.map(ProtocolVersion::from_wire))
                 .filter(ProtocolVersion::is_stateful)
                 .unwrap_or(ProtocolVersion::V2025_11_25);
             meta::set_request_meta(
@@ -1008,16 +1070,15 @@ where
     };
     let request_id = req.id.clone();
     let connection_id = format!("http-post-{}", uuid::Uuid::new_v4());
-    // If this request upgrades to SSE, `2025-11-25` SHOULD-requires priming
-    // the stream with an event carrying an event ID and an empty `data` field
-    // so the client always holds a `Last-Event-ID` (transports spec §Sending
-    // Messages to the Server). The id is `{connection_id}-0`: globally unique
-    // and stream-identifying, as §Resumability requires of event IDs. The
-    // draft dropped resumability ("Resumable SSE streams via `Last-Event-ID`
-    // are not supported"), so draft streams are never primed.
-    let primer = declared_version(&msg)
-        .is_none_or(|v| ProtocolVersion::from_wire(&v) != ProtocolVersion::V2026_07_28)
-        .then(|| format!("{connection_id}-0"));
+    // No event `id` on this stream, because this endpoint does not replay.
+    //
+    // Attaching one is a MAY, and it belongs entirely to §Resumability and
+    // Redelivery: an id is what tells a client it may reconnect with
+    // `Last-Event-ID` and be caught up. Nothing here reads that header — and
+    // v4's own client sends it — so priming the stream turned a visible
+    // disconnect into a silent gap the client believed it had recovered from.
+    // A stream with no ids is plainly not resumable, which the spec allows and
+    // a client can see.
     let (tx, mut rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
     let registration = outbound::register(&connection_id, tx);
     meta::set_request_meta(
@@ -1050,12 +1111,12 @@ where
                 }
                 Ok(Some(reply)) => {
                     events.push_back(reply);
-                    finished_sse(state.codec, primer, events)
+                    finished_sse(state.codec, events)
                 }
                 // A request always gets a response from the dispatcher; these
                 // arms are defensive.
                 Ok(None) if events.is_empty() => StatusCode::ACCEPTED.into_response(),
-                Ok(None) => finished_sse(state.codec, primer, events),
+                Ok(None) => finished_sse(state.codec, events),
                 Err(e) => protocol_error_response(&e),
             }
         }
@@ -1068,7 +1129,6 @@ where
             };
             streaming_post_sse(
                 state.codec,
-                primer,
                 first,
                 PostStream::Run {
                     rx,
@@ -1102,7 +1162,6 @@ enum PostStream<F> {
 /// event; dropping the response body drops the call future.
 fn streaming_post_sse<F>(
     codec: DefaultCodec,
-    primer: Option<String>,
     first: JsonRpcMessage,
     run: PostStream<F>,
     keepalive: Duration,
@@ -1110,14 +1169,7 @@ fn streaming_post_sse<F>(
 where
     F: Future<Output = Result<Option<JsonRpcMessage>, ProtocolError>> + Send + 'static,
 {
-    let head = futures::stream::iter(
-        primer
-            .as_deref()
-            .map(primer_event)
-            .into_iter()
-            .chain([sse_event(&codec, &first)])
-            .map(Ok::<_, Infallible>),
-    );
+    let head = futures::stream::iter([Ok::<_, Infallible>(sse_event(&codec, &first))]);
     let tail = futures::stream::unfold(run, move |state| async move {
         match state {
             PostStream::Run {
@@ -1174,17 +1226,11 @@ where
 /// A short, complete SSE response for a request that finished before the
 /// upgrade decision but raced messages into its channel: the messages, the
 /// final response, end of stream.
-fn finished_sse(
-    codec: DefaultCodec,
-    primer: Option<String>,
-    events: VecDeque<JsonRpcMessage>,
-) -> Response {
+fn finished_sse(codec: DefaultCodec, events: VecDeque<JsonRpcMessage>) -> Response {
     let stream = futures::stream::iter(
-        primer
-            .as_deref()
-            .map(primer_event)
+        events
             .into_iter()
-            .chain(events.into_iter().map(move |msg| sse_event(&codec, &msg)))
+            .map(move |msg| sse_event(&codec, &msg))
             .map(Ok::<_, Infallible>),
     );
     (
@@ -1204,18 +1250,6 @@ fn drain(rx: &mut tokio::sync::mpsc::Receiver<JsonRpcMessage>) -> VecDeque<JsonR
         events.push_back(msg);
     }
     events
-}
-
-/// The `2025-11-25` stream primer (transports spec §Sending Messages: the
-/// server SHOULD immediately send an event ID + empty `data` field so the
-/// client always holds a `Last-Event-ID`). axum elides the empty `data:`
-/// line, so the wire shape is an `id:`-only block — per the WHATWG SSE
-/// processing model that's equivalent: the `id` field sets the client's last
-/// event ID the moment it's parsed, and an empty data buffer never dispatches
-/// a message event anyway. The id-only shape also sidesteps the empty-`data:`
-/// misparse bugs in older SSE clients that v3 needed a comment workaround for.
-fn primer_event(id: &str) -> Event {
-    Event::default().id(id).data("")
 }
 
 /// Encode one message as one `data:` event; an encode failure becomes a
@@ -1306,6 +1340,9 @@ where
     if !accepts(&headers, &mime::TEXT_EVENT_STREAM) {
         return not_acceptable_rejection("GET requires an Accept header listing text/event-stream");
     }
+    if let Some(rejection) = state.reject_version_header(&headers) {
+        return rejection;
+    }
     // The GET stream is part of the protected resource; require auth too.
     let subject = match enforce_auth(&state, &headers, None).await {
         Ok(subject) => subject,
@@ -1366,6 +1403,9 @@ where
         return rejection;
     }
     if let Some(rejection) = check_host(&state.hosts, &headers) {
+        return rejection;
+    }
+    if let Some(rejection) = state.reject_version_header(&headers) {
         return rejection;
     }
     let subject = match enforce_auth(&state, &headers, None).await {
@@ -1643,11 +1683,12 @@ fn envelope_rejection(id: &RequestId, field: &str) -> Response {
 /// `400` for an explicit but unsupported `MCP-Protocol-Version` header
 /// (`UnsupportedProtocolVersionError`, with the spec-required
 /// `data: { supported, requested }`).
-fn version_header_rejection(id: Option<&RequestId>, requested: &str) -> Response {
-    let supported: Vec<&str> = ProtocolVersion::SUPPORTED
-        .iter()
-        .map(ProtocolVersion::as_str)
-        .collect();
+fn version_header_rejection(
+    id: Option<&RequestId>,
+    requested: &str,
+    serves: &[ProtocolVersion],
+) -> Response {
+    let supported: Vec<&str> = serves.iter().map(ProtocolVersion::as_str).collect();
     transport_error(
         StatusCode::BAD_REQUEST,
         id,

@@ -34,7 +34,7 @@ pub use middleware::{Tracing, TracingLayer};
 pub use panic::{catch_handler_panic, catch_panic};
 pub use ratelimit::{GovernorRateLimiter, RateKey, RateLimiter};
 pub use serve::{ServeConfig, serve, serve_with};
-pub use session::{SessionTerminator, TerminateFuture};
+pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
 pub use transport::{HttpFailure, Transport};
 
 pub use tokio_util::sync::CancellationToken;

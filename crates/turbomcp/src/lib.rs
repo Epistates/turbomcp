@@ -315,7 +315,12 @@ pub mod http {
     {
         async fn run_http(self, addr: SocketAddr, config: HttpConfig) -> Result<(), HttpError> {
             let dispatcher = self.build();
-            let config = config.with_session_terminator(Arc::new(dispatcher.session_terminator()));
+            // What `#[server(protocols(…))]` narrowed, so the endpoint refuses
+            // an `MCP-Protocol-Version` this server does not serve rather than
+            // answering it in a shape the client never asked for.
+            let config = config
+                .with_supported_versions(dispatcher.supported_versions().to_vec())
+                .with_session_terminator(Arc::new(dispatcher.session_terminator()));
             // Graceful teardown: when the shutdown token fires, end the live
             // `subscriptions/listen` registrations — each gets the frozen
             // `2026-07-28` closing envelope before the transport tears its

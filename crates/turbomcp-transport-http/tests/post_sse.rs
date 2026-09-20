@@ -240,12 +240,16 @@ fn legacy_call_with_token(id: i64, session: &str) -> Request<Body> {
         .unwrap()
 }
 
-/// `2025-11-25` SHOULD-requires priming a POST-response SSE stream so the
-/// client always holds a `Last-Event-ID` (transports spec §Sending Messages).
-/// The primer is the stream's first event: an `id:` field (globally unique,
-/// stream-identifying, per §Resumability) with no message payload.
+/// A POST-response SSE stream carries no event `id`, because this endpoint
+/// does not replay.
+///
+/// Attaching one is a MAY under §Resumability and Redelivery, and it is what
+/// tells a client it may reconnect with `Last-Event-ID` and be caught up.
+/// Nothing here reads that header — and v4's own client sends it — so the
+/// primer turned a visible disconnect into a silent gap the client believed it
+/// had recovered from.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn legacy_streams_are_primed_with_an_event_id() {
+async fn legacy_streams_advertise_no_resumability_they_cannot_honour() {
     let app = router(
         VersionDispatcher::new(Slow, MethodRouter::new().with_tools()),
         HttpConfig::new(),
@@ -278,24 +282,12 @@ async fn legacy_streams_are_primed_with_an_event_id() {
         .to_bytes();
     let text = String::from_utf8_lossy(&bytes);
 
-    // The primer is its own first event block: an event ID, no payload.
-    let first_event = text.split("\n\n").next().expect("at least one event");
-    let id_line = first_event
-        .lines()
-        .find_map(|l| l.strip_prefix("id: ").or_else(|| l.strip_prefix("id:")))
-        .expect("the first event carries the primer's event ID");
     assert!(
-        id_line.starts_with("http-post-") && id_line.ends_with("-0"),
-        "the id encodes the originating stream and a cursor: {id_line}"
-    );
-    assert!(
-        first_event
-            .lines()
-            .all(|l| l.strip_prefix("data:").is_none_or(|d| d.trim().is_empty())),
-        "the primer carries no message payload: {first_event:?}"
+        !text.lines().any(|l| l.starts_with("id:")),
+        "no event id, so no client believes it can resume: {text:?}"
     );
 
-    // The JSON-RPC frames follow, untouched.
+    // The JSON-RPC frames are the whole stream, untouched.
     let frames: Vec<Value> = text
         .lines()
         .filter_map(|l| l.strip_prefix("data: ").or_else(|| l.strip_prefix("data:")))

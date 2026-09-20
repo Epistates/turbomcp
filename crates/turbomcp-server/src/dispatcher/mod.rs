@@ -292,6 +292,18 @@ impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
             self.shared.terminate_session(session_id).await
         })
     }
+    fn negotiated_version<'a>(
+        &'a self,
+        session_id: &'a str,
+    ) -> turbomcp_service::SessionVersionFuture<'a> {
+        Box::pin(async move {
+            self.shared
+                .sessions
+                .get(session_id)
+                .await
+                .map(|state| state.version.clone())
+        })
+    }
 }
 
 impl<S: Clone> Clone for VersionDispatcher<S> {
@@ -306,6 +318,18 @@ impl<S: Clone> Clone for VersionDispatcher<S> {
 }
 
 impl<S: McpServerCore> VersionDispatcher<S> {
+    /// The revisions this dispatcher accepts, narrowed by
+    /// `#[server(protocols(…))]` from the build's full set.
+    ///
+    /// The HTTP transport needs it: "if the server receives a request with an
+    /// invalid **or unsupported** `MCP-Protocol-Version`, it MUST respond with
+    /// `400 Bad Request`" — and what counts as unsupported is this server's
+    /// list, not the crate constant.
+    #[must_use]
+    pub fn supported_versions(&self) -> &[ProtocolVersion] {
+        &self.supported
+    }
+
     /// Build a dispatcher for `server` with `router`'s registered capabilities.
     /// The accepted version set is taken from [`McpServerCore::supported_versions`].
     #[must_use]
@@ -511,12 +535,11 @@ async fn handle<S: McpServerCore>(
     match msg {
         JsonRpcMessage::Request(req) => {
             // Track the request for `notifications/cancelled` while it
-            // dispatches, on any connection the transport identified. On HTTP
-            // that id is per-POST, so the notification never matches and the
-            // disconnect does the cancelling instead (see `inflight`).
+            // dispatches, in whichever scope the transport identified — see
+            // [`cancel_scope`] for why that is the session where there is one.
             let cancel = CancellationToken::new();
-            let _guard = connection_id(req.params.as_ref())
-                .map(|conn| shared.inflight.register(conn, &req.id, cancel.clone()));
+            let _guard = cancel_scope(req.params.as_ref())
+                .map(|scope| shared.inflight.register(scope, &req.id, cancel.clone()));
 
             // `subscriptions/listen` is the one MCP request with no JSON-RPC
             // response: its stream begins with an acknowledged *notification*
@@ -572,8 +595,8 @@ fn handle_notification(
         methods::notification::CANCELLED => {
             // Fire-and-forget per spec: malformed params, unknown ids, and
             // already-finished requests are all silently ignored.
-            let Some(conn) = connection_id(n.params.as_ref()) else {
-                tracing::debug!("notifications/cancelled without a connection; ignored");
+            let Some(scope) = cancel_scope(n.params.as_ref()) else {
+                tracing::debug!("notifications/cancelled without a scope; ignored");
                 return;
             };
             let Some(parsed) = n
@@ -587,8 +610,12 @@ fn handle_notification(
             // The id may name an in-flight request *or* a live subscription
             // (cancelling the `subscriptions/listen` request id is how a
             // stdio client closes its stream).
-            let fired = inflight.cancel(conn, &parsed.request_id);
-            let unsubscribed = subs.remove(conn, &parsed.request_id);
+            let fired = inflight.cancel(scope, &parsed.request_id);
+            // Subscriptions stay connection-scoped: a `subscriptions/listen`
+            // stream belongs to the connection it was opened on, and the draft
+            // has no session to widen to.
+            let unsubscribed = connection_id(n.params.as_ref())
+                .is_some_and(|conn| subs.remove(conn, &parsed.request_id));
             tracing::debug!(
                 request_id = ?parsed.request_id,
                 reason = parsed.reason.as_deref().unwrap_or(""),
@@ -1081,6 +1108,23 @@ fn connection_id(params: Option<&Value>) -> Option<&str> {
         .get("_meta")?
         .get(meta::internal::CONNECTION_ID)?
         .as_str()
+}
+
+/// The scope a `notifications/cancelled` may reach: the session when there is
+/// one, the connection otherwise.
+///
+/// Connection alone was too narrow for Streamable HTTP, where the connection id
+/// is minted **per POST**: a client's cancellation arrives on a different POST
+/// than the request it names, so it matched nothing and the server kept working
+/// on an answer no one would read. `2025-11-25` is explicit that a disconnect
+/// is *not* a cancellation there, so the notification is the only signal, and
+/// the session is the scope it is sent in.
+///
+/// Where there is no session — stdio, WebSocket, the stateless wire — this is
+/// the connection id exactly as before, so the "same connection" guarantee is
+/// unchanged for every transport that had it.
+fn cancel_scope(params: Option<&Value>) -> Option<&str> {
+    session_id(params).or_else(|| connection_id(params))
 }
 
 /// Whether the request's per-request client capabilities declare `ext_id` under
