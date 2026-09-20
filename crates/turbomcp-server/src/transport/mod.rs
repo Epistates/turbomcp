@@ -167,9 +167,20 @@ impl InitializedSessionState {
     }
 }
 
-#[cfg(feature = "http")]
-pub(crate) fn request_id_key(id: &Value) -> Option<String> {
-    serde_json::to_string(id).ok()
+/// Render a JSON-RPC `id` (string | number) as a stable string key so that
+/// `42` from the request and `"42"` from `notifications/cancelled.requestId`
+/// share a slot in the cancellation registry.
+///
+/// Every transport keys its in-flight registry with this one function. They
+/// have to agree: a client is free to send the id as a number in the request
+/// and a string in the cancellation (JSON-RPC does not constrain it), and two
+/// renderings would mean the cancel silently matched nothing.
+pub(crate) fn jsonrpc_id_key(id: &Value) -> String {
+    match id {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Read the client's declared capabilities out of the `initialize` params.

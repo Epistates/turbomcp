@@ -101,7 +101,7 @@ fn bench_send_to_session(c: &mut Criterion) {
                         .recv()
                         .await
                         .expect("subscriber receives routed message");
-                    black_box(message.len());
+                    black_box(message.1.len());
                 }
             });
         });
@@ -152,7 +152,7 @@ fn bench_broadcast(c: &mut Criterion) {
                                 .recv()
                                 .await
                                 .expect("each session receives the broadcast");
-                            black_box(message.len());
+                            black_box(message.1.len());
                         }
                     }
                 });

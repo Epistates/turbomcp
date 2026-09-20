@@ -31,7 +31,7 @@ use super::SessionState;
 use crate::config::{ConnectionCounter, RateLimiter, ServerConfig};
 use crate::context::{Cancellable, McpSession, RequestContext, SessionFuture};
 use crate::router::{self, JsonRpcOutgoing};
-use crate::transport::line::jsonrpc_id_key;
+use crate::transport::jsonrpc_id_key;
 use turbomcp_transport::security::{
     OriginConfig, SecurityHeaders, extract_client_ip_with_trust, validate_origin,
 };

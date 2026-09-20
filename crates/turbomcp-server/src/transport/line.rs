@@ -24,18 +24,7 @@ use crate::config::ServerConfig;
 use crate::context::{Cancellable, McpSession, RequestContext, SessionFuture};
 use crate::router;
 
-/// Render a JSON-RPC `id` (string | number) as a stable string key so that
-/// `42` from the request and `"42"` from `notifications/cancelled.requestId`
-/// share a slot in the cancellation registry.
-pub(crate) fn jsonrpc_id_key(id: &serde_json::Value) -> String {
-    match id {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
-        other => other.to_string(),
-    }
-}
-
-use super::{MAX_MESSAGE_SIZE, SessionState};
+use super::{MAX_MESSAGE_SIZE, SessionState, jsonrpc_id_key};
 
 /// Maximum number of in-flight server-to-client requests before back-pressure.
 const MAX_PENDING_REQUESTS: usize = 64;

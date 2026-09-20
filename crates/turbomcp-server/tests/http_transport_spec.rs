@@ -132,6 +132,87 @@ impl McpHandler for SamplingHandler {
     }
 }
 
+/// The two long-running tool shapes: one that parks until cancelled, one that
+/// reports progress while it works.
+#[derive(Clone)]
+struct CancellableHandler;
+
+impl McpHandler for CancellableHandler {
+    fn server_info(&self) -> ServerInfo {
+        ServerInfo::new("cancellable-http-test", "1.0.0")
+    }
+
+    fn list_tools(&self) -> Vec<Tool> {
+        vec![
+            Tool::new("park", "Wait until cancelled"),
+            Tool::new("report", "Report progress while working"),
+        ]
+    }
+
+    fn list_resources(&self) -> Vec<Resource> {
+        Vec::new()
+    }
+
+    fn list_prompts(&self) -> Vec<Prompt> {
+        Vec::new()
+    }
+
+    async fn call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        _args: serde_json::Value,
+        ctx: &'a CoreRequestContext,
+    ) -> McpResult<ToolResult> {
+        match name {
+            "park" => {
+                for _ in 0..30 {
+                    if ctx.is_cancelled() {
+                        return Ok(ToolResult::text("cancelled"));
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Ok(ToolResult::text("completed"))
+            }
+            "report" => {
+                ctx.report_progress(1.0, Some(2.0), Some("halfway")).await?;
+                Ok(ToolResult::text("done"))
+            }
+            _ => Err(McpError::tool_not_found(name)),
+        }
+    }
+
+    async fn read_resource(
+        &self,
+        uri: &str,
+        _ctx: &CoreRequestContext,
+    ) -> McpResult<ResourceResult> {
+        Err(McpError::resource_not_found(uri))
+    }
+
+    async fn get_prompt(
+        &self,
+        name: &str,
+        _args: Option<serde_json::Value>,
+        _ctx: &CoreRequestContext,
+    ) -> McpResult<PromptResult> {
+        Err(McpError::prompt_not_found(name))
+    }
+}
+
+async fn spawn_cancellable_server() -> (String, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
+    let addr_string = addr.to_string();
+    let handle = tokio::spawn(async move {
+        http::run(&CancellableHandler, &addr_string).await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    (format!("http://{}", addr), handle)
+}
+
 async fn spawn_server() -> (String, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -253,15 +334,36 @@ async fn ping_before_initialize_is_allowed() {
     handle.abort();
 }
 
-async fn read_next_sse_json(response: reqwest::Response) -> serde_json::Value {
-    use tokio::io::AsyncBufReadExt;
+type SseBytes = futures::stream::BoxStream<'static, std::io::Result<bytes::Bytes>>;
+type SseReader = tokio::io::BufReader<tokio_util::io::StreamReader<SseBytes, bytes::Bytes>>;
 
-    let mut reader = tokio::io::BufReader::new(tokio_util::io::StreamReader::new(
+/// Pull JSON-RPC payloads off an SSE stream one at a time.
+///
+/// A POST-initiated stream carries several records (primer, any server-initiated
+/// traffic, then the response), so reading has to be resumable rather than
+/// one-shot.
+fn sse_reader(response: reqwest::Response) -> SseReader {
+    tokio::io::BufReader::new(tokio_util::io::StreamReader::new(
         response
             .bytes_stream()
-            .map(|r| r.map_err(std::io::Error::other)),
-    ));
-    let mut data = String::new();
+            .map(|r| r.map_err(std::io::Error::other))
+            .boxed(),
+    ))
+}
+
+struct SseRecord {
+    id: Option<String>,
+    data: String,
+}
+
+/// Read one SSE record, skipping comment-only frames such as `: connected`.
+async fn next_sse_record(reader: &mut SseReader) -> SseRecord {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut record = SseRecord {
+        id: None,
+        data: String::new(),
+    };
 
     loop {
         let mut line = String::new();
@@ -269,18 +371,29 @@ async fn read_next_sse_json(response: reqwest::Response) -> serde_json::Value {
             .await
             .expect("timed out reading SSE line")
             .expect("SSE read error");
-        assert_ne!(n, 0, "SSE stream closed before a JSON-RPC message");
+        assert_ne!(n, 0, "SSE stream closed before the record ended");
 
         let line = line.trim_end_matches(&['\r', '\n'][..]);
         if line.is_empty() {
-            if !data.is_empty() {
-                return serde_json::from_str(&data).expect("SSE data should be JSON");
+            if record.id.is_some() || !record.data.is_empty() {
+                return record;
             }
             continue;
         }
 
-        if let Some(rest) = line.strip_prefix("data:") {
-            data.push_str(rest.trim_start());
+        if let Some(rest) = line.strip_prefix("id:") {
+            record.id = Some(rest.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            record.data.push_str(rest.trim_start());
+        }
+    }
+}
+
+async fn next_sse_json(reader: &mut SseReader) -> serde_json::Value {
+    loop {
+        let record = next_sse_record(reader).await;
+        if !record.data.is_empty() {
+            return serde_json::from_str(&record.data).expect("SSE data should be JSON");
         }
     }
 }
@@ -355,6 +468,15 @@ async fn get_sse_stream_primes_client_with_unique_event_id() {
     );
 }
 
+/// Drive a full sampling round trip **without ever issuing a GET**.
+///
+/// §Sending Messages item 6 puts request-related server messages on the stream
+/// the POST itself opened, and §Listening for Messages item 4 reserves the
+/// standalone GET stream for messages unrelated to a running request. Before
+/// 3.5.0 this server always answered a POST with `application/json` and pushed
+/// `ctx.sample()` onto the GET stream, so a client that only POSTs — which the
+/// spec permits, since the GET is a MAY — got `-32603 No active SSE stream`
+/// from every sample. Opening no GET here is the point of the test.
 async fn run_sampling_round_trip(client_sampling_payload: serde_json::Value) -> serde_json::Value {
     let (base_url, handle) = spawn_sampling_server().await;
     let client = Client::builder()
@@ -363,52 +485,6 @@ async fn run_sampling_round_trip(client_sampling_payload: serde_json::Value) -> 
         .unwrap();
     let session_id =
         initialize_session_with_capabilities(&client, &base_url, json!({ "sampling": {} })).await;
-
-    let sse_response = client
-        .get(format!("{}/mcp", base_url))
-        .header(header::ACCEPT, "text/event-stream")
-        .header("Mcp-Session-Id", &session_id)
-        .header("MCP-Protocol-Version", "2025-11-25")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(sse_response.status(), StatusCode::OK);
-
-    let responder_client = client.clone();
-    let responder_base_url = base_url.clone();
-    let responder_session_id = session_id.clone();
-    let responder = tokio::spawn(async move {
-        let server_request = read_next_sse_json(sse_response).await;
-        assert_eq!(server_request["method"], "sampling/createMessage");
-        assert!(
-            server_request["id"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("s-")),
-            "server request id should be string-prefixed: {server_request:?}"
-        );
-
-        let mut response = serde_json::Map::new();
-        response.insert("jsonrpc".to_string(), json!("2.0"));
-        response.insert("id".to_string(), server_request["id"].clone());
-        if let Some(result) = client_sampling_payload.get("result") {
-            response.insert("result".to_string(), result.clone());
-        } else if let Some(error) = client_sampling_payload.get("error") {
-            response.insert("error".to_string(), error.clone());
-        } else {
-            panic!("client sampling payload must contain result or error");
-        }
-
-        let response = responder_client
-            .post(format!("{}/mcp", responder_base_url))
-            .header(header::ACCEPT, "application/json, text/event-stream")
-            .header("Mcp-Session-Id", &responder_session_id)
-            .header("MCP-Protocol-Version", "2025-11-25")
-            .json(&serde_json::Value::Object(response))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-    });
 
     let tool_response = tokio::time::timeout(
         Duration::from_secs(5),
@@ -429,12 +505,56 @@ async fn run_sampling_round_trip(client_sampling_payload: serde_json::Value) -> 
             .send(),
     )
     .await
-    .expect("tool call should complete without waiting for timeout")
+    .expect("the POST should answer with headers promptly, not block on the handler")
     .unwrap();
 
     assert_eq!(tool_response.status(), StatusCode::OK);
-    let body = tool_response.json().await.unwrap();
-    responder.await.unwrap();
+    assert_eq!(
+        tool_response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.split(';').next().unwrap_or("").trim().to_string()),
+        Some("text/event-stream".to_string()),
+        "a handler that talks back must upgrade the POST to a stream"
+    );
+
+    let mut reader = sse_reader(tool_response);
+    let server_request = next_sse_json(&mut reader).await;
+    assert_eq!(server_request["method"], "sampling/createMessage");
+    assert!(
+        server_request["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("s-")),
+        "server request id should be string-prefixed: {server_request:?}"
+    );
+
+    let mut response = serde_json::Map::new();
+    response.insert("jsonrpc".to_string(), json!("2.0"));
+    response.insert("id".to_string(), server_request["id"].clone());
+    if let Some(result) = client_sampling_payload.get("result") {
+        response.insert("result".to_string(), result.clone());
+    } else if let Some(error) = client_sampling_payload.get("error") {
+        response.insert("error".to_string(), error.clone());
+    } else {
+        panic!("client sampling payload must contain result or error");
+    }
+
+    let ack = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&serde_json::Value::Object(response))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ack.status(), StatusCode::ACCEPTED);
+
+    // §Sending Messages item 6: "The SSE stream SHOULD eventually include a
+    // JSON-RPC response for the JSON-RPC request sent in the POST body."
+    let body = next_sse_json(&mut reader).await;
+    assert_eq!(body["id"], 2, "the stream must conclude with our response");
     handle.abort();
     body
 }
@@ -760,85 +880,6 @@ async fn server_initiated_sse_messages_have_resumable_event_ids() {
     let session_id =
         initialize_session_with_capabilities(&client, &base_url, json!({ "sampling": {} })).await;
 
-    let sse_response = client
-        .get(format!("{}/mcp", base_url))
-        .header(header::ACCEPT, "text/event-stream")
-        .header("Mcp-Session-Id", &session_id)
-        .header("MCP-Protocol-Version", "2025-11-25")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(sse_response.status(), StatusCode::OK);
-
-    let responder_client = client.clone();
-    let responder_base_url = base_url.clone();
-    let responder_session_id = session_id.clone();
-    let responder = tokio::spawn(async move {
-        use tokio::io::AsyncBufReadExt;
-
-        let mut reader = tokio::io::BufReader::new(tokio_util::io::StreamReader::new(
-            sse_response
-                .bytes_stream()
-                .map(|r| r.map_err(std::io::Error::other)),
-        ));
-        let mut event_id = String::new();
-        let mut data = String::new();
-
-        loop {
-            let mut line = String::new();
-            let n = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
-                .await
-                .expect("timed out reading SSE line")
-                .expect("SSE read error");
-            assert_ne!(n, 0, "SSE stream closed before a JSON-RPC message");
-
-            let line = line.trim_end_matches(&['\r', '\n'][..]);
-            if line.is_empty() {
-                if !data.is_empty() {
-                    break;
-                }
-                continue;
-            }
-
-            if let Some(rest) = line.strip_prefix("id:") {
-                event_id = rest.trim().to_string();
-            } else if let Some(rest) = line.strip_prefix("data:") {
-                data.push_str(rest.trim_start());
-            }
-        }
-
-        let server_request: serde_json::Value =
-            serde_json::from_str(&data).expect("SSE data should be JSON");
-        assert_eq!(server_request["method"], "sampling/createMessage");
-        assert!(
-            event_id.starts_with(&format!("{}-", responder_session_id)),
-            "server-initiated event id should be scoped to the session, got: {event_id}"
-        );
-
-        let response = responder_client
-            .post(format!("{}/mcp", responder_base_url))
-            .header(header::ACCEPT, "application/json, text/event-stream")
-            .header("Mcp-Session-Id", &responder_session_id)
-            .header("MCP-Protocol-Version", "2025-11-25")
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": server_request["id"],
-                "result": {
-                    "role": "assistant",
-                    "content": {
-                        "type": "text",
-                        "text": "sampled"
-                    },
-                    "model": "test-model"
-                }
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-        event_id
-    });
-
     let tool_response = client
         .post(format!("{}/mcp", base_url))
         .header(header::ACCEPT, "application/json, text/event-stream")
@@ -858,11 +899,65 @@ async fn server_initiated_sse_messages_have_resumable_event_ids() {
         .unwrap();
     assert_eq!(tool_response.status(), StatusCode::OK);
 
-    let event_id = responder.await.unwrap();
+    let mut reader = sse_reader(tool_response);
+
+    // §Sending Messages item 6: the stream opens with an event ID and an empty
+    // data field, priming the client with a `Last-Event-ID` anchor.
+    let primer = next_sse_record(&mut reader).await;
+    let primer_id = primer.id.expect("primer must carry an event ID");
+    assert!(primer.data.is_empty(), "primer carries no data");
+    assert!(
+        primer_id.starts_with(&format!("{}-", session_id)),
+        "event ids are scoped to the session, got: {primer_id}"
+    );
+    assert!(primer_id.ends_with("-0"), "the primer is the seq-0 cursor");
+
+    let message = next_sse_record(&mut reader).await;
+    let event_id = message.id.expect("message must carry an event ID");
+    let server_request: serde_json::Value =
+        serde_json::from_str(&message.data).expect("SSE data should be JSON");
+    assert_eq!(server_request["method"], "sampling/createMessage");
     assert!(
         event_id.ends_with("-1"),
         "the stream's primer event holds sequence 0, so the first JSON-RPC \
          message must use sequence 1 to keep event IDs unique, got: {event_id}"
+    );
+    assert_eq!(
+        primer_id.rsplit_once('-').map(|(head, _)| head),
+        event_id.rsplit_once('-').map(|(head, _)| head),
+        "both events belong to the same stream, so the ids share a prefix"
+    );
+
+    let ack = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": server_request["id"],
+            "result": {
+                "role": "assistant",
+                "content": {
+                    "type": "text",
+                    "text": "sampled"
+                },
+                "model": "test-model"
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ack.status(), StatusCode::ACCEPTED);
+
+    let final_record = next_sse_record(&mut reader).await;
+    assert_eq!(
+        final_record
+            .id
+            .as_deref()
+            .and_then(|id| id.rsplit_once('-')),
+        Some((event_id.rsplit_once('-').unwrap().0, "2")),
+        "the response continues the same stream's cursor"
     );
 
     handle.abort();
@@ -1080,6 +1175,376 @@ async fn a_reused_request_id_is_served_rather_than_refused() {
         let body: serde_json::Value = again.json().await.unwrap();
         assert!(body.get("result").is_some(), "got: {body}");
     }
+
+    handle.abort();
+}
+
+/// MCP §Cancellation: a receiver SHOULD stop processing a cancelled request.
+///
+/// The other three transports each kept an in-flight registry; HTTP had none,
+/// so `ctx.is_cancelled()` was permanently false on the transport where long
+/// tool calls are most common. A client that abandoned a ten-minute call still
+/// paid for it server-side, and the 202 made the cancel look accepted.
+#[tokio::test]
+async fn a_posted_cancellation_signals_the_running_handler() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let call = tokio::spawn({
+        let client = client.clone();
+        let base_url = base_url.clone();
+        let session_id = session_id.clone();
+        async move {
+            client
+                .post(format!("{}/mcp", base_url))
+                .header(header::ACCEPT, "application/json, text/event-stream")
+                .header("Mcp-Session-Id", &session_id)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .json(&json!({
+                    "jsonrpc": "2.0",
+                    "id": 42,
+                    "method": "tools/call",
+                    "params": { "name": "park", "arguments": {} }
+                }))
+                .send()
+                .await
+                .unwrap()
+        }
+    });
+
+    // Let the handler get into its wait before cancelling it.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // The id goes out as a string here while the request carried a number:
+    // JSON-RPC does not constrain which, so both must land in the same slot.
+    let cancel = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": { "requestId": "42", "reason": "user abandoned it" }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cancel.status(), StatusCode::ACCEPTED);
+
+    let body: serde_json::Value = tokio::time::timeout(Duration::from_secs(5), call)
+        .await
+        .expect("the cancelled call should return promptly, not run to its timeout")
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        body["result"]["content"][0]["text"], "cancelled",
+        "the handler must observe ctx.is_cancelled(), got: {body}"
+    );
+
+    handle.abort();
+}
+
+/// §Resumability: "the server MAY use this header to replay messages that would
+/// have been sent after the last event ID, *on the stream that was
+/// disconnected*, and to resume the stream from that point."
+///
+/// Before 3.5.0 `Last-Event-ID` was never read, so a reconnect got a brand-new
+/// empty stream and the client never learned it had missed anything — while the
+/// event IDs the server emits advertised resumability the whole time.
+#[tokio::test]
+async fn a_dropped_stream_resumes_from_last_event_id() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    // A POST stream is the easy one to disconnect mid-flight: the handler emits
+    // progress, then the response. Drop after the progress event.
+    let response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "report",
+                "arguments": {},
+                "_meta": { "progressToken": "tok-2" }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut reader = sse_reader(response);
+    let primer = next_sse_record(&mut reader).await;
+    let primer_id = primer.id.expect("primer carries an event ID");
+    let progress = next_sse_record(&mut reader).await;
+    let progress_id = progress.id.expect("progress carries an event ID");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&progress.data).unwrap()["method"],
+        "notifications/progress"
+    );
+
+    // Hang up without reading the response, then let the handler finish.
+    drop(reader);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // §Resumability: "Resumption is always via HTTP GET with Last-Event-ID",
+    // whichever way the stream was originally opened.
+    let resumed = client
+        .get(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .header("Last-Event-ID", &progress_id)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), StatusCode::OK);
+
+    let mut resumed_reader = sse_reader(resumed);
+    let replayed = next_sse_record(&mut resumed_reader).await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&replayed.data).unwrap()["id"],
+        5,
+        "the response the client missed must be redelivered"
+    );
+    assert_eq!(
+        replayed.id.as_deref(),
+        Some(format!("{}-2", progress_id.rsplit_once('-').unwrap().0).as_str()),
+        "a replayed event keeps its original id, and continues this stream's cursor"
+    );
+    assert_ne!(
+        replayed.id.as_deref(),
+        Some(primer_id.as_str()),
+        "already-received events are not replayed"
+    );
+
+    handle.abort();
+}
+
+/// A `Last-Event-ID` naming another session's stream replays nothing.
+///
+/// §Resumability: "The server MUST NOT replay messages that would have been
+/// delivered on a different stream." Falling through to a fresh stream, rather
+/// than erroring, is also what a client that sent no header would have got.
+#[tokio::test]
+async fn a_last_event_id_from_another_session_replays_nothing() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let victim = initialize_session(&client, &base_url).await;
+    let attacker = initialize_session(&client, &base_url).await;
+
+    let response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &victim)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "report",
+                "arguments": {},
+                "_meta": { "progressToken": "tok-3" }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let mut reader = sse_reader(response);
+    next_sse_record(&mut reader).await; // primer
+    let progress_id = next_sse_record(&mut reader)
+        .await
+        .id
+        .expect("progress carries an event ID");
+    drop(reader);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let resumed = client
+        .get(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "text/event-stream")
+        .header("Mcp-Session-Id", &attacker)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .header("Last-Event-ID", &progress_id)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), StatusCode::OK);
+
+    // A fresh stream: the first record is this session's own primer, not any of
+    // the victim's traffic.
+    let mut resumed_reader = sse_reader(resumed);
+    let first = next_sse_record(&mut resumed_reader).await;
+    assert!(
+        first.data.is_empty(),
+        "a cross-session Last-Event-ID must open a fresh stream, got: {}",
+        first.data
+    );
+    assert!(
+        first
+            .id
+            .as_deref()
+            .is_some_and(|id| id.starts_with(&format!("{attacker}-")) && id.ends_with("-0")),
+        "the fresh stream is primed under the requesting session, got: {:?}",
+        first.id
+    );
+
+    handle.abort();
+}
+
+/// The upgrade to SSE is lazy: a request whose handler says nothing back keeps
+/// the single-JSON-object form. §Sending Messages item 5 permits either, and
+/// making every POST a stream would be a needless change for every client.
+#[tokio::test]
+async fn a_request_that_needs_no_stream_still_answers_with_json() {
+    let (base_url, _handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/list" }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.split(';').next().unwrap_or("").trim().to_string()),
+        Some("application/json".to_string())
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["id"], 3);
+}
+
+/// Progress is request-related traffic, so it belongs on the POST's own stream.
+///
+/// It used to go to the standalone GET stream, which means `report_progress`
+/// returned `-32603 No active SSE stream` on a client that never issued a GET —
+/// failing the very request it was describing.
+#[tokio::test]
+async fn progress_rides_the_stream_opened_by_its_own_request() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "report",
+                "arguments": {},
+                "_meta": { "progressToken": "tok-1" }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut reader = sse_reader(response);
+
+    let progress = next_sse_json(&mut reader).await;
+    assert_eq!(progress["method"], "notifications/progress");
+    assert_eq!(progress["params"]["progressToken"], "tok-1");
+    assert_eq!(progress["params"]["progress"], 1.0);
+
+    // Ordering is the point: a progress report that lands after the response it
+    // describes is worse than none.
+    let result = next_sse_json(&mut reader).await;
+    assert_eq!(result["id"], 4);
+    assert_eq!(result["result"]["content"][0]["text"], "done");
+
+    handle.abort();
+}
+
+/// A cancellation is scoped to the session that sent it. The registry is
+/// per-session precisely so one client cannot cancel another's request by
+/// guessing a JSON-RPC id — ids are only unique within a session.
+#[tokio::test]
+async fn a_cancellation_cannot_reach_another_session() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let victim = initialize_session(&client, &base_url).await;
+    let attacker = initialize_session(&client, &base_url).await;
+    assert_ne!(victim, attacker);
+
+    let call = tokio::spawn({
+        let client = client.clone();
+        let base_url = base_url.clone();
+        async move {
+            client
+                .post(format!("{}/mcp", base_url))
+                .header(header::ACCEPT, "application/json, text/event-stream")
+                .header("Mcp-Session-Id", &victim)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .json(&json!({
+                    "jsonrpc": "2.0",
+                    "id": 42,
+                    "method": "tools/call",
+                    "params": { "name": "park", "arguments": {} }
+                }))
+                .send()
+                .await
+                .unwrap()
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let cancel = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &attacker)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": { "requestId": 42 }
+        }))
+        .send()
+        .await
+        .unwrap();
+    // Still 202: an id the sender never used is a no-op, not an error.
+    assert_eq!(cancel.status(), StatusCode::ACCEPTED);
+
+    let body: serde_json::Value = tokio::time::timeout(Duration::from_secs(5), call)
+        .await
+        .expect("the victim's call should finish on its own")
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        body["result"]["content"][0]["text"], "completed",
+        "another session's cancel must not touch this request, got: {body}"
+    );
 
     handle.abort();
 }

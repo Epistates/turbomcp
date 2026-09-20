@@ -12,6 +12,19 @@
 //! - DELETE `/` or `/mcp` - explicit session termination
 //! - `Mcp-Session-Id` header for session correlation
 //!
+//! # Streams
+//!
+//! A POST answers with a single `application/json` object unless the handler
+//! emits something for the client mid-request — sampling, elicitation,
+//! progress — in which case it upgrades to `text/event-stream` and carries that
+//! traffic plus the final response, per §Sending Messages item 6. The
+//! standalone GET stream carries only messages unrelated to a running request,
+//! which is what §Listening for Messages item 4 reserves it for.
+//!
+//! Both kinds of stream are resumable: event IDs are `{session}-{stream}-{seq}`,
+//! each stream keeps a bounded history, and a GET carrying `Last-Event-ID`
+//! re-attaches to the named stream and replays what it missed.
+//!
 //! # Version-Aware Routing
 //!
 //! Per-session version-aware routing is active. After a successful `initialize`
@@ -20,7 +33,7 @@
 //! dispatched through [`router::route_request_versioned`], ensuring correct
 //! adapter filtering and method availability for the negotiated spec version.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +45,9 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bytes::Bytes;
+use dashmap::DashMap;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 use tower_http::limit::RequestBodyLimitLayer;
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
@@ -44,8 +59,10 @@ use turbomcp_types::{ClientCapabilities, ProtocolVersion};
 use uuid::Uuid;
 
 use crate::config::{RateLimiter, ServerConfig};
-use crate::context::{McpSession, RequestContext, SessionFuture};
+use crate::context::{Cancellable, McpSession, RequestContext, SessionFuture};
 use crate::router::{self, JsonRpcIncoming, JsonRpcOutgoing};
+
+use super::{PendingHandlerGuard, jsonrpc_id_key};
 
 /// Maximum HTTP request body size for MCP requests.
 ///
@@ -64,23 +81,120 @@ const MAX_PENDING_SERVER_REQUESTS: usize = 64;
 /// Timeout for server-to-client request responses over Streamable HTTP.
 const SERVER_REQUEST_TIMEOUT_SECS: u64 = 60;
 
+/// Maximum events retained per stream for `Last-Event-ID` replay.
+const MAX_REPLAY_EVENTS: usize = 64;
+
+/// Maximum SSE streams retained per session, attached or resumable.
+///
+/// A stream entry outlives its connection so a reconnect can replay from it,
+/// so without a cap a client could grow a session without bound by opening
+/// and dropping GETs.
+const MAX_RETAINED_STREAMS: usize = 8;
+
 type PendingServerResponse = oneshot::Sender<McpResult<serde_json::Value>>;
 type PendingServerRequests = Arc<Mutex<HashMap<String, PendingServerResponse>>>;
+
+/// One SSE event: its `{session}-{stream}-{seq}` id and its payload.
+///
+/// Payloads are `Arc<str>` so routing and broadcast share one allocation
+/// instead of copying the full message per send.
+type SseEvent = (String, Arc<str>);
+
+/// One SSE stream belonging to a session.
+#[derive(Debug)]
+struct StreamState {
+    /// Sender for the attached connection, `None` once it drops.
+    ///
+    /// The entry outlives the connection on purpose: §Resumability lets a
+    /// client reconnect with `Last-Event-ID` and pick the stream back up, and
+    /// it can only do that if the stream's cursor and history survived.
+    sender: Option<mpsc::UnboundedSender<SseEvent>>,
+    /// Whether this is a standalone GET stream, and so eligible to carry
+    /// messages unrelated to any running request.
+    ///
+    /// POST streams are addressed explicitly by id and must never be picked by
+    /// that heuristic — a GET opened mid-call would otherwise steal the
+    /// request's sampling traffic.
+    listening: bool,
+    /// Cursor for the next event on this stream.
+    next_seq: u64,
+    /// Events already sent, newest last, bounded by [`MAX_REPLAY_EVENTS`].
+    history: VecDeque<(u64, SseEvent)>,
+}
+
+impl StreamState {
+    fn new(sender: mpsc::UnboundedSender<SseEvent>, listening: bool) -> Self {
+        Self {
+            sender: Some(sender),
+            listening,
+            // The primer takes seq 0, so messages start at 1. §Resumability
+            // requires event IDs unique within the session, and reusing 0 would
+            // make the primer and the first message indistinguishable on replay.
+            next_seq: 1,
+            history: VecDeque::new(),
+        }
+    }
+
+    /// Stamp the next event id on `message` and hand it to the connection.
+    ///
+    /// Only a delivered event is retained. An event the transport never
+    /// accepted was reported to its caller as undelivered — `ctx.sample()`
+    /// surfaces an error and drops its pending entry — so replaying it later
+    /// would resurrect a request the server has already given up on.
+    fn emit(&mut self, session_id: &str, stream_id: &str, message: &str) -> bool {
+        let Some(sender) = self.sender.as_ref() else {
+            return false;
+        };
+
+        let seq = self.next_seq;
+        let event: SseEvent = (
+            format!("{session_id}-{stream_id}-{seq}"),
+            Arc::from(message),
+        );
+        if sender.send(event.clone()).is_err() {
+            self.sender = None;
+            return false;
+        }
+
+        self.next_seq = seq.saturating_add(1);
+        while self.history.len() >= MAX_REPLAY_EVENTS {
+            self.history.pop_front();
+        }
+        self.history.push_back((seq, event));
+        true
+    }
+
+    /// Events this stream sent after `last_seq`, for replay on reconnect.
+    fn replay_after(&self, last_seq: u64) -> Vec<SseEvent> {
+        self.history
+            .iter()
+            .filter(|(seq, _)| *seq > last_seq)
+            .map(|(_, event)| event.clone())
+            .collect()
+    }
+}
+
+/// Split a `{session}-{stream}-{seq}` event id back into its parts.
+///
+/// Parsed from the right: the session id is a hyphenated UUID, so only this
+/// direction is unambiguous.
+fn parse_event_id(event_id: &str) -> Option<(&str, &str, u64)> {
+    let (head, seq) = event_id.rsplit_once('-')?;
+    let (session_id, stream_id) = head.rsplit_once('-')?;
+    Some((session_id, stream_id, seq.parse().ok()?))
+}
 
 /// Per-session data tracked by SessionManager.
 ///
 /// The MCP 2025-11-25 spec (§Multiple Connections) says a server "MUST send
 /// each of its JSON-RPC messages on only one of the connected streams; that
 /// is, it MUST NOT broadcast the same message across multiple streams."
-/// We therefore track subscribers as a list of mpsc senders and route each
-/// outbound message to exactly one of them, dropping dead senders as we go.
+/// We therefore track streams as a list and route each outbound message to
+/// exactly one of them.
 #[derive(Debug)]
 struct SessionData {
-    /// Ordered list of active SSE subscribers (newest last).
-    ///
-    /// Payloads are `Arc<str>` so routing/broadcast shares one allocation
-    /// instead of copying the full message per send.
-    subscribers: Vec<mpsc::UnboundedSender<Arc<str>>>,
+    /// Ordered list of this session's SSE streams (newest last).
+    streams: Vec<(String, StreamState)>,
     /// Negotiated protocol version (set after successful initialize).
     protocol_version: Option<ProtocolVersion>,
     /// Client capabilities captured from the successful initialize request.
@@ -89,6 +203,13 @@ struct SessionData {
     pending_server_requests: PendingServerRequests,
     /// Monotonic server request counter. IDs are rendered as `s-{n}`.
     next_server_request_id: u64,
+    /// Cancellation tokens for this session's in-flight handlers, keyed by
+    /// JSON-RPC request id.
+    ///
+    /// Per-session, not server-wide. One HTTP server multiplexes many clients,
+    /// so a flat map keyed by request id alone would let any client cancel
+    /// another client's request by guessing an id.
+    pending_handlers: Arc<DashMap<String, CancellationToken>>,
 }
 
 /// Session manager for SSE connections.
@@ -147,11 +268,12 @@ impl SessionManager {
         self.sessions.write().await.insert(
             session_id.clone(),
             SessionData {
-                subscribers: Vec::new(),
+                streams: Vec::new(),
                 protocol_version: None,
                 client_capabilities: None,
                 pending_server_requests: Arc::new(Mutex::new(HashMap::new())),
                 next_server_request_id: 1,
+                pending_handlers: Arc::new(DashMap::new()),
             },
         );
 
@@ -201,12 +323,10 @@ impl SessionManager {
     async fn subscribe_session_inner(
         &self,
         session_id: &str,
-    ) -> Option<mpsc::UnboundedReceiver<Arc<str>>> {
-        let mut sessions = self.sessions.write().await;
-        let data = sessions.get_mut(session_id)?;
-        let (tx, rx) = mpsc::unbounded_channel();
-        data.subscribers.push(tx);
-        Some(rx)
+    ) -> Option<mpsc::UnboundedReceiver<SseEvent>> {
+        self.open_stream(session_id, true)
+            .await
+            .map(|(_, _, rx)| rx)
     }
 
     /// Subscribe to an existing session's SSE stream.
@@ -214,10 +334,11 @@ impl SessionManager {
     /// Each subscribe returns a dedicated [`mpsc::UnboundedReceiver`] that
     /// only receives messages routed to this subscriber — never broadcasts.
     #[cfg(not(feature = "internal-bench"))]
+    #[allow(dead_code)]
     pub(crate) async fn subscribe_session(
         &self,
         session_id: &str,
-    ) -> Option<mpsc::UnboundedReceiver<Arc<str>>> {
+    ) -> Option<mpsc::UnboundedReceiver<SseEvent>> {
         self.subscribe_session_inner(session_id).await
     }
 
@@ -226,8 +347,122 @@ impl SessionManager {
     pub async fn subscribe_session(
         &self,
         session_id: &str,
-    ) -> Option<mpsc::UnboundedReceiver<Arc<str>>> {
+    ) -> Option<mpsc::UnboundedReceiver<SseEvent>> {
         self.subscribe_session_inner(session_id).await
+    }
+
+    /// Open a new SSE stream on this session.
+    ///
+    /// Returns the stream id, the id of the primer event the caller should emit
+    /// (§Sending Messages item 6), and the receiver. `listening` marks the
+    /// standalone GET stream; POST streams are addressed by id only.
+    async fn open_stream(
+        &self,
+        session_id: &str,
+        listening: bool,
+    ) -> Option<(String, String, mpsc::UnboundedReceiver<SseEvent>)> {
+        let mut sessions = self.sessions.write().await;
+        let data = sessions.get_mut(session_id)?;
+
+        let stream_id = Uuid::new_v4().simple().to_string();
+        let (tx, rx) = mpsc::unbounded_channel();
+        data.streams
+            .push((stream_id.clone(), StreamState::new(tx, listening)));
+        Self::evict_excess_streams(data);
+
+        let primer_id = format!("{session_id}-{stream_id}-0");
+        Some((stream_id, primer_id, rx))
+    }
+
+    /// Re-attach to the stream a `Last-Event-ID` names, replaying what it missed.
+    ///
+    /// Returns `None` — meaning "open a fresh stream instead" — for a malformed
+    /// id, an unknown stream, or an id naming another session. Never replaying
+    /// across sessions or streams is what §Resumability requires: "The server
+    /// MUST NOT replay messages that would have been delivered on a different
+    /// stream."
+    async fn resume_stream(
+        &self,
+        session_id: &str,
+        last_event_id: &str,
+    ) -> Option<(String, Vec<SseEvent>, mpsc::UnboundedReceiver<SseEvent>)> {
+        let (event_session, stream_id, last_seq) = parse_event_id(last_event_id)?;
+        if event_session != session_id {
+            tracing::warn!(
+                session_id,
+                last_event_id,
+                "Ignoring a Last-Event-ID that names a different session"
+            );
+            return None;
+        }
+        let stream_id = stream_id.to_string();
+
+        let mut sessions = self.sessions.write().await;
+        let data = sessions.get_mut(session_id)?;
+        let (_, state) = data.streams.iter_mut().find(|(id, _)| *id == stream_id)?;
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        state.sender = Some(tx);
+        Some((stream_id, state.replay_after(last_seq), rx))
+    }
+
+    /// Route one payload to a named stream, recording it for replay.
+    async fn send_to_stream(&self, session_id: &str, stream_id: &str, message: &str) -> bool {
+        let mut sessions = self.sessions.write().await;
+        let Some(data) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        let Some((_, state)) = data.streams.iter_mut().find(|(id, _)| id == stream_id) else {
+            return false;
+        };
+        state.emit(session_id, stream_id, message)
+    }
+
+    /// Forget a stream outright.
+    ///
+    /// Used when a POST turned out not to need a stream after all: keeping the
+    /// entry would waste one of the session's retained slots on a stream that
+    /// never carried an event.
+    async fn close_stream(&self, session_id: &str, stream_id: &str) {
+        if let Some(data) = self.sessions.write().await.get_mut(session_id) {
+            data.streams.retain(|(id, _)| id != stream_id);
+        }
+    }
+
+    /// Keep the retained-stream list bounded.
+    ///
+    /// Detached streams go first, since they cost a slot for a replay nobody
+    /// has asked for. If every retained stream is still attached, the oldest
+    /// goes and its connection ends with it.
+    fn evict_excess_streams(data: &mut SessionData) {
+        while data.streams.len() > MAX_RETAINED_STREAMS {
+            let victim = data
+                .streams
+                .iter()
+                .position(|(_, state)| state.sender.is_none())
+                .unwrap_or(0);
+            data.streams.remove(victim);
+        }
+    }
+
+    /// Route one payload to exactly one of a session's listening streams.
+    ///
+    /// §Multiple Connections: the server "MUST NOT broadcast the same message
+    /// across multiple streams". The newest attached listening stream wins,
+    /// which gives a fresh GET priority over a stale one without closing
+    /// streams that are merely idle.
+    fn route_to_listening_stream(session_id: &str, data: &mut SessionData, message: &str) -> bool {
+        for index in (0..data.streams.len()).rev() {
+            let (stream_id, state) = &mut data.streams[index];
+            if !state.listening || state.sender.is_none() {
+                continue;
+            }
+            let stream_id = stream_id.clone();
+            if state.emit(session_id, &stream_id, message) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check whether a session exists.
@@ -248,33 +483,14 @@ impl SessionManager {
         let Some(data) = sessions.get_mut(session_id) else {
             return false;
         };
-        // One shared allocation for the payload; retries clone the Arc, not
-        // the message bytes.
-        let message: Arc<str> = Arc::from(message);
-        // Drain dead senders from the newest end forward until we find a
-        // live one that accepts the message. This gives new SSE connections
-        // priority over stale ones without closing streams that are idle.
-        while let Some(tx) = data.subscribers.last() {
-            if tx.is_closed() {
-                data.subscribers.pop();
-                continue;
-            }
-            if tx.send(Arc::clone(&message)).is_ok() {
-                return true;
-            }
-            // Send only fails here if the receiver was dropped between the
-            // is_closed check and send; pop and retry.
-            data.subscribers.pop();
-        }
-        false
+        Self::route_to_listening_stream(session_id, data, message)
     }
 
-    /// Send a message to one subscriber for the given session.
+    /// Send a message to one listening stream for the given session.
     ///
     /// Per the MCP Multiple Connections rule, this routes the message to
-    /// exactly one of the session's currently connected streams (the most
-    /// recently subscribed live one), dropping any closed senders along the
-    /// way. Returns `true` if the message was delivered.
+    /// exactly one of the session's currently connected GET streams (the most
+    /// recently opened live one). Returns `true` if the message was delivered.
     ///
     /// Exposed under the `internal-bench` feature for `benches/sse_throughput.rs`;
     /// treat as crate-internal otherwise.
@@ -292,22 +508,8 @@ impl SessionManager {
     #[allow(dead_code)]
     async fn broadcast_inner(&self, message: &str) {
         let mut sessions = self.sessions.write().await;
-        // One shared allocation for all sessions instead of one copy each.
-        let message: Arc<str> = Arc::from(message);
         for (session_id, data) in sessions.iter_mut() {
-            let mut delivered = false;
-            while let Some(tx) = data.subscribers.last() {
-                if tx.is_closed() {
-                    data.subscribers.pop();
-                    continue;
-                }
-                if tx.send(Arc::clone(&message)).is_ok() {
-                    delivered = true;
-                    break;
-                }
-                data.subscribers.pop();
-            }
-            if !delivered {
+            if !Self::route_to_listening_stream(session_id, data, message) {
                 tracing::warn!("No live subscriber for session {}", session_id);
             }
         }
@@ -450,6 +652,62 @@ impl SessionManager {
             .get(session_id)
             .map(|data| Arc::clone(&data.pending_server_requests))
     }
+
+    /// Register a cancellation token for an in-flight request on this session.
+    ///
+    /// Returns the token to install in the request context plus a guard that
+    /// removes the registry entry on every exit path (success, error, panic,
+    /// future drop), matching the line / channel / websocket transports.
+    ///
+    /// `None` when the session is gone, in which case the request simply runs
+    /// without a token, exactly as a sessionless request does today.
+    async fn register_pending_handler(
+        &self,
+        session_id: &str,
+        key: String,
+    ) -> Option<(CancellationToken, PendingHandlerGuard)> {
+        let handlers = {
+            let sessions = self.sessions.read().await;
+            Arc::clone(&sessions.get(session_id)?.pending_handlers)
+        };
+
+        let token = CancellationToken::new();
+        if handlers.insert(key.clone(), token.clone()).is_some() {
+            // Sequential id reuse is fine. *Concurrent* reuse is not: the
+            // client cannot match two responses carrying one id, and this just
+            // overwrote the first handler's token. Report it rather than
+            // refusing to serve, matching line.rs.
+            tracing::warn!(
+                request_id = %key,
+                "Request id reused while the first is still in flight"
+            );
+        }
+
+        let guard = PendingHandlerGuard::new(Arc::clone(&handlers), Some(key));
+        Some((token, guard))
+    }
+
+    /// Signal the in-flight handler registered under `key` for this session.
+    ///
+    /// An unknown or already-finished id is a no-op, which is what the
+    /// cancellation utility requires of a receiver.
+    async fn cancel_pending_handler(&self, session_id: &str, key: &str) -> bool {
+        let handlers = {
+            let sessions = self.sessions.read().await;
+            match sessions.get(session_id) {
+                Some(data) => Arc::clone(&data.pending_handlers),
+                None => return false,
+            }
+        };
+
+        match handlers.remove(key) {
+            Some((_, token)) => {
+                token.cancel();
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Bidirectional HTTP/SSE session handle used by request handlers.
@@ -458,6 +716,8 @@ struct HttpSessionHandle {
     session_id: String,
     session_manager: SessionManager,
     request_timeout: Duration,
+    /// Id of the stream opened by the POST that is currently being served.
+    request_stream: Option<String>,
 }
 
 impl HttpSessionHandle {
@@ -466,7 +726,36 @@ impl HttpSessionHandle {
             session_id: session_id.into(),
             session_manager,
             request_timeout: Duration::from_secs(SERVER_REQUEST_TIMEOUT_SECS),
+            request_stream: None,
         }
+    }
+
+    fn with_request_stream(mut self, stream_id: Option<String>) -> Self {
+        self.request_stream = stream_id;
+        self
+    }
+
+    /// Deliver one payload to the client.
+    ///
+    /// Prefers the SSE stream opened for the request being served: §Sending
+    /// Messages item 6 is where request-related traffic belongs, and §Listening
+    /// for Messages item 4 reserves the standalone GET stream for messages
+    /// *unrelated* to a running request. Falls back to the GET stream when the
+    /// POST was answered with plain JSON (a client whose `Accept` omits
+    /// `text/event-stream`), or when the request stream is already closed.
+    async fn deliver(&self, payload: &str) -> bool {
+        if let Some(ref stream_id) = self.request_stream
+            && self
+                .session_manager
+                .send_to_stream(&self.session_id, stream_id, payload)
+                .await
+        {
+            return true;
+        }
+
+        self.session_manager
+            .send_to_session(&self.session_id, payload)
+            .await
     }
 }
 
@@ -501,11 +790,7 @@ impl McpSession for HttpSessionHandle {
             let payload = serde_json::to_string(&request)
                 .map_err(|e| McpError::serialization(e.to_string()))?;
 
-            if !self
-                .session_manager
-                .send_to_session(&self.session_id, &payload)
-                .await
-            {
+            if !self.deliver(&payload).await {
                 self.session_manager
                     .remove_pending_server_request(&self.session_id, &request_id)
                     .await;
@@ -539,11 +824,7 @@ impl McpSession for HttpSessionHandle {
             let payload = serde_json::to_string(&notification)
                 .map_err(|e| McpError::serialization(e.to_string()))?;
 
-            if self
-                .session_manager
-                .send_to_session(&self.session_id, &payload)
-                .await
-            {
+            if self.deliver(&payload).await {
                 Ok(())
             } else {
                 Err(McpError::unavailable(
@@ -777,8 +1058,17 @@ async fn route_with_version_tracking<H: McpHandler>(
     session_manager: &SessionManager,
     config: Option<&ServerConfig>,
     session_id: Option<&str>,
+    request_stream: Option<String>,
 ) -> router::JsonRpcOutgoing {
-    let ctx = http_request_context(session_manager, session_id, request.id.as_ref());
+    // Held for the life of the dispatch: dropping it de-registers the
+    // cancellation token so a late `notifications/cancelled` matches nothing.
+    let (ctx, _pending_guard) = http_request_context(
+        session_manager,
+        session_id,
+        request.id.as_ref(),
+        request_stream,
+    )
+    .await;
 
     if request.method == "initialize" {
         let client_capabilities =
@@ -814,28 +1104,47 @@ async fn route_with_version_tracking<H: McpHandler>(
     router::route_request_with_config(handler, request, &ctx, config).await
 }
 
-fn http_request_context(
+/// Build the per-request context, installing a cancellation token when the
+/// request belongs to a session and carries an id.
+///
+/// Returns the guard alongside the context; the caller must hold it for the
+/// life of the dispatch so the registry entry is removed on every exit path.
+async fn http_request_context(
     session_manager: &SessionManager,
     session_id: Option<&str>,
     request_id: Option<&serde_json::Value>,
-) -> RequestContext {
+    request_stream: Option<String>,
+) -> (RequestContext, Option<PendingHandlerGuard>) {
     let mut ctx = RequestContext::http();
+    let key = request_id.map(jsonrpc_id_key);
 
-    if let Some(request_id) = request_id.and_then(super::request_id_key) {
-        ctx = ctx.with_request_id(request_id);
+    if let Some(ref key) = key {
+        ctx = ctx.with_request_id(key.clone());
     }
 
+    let mut guard = None;
     if let Some(session_id) = session_id {
-        let session = Arc::new(HttpSessionHandle::new(
-            session_id.to_string(),
-            session_manager.clone(),
-        )) as Arc<dyn McpSession>;
+        let session = Arc::new(
+            HttpSessionHandle::new(session_id.to_string(), session_manager.clone())
+                .with_request_stream(request_stream),
+        ) as Arc<dyn McpSession>;
         ctx = ctx
             .with_session_id(session_id.to_string())
             .with_session(session);
+
+        // Only a request can be cancelled — a notification has no id for the
+        // client to name in `notifications/cancelled`.
+        if let Some(key) = key
+            && let Some((token, pending_guard)) = session_manager
+                .register_pending_handler(session_id, key)
+                .await
+        {
+            ctx = ctx.with_cancellation_token(Arc::new(token) as Arc<dyn Cancellable>);
+            guard = Some(pending_guard);
+        }
     }
 
-    ctx
+    (ctx, guard)
 }
 
 fn parse_session_id(headers: &HeaderMap) -> Option<String> {
@@ -1126,6 +1435,209 @@ async fn handle_client_json_rpc_response<H: McpHandler>(
     }
 }
 
+/// Does the client accept an SSE answer to this POST?
+///
+/// §Sending Messages item 2 makes listing `text/event-stream` a client MUST, and
+/// item 5 leaves the choice of form to the server. A client that omits it gets
+/// the single-JSON-object form. `*/*` and `text/*` count: item 5 also obliges
+/// the client to support both forms, so a blanket accept is an accept.
+fn accepts_event_stream(headers: &HeaderMap) -> bool {
+    let Some(accept) = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+
+    accept.split(',').any(|entry| {
+        let mime = entry.split(';').next().unwrap_or("").trim();
+        mime.eq_ignore_ascii_case("text/event-stream")
+            || mime.eq_ignore_ascii_case("text/*")
+            || mime == "*/*"
+    })
+}
+
+/// Dispatch one request on its own task.
+///
+/// Spawning is what lets a handler panic be answered rather than dropped: an
+/// unwind inside the axum handler propagates into hyper, which closes the
+/// connection with no response at all, leaving a client without a per-request
+/// timeout waiting forever. The other three transports already route through
+/// `route_catching_panics`; this gives HTTP the same guarantee.
+///
+/// It also means a client disconnect no longer kills the handler mid-flight,
+/// which is what §Sending Messages item 6 asks for: "Disconnection SHOULD NOT
+/// be interpreted as the client cancelling its request." Cancellation is
+/// explicit, via `notifications/cancelled`.
+fn dispatch_request<H: McpHandler>(
+    state: &SseState<H>,
+    request: JsonRpcIncoming,
+    session_id: Option<String>,
+    request_stream: Option<String>,
+) -> tokio::task::JoinHandle<JsonRpcOutgoing> {
+    let handler = state.handler.clone();
+    let session_manager = state.session_manager.clone();
+    let config = state.config.clone();
+
+    tokio::spawn(async move {
+        route_with_version_tracking(
+            &handler,
+            request,
+            &session_manager,
+            config.as_ref(),
+            session_id.as_deref(),
+            request_stream,
+        )
+        .await
+    })
+}
+
+/// Unwrap a dispatch task, reporting a panicking handler as a server fault.
+///
+/// The panic payload is logged in full but only summarised to the client, since
+/// it can carry internal detail.
+fn dispatch_outcome(
+    outcome: Result<JsonRpcOutgoing, tokio::task::JoinError>,
+    id: Option<serde_json::Value>,
+    method: &str,
+) -> JsonRpcOutgoing {
+    match outcome {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::error!(
+                method = %method,
+                %error,
+                "Handler panicked; answering with an internal error"
+            );
+            JsonRpcOutgoing::error(
+                id,
+                McpError::internal(format!("Handler panicked while serving {method}")),
+            )
+        }
+    }
+}
+
+/// Build the `text/event-stream` response around an already-built body.
+fn sse_response(session_id: &str, body: Body) -> Response {
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(body)
+        .expect("SSE response builder should be valid");
+    response
+        .headers_mut()
+        .insert("mcp-session-id", session_header_value(session_id));
+    response
+}
+
+/// Answer a POST with an SSE stream, upgrading only if the handler needs one.
+///
+/// Runs the dispatch and races it against its own outbound traffic. A handler
+/// that finishes without emitting anything gets the plain JSON answer it would
+/// have got before; one that emits gets a stream carrying those messages and
+/// then, per §Sending Messages item 6, the JSON-RPC response for the
+/// originating request, after which the stream terminates.
+async fn stream_json_rpc<H: McpHandler>(
+    state: SseState<H>,
+    request: JsonRpcIncoming,
+    session_id: String,
+) -> Response {
+    let method = request.method.clone();
+    let request_id = request.id.clone();
+
+    // The stream is registered with the session up front so the handler can
+    // address it by id, and so that a client whose connection drops mid-call
+    // can resume it with `Last-Event-ID` — §Resumability applies "regardless of
+    // how the original stream was initiated (via POST or GET)".
+    let Some((stream_id, primer_id, mut stream_rx)) =
+        state.session_manager.open_stream(&session_id, false).await
+    else {
+        return empty_response(StatusCode::NOT_FOUND);
+    };
+
+    let mut dispatch = dispatch_request(
+        &state,
+        request,
+        Some(session_id.clone()),
+        Some(stream_id.clone()),
+    );
+
+    let unstreamed = |outcome| {
+        let response = dispatch_outcome(outcome, request_id.clone(), &method);
+        if response.should_send() {
+            json_response(StatusCode::OK, response)
+        } else {
+            empty_response(StatusCode::ACCEPTED)
+        }
+    };
+
+    let first = tokio::select! {
+        biased;
+        first = stream_rx.recv() => first,
+        outcome = &mut dispatch => {
+            state.session_manager.close_stream(&session_id, &stream_id).await;
+            return unstreamed(outcome);
+        }
+    };
+
+    let Some(first) = first else {
+        // The channel can only close with the session, which takes the stream
+        // entry with it.
+        return unstreamed(dispatch.await);
+    };
+
+    let session_manager = state.session_manager.clone();
+    let stream_session_id = session_id.clone();
+    let stream = async_stream::stream! {
+        // §Sending Messages item 6: "The server SHOULD immediately send an SSE
+        // event consisting of an event ID and an empty `data` field in order to
+        // prime the client to reconnect." The `: connected` comment goes first
+        // for the same reason as on the GET stream — older RMCP/Codex clients
+        // misparse a bare `data:\n\n` as a JSON-RPC payload.
+        yield Ok::<_, std::convert::Infallible>(Bytes::from_static(b": connected\n\n"));
+        yield Ok::<_, std::convert::Infallible>(sse_event_bytes(&primer_id, None, ""));
+        yield Ok::<_, std::convert::Infallible>(
+            sse_event_bytes(&first.0, Some("message"), &first.1),
+        );
+
+        let outcome = loop {
+            tokio::select! {
+                biased;
+                message = stream_rx.recv() => match message {
+                    Some((id, data)) => yield Ok::<_, std::convert::Infallible>(
+                        sse_event_bytes(&id, Some("message"), &data),
+                    ),
+                    None => break dispatch.await,
+                },
+                outcome = &mut dispatch => break outcome,
+            }
+        };
+
+        // The response goes through the session manager like any other event so
+        // it gets this stream's next id and is retained for replay: a client
+        // that dropped before receiving it can reconnect and still collect it.
+        let response = dispatch_outcome(outcome, request_id, &method);
+        if response.should_send()
+            && let Ok(payload) = serde_json::to_string(&response)
+        {
+            session_manager
+                .send_to_stream(&stream_session_id, &stream_id, &payload)
+                .await;
+        }
+
+        // Drain in arrival order. Anything the handler queued in the instant
+        // before it returned still belongs ahead of the response: progress that
+        // trails the result it describes is worse than no progress at all.
+        while let Ok((id, data)) = stream_rx.try_recv() {
+            yield Ok::<_, std::convert::Infallible>(
+                sse_event_bytes(&id, Some("message"), &data),
+            );
+        }
+        // §Sending Messages item 6: "After the JSON-RPC response has been sent,
+        // the server SHOULD terminate the SSE stream."
+    };
+
+    sse_response(&session_id, Body::from_stream(stream))
+}
+
 /// Axum handler for JSON-RPC requests (simple mode).
 async fn handle_json_rpc<H: McpHandler>(
     axum::extract::State(state): axum::extract::State<SseState<H>>,
@@ -1205,15 +1717,66 @@ async fn handle_json_rpc<H: McpHandler>(
     // unbounded per-session set that never shrank. Real clients reuse ids
     // across a long-lived session and were locked out (#25).
 
+    // MCP §Cancellation: signal the matching in-flight handler. Consumed here
+    // rather than routed, exactly as line / channel / websocket do — the core
+    // router has no handle on any registry, and the registry is inherently
+    // per-session transport state.
+    if request.method == "notifications/cancelled" {
+        if let (Some(session_id), Some(cancelled_id)) = (
+            session_id.as_deref(),
+            request.params.as_ref().and_then(|p| p.get("requestId")),
+        ) {
+            let key = jsonrpc_id_key(cancelled_id);
+            let reason = request
+                .params
+                .as_ref()
+                .and_then(|p| p.get("reason"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("client requested cancellation");
+            if state
+                .session_manager
+                .cancel_pending_handler(session_id, &key)
+                .await
+            {
+                tracing::debug!(
+                    request_id = %key,
+                    reason = %reason,
+                    "Cancelling in-flight handler",
+                );
+            }
+        }
+        return empty_response(StatusCode::ACCEPTED);
+    }
+
+    // §Sending Messages item 5: a JSON-RPC request may be answered with either
+    // a single JSON object or an SSE stream, and item 6 says request-related
+    // server messages ride that stream. Until 3.5.0 this server only ever
+    // answered with JSON, so everything a handler emitted mid-request —
+    // `ctx.sample()`, elicitation, progress — was pushed onto the standalone
+    // GET stream, which item 4 of §Listening for Messages reserves for
+    // *unrelated* messages. A client that never issued a GET (Inspector's
+    // stateless mode, curl harnesses, serverless callers) got
+    // `-32603 No active SSE stream` from every sample and silently lost every
+    // progress notification.
+    //
+    // The upgrade is lazy: JSON stays the answer unless the handler actually
+    // emits something, so the common request/response case is unchanged.
+    if request.id.is_some()
+        && !is_initialize
+        && let Some(session_id) = session_id.clone()
+        && accepts_event_stream(&headers)
+    {
+        return stream_json_rpc(state, request, session_id).await;
+    }
+
     let initialize_request_id = request.id.clone();
-    let response = route_with_version_tracking(
-        &state.handler,
-        request,
-        &state.session_manager,
-        state.config.as_ref(),
-        session_id.as_deref(),
-    )
-    .await;
+    let method = request.method.clone();
+    let request_id = request.id.clone();
+    let response = dispatch_outcome(
+        dispatch_request(&state, request, session_id.clone(), None).await,
+        request_id,
+        &method,
+    );
 
     if !response.should_send() {
         return empty_response(StatusCode::ACCEPTED);
@@ -1277,54 +1840,60 @@ async fn handle_sse<H: McpHandler>(
     if validate_protocol_header(&headers, state.config.as_ref(), expected.as_ref()).is_err() {
         return empty_response(StatusCode::BAD_REQUEST);
     }
-    let Some(mut rx) = state.session_manager.subscribe_session(&session_id).await else {
-        return empty_response(StatusCode::NOT_FOUND);
+    // §Resumability: a client that lost its connection reconnects by GET with
+    // `Last-Event-ID`, and the server replays what that *same* stream sent
+    // after it. Event IDs are `{session}-{stream}-{seq}` for exactly this: the
+    // id identifies its originating stream, so the correlation is possible.
+    // Anything that does not resolve — malformed, unknown stream, another
+    // session's id — falls through to a fresh stream rather than erroring, the
+    // same answer the client would have got without the header.
+    let resumed = match headers.get("last-event-id").and_then(|v| v.to_str().ok()) {
+        Some(last_event_id) => {
+            state
+                .session_manager
+                .resume_stream(&session_id, last_event_id)
+                .await
+        }
+        None => None,
     };
 
-    // Create the SSE stream. Each GET subscription gets its own `stream_id` so
-    // Event IDs include a stream component so concurrent streams on the same
-    // session produce distinguishable IDs. Format: `{session_id}-{stream_id}-{seq}`.
-    // A future replay buffer can use the (stream_id, seq) tuple to resume from
-    // an arbitrary Last-Event-ID.
-    let stream_id = Uuid::new_v4().simple().to_string();
-    let primer_id = format!("{}-{}-0", session_id, stream_id);
-    let session_id_for_events = session_id.clone();
-    let stream_id_for_events = stream_id;
-    let stream = async_stream::stream! {
-        // This is the GET listening stream. Resumption in MCP is always via GET
-        // + `Last-Event-ID`, so the spec's *required* primer event applies to
-        // POST-initiated SSE streams (§Sending Messages, item 6) — and this
-        // server answers POST with a single `application/json` object rather
-        // than a stream, so that requirement never engages here. We still emit a
-        // primer on the GET stream: §Resumability permits attaching event IDs,
-        // and doing so hands the client an immediate `Last-Event-ID` anchor to
-        // resume from. Send the `: connected` comment first so older RMCP/Codex
-        // clients that misparse `data:\n\n` as a JSON-RPC payload are
-        // unaffected, then the primer event (event ID + empty data field).
-        yield Ok::<_, std::convert::Infallible>(Bytes::from_static(b": connected\n\n"));
-        yield Ok::<_, std::convert::Infallible>(sse_event_bytes(&primer_id, None, ""));
+    let (primer, replay, mut rx) = match resumed {
+        // No primer on a resume: the client already holds an anchor, and the
+        // replayed events carry their original ids.
+        Some((_, replay, rx)) => (None, replay, rx),
+        None => match state.session_manager.open_stream(&session_id, true).await {
+            Some((_, primer_id, rx)) => (Some(primer_id), Vec::new(), rx),
+            None => return empty_response(StatusCode::NOT_FOUND),
+        },
+    };
 
-        // Drain messages routed to this specific subscriber. Per spec we
-        // only see messages that the server explicitly chose to send to
-        // this stream; other concurrent streams on the same session have
-        // their own receivers. The primer above consumed seq 0, so real
-        // message IDs start at 1 — §Resumability requires event IDs to be
-        // globally unique within the session, and reusing `-0` here would
-        // make the primer and the first message indistinguishable on replay.
-        let mut seq: u64 = 1;
+    let stream = async_stream::stream! {
+        // Send the `: connected` comment first so older RMCP/Codex clients that
+        // misparse `data:\n\n` as a JSON-RPC payload are unaffected.
+        yield Ok::<_, std::convert::Infallible>(Bytes::from_static(b": connected\n\n"));
+        if let Some(primer_id) = primer {
+            // §Resumability permits attaching event IDs; doing so hands the
+            // client an immediate `Last-Event-ID` anchor to resume from. The
+            // primer takes seq 0, so messages start at 1.
+            yield Ok::<_, std::convert::Infallible>(sse_event_bytes(&primer_id, None, ""));
+        }
+
+        for (id, data) in replay {
+            yield Ok::<_, std::convert::Infallible>(
+                sse_event_bytes(&id, Some("message"), &data),
+            );
+        }
+
+        // Drain messages routed to this specific stream. Per §Multiple
+        // Connections we only see messages the server explicitly chose to send
+        // here; other concurrent streams on the same session have their own
+        // receivers.
         loop {
             match tokio::time::timeout(Duration::from_secs(SSE_KEEP_ALIVE_SECS), rx.recv()).await {
-                Ok(Some(message)) => {
-                    let event_id = format!(
-                        "{}-{}-{}",
-                        session_id_for_events, stream_id_for_events, seq
+                Ok(Some((id, data))) => {
+                    yield Ok::<_, std::convert::Infallible>(
+                        sse_event_bytes(&id, Some("message"), &data),
                     );
-                    seq = seq.saturating_add(1);
-                    yield Ok::<_, std::convert::Infallible>(sse_event_bytes(
-                        &event_id,
-                        Some("message"),
-                        &message,
-                    ));
                 }
                 Ok(None) => {
                     tracing::debug!("SSE subscriber channel closed");
@@ -1337,16 +1906,7 @@ async fn handle_sse<H: McpHandler>(
         }
     };
 
-    let mut response = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from_stream(stream))
-        .expect("SSE response builder should be valid");
-    response
-        .headers_mut()
-        .insert("mcp-session-id", session_header_value(&session_id));
-    response
+    sse_response(&session_id, Body::from_stream(stream))
 }
 
 /// Explicitly terminate an HTTP session.
@@ -1488,8 +2048,8 @@ mod tests {
         let first = tokio::time::timeout(std::time::Duration::from_millis(100), rx1.recv()).await;
         let second = tokio::time::timeout(std::time::Duration::from_millis(100), rx2.recv()).await;
 
-        let first_got = matches!(first, Ok(Some(ref s)) if &**s == "hello");
-        let second_got = matches!(second, Ok(Some(ref s)) if &**s == "hello");
+        let first_got = matches!(first, Ok(Some((_, ref data))) if &**data == "hello");
+        let second_got = matches!(second, Ok(Some((_, ref data))) if &**data == "hello");
 
         assert!(
             first_got ^ second_got,

@@ -26,7 +26,7 @@ use turbomcp_types::{ClientCapabilities, ProtocolVersion};
 
 use crate::context::{Cancellable, McpSession, RequestContext, SessionFuture};
 use crate::router;
-use crate::transport::line::jsonrpc_id_key;
+use crate::transport::jsonrpc_id_key;
 use crate::transport::{MAX_MESSAGE_SIZE, SessionState};
 
 use turbomcp_transport::{

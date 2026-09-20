@@ -411,6 +411,54 @@ where the gap was visible on the wire.
   `GetPromptRequestParams.arguments` is typed `{ [key: string]: string }`;
   numbers and objects were transmitted and left for the server to refuse.
 
+### Streamable HTTP
+
+The flagship remote transport was the one furthest from the transport
+specification, and the three gaps compounded: a POST that could not become a
+stream forced every server-initiated message onto a stream the spec reserves for
+something else, cancellation had nowhere to land, and the event IDs the server
+emitted advertised a resumability that did not exist.
+
+- **A POST can now answer with `text/event-stream`.** §Sending Messages item 5
+  permits either form, but only a stream can carry what a handler emits *during*
+  a request. Everything a handler produced mid-call — `ctx.sample()`,
+  elicitation, progress — was previously pushed onto the standalone GET stream,
+  which §Listening for Messages item 4 reserves for messages **unrelated** to a
+  running request. A conforming client that only POSTs, which the spec permits
+  since the GET is a MAY, got `-32603 No active SSE stream for HTTP session` from
+  every sample and silently lost every progress notification.
+
+  The upgrade is lazy: the dispatch is raced against its own outbound traffic, so
+  a handler that says nothing back still gets the single JSON object it always
+  did. One that speaks gets a stream carrying its messages and then the JSON-RPC
+  response, after which the stream terminates.
+
+- **`notifications/cancelled` is honoured over HTTP.** The other three transports
+  each kept a registry of in-flight handlers; HTTP had none, so `ctx.is_cancelled()`
+  was permanently `false` on the transport where long tool calls are most common.
+  A client that abandoned a ten-minute call still paid for it server-side, and the
+  202 made the cancel look accepted. The registry is **per session**, which is
+  load-bearing: one server multiplexes many clients, and a flat map keyed by
+  request id would let anyone cancel anyone else's request by guessing an id.
+
+- **SSE streams are resumable.** `Last-Event-ID` was never read, so a reconnect
+  after a network blip got a brand-new empty stream and the client never learned
+  it had missed a progress notification or a `list_changed`. Streams are now
+  entries that outlive their connections, each with a cursor and a bounded
+  history; a GET carrying `Last-Event-ID` re-attaches to the stream that id names
+  and replays only what that stream sent after it. Never across streams and never
+  across sessions, both of which §Resumability forbids. This works for streams
+  opened by a POST as well as by a GET, as the spec requires.
+
+- **A panicking handler is answered rather than dropped.** An unwind used to
+  propagate into hyper, which closed the connection with no response at all,
+  leaving a client without a per-request timeout waiting forever. Dispatch now
+  runs on its own task and a panic becomes `-32603`, matching what the other
+  three transports already did. The same change means a client disconnect no
+  longer kills the handler mid-flight, which is what §Sending Messages item 6
+  asks for: "Disconnection SHOULD NOT be interpreted as the client cancelling its
+  request."
+
 ### Changed
 
 - **`RichContextExt::report_progress` and `report_progress_with_token` are
