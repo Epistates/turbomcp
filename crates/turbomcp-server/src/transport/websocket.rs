@@ -51,6 +51,7 @@ const MAX_PENDING_REQUESTS: usize = 64;
 struct WebSocketSessionHandle {
     request_tx: mpsc::Sender<SessionCommand>,
     client_capabilities: Arc<RwLock<Option<ClientCapabilities>>>,
+    protocol_version: Arc<RwLock<Option<ProtocolVersion>>>,
 }
 
 #[derive(Debug)]
@@ -69,6 +70,10 @@ enum SessionCommand {
 impl McpSession for WebSocketSessionHandle {
     fn client_capabilities<'a>(&'a self) -> SessionFuture<'a, Option<ClientCapabilities>> {
         Box::pin(async move { Ok(self.client_capabilities.read().await.clone()) })
+    }
+
+    fn protocol_version<'a>(&'a self) -> SessionFuture<'a, Option<ProtocolVersion>> {
+        Box::pin(async move { Ok(self.protocol_version.read().await.clone()) })
     }
 
     fn call<'a>(
@@ -340,6 +345,7 @@ async fn handle_websocket<H: McpHandler>(
     let session_handle = Arc::new(WebSocketSessionHandle {
         request_tx: cmd_tx,
         client_capabilities: Arc::new(RwLock::new(None)),
+        protocol_version: Arc::new(RwLock::new(None)),
     });
 
     // Correlation table for requests this server sent to the client.
@@ -553,8 +559,9 @@ async fn handle_websocket<H: McpHandler>(
                                         "Protocol version negotiated"
                                     );
                                     session_state = SessionState::Initialized(
-                                        super::InitializedSessionState::new(version),
+                                        super::InitializedSessionState::new(version.clone()),
                                     );
+                                    *session_handle.protocol_version.write().await = Some(version);
                                 }
                                 resp
                             };

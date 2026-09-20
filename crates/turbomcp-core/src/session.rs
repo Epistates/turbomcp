@@ -20,7 +20,7 @@ use core::future::Future;
 use core::pin::Pin;
 
 use serde_json::Value;
-use turbomcp_types::ClientCapabilities;
+use turbomcp_types::{ClientCapabilities, ProtocolVersion};
 
 use crate::error::McpResult;
 use crate::marker::{MaybeSend, MaybeSync};
@@ -61,6 +61,17 @@ pub trait McpSession: Debug + MaybeSend + MaybeSync {
     /// initialize handshake so handler helpers can enforce server-initiated
     /// request capability requirements.
     fn client_capabilities<'a>(&'a self) -> SessionFuture<'a, Option<ClientCapabilities>> {
+        Box::pin(async move { Ok(None) })
+    }
+
+    /// Protocol version negotiated for this session, when known.
+    ///
+    /// Inbound requests are already version-adapted by the router, but a
+    /// server-initiated request is built by handler code and goes out
+    /// unfiltered — so this is the only way for anything on that path to tell
+    /// which wire it is writing to. A multi-version server that cannot ask
+    /// will happily send 2025-11-25-only shapes to a 2025-06-18 client.
+    fn protocol_version<'a>(&'a self) -> SessionFuture<'a, Option<ProtocolVersion>> {
         Box::pin(async move { Ok(None) })
     }
 

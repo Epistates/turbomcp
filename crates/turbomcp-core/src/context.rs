@@ -33,7 +33,10 @@ use crate::session::Cancellable;
 #[cfg(feature = "std")]
 use std::time::Instant;
 
-use turbomcp_types::{ClientCapabilities, CreateMessageRequest, CreateMessageResult, ElicitResult};
+use turbomcp_types::{
+    CreateMessageRequest, CreateMessageResult, ElicitResult, IncludeContext, ProtocolVersion,
+    SamplingContent, SamplingContentBlock,
+};
 
 /// Transport type identifier.
 ///
@@ -641,9 +644,26 @@ impl RequestContext {
     ///
     /// Requires a bidirectional session; returns
     /// [`McpError::capability_not_supported`] on unidirectional transports.
+    ///
+    /// Task-augmented sampling is rejected: a request carrying `task` returns a
+    /// `CreateTaskResult` rather than a `CreateMessageResult`, and there is no
+    /// server-initiated `tasks/result` path to collect it with.
     pub async fn sample(&self, request: CreateMessageRequest) -> McpResult<CreateMessageResult> {
+        if request.task.is_some() {
+            // Checked before the capability gate so it fires even when client
+            // capabilities are unknown. Letting it through would accept the
+            // task on the client, orphan it, and fail here on a deserialize
+            // that can never succeed.
+            return Err(McpError::invalid_request(
+                "task-augmented sampling/createMessage returns CreateTaskResult, which sample() \
+                 cannot return; task-augmented sampling is not supported",
+            ));
+        }
+        request.validate().map_err(McpError::invalid_params)?;
         let session = self.require_session("sampling/createMessage")?;
         self.require_sampling_capability(session, &request).await?;
+        self.require_representable_sampling(session, &request)
+            .await?;
         let params = serde_json::to_value(request).map_err(|e| {
             McpError::invalid_params(alloc::format!("Failed to serialize sampling request: {e}"))
         })?;
@@ -871,13 +891,81 @@ impl RequestContext {
             ));
         }
 
-        if request.task.is_some() && !client_supports_task_sampling(&caps) {
+        // `includeContext: thisServer | allServers` is soft-deprecated, and a
+        // server SHOULD only use it against a client that declared
+        // `sampling.context`. It cannot be refused unconditionally: on the
+        // 2025-06-18 wire `sampling.context` does not exist and both values are
+        // fully legal. `sampling.tools` is the usable proxy for "this client
+        // speaks 2025-11-25" — the sub-capability exists only there — so a
+        // client declaring `tools` but not `context` has deliberately opted
+        // out, and that is the only case worth refusing.
+        if matches!(
+            request.include_context,
+            Some(IncludeContext::ThisServer | IncludeContext::AllServers)
+        ) && sampling.context.is_none()
+            && sampling.tools.is_some()
+        {
             return Err(McpError::capability_not_supported(
-                "client tasks.requests.sampling.createMessage capability required for task-augmented sampling/createMessage",
+                "client sampling.context capability required for includeContext \
+                 \"thisServer\"/\"allServers\" (soft-deprecated; omit it or use \"none\")",
             ));
         }
 
         Ok(())
+    }
+
+    /// Refuse sampling content the negotiated wire cannot carry.
+    ///
+    /// Inbound requests are version-adapted by the router, but a
+    /// server-initiated request is assembled by handler code and goes out
+    /// unfiltered. On a 2025-06-18 session `SamplingMessage.content` is a
+    /// *single* text/image/audio block — no array, no `tool_use`, no
+    /// `tool_result` — so a multi-version server running a tool loop would
+    /// otherwise send a shape the client's parser has no case for.
+    ///
+    /// Refusal rather than a silent downgrade: flattening an array to its first
+    /// block changes what the prompt says, and dropping a `tool_result` makes
+    /// the model answer a question it was never given the answer to.
+    async fn require_representable_sampling(
+        &self,
+        session: &Arc<dyn McpSession>,
+        request: &CreateMessageRequest,
+    ) -> McpResult<()> {
+        if session.protocol_version().await? != Some(ProtocolVersion::V2025_06_18) {
+            return Ok(());
+        }
+
+        for message in &request.messages {
+            let unrepresentable = match &message.content {
+                SamplingContentBlock::Multiple(_) => true,
+                SamplingContentBlock::Single(content) => matches!(
+                    content,
+                    SamplingContent::ToolUse(_) | SamplingContent::ToolResult(_)
+                ),
+            };
+            if unrepresentable {
+                return Err(McpError::invalid_params(
+                    "multi-block and tool_use/tool_result sampling content require protocol \
+                     2025-11-25; this session negotiated 2025-06-18",
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Whether the client declared `sampling.context`.
+    ///
+    /// Lets a handler pick `includeContext` rather than discovering the refusal
+    /// from [`Self::sample`]. `Ok(false)` covers both "declared nothing" and
+    /// "capabilities unknown".
+    pub async fn client_supports_sampling_context(&self) -> McpResult<bool> {
+        let session = self.require_session("sampling/createMessage")?;
+        Ok(session
+            .client_capabilities()
+            .await?
+            .and_then(|caps| caps.sampling)
+            .is_some_and(|sampling| sampling.context.is_some()))
     }
 
     async fn require_elicitation_capability(
@@ -909,15 +997,6 @@ impl RequestContext {
             )))
         }
     }
-}
-
-fn client_supports_task_sampling(caps: &ClientCapabilities) -> bool {
-    caps.tasks
-        .as_ref()
-        .and_then(|tasks| tasks.requests.as_ref())
-        .and_then(|requests| requests.sampling.as_ref())
-        .and_then(|sampling| sampling.create_message.as_ref())
-        .is_some()
 }
 
 // ====================================================================

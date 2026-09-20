@@ -42,6 +42,7 @@ impl<T: AsyncWrite + Unpin + Send> LineWriter for T {}
 pub struct SessionHandle {
     request_tx: mpsc::Sender<SessionCommand>,
     client_capabilities: Arc<RwLock<Option<ClientCapabilities>>>,
+    protocol_version: Arc<RwLock<Option<ProtocolVersion>>>,
 }
 
 #[derive(Debug)]
@@ -60,6 +61,10 @@ enum SessionCommand {
 impl McpSession for SessionHandle {
     fn client_capabilities<'a>(&'a self) -> SessionFuture<'a, Option<ClientCapabilities>> {
         Box::pin(async move { Ok(self.client_capabilities.read().await.clone()) })
+    }
+
+    fn protocol_version<'a>(&'a self) -> SessionFuture<'a, Option<ProtocolVersion>> {
+        Box::pin(async move { Ok(self.protocol_version.read().await.clone()) })
     }
 
     fn call<'a>(
@@ -161,6 +166,7 @@ impl<H: McpHandler> LineTransportRunner<H> {
         let session_handle = Arc::new(SessionHandle {
             request_tx: cmd_tx,
             client_capabilities: Arc::new(RwLock::new(None)),
+            protocol_version: Arc::new(RwLock::new(None)),
         });
 
         // Channel for completed handler responses
@@ -329,10 +335,14 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                                         "Protocol version negotiated"
                                                     );
                                                     session_state = SessionState::Initialized(
-                                                        super::InitializedSessionState::new(version),
+                                                        super::InitializedSessionState::new(
+                                                            version.clone(),
+                                                        ),
                                                     );
                                                     *session_handle.client_capabilities.write().await =
                                                         Some(client_capabilities);
+                                                    *session_handle.protocol_version.write().await =
+                                                        Some(version);
                                                 }
 
                                                 if response.should_send() {

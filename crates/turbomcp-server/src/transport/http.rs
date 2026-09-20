@@ -769,6 +769,15 @@ impl McpSession for HttpSessionHandle {
         })
     }
 
+    fn protocol_version<'a>(&'a self) -> SessionFuture<'a, Option<ProtocolVersion>> {
+        Box::pin(async move {
+            Ok(self
+                .session_manager
+                .get_protocol_version(&self.session_id)
+                .await)
+        })
+    }
+
     fn call<'a>(
         &'a self,
         method: &'a str,

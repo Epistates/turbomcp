@@ -411,6 +411,54 @@ where the gap was visible on the wire.
   `GetPromptRequestParams.arguments` is typed `{ [key: string]: string }`;
   numbers and objects were transmitted and left for the server to refuse.
 
+### Sampling
+
+`sampling/createMessage` is the one request a server assembles itself, so
+nothing on the inbound path ever inspects it — not capability negotiation, not
+the version adapter. Everything it must satisfy has to be checked where it is
+built, and none of it was.
+
+- **`Client::enable_sampling_tools()` and `enable_sampling_context()`.** A
+  client's declared sampling capability was hardcoded to `{}` with no API to
+  change it, and a spec-abiding server **MUST NOT** send `tools` or `toolChoice`
+  to a client that did not declare `sampling.tools`. A TurboMCP client could
+  therefore never take part in 2025-11-25 tool-augmented sampling, no matter
+  what its handler supported — including against TurboMCP's own server, which
+  enforces the rule. `ClientCapabilitiesBuilder::enable_sampling_with` mirrors
+  this on the const-generic path so both capability-construction routes agree.
+
+- **Message content constraints are enforced.** `CreateMessageRequest::validate`
+  checks the two MUSTs in §Message Content Constraints: a message containing
+  tool results must contain **only** tool results, and every tool use must be
+  answered before the conversation moves on. `RequestContext::sample` refuses a
+  sequence that breaks either, and the client answers `-32602` — the code the
+  spec names — rather than forwarding it. Without this the payload reached
+  Anthropic, OpenAI or Gemini and came back as an opaque 400, three steps
+  removed from the mistake that caused it.
+
+- **11-25-only content cannot reach a 2025-06-18 client.** `McpSession` gains
+  `protocol_version()`, implemented by all four transports; a handler can now
+  ask which wire it is writing to, which was previously impossible. `sample()`
+  refuses multi-block and `tool_use`/`tool_result` content on a 06-18 session
+  rather than downgrading it: flattening an array changes what the prompt says,
+  and dropping a tool result makes the model answer a question it was never
+  given the answer to.
+
+- **Task-augmented sampling is refused up front.** A request carrying `task`
+  returns `CreateTaskResult`, which has none of `role`/`content`/`model`, and
+  there is no server-initiated `tasks/result` path to collect it with. The
+  capability gate nonetheless let it through, so the client accepted and started
+  a task, `sample()` failed on a deserialize that could never succeed, and the
+  task was orphaned until its TTL expired.
+
+- **`includeContext: "thisServer"/"allServers"` is gated.** Both values are
+  soft-deprecated and a server SHOULD only use them against a client declaring
+  `sampling.context`. The refusal applies only to a client that declared
+  `sampling.tools` but not `context` — a deliberate opt-out on the 11-25 wire —
+  so the 06-18 wire, where `sampling.context` does not exist and both values are
+  fully legal, is untouched. `RequestContext::client_supports_sampling_context`
+  lets a handler branch rather than discover this from a refusal.
+
 ### Streamable HTTP
 
 The flagship remote transport was the one furthest from the transport

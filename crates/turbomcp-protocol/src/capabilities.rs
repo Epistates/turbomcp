@@ -1430,11 +1430,25 @@ pub mod builders {
         pub fn enable_sampling(
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, true, E>> {
+            self.enable_sampling_with(SamplingCapabilities::default())
+        }
+
+        /// Enable sampling with explicit sub-capabilities.
+        ///
+        /// `SamplingCapabilities::default()` is `{}` — plain
+        /// `sampling/createMessage` and nothing more. Set `tools` to take part
+        /// in 2025-11-25 tool loops (a server **MUST NOT** send `tools` or
+        /// `toolChoice` without it), and `context` to accept the
+        /// soft-deprecated `includeContext: "thisServer"/"allServers"`.
+        pub fn enable_sampling_with(
+            self,
+            sampling: SamplingCapabilities,
+        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, true, E>> {
             ClientCapabilitiesBuilder {
                 extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
-                sampling: Some(SamplingCapabilities::default()),
+                sampling: Some(sampling),
                 elicitation: self.elicitation,
                 tasks: self.tasks,
                 negotiator: self.negotiator,

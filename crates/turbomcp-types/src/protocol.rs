@@ -362,6 +362,106 @@ pub struct CreateMessageRequest {
     pub meta: Option<HashMap<String, Value>>,
 }
 
+impl CreateMessageRequest {
+    /// Check the message sequence against MCP §Message Content Constraints.
+    ///
+    /// Two rules, both MUSTs, both carrying `-32602` when broken:
+    ///
+    /// - A message containing any `tool_result` block must contain **only**
+    ///   `tool_result` blocks. Provider APIs give tool results a dedicated role
+    ///   (OpenAI's `tool`, Gemini's `function`), so a mixed message has no
+    ///   representation to translate into.
+    /// - Every assistant message carrying `tool_use` blocks must be followed by
+    ///   a user message consisting entirely of `tool_result` blocks, one per
+    ///   tool use, before any other message.
+    ///
+    /// Catching this here turns what would otherwise surface as an opaque 400
+    /// from Anthropic, OpenAI or Gemini — three messages downstream of the
+    /// mistake — into the invalid-params error the spec prescribes.
+    ///
+    /// Version-agnostic: `tool_use` and `tool_result` do not exist on the
+    /// 2025-06-18 wire, so on that wire this cannot fire.
+    pub fn validate(&self) -> Result<(), String> {
+        // Tool uses from the immediately preceding assistant message, still
+        // waiting to be answered.
+        let mut pending: Vec<&str> = Vec::new();
+
+        for message in &self.messages {
+            let blocks = message.content.to_vec();
+            let has_tool_result = blocks
+                .iter()
+                .any(|block| matches!(block, SamplingContent::ToolResult(_)));
+
+            if has_tool_result {
+                if message.role != Role::User {
+                    return Err(format!(
+                        "tool_result content is only valid in a user message, found in {} message",
+                        message.role
+                    ));
+                }
+                if !blocks
+                    .iter()
+                    .all(|block| matches!(block, SamplingContent::ToolResult(_)))
+                {
+                    return Err(
+                        "Tool results mixed with other content: a message containing tool results \
+                         must contain only tool results"
+                            .to_string(),
+                    );
+                }
+
+                for block in &blocks {
+                    let SamplingContent::ToolResult(result) = block else {
+                        continue;
+                    };
+                    match pending
+                        .iter()
+                        .position(|id| *id == result.tool_use_id.as_str())
+                    {
+                        Some(index) => {
+                            pending.swap_remove(index);
+                        }
+                        None => {
+                            return Err(format!(
+                                "tool_result with toolUseId '{}' has no matching tool_use in the \
+                                 preceding assistant message",
+                                result.tool_use_id
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // Anything other than the answering user message closes the window.
+            if !pending.is_empty() {
+                return Err("Tool result missing in request".to_string());
+            }
+
+            for block in &blocks {
+                let SamplingContent::ToolUse(tool_use) = block else {
+                    continue;
+                };
+                if message.role != Role::Assistant {
+                    return Err(format!(
+                        "tool_use content is only valid in an assistant message, found in {} message",
+                        message.role
+                    ));
+                }
+                pending.push(tool_use.id.as_str());
+            }
+        }
+
+        if pending.is_empty() {
+            Ok(())
+        } else {
+            // A trailing tool_use turn is the normal shape of "now run these
+            // tools" only when the *client* produces it; a request ending there
+            // is asking the model to continue past an unresolved call.
+            Err("Tool result missing in request".to_string())
+        }
+    }
+}
+
 /// Message in a sampling request.
 ///
 /// Per MCP 2025-11-25, `content` can be a single `SamplingMessageContentBlock`

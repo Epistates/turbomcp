@@ -62,6 +62,13 @@ pub(super) struct ClientInner<T: Transport + 'static> {
     /// Optional sampling handler (mutex for dynamic updates)
     pub(super) sampling_handler: Arc<Mutex<Option<Arc<dyn SamplingHandler>>>>,
 
+    /// Sub-capabilities advertised alongside `sampling` when a handler is set.
+    ///
+    /// Defaults to `{}`, which is the correct declaration for a client that
+    /// only answers plain `sampling/createMessage`. `enable_sampling_tools` /
+    /// `enable_sampling_context` opt into the rest.
+    pub(super) sampling_capabilities: Arc<Mutex<SamplingCapabilities>>,
+
     /// Handler registry for bidirectional communication (mutex for registration)
     pub(super) handlers: Arc<Mutex<HandlerRegistry>>,
 
@@ -209,6 +216,7 @@ impl<T: Transport + 'static> Client<T> {
                 initialized: AtomicBool::new(false),
                 shutdown_requested: AtomicBool::new(false),
                 sampling_handler: Arc::new(Mutex::new(None)),
+                sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
                 pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -262,6 +270,7 @@ impl<T: Transport + 'static> Client<T> {
                 initialized: AtomicBool::new(false),
                 shutdown_requested: AtomicBool::new(false),
                 sampling_handler: Arc::new(Mutex::new(None)),
+                sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
                 pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -718,6 +727,27 @@ impl<T: Transport + 'static> Client<T> {
                             message: "client sampling.tools capability required for \
                                       tool-enabled sampling/createMessage"
                                 .to_string(),
+                            data: None,
+                        };
+                        self.send_response(JsonRpcResponse::error_response(
+                            error,
+                            request.id.clone(),
+                        ))
+                        .await?;
+                        return Ok(());
+                    }
+
+                    // §Message Content Constraints: a tool-result message must
+                    // carry nothing but tool results, and every tool use must
+                    // be answered before the conversation moves on. The spec
+                    // assigns -32602 to both. Refusing here is what stops the
+                    // handler forwarding an unrepresentable sequence to a
+                    // provider, which answers with an opaque 400 three steps
+                    // removed from the mistake.
+                    if let Err(reason) = params.validate() {
+                        let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                            code: -32602,
+                            message: reason,
                             data: None,
                         };
                         self.send_response(JsonRpcResponse::error_response(
