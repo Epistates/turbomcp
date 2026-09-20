@@ -134,6 +134,19 @@ where
     r.result.expect("a success response has a result")
 }
 
+/// The JSON-RPC error a request answered with. A hidden component is refused
+/// at the protocol level, exactly as a nonexistent one is.
+async fn error<S>(svc: &mut S, req: JsonRpcRequest) -> turbomcp::JsonRpcError
+where
+    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S::Error: std::fmt::Debug,
+{
+    let method = req.method.clone();
+    let r = respond(svc, req).await;
+    r.error
+        .unwrap_or_else(|| panic!("{method} succeeded, expected an error: {:?}", r.result))
+}
+
 fn field(list: &Value, key: &str, name_field: &str) -> Vec<String> {
     let mut out: Vec<String> = list[key]
         .as_array()
@@ -168,7 +181,7 @@ async fn a_hidden_tool_is_absent_and_unreachable() {
     let tools = result(&mut svc, as_caller(1, request::TOOLS_LIST, json!({}), "")).await;
     assert_eq!(field(&tools, "tools", "name"), ["read", "wipe"]);
 
-    let called = result(
+    let called = error(
         &mut svc,
         as_caller(
             2,
@@ -178,11 +191,10 @@ async fn a_hidden_tool_is_absent_and_unreachable() {
         ),
     )
     .await;
-    assert_eq!(called["isError"], json!(true));
 
-    // Byte-identical to what a name that was never declared produces: a
-    // distinct refusal would disclose the tool the policy is hiding.
-    let unknown = result(
+    // The same shape a name that was never declared produces, down to the code:
+    // a distinct refusal would disclose the tool the policy is hiding.
+    let unknown = error(
         &mut svc,
         as_caller(
             3,
@@ -192,15 +204,10 @@ async fn a_hidden_tool_is_absent_and_unreachable() {
         ),
     )
     .await;
-    assert_eq!(
-        called["content"][0]["text"].as_str().unwrap(),
-        "unknown tool: rotate_keys"
-    );
-    assert_eq!(
-        unknown["content"][0]["text"].as_str().unwrap(),
-        "unknown tool: no_such_tool"
-    );
-    assert_eq!(called["isError"], unknown["isError"]);
+    assert_eq!(called.code, unknown.code);
+    assert_eq!(called.code, -32602);
+    assert!(called.message.ends_with("unknown tool: rotate_keys"));
+    assert!(unknown.message.ends_with("unknown tool: no_such_tool"));
 
     // A visible tool still works.
     let ok = result(
@@ -232,7 +239,7 @@ async fn declared_scopes_now_filter_the_list_too() {
     assert_eq!(field(&tools, "tools", "name"), ["read", "rotate_keys"]);
 
     // …and unreachable, as an unknown tool.
-    let refused = result(
+    let refused = error(
         &mut svc,
         as_caller(
             2,
@@ -242,7 +249,8 @@ async fn declared_scopes_now_filter_the_list_too() {
         ),
     )
     .await;
-    assert_eq!(refused["content"][0]["text"], json!("unknown tool: wipe"));
+    assert_eq!(refused.code, -32602);
+    assert!(refused.message.ends_with("unknown tool: wipe"));
 
     // Authorized: listed and callable.
     let tools = result(

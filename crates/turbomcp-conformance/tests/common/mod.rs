@@ -149,6 +149,46 @@ impl Everything {
         Ok("logged".to_string())
     }
 
+    /// The `2026-07-28` stateless scenario's log gate: it calls this *without*
+    /// `_meta.io.modelcontextprotocol/logLevel` and checks that no
+    /// `notifications/message` comes back.
+    ///
+    /// Named for the harness. Until it existed the check answered "unknown
+    /// tool" and scored itself untestable, which is not the same as passing.
+    #[tool(name = "test_logging_tool", description = "Log at every level, then finish")]
+    async fn test_logging_tool(&self, ctx: &CallToolContext) -> McpResult<String> {
+        ctx.log.debug(json!({ "message": "starting" })).await;
+        ctx.log.info(json!({ "message": "working" })).await;
+        ctx.log.error(json!({ "message": "still fine" })).await;
+        Ok("logged".to_string())
+    }
+
+    /// The stateless scenario's stream-discipline gate: everything a request
+    /// needs from the client rides that request's own stream as an
+    /// `InputRequiredResult`, never as an independent server→client request.
+    #[tool(
+        name = "test_streaming_elicitation",
+        description = "Elicit mid-request over the request's own stream"
+    )]
+    async fn test_streaming_elicitation(&self, ctx: &CallToolContext) -> McpResult<String> {
+        ctx.progress.report(0.5, Some(1.0), Some("asking")).await;
+        let outcome = ctx
+            .client
+            .elicit(
+                "streaming_confirm",
+                neutral::ElicitParams::new(
+                    "Confirm to continue",
+                    json!({
+                        "type": "object",
+                        "properties": { "confirmed": { "type": "boolean" } },
+                        "required": ["confirmed"],
+                    }),
+                ),
+            )
+            .await?;
+        Ok(format!("confirmed={}", outcome.accepted()))
+    }
+
     /// A tool that asks the client to elicit user input.
     #[tool(description = "Request user input via elicitation")]
     async fn test_elicitation(

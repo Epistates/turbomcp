@@ -244,6 +244,24 @@ fn check_header_mirrors(
     Ok(())
 }
 
+/// [`hidden`] for a resource URI, for the paths that address one without going
+/// through [`dispatch_capability`] — the legacy `resources/subscribe` arm and
+/// the draft `subscriptions/listen` filter.
+///
+/// Both deliver `notifications/resources/updated`, so a policy that stops a
+/// caller *reading* a resource has to stop them watching it change: the update
+/// notification names the URI, and a stream of them is a side channel on a
+/// resource the caller was refused.
+pub(super) async fn resource_hidden<S: McpServerCore>(
+    shared: &Shared,
+    router: &MethodRouter<S>,
+    server: &S,
+    ctx: &RequestContext,
+    uri: &str,
+) -> McpResult<bool> {
+    hidden(shared, router, server, ctx, Component::Resource(uri)).await
+}
+
 async fn hidden<S: McpServerCore>(
     shared: &Shared,
     router: &MethodRouter<S>,
@@ -284,16 +302,30 @@ async fn hidden<S: McpServerCore>(
             {
                 return Ok(judge(ComponentKind::Resource, &r.uri, &r.meta));
             }
-            let Some(fut) = router.dispatch_lookup_resource_template(
+            if let Some(fut) = router.dispatch_lookup_resource_template(
                 server.clone(),
                 ListResourceTemplatesContext::new(ctx.clone()),
                 uri.into(),
-            ) else {
-                return Ok(true);
-            };
-            Ok(fut
-                .await?
-                .is_none_or(|t| judge(ComponentKind::ResourceTemplate, &t.uri_template, &t.meta)))
+            ) && let Some(t) = fut.await?
+            {
+                return Ok(judge(
+                    ComponentKind::ResourceTemplate,
+                    &t.uri_template,
+                    &t.meta,
+                ));
+            }
+            // Neither a listed resource nor a registered template — a URI the
+            // server never declared, so the policy has no component to judge
+            // and the handler is the only thing that knows whether it exists.
+            //
+            // Answering "hidden" here refused it outright, which turned any
+            // server serving URIs it does not enumerate (legal: the spec never
+            // requires a readable URI to appear in `resources/list`) into a
+            // broken one the moment a policy was installed. Nothing is
+            // disclosed by deferring: a URI outside the catalogue carries no
+            // tag or scope a policy could ever have matched, so the answer is
+            // the same one it would get with no policy at all.
+            Ok(false)
         }
     }
 }
@@ -577,13 +609,17 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
             .map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?,
         None => None,
     };
+    // "Protocol Errors: Standard JSON-RPC errors for issues like unknown
+    // tools", with `-32602 Unknown tool: …` as the spec's own example. The
+    // distinction is not cosmetic: a `CallToolResult { isError }` is the
+    // channel a model is *meant* to read and self-correct from, and a name it
+    // cannot invent its way out of does not belong there. A hidden tool
+    // answers identically, so visibility stays indistinguishable from absence.
     let unknown = || {
-        ok_value(
+        error_response_for(
             id.clone(),
-            &W::CallTool::from(neutral::CallToolResult::error(format!(
-                "unknown tool: {}",
-                params.name
-            ))),
+            &W::VERSION,
+            &McpError::invalid_params(format!("unknown tool: {}", params.name)),
         )
     };
     let tool = tool.ok_or_else(unknown)?;

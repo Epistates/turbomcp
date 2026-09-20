@@ -2,8 +2,6 @@
 //! intersection, the acknowledged-first stream contract, and extension filter
 //! contributions (e.g. the Tasks extension's `taskIds`).
 
-use std::sync::Arc;
-
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -15,15 +13,16 @@ use turbomcp_protocol::methods;
 use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_service::ProtocolError;
 
-use crate::extension::{Extension, SubscribeOutcome};
+use crate::extension::SubscribeOutcome;
 use crate::router::MethodRouter;
-use crate::subscriptions::{SubscriptionRegistry, subscription_id_value};
+use crate::subscriptions::subscription_id_value;
 use crate::traits::McpServerCore;
 
+use super::capability::resource_hidden;
 use super::params::build_context;
 use super::{
-    VersionRoute, classify_version, connection_id, context_declares_extension, error_response,
-    invalid_envelope, missing_capability_response, unsupported_version,
+    Shared, VersionRoute, classify_version, connection_id, context_declares_extension,
+    error_response, invalid_envelope, missing_capability_response, unsupported_version,
 };
 
 // ---- subscriptions (draft `subscriptions/listen`) ------------------------------
@@ -39,13 +38,15 @@ struct RawListenParams {
 /// and commit the subscription. Success returns `Ok(None)` — the listen
 /// request never gets a JSON-RPC response; only failures answer in-band.
 pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
+    server: &S,
     router: &MethodRouter<S>,
     supported: &[ProtocolVersion],
-    subs: &Arc<SubscriptionRegistry>,
-    extensions: &[Arc<dyn Extension>],
+    shared: &Shared,
     req: &JsonRpcRequest,
     cancel: &CancellationToken,
 ) -> Result<Option<JsonRpcMessage>, ProtocolError> {
+    let subs = &shared.subs;
+    let extensions = shared.extensions.as_slice();
     let id = req.id.clone();
     match classify_version(req.params.as_ref(), supported) {
         VersionRoute::Modern => {}
@@ -106,8 +107,24 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         .then_some(true),
         prompts_list_changed: (wanted.prompts_list_changed == Some(true) && router.has_prompts())
             .then_some(true),
+        // Each requested URI is judged the way a `resources/read` of it would
+        // be: `notifications/resources/updated` names the URI, so agreeing to
+        // watch one the policy hides is the same disclosure on a timer. A
+        // refused URI is dropped from the agreed filter rather than failing
+        // the whole subscription — the acknowledgment already tells the client
+        // what the server agreed to, and it is the same answer a URI the
+        // server does not have gets.
         resource_subscriptions: if router.has_resources() {
-            wanted.resource_subscriptions
+            let ctx = build_context(req);
+            let mut agreed = Vec::with_capacity(wanted.resource_subscriptions.len());
+            for uri in wanted.resource_subscriptions {
+                match resource_hidden(shared, router, server, &ctx, &uri).await {
+                    Ok(false) => agreed.push(uri),
+                    Ok(true) => {}
+                    Err(e) => return Ok(Some(error_response(id, &e))),
+                }
+            }
+            agreed
         } else {
             Vec::new()
         },

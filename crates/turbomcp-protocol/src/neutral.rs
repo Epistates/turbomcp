@@ -20,7 +20,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde_json::{Map, Value};
-use turbomcp_core::ProtocolVersion;
+use turbomcp_core::{McpError, ProtocolVersion};
 
 use crate::v2025_06_18::types as v06;
 use crate::v2025_11_25::types as legacy;
@@ -517,6 +517,28 @@ impl ListParams {
             cursor: Some(cursor.into()),
         }
     }
+
+    /// Refuse a cursor on a listing that is always one unbounded page.
+    ///
+    /// "Invalid cursors **SHOULD** result in an error with code -32602." A
+    /// listing that never sets `next_cursor` never issued one, so any cursor
+    /// it is handed is invalid by construction — returning the full list
+    /// instead makes a client's paging loop look like it worked and quietly
+    /// re-reads page one forever.
+    ///
+    /// `listing` names the method for the error message.
+    ///
+    /// # Errors
+    /// [`McpError::InvalidParams`] when a cursor is present.
+    pub fn reject_unknown_cursor(&self, listing: &str) -> Result<(), McpError> {
+        match &self.cursor {
+            None => Ok(()),
+            Some(cursor) => Err(McpError::invalid_params(alloc::format!(
+                "unknown cursor `{cursor}`: {listing} returns a single page and \
+                 issues no cursor"
+            ))),
+        }
+    }
 }
 
 // ---- subscriptions (`subscriptions/listen`, 2026-07-28) ------------------------
@@ -898,6 +920,27 @@ impl ReadResourceResult {
             contents,
             cache: None,
         }
+    }
+
+    /// Fill in `mime_type` on any contents that did not set one.
+    ///
+    /// `#[resource(mime_type = "…")]` reached `resources/list` but never the
+    /// read, so a client that consulted the catalogue and then read the
+    /// resource got two different answers: the declared type and nothing.
+    /// A handler that set its own wins — the declaration is the default, not
+    /// an override.
+    #[must_use]
+    pub fn with_default_mime_type(mut self, mime_type: &str) -> Self {
+        for contents in &mut self.contents {
+            let slot = match contents {
+                ResourceContents::Text { mime_type, .. }
+                | ResourceContents::Blob { mime_type, .. } => mime_type,
+            };
+            if slot.is_none() {
+                *slot = Some(mime_type.into());
+            }
+        }
+        self
     }
 
     /// A result carrying a single text item.
@@ -2637,7 +2680,25 @@ impl CompleteResult {
         self.has_more = Some(has_more);
         self
     }
+
+    /// Cut the values to the schema's `maxItems: 100`, flagging the rest.
+    ///
+    /// Run on the way to every wire, because the cap is a schema constraint
+    /// and a handler returning 101 otherwise emits a response its own client
+    /// will refuse to parse. `has_more` is exactly the field for what was cut,
+    /// so nothing is lost but the surplus itself — and `total`, if the handler
+    /// set one, still reports how many there really are.
+    fn capped(mut self) -> Self {
+        if self.values.len() > MAX_COMPLETION_VALUES {
+            self.values.truncate(MAX_COMPLETION_VALUES);
+            self.has_more = Some(true);
+        }
+        self
+    }
 }
+
+/// `CompleteResult.completion.values` is `maxItems: 100` on every revision.
+const MAX_COMPLETION_VALUES: usize = 100;
 
 /// What a completion request is completing against.
 #[derive(Clone, Debug)]
@@ -3292,6 +3353,7 @@ impl From<GetPromptResult> for v0728::GetPromptResult {
 
 impl From<CompleteResult> for v0728::CompleteResult {
     fn from(r: CompleteResult) -> Self {
+        let r = r.capped();
         v0728::CompleteResult {
             completion: v0728::CompleteResultCompletion {
                 has_more: r.has_more,
@@ -3710,6 +3772,7 @@ impl From<GetPromptResult> for legacy::GetPromptResult {
 
 impl From<CompleteResult> for legacy::CompleteResult {
     fn from(r: CompleteResult) -> Self {
+        let r = r.capped();
         legacy::CompleteResult {
             completion: legacy::CompleteResultCompletion {
                 has_more: r.has_more,
@@ -5512,6 +5575,31 @@ mod tests {
                 .with_tools(alloc::vec![Tool::new("t", json!({}))])
                 .uses_tools()
         );
+    }
+
+    /// The schema caps `completion.values` at 100. A handler that returns more
+    /// gets the surplus cut and `hasMore` set, rather than a response its own
+    /// client refuses to parse.
+    #[test]
+    fn a_completion_over_the_cap_is_cut_and_flagged() {
+        let many =
+            CompleteResult::new((0..150).map(|i| alloc::format!("v{i}")).collect()).with_total(150);
+        let draft: v0728::CompleteResult = many.clone().into();
+        assert_eq!(draft.completion.values.len(), 100);
+        assert_eq!(draft.completion.has_more, Some(true));
+        assert_eq!(draft.completion.total, Some(150), "the real count survives");
+
+        let legacy_wire: legacy::CompleteResult = many.into();
+        assert_eq!(legacy_wire.completion.values.len(), 100);
+        assert_eq!(legacy_wire.completion.has_more, Some(true));
+
+        // At or under the cap nothing is touched, including an explicit
+        // `hasMore: false`.
+        let exact = CompleteResult::new((0..100).map(|i| alloc::format!("v{i}")).collect())
+            .with_has_more(false);
+        let wire: v0728::CompleteResult = exact.into();
+        assert_eq!(wire.completion.values.len(), 100);
+        assert_eq!(wire.completion.has_more, Some(false));
     }
 
     // ---- elicitation ---------------------------------------------------------

@@ -189,8 +189,15 @@ mod catalog_tests {
             .await
             .unwrap()
             .unwrap();
+        // Indistinguishable from a tool that does not exist, which since the
+        // unknown-tool fix is the spec's protocol error rather than a
+        // tool-level result.
         let value = serde_json::to_value(result).unwrap();
-        assert_eq!(value["result"]["isError"], true);
+        assert_eq!(value["error"]["code"], -32602);
+        assert_eq!(
+            value["error"]["message"],
+            "invalid params: unknown tool: secret"
+        );
     }
     #[tokio::test]
     async fn deny_all_visibility_rejects_later_page_tool() {
@@ -206,10 +213,8 @@ mod catalog_tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            serde_json::to_value(result).unwrap()["result"]["isError"],
-            true
-        );
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["error"]["code"], -32602);
     }
     #[tokio::test]
     async fn flat_composite_calls_later_page_tools() {
@@ -332,5 +337,59 @@ mod schema_tests {
             .unwrap();
         let value = serde_json::to_value(result).unwrap();
         assert_eq!(value["result"]["isError"], true);
+    }
+
+    /// "Invalid cursors **SHOULD** result in an error with code -32602."
+    ///
+    /// A `#[server]` listing is a single unbounded page with no `nextCursor`,
+    /// so any cursor it is handed is one it never issued. Returning the full
+    /// list instead made a client's paging loop look like it worked while it
+    /// re-read page one.
+    #[tokio::test]
+    async fn a_cursor_the_server_never_issued_is_invalid_params() {
+        for method in [
+            "tools/list",
+            "prompts/list",
+            "resources/list",
+            "resources/templates/list",
+        ] {
+            let result = Adults
+                .into_server()
+                .build()
+                .oneshot(request(method, json!({ "cursor": "made-up" })))
+                .await
+                .unwrap()
+                .unwrap();
+            let value = serde_json::to_value(result).unwrap();
+            // Only the capabilities this server has are routed; the rest
+            // answer method-not-found, which is its own correct refusal.
+            let code = value["error"]["code"].as_i64();
+            assert!(
+                code == Some(-32602) || code == Some(-32601),
+                "{method}: {value}"
+            );
+            if code == Some(-32602) {
+                assert!(
+                    value["error"]["message"]
+                        .as_str()
+                        .is_some_and(|m| m.contains("made-up")),
+                    "{method}: {value}"
+                );
+            }
+        }
+
+        // The first page still works.
+        let listed = Adults
+            .into_server()
+            .build()
+            .oneshot(request("tools/list", json!({})))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            serde_json::to_value(listed).unwrap()["result"]["tools"]
+                .as_array()
+                .is_some_and(|t| t.len() == 1)
+        );
     }
 }

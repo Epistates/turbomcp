@@ -599,41 +599,87 @@ impl CompositeServer {
         // misbehaving — which is itself worth failing on.
         const MAX_PAGES: usize = 1000;
 
+        // Walks each mount to exhaustion and claims every composed identifier
+        // into **one** map spanning all mounts and all pages.
+        //
+        // Going mount by mount rather than through the composite's own
+        // `list_*` is what makes the cross-page promise real: a request's
+        // `seen` map lives for one page, so two mounts whose components land on
+        // different pages never met. It also keeps the owning mount in hand for
+        // the error, which a composed page alone cannot say.
         macro_rules! drain {
-            ($ctx:expr, $list:ident, $label:literal) => {{
+            ($ctx:expr, $dispatch:ident, $field:ident, $kind:expr, $label:literal,
+             |$mount:ident, $item:ident| $id:expr) => {{
                 let ctx = $ctx;
-                let mut cursor = None;
-                for page in 0.. {
-                    if page == MAX_PAGES {
-                        return Err(McpError::internal(format!(
-                            "a mounted server is still paginating {} after {MAX_PAGES} pages \
-                             — it is not terminating its cursor",
-                            $label
-                        )));
-                    }
-                    let mut params = neutral::ListParams::default();
-                    params.cursor = cursor;
-                    let result = self.$list(&ctx, params).await?;
-                    match result.next_cursor {
-                        Some(next) => cursor = Some(next),
-                        None => break,
+                let mut seen: BTreeMap<String, String> = BTreeMap::new();
+                for $mount in &self.inner.mounts {
+                    let mut cursor = None;
+                    for page in 0.. {
+                        if page == MAX_PAGES {
+                            return Err(McpError::internal(format!(
+                                "`{}` is still paginating {} after {MAX_PAGES} pages \
+                                 — it is not terminating its cursor",
+                                $mount.label(),
+                                $label
+                            )));
+                        }
+                        let mut params = neutral::ListParams::default();
+                        params.cursor = cursor;
+                        let Some(fut) = $mount.server.$dispatch(ctx.clone(), params) else {
+                            break;
+                        };
+                        let result = fut.await?;
+                        for $item in &result.$field {
+                            claim(&mut seen, &$id, $mount, $kind)?;
+                        }
+                        match result.next_cursor {
+                            Some(next) => cursor = Some(next),
+                            None => break,
+                        }
                     }
                 }
             }};
         }
 
-        drain!(ListToolsContext::new(request.clone()), list_tools, "tools");
+        drain!(
+            ListToolsContext::new(request.clone()),
+            list_tools,
+            tools,
+            Kind::Tool,
+            "tools",
+            |mount, tool| match &mount.prefix {
+                Some(prefix) => qualify(prefix, &tool.name),
+                None => tool.name.clone(),
+            }
+        );
         drain!(
             ListResourcesContext::new(request.clone()),
             list_resources,
-            "resources"
+            resources,
+            Kind::Resource,
+            "resources",
+            // Resource URIs are never prefixed — a mount's URIs are its own.
+            |mount, resource| resource.uri.clone()
         );
         drain!(
             ListResourceTemplatesContext::new(request.clone()),
             list_resource_templates,
-            "resource templates"
+            resource_templates,
+            Kind::Template,
+            "resource templates",
+            |mount, template| template.uri_template.clone()
         );
-        drain!(ListPromptsContext::new(request), list_prompts, "prompts");
+        drain!(
+            ListPromptsContext::new(request),
+            list_prompts,
+            prompts,
+            Kind::Prompt,
+            "prompts",
+            |mount, prompt| match &mount.prefix {
+                Some(prefix) => qualify(prefix, &prompt.name),
+                None => prompt.name.clone(),
+            }
+        );
         Ok(())
     }
 
@@ -655,6 +701,35 @@ impl CompositeServer {
     /// and no list is needed.
     fn has_flat(&self) -> bool {
         self.inner.mounts.iter().any(|m| m.prefix.is_none())
+    }
+
+    /// Resolve a caller-visible name to the mount serving it and the name that
+    /// mount knows it by.
+    ///
+    /// **A flat mount exposing the name exactly wins over splitting it at the
+    /// first `.`.** `#[tool(name = "git.status")]` is endorsed v4 usage, and
+    /// the split sent it to a mount prefixed `git` that had never heard of
+    /// `status`, so a tool `tools/list` advertised could not be called. Two
+    /// mounts claiming one caller-visible name is already a listing error
+    /// (see `claim`), so preferring the exact match cannot mask a collision.
+    ///
+    /// The flat lookup runs only when a flat mount exists; a purely prefixed
+    /// composite still resolves by string split, with no list at all.
+    async fn resolve<'a, T, F>(
+        &'a self,
+        name: &str,
+        list: F,
+    ) -> McpResult<Option<(&'a Mount, String)>>
+    where
+        F: FnMut(&'a Mount, neutral::ListParams) -> Option<BoxFuture<'static, McpResult<T>>>,
+        T: Names,
+    {
+        if self.has_flat()
+            && let Some(mount) = Self::flat_owner(&self.inner.mounts, name, list).await?
+        {
+            return Ok(Some((mount, name.to_owned())));
+        }
+        Ok(self.route(name))
     }
 
     /// Find the flat mount exposing `name`, by asking each what it currently
@@ -884,25 +959,20 @@ impl WithTools for CompositeServer {
         ctx: &CallToolContext,
         mut params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
-        // A name with no prefix may still belong to a flat mount, which only its
-        // current list can say. Matches what a `#[server]` impl answers for a
-        // name it doesn't know: a tool-level error the model can act on, not a
-        // JSON-RPC one.
-        let routed = match self.route(&params.name) {
-            Some(routed) => Some(routed),
-            None if self.has_flat() => {
-                Self::flat_owner(&self.inner.mounts, &params.name, |mount, page| {
-                    mount
-                        .server
-                        .list_tools(ListToolsContext::new(ctx.base.clone()), page)
-                })
-                .await?
-                .map(|mount| (mount, params.name.clone()))
-            }
-            None => None,
-        };
+        // A name with no prefix — or one a flat mount exposes verbatim — only
+        // that mount's current list can resolve.
+        let routed = self
+            .resolve(&params.name, |mount, page| {
+                mount
+                    .server
+                    .list_tools(ListToolsContext::new(ctx.base.clone()), page)
+            })
+            .await?;
         let Some((mount, name)) = routed else {
-            return Ok(neutral::CallToolResult::error(format!(
+            // Unreachable in practice: the dispatcher's `prepare_tool` refuses
+            // an unlisted name with the spec's `-32602` before reaching here.
+            // Kept as the honest answer for a direct caller.
+            return Err(McpError::invalid_params(format!(
                 "unknown tool: {}",
                 params.name
             )));
@@ -1007,19 +1077,13 @@ impl WithPrompts for CompositeServer {
         ctx: &GetPromptContext,
         mut params: neutral::GetPromptParams,
     ) -> McpResult<neutral::GetPromptResult> {
-        let routed = match self.route(&params.name) {
-            Some(routed) => Some(routed),
-            None if self.has_flat() => {
-                Self::flat_owner(&self.inner.mounts, &params.name, |mount, page| {
-                    mount
-                        .server
-                        .list_prompts(ListPromptsContext::new(ctx.base.clone()), page)
-                })
-                .await?
-                .map(|mount| (mount, params.name.clone()))
-            }
-            None => None,
-        };
+        let routed = self
+            .resolve(&params.name, |mount, page| {
+                mount
+                    .server
+                    .list_prompts(ListPromptsContext::new(ctx.base.clone()), page)
+            })
+            .await?;
         let Some((mount, name)) = routed else {
             return Err(McpError::invalid_params(format!(
                 "unknown prompt: {}",
@@ -1048,19 +1112,13 @@ impl WithCompletions for CompositeServer {
             // an unprefixed one is resolved the same way `get_prompt` resolves
             // it, so completion and the call it completes for agree on the owner.
             neutral::CompletionReference::Prompt { name } => {
-                let routed = match self.route(name) {
-                    Some(routed) => Some(routed),
-                    None if self.has_flat() => {
-                        Self::flat_owner(&self.inner.mounts, name, |mount, page| {
-                            mount
-                                .server
-                                .list_prompts(ListPromptsContext::new(ctx.base.clone()), page)
-                        })
-                        .await?
-                        .map(|mount| (mount, name.clone()))
-                    }
-                    None => None,
-                };
+                let routed = self
+                    .resolve(name, |mount, page| {
+                        mount
+                            .server
+                            .list_prompts(ListPromptsContext::new(ctx.base.clone()), page)
+                    })
+                    .await?;
                 let Some((mount, own)) = routed else {
                     return Ok(neutral::CompleteResult::new(vec![]));
                 };
@@ -1139,10 +1197,11 @@ impl Kind {
 /// The `#[server]` macro rejects the same collision within one server at compile
 /// time; across mounts it can only be seen here.
 ///
-/// The check is per *page*, which is everything a mount has unless it paginates.
-/// Catching a collision between two mounts whose components land on different
-/// pages would mean draining every mount on every request, which is the cost
-/// pagination exists to avoid.
+/// On a *request* the check is per page, which is everything a mount has unless
+/// it paginates: catching a collision between two mounts whose components land
+/// on different pages would mean draining every mount on every request, which
+/// is the cost pagination exists to avoid.
+/// [`CompositeServer::preflight`] drains, and so catches those too.
 fn claim(
     seen: &mut BTreeMap<String, String>,
     id: &str,

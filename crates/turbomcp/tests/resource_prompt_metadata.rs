@@ -119,6 +119,31 @@ async fn assert_metadata_survives(mode: ConnectMode) {
     assert_eq!(summarize.description.as_deref(), Some("Summarize"));
 }
 
+/// The declared `mime_type` reaches the *read*, not just the catalogue.
+///
+/// A client that consulted `resources/list` and then read the resource used to
+/// get two different answers: the declared type, then nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_declared_mime_type_reaches_the_read_contents() {
+    let client = connect(ConnectMode::Modern).await;
+
+    for (uri, expected) in [
+        ("config://app", Some("application/json")),
+        // A template's declared type applies to what it serves too.
+        ("file://src/main.rs", Some("text/plain")),
+        // Undeclared stays undeclared rather than being guessed.
+        ("config://bare", None),
+    ] {
+        let read = client.read_resource(uri).await.expect("read");
+        let mime = match &read.contents[0] {
+            neutral::ResourceContents::Text { mime_type, .. }
+            | neutral::ResourceContents::Blob { mime_type, .. } => mime_type.as_deref(),
+            other => panic!("unexpected contents kind: {other:?}"),
+        };
+        assert_eq!(mime, expected, "reading {uri}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metadata_survives_the_draft_wire() {
     assert_metadata_survives(ConnectMode::Modern).await;

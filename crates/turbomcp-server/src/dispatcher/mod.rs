@@ -56,7 +56,7 @@ mod listen;
 mod params;
 
 use augment::try_augment_call;
-use capability::{DraftWire, Legacy0618Wire, LegacyWire, dispatch_capability};
+use capability::{DraftWire, Legacy0618Wire, LegacyWire, dispatch_capability, resource_hidden};
 use handshake::{discover_response, handle_initialize};
 use legacy_tasks::{
     handle_tasks_method, has_task_field, legacy_list_tools_with_task_support, task_augmented_call,
@@ -524,12 +524,7 @@ async fn handle<S: McpServerCore>(
             // always-respond contract.
             if req.method == methods::request::SUBSCRIPTIONS_LISTEN {
                 return handle_subscriptions_listen(
-                    &router,
-                    &supported,
-                    &shared.subs,
-                    &shared.extensions,
-                    &req,
-                    &cancel,
+                    &server, &router, &supported, &shared, &req, &cancel,
                 )
                 .await;
             }
@@ -847,6 +842,18 @@ async fn handle_request<S: McpServerCore>(
                     // `legacy_context` proved the session id is present.
                     let sid = session_id(req.params.as_ref()).unwrap_or_default();
                     if method == methods::request::RESOURCES_SUBSCRIBE {
+                        // A hidden resource is unreachable, and that has to
+                        // include watching it: every `resources/updated` names
+                        // its URI, so a subscription the policy would refuse a
+                        // read of is the same disclosure on a timer.
+                        let ctx = build_context(&req);
+                        match resource_hidden(shared, router, &server, &ctx, &uri).await {
+                            Ok(true) => {
+                                return Ok(error_response(id, &McpError::resource_not_found(uri)));
+                            }
+                            Ok(false) => {}
+                            Err(e) => return Ok(error_response(id, &e)),
+                        }
                         subs.legacy_subscribe(sid, connection_id(req.params.as_ref()), uri);
                     } else {
                         subs.legacy_unsubscribe(sid, &uri);

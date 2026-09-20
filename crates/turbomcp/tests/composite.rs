@@ -142,6 +142,19 @@ where
     r.result.expect("a success response has a result")
 }
 
+/// The JSON-RPC error a request answered with, for the cases where that is the
+/// right answer.
+async fn error<S>(svc: &mut S, req: JsonRpcRequest) -> turbomcp::JsonRpcError
+where
+    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S::Error: std::fmt::Debug,
+{
+    let method = req.method.clone();
+    let r = respond(svc, req).await;
+    r.error
+        .unwrap_or_else(|| panic!("{method} succeeded, expected an error: {:?}", r.result))
+}
+
 /// The text of a `tools/call` result's first content block.
 fn text(result: &Value) -> &str {
     result["content"][0]["text"]
@@ -322,13 +335,17 @@ async fn capabilities_come_from_what_the_mounts_actually_have() {
 }
 
 /// A tool name with no mount prefix, or one naming an unmounted prefix, answers
-/// the same way a `#[server]` impl answers an unknown tool: a tool-level error
-/// the model can act on, not a JSON-RPC error.
+/// the same way a `#[server]` impl answers an unknown tool: the spec's `-32602`
+/// protocol error.
+///
+/// Not a tool-level `isError`. "Protocol Errors: standard JSON-RPC errors for
+/// issues like unknown tools" — and a name the model cannot invent its way out
+/// of has no business in the channel it is meant to self-correct from.
 #[tokio::test]
-async fn an_unroutable_tool_name_is_a_tool_level_error() {
+async fn an_unroutable_tool_name_is_a_protocol_error() {
     let mut svc = connect(gateway()).await;
     for name in ["forecast", "sports.forecast"] {
-        let r = result(
+        let err = error(
             &mut svc,
             JsonRpcRequest::new(
                 2,
@@ -337,8 +354,8 @@ async fn an_unroutable_tool_name_is_a_tool_level_error() {
             ),
         )
         .await;
-        assert_eq!(r["isError"], json!(true), "calling `{name}`");
-        assert!(text(&r).contains("unknown tool"), "calling `{name}`");
+        assert_eq!(err.code, -32602, "calling `{name}`");
+        assert!(err.message.contains("unknown tool"), "calling `{name}`");
     }
 }
 
@@ -843,4 +860,147 @@ async fn preflight_reports_a_collision_before_any_request() {
         .preflight(RequestContext::new(ProtocolVersion::V2025_11_25))
         .await
         .expect("no collision");
+}
+
+/// A flat mount's dotted tool name is not shadowed by a mount prefix.
+///
+/// v4 endorses `.` as an in-name namespace (`#[tool(name = "git.status")]`),
+/// and routing split on the first `.`: `git.status` went to the mount prefixed
+/// `git`, which had never heard of `status`. The tool was listed and
+/// uncallable. The flat mount's exact name wins, because that is the name
+/// `tools/list` advertised.
+#[tokio::test]
+async fn a_flat_dotted_tool_name_is_not_shadowed_by_a_mount_prefix() {
+    #[derive(Clone)]
+    struct Dotted;
+    #[server(name = "dotted", version = "1.0.0")]
+    impl Dotted {
+        #[tool(name = "git.status", description = "Working tree status")]
+        async fn git_status(&self) -> String {
+            "clean".into()
+        }
+    }
+
+    // `Health` mounts at `git` and serves only `ping`, so `git.status` splits
+    // to a name that mount does not have.
+    let mut svc = connect(
+        Composite::new(Implementation::new("gw", "1.0.0"))
+            .mount_flat(Dotted.into_server())
+            .expect("mount dotted")
+            .mount("git", Health.into_server())
+            .expect("mount git"),
+    )
+    .await;
+
+    let listed = result(
+        &mut svc,
+        JsonRpcRequest::new(2, request::TOOLS_LIST, Some(json!({}))),
+    )
+    .await;
+    assert!(
+        names(&listed, "tools").contains(&"git.status".to_owned()),
+        "listed: {listed}"
+    );
+
+    let called = result(
+        &mut svc,
+        JsonRpcRequest::new(
+            3,
+            request::TOOLS_CALL,
+            Some(json!({ "name": "git.status", "arguments": {} })),
+        ),
+    )
+    .await;
+    assert_eq!(text(&called), "clean");
+
+    // The prefixed mount is still reachable under its own prefix.
+    let pinged = result(
+        &mut svc,
+        JsonRpcRequest::new(
+            4,
+            request::TOOLS_CALL,
+            Some(json!({ "name": "git.ping", "arguments": {} })),
+        ),
+    )
+    .await;
+    assert_eq!(text(&pinged), "ok");
+}
+
+/// Two mounts whose colliding tools land on *different* pages.
+///
+/// A request's duplicate check lives for one page, so this pair never met:
+/// preflight drains each mount instead, which is the difference its doc
+/// promised and did not deliver.
+#[tokio::test]
+async fn preflight_catches_a_collision_that_spans_pages() {
+    /// Page one is `alpha`, page two is `shared`.
+    #[derive(Clone)]
+    struct Paged(&'static str);
+    impl turbomcp_server::McpServerCore for Paged {
+        fn server_info(&self) -> Implementation {
+            Implementation::new(self.0, "1")
+        }
+    }
+    impl turbomcp_server::WithTools for Paged {
+        async fn list_tools(
+            &self,
+            _: &turbomcp_server::ListToolsContext,
+            p: turbomcp::neutral::ListParams,
+        ) -> turbomcp::McpResult<turbomcp::neutral::ListToolsResult> {
+            let second = p.cursor.is_some();
+            let name = if second { "shared" } else { self.0 };
+            let mut r =
+                turbomcp::neutral::ListToolsResult::new(vec![turbomcp::neutral::Tool::new(
+                    name,
+                    json!({ "type": "object" }),
+                )]);
+            if !second {
+                r.next_cursor = Some("p2".into());
+            }
+            Ok(r)
+        }
+        async fn call_tool(
+            &self,
+            _: &turbomcp_server::CallToolContext,
+            _: turbomcp::neutral::CallToolParams,
+        ) -> turbomcp::McpResult<turbomcp::neutral::CallToolResult> {
+            Ok(turbomcp::neutral::CallToolResult::text("ok"))
+        }
+    }
+
+    let composed = Composite::new(Implementation::new("vault", "1.0.0"))
+        .mount_flat(ServerBuilder::new(Paged("left")).with_tools())
+        .expect("mount left")
+        .mount_flat(ServerBuilder::new(Paged("right")).with_tools())
+        .expect("mount right")
+        .build();
+
+    // The first page of a request sees only `left` and `right`: no collision.
+    let first = composed
+        .clone()
+        .into_server()
+        .build()
+        .oneshot(JsonRpcMessage::from(JsonRpcRequest::new(
+            1,
+            request::TOOLS_LIST,
+            Some(json!({ "_meta": draft_meta() })),
+        )))
+        .await
+        .expect("service")
+        .expect("a response");
+    assert!(
+        serde_json::to_value(first).unwrap()["error"].is_null(),
+        "page one is not where the collision is"
+    );
+
+    // Preflight drains, so it meets `shared` twice.
+    let err = composed
+        .preflight(RequestContext::new(ProtocolVersion::V2025_11_25))
+        .await
+        .expect_err("a cross-page collision is still a collision");
+    let message = err.to_string();
+    assert!(
+        message.contains("shared") && message.contains("left") && message.contains("right"),
+        "the error must name the tool and both mounts, got: {message}"
+    );
 }

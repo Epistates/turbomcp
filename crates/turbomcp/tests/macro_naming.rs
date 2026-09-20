@@ -135,7 +135,7 @@ async fn a_renamed_tool_is_called_by_its_wire_name() {
     params.insert("arguments".into(), json!({ "q": "rust" }));
     let body = call(Renamed.into_server().build(), draft("tools/call", params)).await;
     assert_eq!(
-        body["result"]["isError"], true,
+        body["error"]["code"], -32602,
         "the Rust name must not also resolve: {body}"
     );
 }

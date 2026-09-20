@@ -1050,8 +1050,9 @@ fn gen_tools_impl(self_ty: &Type, tools: &[Handler]) -> TokenStream {
             async fn list_tools(
                 &self,
                 _ctx: &::turbomcp::ListToolsContext,
-                _params: ::turbomcp::neutral::ListParams,
+                params: ::turbomcp::neutral::ListParams,
             ) -> ::turbomcp::McpResult<::turbomcp::neutral::ListToolsResult> {
+                params.reject_unknown_cursor("tools/list")?;
                 ::core::result::Result::Ok(::turbomcp::neutral::ListToolsResult::new(
                     ::std::vec![ #(#list_entries),* ],
                 ))
@@ -1279,11 +1280,12 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
         let uri = r.resource_uri();
         let method = &r.method;
         let call_args = r.call_args(|_| quote!(compile_error!("fixed resource takes no args")));
+        let default_mime = declared_mime_default(r);
         quote! {
             #uri => return ::turbomcp::IntoReadResourceResult::into_read_resource_result(
                 self.#method(#(#call_args),*).await,
                 #uri,
-            ),
+            ) #default_mime,
         }
     });
 
@@ -1291,6 +1293,7 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
     let template_matches = templated.iter().map(|r| {
         let uri = r.resource_uri();
         let method = &r.method;
+        let default_mime = declared_mime_default(r);
         let extracts = r.args.iter().map(|a| {
             let ident = &a.ident;
             let arg_name = a.ident.to_string();
@@ -1319,7 +1322,7 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
                 return ::turbomcp::IntoReadResourceResult::into_read_resource_result(
                     self.#method(#(#call_args),*).await,
                     __uri,
-                );
+                ) #default_mime;
             }
         }
     });
@@ -1329,8 +1332,9 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
             async fn list_resource_templates(
                 &self,
                 _ctx: &::turbomcp::ListResourceTemplatesContext,
-                _params: ::turbomcp::neutral::ListParams,
+                params: ::turbomcp::neutral::ListParams,
             ) -> ::turbomcp::McpResult<::turbomcp::neutral::ListResourceTemplatesResult> {
+                params.reject_unknown_cursor("resources/templates/list")?;
                 ::core::result::Result::Ok(
                     ::turbomcp::neutral::ListResourceTemplatesResult::new(
                         ::std::vec![ #(#template_entries),* ],
@@ -1345,8 +1349,9 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
             async fn list_resources(
                 &self,
                 _ctx: &::turbomcp::ListResourcesContext,
-                _params: ::turbomcp::neutral::ListParams,
+                params: ::turbomcp::neutral::ListParams,
             ) -> ::turbomcp::McpResult<::turbomcp::neutral::ListResourcesResult> {
+                params.reject_unknown_cursor("resources/list")?;
                 ::core::result::Result::Ok(::turbomcp::neutral::ListResourcesResult::new(
                     ::std::vec![ #(#list_entries),* ],
                 ))
@@ -1374,6 +1379,19 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
     }
 }
 
+/// The tail that carries a declared `mime_type` into the *read* result.
+///
+/// `resources/list` advertised it and `resources/read` did not, so a client
+/// that consulted the catalogue and then read the resource got two different
+/// answers. Applied as a default: a handler returning its own `ResourceContents`
+/// with a MIME type keeps it.
+fn declared_mime_default(r: &Handler) -> TokenStream {
+    match r.mime_type.as_ref() {
+        Some(m) => quote!(.map(|__r| __r.with_default_mime_type(#m))),
+        None => quote!(),
+    }
+}
+
 /// The builder tail carrying a resource's optional metadata. `Resource` and
 /// `ResourceTemplate` expose the same setters, so one generator serves both.
 fn resource_metadata(r: &Handler) -> TokenStream {
@@ -1397,8 +1415,9 @@ fn gen_prompts_impl(self_ty: &Type, prompts: &[Handler]) -> TokenStream {
             async fn list_prompts(
                 &self,
                 _ctx: &::turbomcp::ListPromptsContext,
-                _params: ::turbomcp::neutral::ListParams,
+                params: ::turbomcp::neutral::ListParams,
             ) -> ::turbomcp::McpResult<::turbomcp::neutral::ListPromptsResult> {
+                params.reject_unknown_cursor("prompts/list")?;
                 ::core::result::Result::Ok(::turbomcp::neutral::ListPromptsResult::new(
                     ::std::vec![ #(#list_entries),* ],
                 ))
