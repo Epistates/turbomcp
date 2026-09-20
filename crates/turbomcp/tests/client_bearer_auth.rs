@@ -62,7 +62,10 @@ async fn mock_post(
                 "id": id,
                 "result": {
                     "protocolVersion": "2025-11-25",
-                    "capabilities": {},
+                    // Declared because this mock answers `tools/list`: the
+                    // client refuses to call a capability the server never
+                    // advertised, which is what the spec asks of it.
+                    "capabilities": { "tools": {} },
                     "serverInfo": { "name": "bearer-mock", "version": "1.0.0" },
                 },
             })),

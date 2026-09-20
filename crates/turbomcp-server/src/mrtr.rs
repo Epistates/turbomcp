@@ -423,6 +423,7 @@ impl ClientHandle {
         key: &str,
         params: neutral::ElicitParams,
     ) -> McpResult<neutral::ElicitOutcome> {
+        params.validate().map_err(McpError::invalid_params)?;
         let raw = self
             .obtain(key, "elicitation", elicit_request_value(&params))
             .await?;
@@ -441,6 +442,21 @@ impl ClientHandle {
         key: &str,
         params: neutral::ElicitUrlParams,
     ) -> McpResult<neutral::ElicitOutcome> {
+        // "The `url` parameter MUST contain a valid URL." Checked with a real
+        // parser rather than a prefix test: the client is about to put this in
+        // front of a user, and a relative or malformed one resolves against
+        // whatever the client's UI happens to be.
+        let url = url::Url::parse(&params.url).map_err(|e| {
+            McpError::invalid_params(format!("elicitation url `{}`: {e}", params.url))
+        })?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(McpError::invalid_params(format!(
+                "elicitation url `{}` has scheme `{}`; a user is being sent there, \
+                 so it must be http or https",
+                params.url,
+                url.scheme()
+            )));
+        }
         // `elicitationId` is `2025-11-25`-only. The 2026-07-28 RC had briefly
         // made it required on URL-mode requests; the frozen spec removed it
         // again, together with `notifications/elicitation/complete`, so the
@@ -940,6 +956,12 @@ fn parse_elicit_outcome(raw: &Value) -> McpResult<neutral::ElicitOutcome> {
 mod tests {
     use super::*;
 
+    /// A minimal schema inside the form subset, for the tests that care about
+    /// delivery rather than what is being asked.
+    fn form_schema() -> Value {
+        json!({ "type": "object", "properties": { "answer": { "type": "string" } } })
+    }
+
     #[test]
     fn sign_verify_roundtrip_binds_method_and_rejects_tampering() {
         let signer = StateSigner::new();
@@ -1042,7 +1064,7 @@ mod tests {
     async fn elicit_without_declared_capability_is_an_error_not_an_abort() {
         let handle = ClientHandle::mrtr("", Some(json!({})), BTreeMap::new(), None, false);
         let err = handle
-            .elicit("k", neutral::ElicitParams::new("?", json!({})))
+            .elicit("k", neutral::ElicitParams::new("?", form_schema()))
             .await
             .expect_err("must not send undeclared input requests");
         assert!(
@@ -1202,16 +1224,16 @@ mod tests {
         );
         // First records under `k` and aborts (InputRequired).
         let _ = handle
-            .elicit(
-                "k",
-                neutral::ElicitParams::new("A", json!({ "type": "object" })),
-            )
+            .elicit("k", neutral::ElicitParams::new("A", form_schema()))
             .await;
         // Same key, different request shape → strict error (not a warning).
         let err = handle
             .elicit(
                 "k",
-                neutral::ElicitParams::new("B", json!({ "type": "object", "extra": true })),
+                neutral::ElicitParams::new(
+                    "B",
+                    json!({ "type": "object", "properties": { "other": { "type": "boolean" } } }),
+                ),
             )
             .await
             .expect_err("strict keys reject a shape conflict");
@@ -1412,7 +1434,7 @@ mod tests {
         let (handle, pending, mut rx, _guard) = bidi_handle("bidi-err");
         let task = tokio::spawn(async move {
             handle
-                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .elicit("k", neutral::ElicitParams::new("?", form_schema()))
                 .await
         });
 
@@ -1443,7 +1465,7 @@ mod tests {
         let (handle, pending, mut rx, _guard) = bidi_handle("bidi-empty");
         let task = tokio::spawn(async move {
             handle
-                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .elicit("k", neutral::ElicitParams::new("?", form_schema()))
                 .await
         });
 
@@ -1472,7 +1494,7 @@ mod tests {
             ProtocolVersion::V2025_11_25,
         );
         let err = handle
-            .elicit("k", neutral::ElicitParams::new("?", json!({})))
+            .elicit("k", neutral::ElicitParams::new("?", form_schema()))
             .await
             .expect_err("nothing to write to");
         assert!(
@@ -1488,7 +1510,7 @@ mod tests {
         let (handle, _pending, mut rx, _guard) = bidi_handle("bidi-timeout");
         let task = tokio::spawn(async move {
             handle
-                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .elicit("k", neutral::ElicitParams::new("?", form_schema()))
                 .await
         });
         let _req = next_request(&mut rx).await;
@@ -1506,8 +1528,8 @@ mod tests {
         let task = tokio::spawn(async move {
             handle
                 .elicit_all(vec![
-                    ("first", neutral::ElicitParams::new("A", json!({}))),
-                    ("second", neutral::ElicitParams::new("B", json!({}))),
+                    ("first", neutral::ElicitParams::new("A", form_schema())),
+                    ("second", neutral::ElicitParams::new("B", form_schema())),
                 ])
                 .await
         });
@@ -1551,9 +1573,9 @@ mod tests {
         );
         let err = handle
             .elicit_all(vec![
-                ("first", neutral::ElicitParams::new("A", json!({}))),
-                ("second", neutral::ElicitParams::new("B", json!({}))),
-                ("third", neutral::ElicitParams::new("C", json!({}))),
+                ("first", neutral::ElicitParams::new("A", form_schema())),
+                ("second", neutral::ElicitParams::new("B", form_schema())),
+                ("third", neutral::ElicitParams::new("C", form_schema())),
             ])
             .await
             .expect_err("two of three are missing");
@@ -1586,8 +1608,8 @@ mod tests {
         );
         let outcomes = handle
             .elicit_all(vec![
-                ("a", neutral::ElicitParams::new("A", json!({}))),
-                ("b", neutral::ElicitParams::new("B", json!({}))),
+                ("a", neutral::ElicitParams::new("A", form_schema())),
+                ("b", neutral::ElicitParams::new("B", form_schema())),
             ])
             .await
             .expect("all cached");
@@ -1677,6 +1699,58 @@ mod tests {
     /// A one-tool catalogue for the sampling tests.
     fn alloc_tool() -> neutral::Tool {
         neutral::Tool::new("echo", json!({ "type": "object" }))
+    }
+
+    /// A form a client cannot render never leaves the server, and neither does
+    /// a URL it cannot navigate to.
+    ///
+    /// Both are things the user would otherwise meet as silence: an empty form
+    /// with no explanation, or a link that resolves against whatever the
+    /// client's own UI happens to be.
+    #[tokio::test]
+    async fn an_unrenderable_elicitation_is_refused_before_it_is_sent() {
+        let handle = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": { "form": {}, "url": {} } })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+
+        // "Form mode elicitation schemas are limited to flat objects with
+        // primitive properties only."
+        let nested = json!({
+            "type": "object",
+            "properties": { "address": { "type": "object", "properties": {} } },
+        });
+        let err = handle
+            .elicit("k", neutral::ElicitParams::new("?", nested))
+            .await
+            .expect_err("a nested schema is outside the subset");
+        assert!(
+            matches!(&err, McpError::InvalidParams(m) if m.contains("address")),
+            "{err:?}"
+        );
+
+        // "The `url` parameter MUST contain a valid URL."
+        for bad in ["not a url", "/relative/path", "javascript:alert(1)"] {
+            let err = handle
+                .elicit_url("k", neutral::ElicitUrlParams::new("Sign in", bad))
+                .await
+                .expect_err("not somewhere to send a user");
+            assert!(matches!(&err, McpError::InvalidParams(_)), "{bad}: {err:?}");
+        }
+
+        // A real one gets as far as being recorded for the retry.
+        assert!(matches!(
+            handle
+                .elicit_url(
+                    "k",
+                    neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go")
+                )
+                .await,
+            Err(McpError::InputRequired)
+        ));
     }
 
     /// `2025-06-18` has no agentic sampling and no multi-block messages.
@@ -1848,7 +1922,7 @@ mod tests {
         );
         assert!(matches!(
             form_only
-                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .elicit("k", neutral::ElicitParams::new("?", form_schema()))
                 .await,
             Err(McpError::InputRequired)
         ));
@@ -1945,7 +2019,7 @@ mod tests {
             crate::extension::TaskInputSlot::default(),
         );
         let err = handle
-            .elicit("k", neutral::ElicitParams::new("?", json!({})))
+            .elicit("k", neutral::ElicitParams::new("?", form_schema()))
             .await
             .expect_err("no broker was attached");
         assert!(
@@ -1977,7 +2051,7 @@ mod tests {
 
         let handle = ClientHandle::task_mediated(Some(json!({ "elicitation": {} })), slot);
         let outcome = handle
-            .elicit("k", neutral::ElicitParams::new("?", json!({})))
+            .elicit("k", neutral::ElicitParams::new("?", form_schema()))
             .await
             .expect("the broker answered");
         assert_eq!(outcome.content["via"], "k");
@@ -1985,8 +2059,8 @@ mod tests {
         // `elicit_all` resolves through the broker one at a time as well.
         let outcomes = handle
             .elicit_all(vec![
-                ("a", neutral::ElicitParams::new("A", json!({}))),
-                ("b", neutral::ElicitParams::new("B", json!({}))),
+                ("a", neutral::ElicitParams::new("A", form_schema())),
+                ("b", neutral::ElicitParams::new("B", form_schema())),
             ])
             .await
             .expect("both answered");
@@ -2002,11 +2076,11 @@ mod tests {
         let handle = ClientHandle::unavailable("no client channel on this path");
         for err in [
             handle
-                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .elicit("k", neutral::ElicitParams::new("?", form_schema()))
                 .await
                 .expect_err("unavailable"),
             handle
-                .elicit_all(vec![("k", neutral::ElicitParams::new("?", json!({})))])
+                .elicit_all(vec![("k", neutral::ElicitParams::new("?", form_schema()))])
                 .await
                 .expect_err("unavailable"),
         ] {
@@ -2109,16 +2183,16 @@ mod tests {
             false,
         );
         let _ = handle
-            .elicit(
-                "k",
-                neutral::ElicitParams::new("A", json!({ "type": "object" })),
-            )
+            .elicit("k", neutral::ElicitParams::new("A", form_schema()))
             .await;
         // A conflicting reshape aborts with InputRequired (warn), not InvalidParams.
         let err = handle
             .elicit(
                 "k",
-                neutral::ElicitParams::new("B", json!({ "type": "object", "extra": true })),
+                neutral::ElicitParams::new(
+                    "B",
+                    json!({ "type": "object", "properties": { "other": { "type": "boolean" } } }),
+                ),
             )
             .await
             .expect_err("still aborts");

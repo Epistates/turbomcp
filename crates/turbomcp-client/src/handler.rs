@@ -27,7 +27,8 @@
 //! cold-path, user-provided trait object — exactly the case native AFIT can't
 //! store as `dyn`.
 
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -152,6 +153,16 @@ pub struct ClientHandlers {
     pub(crate) sampling: Option<Arc<dyn SamplingHandler>>,
     pub(crate) roots: Option<Arc<dyn RootsHandler>>,
     pub(crate) notifications: Option<Arc<dyn NotificationHandler>>,
+    /// URL-mode elicitation ids this client has actually been sent and has not
+    /// yet seen completed.
+    ///
+    /// "Clients MUST ignore completion notifications for unknown or
+    /// already-completed elicitation IDs" — which needs a record of what was
+    /// asked, and there was none: every `notifications/elicitation/complete`
+    /// reached the handler, including one naming an id this client never saw.
+    /// Shared across clones because the dispatcher and the notification router
+    /// run on different tasks.
+    outstanding_elicitations: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl core::fmt::Debug for ClientHandlers {
@@ -175,6 +186,40 @@ impl ClientHandlers {
             && self.sampling.is_none()
             && self.roots.is_none()
             && self.notifications.is_none()
+    }
+
+    /// Note the `elicitationId` of an inbound URL-mode `elicitation/create`,
+    /// so the paired `notifications/elicitation/complete` is recognized.
+    ///
+    /// Called from the *routing* step rather than the spawned dispatch task:
+    /// the completion may follow the request immediately, and registering on
+    /// the task would lose the race for exactly the server that is quickest to
+    /// tell us the user is done.
+    pub(crate) fn expect_elicitation(&self, method: &str, params: Option<&Value>) {
+        if method != request::ELICITATION_CREATE {
+            return;
+        }
+        let Some(params) = params else { return };
+        if params.get("mode").and_then(Value::as_str) != Some("url") {
+            return;
+        }
+        if let Some(id) = params.get("elicitationId").and_then(Value::as_str) {
+            self.outstanding_elicitations
+                .lock()
+                .expect("elicitation registry poisoned")
+                .insert(id.to_owned());
+        }
+    }
+
+    /// Take `id` if it names an elicitation this client is still waiting on.
+    ///
+    /// `false` covers both halves of the spec's MUST: an id the server never
+    /// sent us, and one a previous notification already completed.
+    pub(crate) fn claim_elicitation(&self, id: &str) -> bool {
+        self.outstanding_elicitations
+            .lock()
+            .expect("elicitation registry poisoned")
+            .remove(id)
     }
 
     /// The capability declaration these handlers imply.
@@ -473,7 +518,7 @@ mod tests {
             elicitation: Some(Arc::new(Agentic)),
             sampling: Some(Arc::new(Agentic)),
             roots: Some(Arc::new(Agentic)),
-            notifications: None,
+            ..ClientHandlers::default()
         };
         let caps = handlers.capabilities();
         assert_eq!(
@@ -671,6 +716,53 @@ mod must_tests {
             .expect_err("malformed sampling params");
             assert_eq!(err.code, -32602, "{params}");
         }
+    }
+
+    /// "Clients MUST ignore completion notifications for unknown or
+    /// already-completed elicitation IDs."
+    ///
+    /// The client kept no record of which ids it had been sent, so every
+    /// notification reached the handler — including one naming an id the
+    /// server invented, which is how a handler gets talked into retrying a
+    /// request nobody asked about.
+    #[tokio::test]
+    async fn only_elicitation_ids_this_client_was_sent_are_recognized() {
+        struct UrlClient;
+        #[async_trait]
+        impl ElicitationHandler for UrlClient {
+            async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
+                neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+            }
+            fn supports_url_mode(&self) -> bool {
+                true
+            }
+        }
+
+        let handlers = ClientHandlers {
+            elicitation: Some(Arc::new(UrlClient)),
+            ..ClientHandlers::default()
+        };
+        assert!(
+            !handlers.claim_elicitation("never-sent"),
+            "an id the server invented is unknown"
+        );
+
+        let params = json!({
+            "mode": "url",
+            "message": "Sign in",
+            "url": "https://e.example",
+            "elicitationId": "eid-1",
+        });
+        handlers.expect_elicitation(request::ELICITATION_CREATE, Some(&params));
+        dispatch(&handlers, request::ELICITATION_CREATE, Some(params))
+            .await
+            .expect("a url-mode client answers this");
+
+        assert!(handlers.claim_elicitation("eid-1"), "this one was asked");
+        assert!(
+            !handlers.claim_elicitation("eid-1"),
+            "and only once: the second notification is already-completed"
+        );
     }
 
     /// Roots that are not `file://` URIs never reach the server: the scheme is

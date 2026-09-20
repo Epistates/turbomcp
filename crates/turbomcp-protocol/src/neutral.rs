@@ -1326,6 +1326,21 @@ impl ElicitParams {
             requested_schema,
         }
     }
+
+    /// Check [`requested_schema`](Self::requested_schema) against the spec's
+    /// restricted subset: a flat object whose properties are primitives, plus
+    /// the one array form (a string-enum multi-select).
+    ///
+    /// The server runs this before sending. A client cannot render what the
+    /// subset excludes, so a nested object comes back as an empty form with
+    /// nothing said about why — naming the property here is the difference
+    /// between a two-minute fix and an afternoon.
+    ///
+    /// # Errors
+    /// A description of the first property outside the subset.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_requested_schema(&self.requested_schema)
+    }
 }
 
 /// A URL-mode elicitation (`mode: "url"`): the client shows `message` and
@@ -1375,6 +1390,77 @@ pub enum ElicitAction {
     Decline,
     /// The user dismissed without an explicit choice.
     Cancel,
+}
+
+/// The primitive JSON Schema types a form-mode elicitation may request.
+///
+/// "Form mode elicitation schemas are limited to flat objects with primitive
+/// properties only … complex nested structures, arrays of objects (beyond
+/// enums), and other advanced JSON Schema features are intentionally not
+/// supported to simplify client user experience."
+const ELICIT_PRIMITIVES: [&str; 4] = ["string", "number", "integer", "boolean"];
+
+/// Check a form-mode `requestedSchema` against the spec's restricted subset.
+///
+/// A client cannot render what the subset excludes, so a server that sends a
+/// nested object gets back an empty form and no explanation. Catching it where
+/// the request is built names the offending property instead.
+///
+/// # Errors
+/// A description of the first property that falls outside the subset.
+fn validate_requested_schema(schema: &Value) -> Result<(), String> {
+    // The wire type makes both `type` and `properties` required, so this is
+    // the schema's own floor rather than an extra rule.
+    if schema.get("type").and_then(Value::as_str) != Some("object") {
+        return Err("requestedSchema must be an object schema (`type: \"object\"`)".into());
+    }
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return Err("requestedSchema must carry a `properties` object".into());
+    };
+    for (name, property) in properties {
+        let Some(ty) = property.get("type").and_then(Value::as_str) else {
+            return Err(alloc::format!(
+                "requestedSchema property `{name}` has no `type`; the form subset \
+                 has no place for a `$ref`, `oneOf` or an untyped property"
+            ));
+        };
+        if ELICIT_PRIMITIVES.contains(&ty) {
+            continue;
+        }
+        // The one non-primitive the subset allows: a multi-select, which is an
+        // array whose items are a string enum.
+        if ty == "array" {
+            // SEP-1330 spells a multi-select two ways: a plain string `enum`,
+            // or an `anyOf` of `{const, title}` alternatives when the options
+            // need display labels. Both are still a closed list of scalars,
+            // which is what keeps the form renderable.
+            if property.get("items").is_some_and(is_enum_items) {
+                continue;
+            }
+            return Err(alloc::format!(
+                "requestedSchema property `{name}` is an array, which the form \
+                 subset allows only as a multi-select (`items` must be a string \
+                 `enum`, or an `anyOf` of `const` alternatives)"
+            ));
+        }
+        return Err(alloc::format!(
+            "requestedSchema property `{name}` has type `{ty}`; the form subset \
+             is flat and primitive ({ELICIT_PRIMITIVES:?}, plus a string-enum array)"
+        ));
+    }
+    Ok(())
+}
+
+/// Whether a multi-select's `items` is a closed list of scalars, in either
+/// shape SEP-1330 defines.
+fn is_enum_items(items: &Value) -> bool {
+    let plain_enum =
+        items.get("type").and_then(Value::as_str) == Some("string") && items.get("enum").is_some();
+    let labelled = items
+        .get("anyOf")
+        .and_then(Value::as_array)
+        .is_some_and(|alts| !alts.is_empty() && alts.iter().all(|a| a.get("const").is_some()));
+    plain_enum || labelled
 }
 
 /// What the client answered to an elicitation.
@@ -5426,6 +5512,83 @@ mod tests {
                 .with_tools(alloc::vec![Tool::new("t", json!({}))])
                 .uses_tools()
         );
+    }
+
+    // ---- elicitation ---------------------------------------------------------
+
+    /// "Form mode elicitation schemas are limited to flat objects with
+    /// primitive properties only."
+    ///
+    /// A client cannot render what the subset excludes, so an unchecked nested
+    /// object reaches the user as an empty form with nothing said about why.
+    #[test]
+    fn a_form_schema_outside_the_restricted_subset_is_rejected() {
+        let ok = ElicitParams::new(
+            "?",
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "minLength": 1 },
+                    "age": { "type": "integer" },
+                    "score": { "type": "number" },
+                    "agree": { "type": "boolean" },
+                    "colors": {
+                        "type": "array",
+                        "items": { "type": "string", "enum": ["red", "green"] },
+                    },
+                    // SEP-1330's labelled forms: `oneOf` for single-select,
+                    // `anyOf` items for multi-select.
+                    "shade": {
+                        "type": "string",
+                        "oneOf": [
+                            { "const": "#FF0000", "title": "Red" },
+                            { "const": "#00FF00", "title": "Green" },
+                        ],
+                    },
+                    "palette": {
+                        "type": "array",
+                        "items": { "anyOf": [
+                            { "const": "#FF0000", "title": "Red" },
+                            { "const": "#00FF00", "title": "Green" },
+                        ]},
+                    },
+                },
+            }),
+        );
+        ok.validate().expect("the whole allowed subset");
+
+        for (label, schema) in [
+            ("not an object", json!({ "type": "string" })),
+            (
+                "nested object",
+                json!({ "type": "object", "properties": {
+                    "address": { "type": "object", "properties": {} },
+                }}),
+            ),
+            (
+                "array of objects",
+                json!({ "type": "object", "properties": {
+                    "rows": { "type": "array", "items": { "type": "object" } },
+                }}),
+            ),
+            (
+                "array without an enum",
+                json!({ "type": "object", "properties": {
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                }}),
+            ),
+            (
+                "untyped property",
+                json!({ "type": "object", "properties": {
+                    "whatever": { "$ref": "#/$defs/Thing" },
+                }}),
+            ),
+        ] {
+            assert!(
+                ElicitParams::new("?", schema).validate().is_err(),
+                "{label} should be refused"
+            );
+        }
     }
 
     // ---- roots ---------------------------------------------------------------

@@ -404,6 +404,11 @@ async fn actor<T>(
     let (shutdown, done) = lifecycle;
     let _done = done.drop_guard();
     let mut callbacks = tokio::task::JoinSet::new();
+    // The `io.turbomcp.internal/*` signals exist for Streamable HTTP, which
+    // turns them into headers and strips them itself. Any other transport
+    // would ship this crate's bookkeeping to a peer that has never heard of
+    // it, so the driver takes them off on the way out.
+    let strip_internal_meta = !transport.consumes_internal_meta();
     loop {
         tokio::select! {
             () = shutdown.cancelled() => break,
@@ -418,7 +423,10 @@ async fn actor<T>(
                     // not an oversight: `close()` is documented as "cancel this
                     // connection", so it has to return promptly rather than
                     // wait out a stalled peer for the write timeout below.
-                    Some(msg) => {
+                    Some(mut msg) => {
+                        if strip_internal_meta {
+                            meta::sanitize_outbound(&mut msg);
+                        }
                         tokio::select! {
                             () = shutdown.cancelled() => break,
                             result = tokio::time::timeout(Duration::from_secs(30), transport.send(msg)) => {
@@ -528,21 +536,29 @@ fn route_inbound(
             // The two are registered independently, so each runs on its own.
             let elicitation = handler.elicitation.clone();
             let observer = handler.notifications.clone();
+            // "Clients MUST ignore completion notifications for unknown or
+            // already-completed elicitation IDs." Claiming the id here, once,
+            // is what makes both halves of that true: an id this client was
+            // never sent is not in the set, and a second notification for the
+            // same id no longer is.
+            let recognized = (n.method == notification::ELICITATION_COMPLETE)
+                .then(|| {
+                    n.params
+                        .as_ref()
+                        .and_then(|p| p.get("elicitationId"))
+                        .and_then(Value::as_str)
+                        .filter(|id| handler.claim_elicitation(id))
+                        .map(ToOwned::to_owned)
+                })
+                .flatten();
             if elicitation.is_none() && observer.is_none() {
                 tracing::trace!(method = %n.method, "client received notification (no handler)");
             } else {
                 callbacks.spawn(async move {
-                    // A malformed `elicitation/complete` (no string
-                    // `elicitationId`) is an unknown id — ignored, per spec.
                     if let Some(h) = elicitation
-                        && n.method == notification::ELICITATION_COMPLETE
-                        && let Some(id) = n
-                            .params
-                            .as_ref()
-                            .and_then(|p| p.get("elicitationId"))
-                            .and_then(Value::as_str)
+                        && let Some(id) = recognized
                     {
-                        h.on_elicitation_complete(id.to_owned()).await;
+                        h.on_elicitation_complete(id).await;
                     }
                     if let Some(h) = observer {
                         h.on_notification(n.method, n.params).await;
@@ -568,6 +584,10 @@ fn route_inbound(
             // handler is unregistered, so an unrelated one being present cannot
             // make this client look more capable than it declared.
             false => {
+                // Claim the id before the dispatch task starts: a server that
+                // answers its own URL-mode elicitation immediately would
+                // otherwise race the registration and lose the completion.
+                handler.expect_elicitation(&req.method, req.params.as_ref());
                 let handlers = handler.clone();
                 let weak_out = weak_out.clone();
                 let version = negotiated

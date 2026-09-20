@@ -432,6 +432,13 @@ impl Transport for HttpClientTransport {
         self.shared.bearer.is_none()
     }
 
+    /// This transport is the reason the internal `_meta` signals exist: the
+    /// negotiated version becomes `MCP-Protocol-Version` and the
+    /// `#[mcp_header]` mirrors become `Mcp-Param-*`. It strips both itself.
+    fn consumes_internal_meta(&self) -> bool {
+        true
+    }
+
     fn take_http_failure(&mut self, id: &RequestId) -> Option<turbomcp_service::HttpFailure> {
         self.shared
             .failures
@@ -441,16 +448,33 @@ impl Transport for HttpClientTransport {
     }
 
     async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
-        // A cancellation is spent here rather than POSTed: closing the named
-        // request's stream *is* how this transport cancels, and a server keys
-        // in-flight work to the POST it arrived on, so forwarding the
-        // notification on a fresh POST would reach nothing.
+        // Dropping the POST stops this client waiting on either wire. Whether
+        // that also *cancels* is where the two revisions disagree, and the
+        // disagreement is explicit on both sides:
+        //
+        // - `2026-07-28` Streamable HTTP: "closing the SSE response stream is
+        //   itself the cancellation signal and no `notifications/cancelled`
+        //   message is expected." Sending one anyway is a notification the
+        //   revision does not define over this transport.
+        // - `2025-11-25`: "Disconnection SHOULD NOT be interpreted as the
+        //   client cancelling its request." Dropping the POST cancels nothing
+        //   there, so the notification has to go out or the server keeps
+        //   working on an answer no one will read.
         if let JsonRpcMessage::Notification(n) = &msg
             && n.method == notification::CANCELLED
             && let Some(id) = cancelled_request_id(n.params.as_ref())
         {
             self.shared.abort_post(&id);
-            return Ok(());
+            let stream_close_cancels = self
+                .shared
+                .version
+                .lock()
+                .expect("version mutex")
+                .as_deref()
+                .is_none_or(|v| v == ProtocolVersion::V2026_07_28.as_str());
+            if stream_close_cancels {
+                return Ok(());
+            }
         }
         // Remember the handshake so an expired session can be re-established
         // without the typed client above having to know sessions exist.

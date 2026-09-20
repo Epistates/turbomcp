@@ -118,9 +118,10 @@ async fn run_harness(url: &str, spec_version: &str) -> Vec<CheckResult> {
 
     assert!(
         output.status.success(),
-        "harness exited {}: {}",
+        "harness exited {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
         output.status,
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
     );
     let checks = harness::parse_checks_from_dir(&out_dir, spec_version);
     assert!(

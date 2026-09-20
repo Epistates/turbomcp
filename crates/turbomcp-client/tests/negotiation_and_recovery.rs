@@ -470,6 +470,12 @@ impl ElicitationHandler for CompletionSpy {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
     }
+    fn supports_url_mode(&self) -> bool {
+        true
+    }
+    async fn elicit_url(&self, _request: neutral::ElicitUrlParams) -> neutral::ElicitOutcome {
+        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+    }
     async fn on_elicitation_complete(&self, elicitation_id: String) {
         self.ids.lock().unwrap().push(elicitation_id);
     }
@@ -482,10 +488,13 @@ impl NotificationHandler for CompletionSpy {
     }
 }
 
-/// A server-pushed `notifications/elicitation/complete` reaches the dedicated
-/// hook with its `elicitationId` — and still reaches the generic notification
-/// hook. A malformed one (no string id) is an unknown id: generic hook only,
-/// never the typed one (clients MUST ignore unknown ids).
+/// A `notifications/elicitation/complete` reaches the dedicated hook only when
+/// it names an elicitation this client was actually sent.
+///
+/// "Clients MUST ignore completion notifications for unknown or
+/// already-completed elicitation IDs." An id the server invented, a repeat of
+/// one already completed, and a malformed one are all unknown: they reach the
+/// generic notification observer, never the typed hook.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn elicitation_complete_reaches_the_typed_hook() {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
@@ -506,9 +515,26 @@ async fn elicitation_complete_reaches_the_typed_hook() {
                 .unwrap()
                 .extend(discover_ok().as_object().unwrap().clone());
             wr.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+
+            // Only `eid-7` is ever asked of this client.
+            let ask = json!({
+                "jsonrpc": "2.0",
+                "id": "url-1",
+                "method": "elicitation/create",
+                "params": {
+                    "mode": "url",
+                    "message": "Sign in",
+                    "url": "https://auth.example/go",
+                    "elicitationId": "eid-7",
+                },
+            });
+            wr.write_all(format!("{ask}\n").as_bytes()).await.unwrap();
+
             for params in [
                 json!({ "elicitationId": "eid-7" }),
-                json!({ "elicitationId": 42 }), // malformed → unknown id
+                json!({ "elicitationId": "eid-7" }), // repeat → already completed
+                json!({ "elicitationId": "eid-9" }), // never asked → unknown
+                json!({ "elicitationId": 42 }),      // malformed → unknown
             ] {
                 let note = json!({
                     "jsonrpc": "2.0",
@@ -529,9 +555,9 @@ async fn elicitation_complete_reaches_the_typed_hook() {
         .await
         .unwrap();
 
-    // Both notifications are in flight behind the handshake response.
+    // All four notifications are in flight behind the handshake response.
     for _ in 0..50 {
-        if spy.methods.lock().unwrap().len() == 2 {
+        if spy.methods.lock().unwrap().len() == 4 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -539,12 +565,12 @@ async fn elicitation_complete_reaches_the_typed_hook() {
     assert_eq!(
         *spy.ids.lock().unwrap(),
         vec!["eid-7".to_owned()],
-        "only the well-formed id reaches the typed hook"
+        "only the id this client was actually sent, and only once"
     );
     assert_eq!(
         spy.methods.lock().unwrap().len(),
-        2,
-        "both still reach the generic hook"
+        4,
+        "every notification still reaches the generic hook"
     );
 }
 

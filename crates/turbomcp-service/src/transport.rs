@@ -84,6 +84,19 @@ pub trait Transport: Send + 'static {
         true
     }
 
+    /// Whether this transport reads the client's internal `_meta` signals
+    /// (`io.turbomcp.internal/*`) off outbound frames and strips them itself.
+    ///
+    /// Only Streamable HTTP does: it turns the negotiated version into the
+    /// `MCP-Protocol-Version` header and the `#[mcp_header]` mirrors into
+    /// `Mcp-Param-*`. Every other transport has no headers to put them in, so
+    /// the keys are pure leak — the connection actor removes them on the way
+    /// out rather than shipping this crate's internals to a peer that has
+    /// never heard of it.
+    fn consumes_internal_meta(&self) -> bool {
+        false
+    }
+
     /// Retrieve a locally observed HTTP failure accompanying a synthetic
     /// response. This side channel cannot be forged through JSON-RPC data.
     fn take_http_failure(&mut self, _id: &turbomcp_core::RequestId) -> Option<HttpFailure> {

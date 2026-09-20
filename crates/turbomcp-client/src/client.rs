@@ -520,6 +520,45 @@ impl Client {
         self.instructions.as_deref()
     }
 
+    /// Whether the server declared `capability`, which may name a
+    /// sub-capability with a dotted path (`resources.subscribe`,
+    /// `tools.listChanged`).
+    ///
+    /// A sub-capability is a boolean on the wire, so "declared" means present
+    /// and not literally `false`: a server answering `{"subscribe": false}` has
+    /// said no, and reading that as yes is how a client ends up calling a
+    /// method the server will refuse.
+    #[must_use]
+    pub fn server_supports(&self, capability: &str) -> bool {
+        capability
+            .split('.')
+            .try_fold(&self.server_capabilities, |node, segment| node.get(segment))
+            .is_some_and(|v| !v.is_null() && v != &Value::Bool(false))
+    }
+
+    /// Refuse a call the server never advertised, before it goes on the wire.
+    ///
+    /// "Servers that support tools MUST declare the `tools` capability" — and
+    /// the same for prompts, resources, completions and logging. Failing here
+    /// names the missing capability instead of surfacing whatever the server
+    /// happens to answer, which for an undeclared feature is usually a bare
+    /// `-32601` that says nothing about why.
+    fn require_server_capability(&self, capability: &str, method: &str) -> ClientResult<()> {
+        if self.server_supports(capability) {
+            return Ok(());
+        }
+        let advertised: Vec<&str> = self
+            .server_capabilities
+            .as_object()
+            .map(|c| c.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        Err(ClientError::Protocol(format!(
+            "this server did not declare `{capability}`, so `{method}` is not \
+             available on this connection (it advertised {advertised:?}). Send \
+             it anyway with `Client::request` if you know better."
+        )))
+    }
+
     /// The underlying raw connection, for advanced/escape-hatch use.
     #[must_use]
     pub fn connection(&self) -> &Connection {
@@ -608,11 +647,17 @@ impl Client {
     ///
     /// The cursor is opaque and server-chosen, so following it is unbounded by
     /// construction. Two guards keep a broken or hostile server from spinning
-    /// this loop forever: a `nextCursor` that repeats the one just sent (or is
-    /// empty) is not advancing, and [`MAX_LIST_PAGES`] caps the total. Both
-    /// fail loudly rather than silently returning a partial list — a truncated
-    /// result that looks complete is the failure mode these helpers exist to
-    /// prevent.
+    /// this loop forever: a `nextCursor` that repeats the one just sent is not
+    /// advancing, and [`MAX_LIST_PAGES`] caps the total. Both fail loudly
+    /// rather than silently returning a partial list — a truncated result that
+    /// looks complete is the failure mode these helpers exist to prevent.
+    ///
+    /// An *empty* `nextCursor` is followed like any other. "Clients MUST treat
+    /// cursors as opaque tokens: don't make assumptions about cursor format" —
+    /// refusing `""` is exactly such an assumption, and it broke every
+    /// `list_all_*` call against a server that mints one. A cursor that is
+    /// empty *and* non-advancing is still caught, one page later, by the
+    /// repeat guard.
     async fn collect_pages<T, F, Fut>(&self, method: &str, mut fetch: F) -> ClientResult<Vec<T>>
     where
         F: FnMut(Option<String>) -> Fut,
@@ -625,7 +670,7 @@ impl Client {
             items.extend(page);
             match next {
                 None => return Ok(items),
-                Some(next) if next.is_empty() || Some(&next) == cursor.as_ref() => {
+                Some(next) if Some(&next) == cursor.as_ref() => {
                     return Err(ClientError::Protocol(format!(
                         "{method} returned a nextCursor that does not advance; \
                          refusing to page forever"
@@ -642,8 +687,10 @@ impl Client {
     /// List the server's tools (one page; pass a `cursor` to continue).
     ///
     /// # Errors
-    /// Propagates RPC and decode failures.
+    /// [`ClientError::Protocol`] if the server never declared `tools`;
+    /// otherwise propagates RPC and decode failures.
     pub async fn list_tools(&self, cursor: Option<&str>) -> ClientResult<neutral::ListToolsResult> {
+        self.require_server_capability("tools", request::TOOLS_LIST)?;
         let v = self
             .cached_request(request::TOOLS_LIST, list_params(cursor), cursor)
             .await?;
@@ -708,7 +755,29 @@ impl Client {
         name: impl Into<String>,
         arguments: Map<String, Value>,
     ) -> ClientResult<neutral::CallToolResult> {
-        self.call_tool_with(&name.into(), &arguments, None).await
+        self.call_tool_with(&name.into(), &arguments, None, None)
+            .await
+    }
+
+    /// [`call_tool`](Self::call_tool), asking the server to report progress
+    /// against `progress_token`.
+    ///
+    /// The token is opaque and caller-chosen (a string or an integer) and must
+    /// be unique among this client's in-flight requests. Progress arrives as
+    /// `notifications/progress` at
+    /// [`NotificationHandler::on_notification`](crate::NotificationHandler::on_notification),
+    /// each carrying the token back; the server is never obliged to send any.
+    ///
+    /// # Errors
+    /// As [`call_tool`](Self::call_tool).
+    pub async fn call_tool_with_progress(
+        &self,
+        name: impl Into<String>,
+        arguments: Map<String, Value>,
+        progress_token: impl Into<Value>,
+    ) -> ClientResult<neutral::CallToolResult> {
+        self.call_tool_with(&name.into(), &arguments, None, Some(&progress_token.into()))
+            .await
     }
 
     /// Call a tool requesting task-augmented execution (core Tasks,
@@ -747,7 +816,7 @@ impl Client {
             Some(ttl) => json!({ "ttl": ttl }),
             None => json!({}),
         };
-        self.call_tool_with(&name.into(), &arguments, Some(&task))
+        self.call_tool_with(&name.into(), &arguments, Some(&task), None)
             .await
     }
 
@@ -759,9 +828,14 @@ impl Client {
         name: &str,
         arguments: &Map<String, Value>,
         task: Option<&Value>,
+        progress_token: Option<&Value>,
     ) -> ClientResult<neutral::CallToolResult> {
+        self.require_server_capability("tools", request::TOOLS_CALL)?;
         let build = |client: &Self| {
             let mut params = client.tool_call_params(name, arguments);
+            if let Some(token) = progress_token {
+                with_progress_token(&mut params, token.clone());
+            }
             // The `task` augmentation is a 2025-11-25 request shape; the draft
             // moved task creation to the server side (SEP-2663 extension).
             if let Some(task) = task
@@ -870,6 +944,7 @@ impl Client {
         &self,
         cursor: Option<&str>,
     ) -> ClientResult<neutral::ListResourcesResult> {
+        self.require_server_capability("resources", request::RESOURCES_LIST)?;
         let v = self
             .cached_request(request::RESOURCES_LIST, list_params(cursor), cursor)
             .await?;
@@ -895,15 +970,41 @@ impl Client {
     /// Read a resource by URI.
     ///
     /// # Errors
-    /// Propagates RPC and decode failures.
+    /// [`ClientError::Protocol`] if the server never declared `resources`;
+    /// otherwise propagates RPC and decode failures.
     pub async fn read_resource(
         &self,
         uri: impl Into<String>,
     ) -> ClientResult<neutral::ReadResourceResult> {
-        let uri = uri.into();
+        self.read_resource_inner(uri.into(), None).await
+    }
+
+    /// [`read_resource`](Self::read_resource), asking the server to report
+    /// progress against `progress_token`. See
+    /// [`call_tool_with_progress`](Self::call_tool_with_progress) for how the
+    /// token is chosen and where the notifications arrive.
+    ///
+    /// # Errors
+    /// As [`read_resource`](Self::read_resource).
+    pub async fn read_resource_with_progress(
+        &self,
+        uri: impl Into<String>,
+        progress_token: impl Into<Value>,
+    ) -> ClientResult<neutral::ReadResourceResult> {
+        self.read_resource_inner(uri.into(), Some(progress_token.into()))
+            .await
+    }
+
+    async fn read_resource_inner(
+        &self,
+        uri: String,
+        progress_token: Option<Value>,
+    ) -> ClientResult<neutral::ReadResourceResult> {
+        self.require_server_capability("resources", request::RESOURCES_READ)?;
         // `resources/read` runs the MRTR loop, so it can't share
         // `cached_request`; the cache wraps the *settled* result (never an
-        // `input_required` intermediate).
+        // `input_required` intermediate). A progress request is still cacheable
+        // — the token only decides whether the server narrates on the way.
         if let Some(cache) = &self.cache
             && let Some(hit) = cache.get(request::RESOURCES_READ, Some(&uri))
         {
@@ -911,6 +1012,9 @@ impl Client {
         }
         let mut params = Map::new();
         params.insert("uri".into(), json!(&uri));
+        if let Some(token) = progress_token {
+            with_progress_token(&mut params, token);
+        }
         let v = self.mrtr_request(request::RESOURCES_READ, params).await?;
         if let Some(cache) = &self.cache {
             cache.store(request::RESOURCES_READ, Some(&uri), &v);
@@ -926,6 +1030,7 @@ impl Client {
         &self,
         cursor: Option<&str>,
     ) -> ClientResult<neutral::ListResourceTemplatesResult> {
+        self.require_server_capability("resources", request::RESOURCES_TEMPLATES_LIST)?;
         let v = self
             .cached_request(
                 request::RESOURCES_TEMPLATES_LIST,
@@ -963,6 +1068,7 @@ impl Client {
         &self,
         cursor: Option<&str>,
     ) -> ClientResult<neutral::ListPromptsResult> {
+        self.require_server_capability("prompts", request::PROMPTS_LIST)?;
         let v = self
             .cached_request(request::PROMPTS_LIST, list_params(cursor), cursor)
             .await?;
@@ -988,15 +1094,46 @@ impl Client {
     /// Get a prompt by name with string arguments.
     ///
     /// # Errors
-    /// Propagates RPC and decode failures.
+    /// [`ClientError::Protocol`] if the server never declared `prompts`;
+    /// otherwise propagates RPC and decode failures.
     pub async fn get_prompt(
         &self,
         name: impl Into<String>,
         arguments: Map<String, Value>,
     ) -> ClientResult<neutral::GetPromptResult> {
+        self.get_prompt_inner(name.into(), arguments, None).await
+    }
+
+    /// [`get_prompt`](Self::get_prompt), asking the server to report progress
+    /// against `progress_token`. See
+    /// [`call_tool_with_progress`](Self::call_tool_with_progress) for how the
+    /// token is chosen and where the notifications arrive.
+    ///
+    /// # Errors
+    /// As [`get_prompt`](Self::get_prompt).
+    pub async fn get_prompt_with_progress(
+        &self,
+        name: impl Into<String>,
+        arguments: Map<String, Value>,
+        progress_token: impl Into<Value>,
+    ) -> ClientResult<neutral::GetPromptResult> {
+        self.get_prompt_inner(name.into(), arguments, Some(progress_token.into()))
+            .await
+    }
+
+    async fn get_prompt_inner(
+        &self,
+        name: String,
+        arguments: Map<String, Value>,
+        progress_token: Option<Value>,
+    ) -> ClientResult<neutral::GetPromptResult> {
+        self.require_server_capability("prompts", request::PROMPTS_GET)?;
         let mut params = Map::new();
-        params.insert("name".into(), json!(name.into()));
+        params.insert("name".into(), json!(name));
         params.insert("arguments".into(), Value::Object(arguments));
+        if let Some(token) = progress_token {
+            with_progress_token(&mut params, token);
+        }
         let v = self.mrtr_request(request::PROMPTS_GET, params).await?;
         self.decode::<v0728::GetPromptResult, legacy::GetPromptResult, _>(v)
     }
@@ -1007,15 +1144,44 @@ impl Client {
     /// (`{ type, name }` / `{ name, value }`).
     ///
     /// # Errors
-    /// Propagates RPC and decode failures.
+    /// [`ClientError::Protocol`] if the server never declared `completions`;
+    /// otherwise propagates RPC and decode failures.
     pub async fn complete(
         &self,
         reference: Value,
         argument: Value,
     ) -> ClientResult<neutral::CompleteResult> {
+        self.complete_with_context(reference, argument, Map::new())
+            .await
+    }
+
+    /// [`complete`](Self::complete), with the arguments already resolved
+    /// earlier in the same form.
+    ///
+    /// Completing the second argument of a multi-argument prompt needs the
+    /// first one: "what repository?" narrows "what branch?". The spec carries
+    /// that as `context.arguments`, and without a way to send it the whole
+    /// point of multi-argument completion is unreachable — the server parses
+    /// the field and v4's own client had no parameter for it.
+    ///
+    /// # Errors
+    /// [`ClientError::Protocol`] if the server never declared `completions`;
+    /// otherwise propagates RPC and decode failures.
+    pub async fn complete_with_context(
+        &self,
+        reference: Value,
+        argument: Value,
+        resolved: Map<String, Value>,
+    ) -> ClientResult<neutral::CompleteResult> {
+        self.require_server_capability("completions", request::COMPLETION_COMPLETE)?;
         let mut params = Map::new();
         params.insert("ref".into(), reference);
         params.insert("argument".into(), argument);
+        if !resolved.is_empty() {
+            let mut context = Map::new();
+            context.insert("arguments".into(), Value::Object(resolved));
+            params.insert("context".into(), Value::Object(context));
+        }
         let v = self
             .versioned_request(request::COMPLETION_COMPLETE, params)
             .await?;
@@ -1075,9 +1241,10 @@ impl Client {
     /// on that wire the server answers `-32601`.
     ///
     /// # Errors
-    /// Propagates RPC failures (`-32601` if the server doesn't advertise
-    /// `resources.subscribe`).
+    /// [`ClientError::Protocol`] if the server never declared
+    /// `resources.subscribe`; otherwise propagates RPC failures.
     pub async fn subscribe_resource(&self, uri: impl Into<String>) -> ClientResult<()> {
+        self.require_server_capability("resources.subscribe", request::RESOURCES_SUBSCRIBE)?;
         let mut params = Map::new();
         params.insert("uri".into(), json!(uri.into()));
         self.versioned_request(request::RESOURCES_SUBSCRIBE, params)
@@ -1089,8 +1256,10 @@ impl Client {
     /// (`resources/unsubscribe`, `2025-11-25`).
     ///
     /// # Errors
-    /// Propagates RPC failures.
+    /// [`ClientError::Protocol`] if the server never declared
+    /// `resources.subscribe`; otherwise propagates RPC failures.
     pub async fn unsubscribe_resource(&self, uri: impl Into<String>) -> ClientResult<()> {
+        self.require_server_capability("resources.subscribe", request::RESOURCES_UNSUBSCRIBE)?;
         let mut params = Map::new();
         params.insert("uri".into(), json!(uri.into()));
         self.versioned_request(request::RESOURCES_UNSUBSCRIBE, params)
@@ -1108,10 +1277,11 @@ impl Client {
     /// at [`NotificationHandler::on_notification`].
     ///
     /// # Errors
-    /// Propagates RPC failures (`-32601` if the server doesn't advertise
-    /// `logging`).
+    /// [`ClientError::Protocol`] if the server never declared `logging`;
+    /// otherwise propagates RPC failures.
     #[deprecated(note = "SEP-2577 deprecates logging; still functional on 2025-11-25")]
     pub async fn set_level(&self, level: LogLevel) -> ClientResult<()> {
+        self.require_server_capability("logging", request::LOGGING_SET_LEVEL)?;
         let mut params = Map::new();
         params.insert("level".into(), json!(level));
         self.versioned_request(request::LOGGING_SET_LEVEL, params)
@@ -1498,6 +1668,18 @@ impl Client {
                 .map(Into::into)
                 .map_err(|e| ClientError::Decode(e.to_string()))
         }
+    }
+}
+
+/// Stamp `_meta.progressToken` onto a request's params, merging into whatever
+/// `_meta` is already there (the `#[mcp_header]` mirror signal, typically).
+fn with_progress_token(params: &mut Map<String, Value>, token: Value) {
+    if let Some(meta) = params
+        .entry("_meta")
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+    {
+        meta.insert("progressToken".into(), token);
     }
 }
 
