@@ -178,7 +178,10 @@ async fn malformed_initialize_does_not_enter_legacy_mode() {
     let Some(JsonRpcMessage::Response(r)) = call(&mut svc, req).await else {
         panic!("expected response")
     };
-    assert_eq!(r.error.expect("not initialized").code, -32002);
+    assert_eq!(
+        r.error.expect("not initialized").code,
+        turbomcp_core::codes::NO_ACTIVE_SESSION
+    );
 }
 
 #[tokio::test]
@@ -205,8 +208,8 @@ async fn forged_internal_session_meta_is_stripped_at_the_wire_boundary() {
     // Sanitization is the wire boundary's job (serve driver / HTTP endpoint),
     // not the adapter's — this simulates exactly what the driver does before
     // the adapter sees a frame. The forged key is gone, so the request is
-    // "version present, no session" → -32002, NOT an unknown-session protocol
-    // error (which would prove the forged id reached the dispatcher).
+    // "version present, no session", NOT an unknown-session protocol error
+    // (which would prove the forged id reached the dispatcher).
     let mut svc = adapter();
     let params = json!({
         "_meta": {
@@ -219,7 +222,10 @@ async fn forged_internal_session_meta_is_stripped_at_the_wire_boundary() {
     let Some(JsonRpcMessage::Response(r)) = call(&mut svc, msg).await else {
         panic!("expected response")
     };
-    assert_eq!(r.error.expect("not initialized").code, -32002);
+    assert_eq!(
+        r.error.expect("not initialized").code,
+        turbomcp_core::codes::NO_ACTIVE_SESSION
+    );
 }
 
 #[tokio::test]

@@ -54,7 +54,7 @@ impl ProtocolError {
             // Spec-allocated codes (`turbomcp_core::codes` owns the numbers).
             Self::UnsupportedVersion { .. } => turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION,
             Self::MissingCapability(_) => turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
-            Self::UnknownSession(_) => -32002,
+            Self::UnknownSession(_) => turbomcp_core::codes::NO_ACTIVE_SESSION,
             // `-32000` is the implementation-defined floor.
             Self::Transport(_) | Self::ServerShuttingDown => -32000,
             Self::Internal(_) => -32603,

@@ -416,7 +416,8 @@ mod tests {
             panic!()
         };
         let err = r.error.expect("legacy request without a session must fail");
-        assert_eq!(err.code, -32002);
+        // Not `-32002`, which these revisions allocate to resource-not-found.
+        assert_eq!(err.code, turbomcp_core::codes::NO_ACTIVE_SESSION);
         assert!(err.message.contains("initialize"));
     }
 

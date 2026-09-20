@@ -230,7 +230,7 @@ async fn subscribe_without_session_or_on_modern_path_is_rejected() {
     let (dispatcher, _notifier) = dispatcher();
     let mut p = pipe(LegacySessionAdapter::new(dispatcher));
 
-    // No initialize ran: declared-legacy subscribe → -32002 in-band.
+    // No initialize ran: declared-legacy subscribe is refused in-band.
     let req = JsonRpcRequest::new(
         1,
         "resources/subscribe",
@@ -243,7 +243,10 @@ async fn subscribe_without_session_or_on_modern_path_is_rejected() {
     let JsonRpcMessage::Response(r) = recv(&mut p.out_rx).await else {
         panic!("expected response");
     };
-    assert_eq!(r.error.expect("not initialized").code, -32002);
+    assert_eq!(
+        r.error.expect("not initialized").code,
+        turbomcp_core::codes::NO_ACTIVE_SESSION
+    );
 
     // The draft path has no resources/subscribe (-32601): it uses
     // subscriptions/listen.

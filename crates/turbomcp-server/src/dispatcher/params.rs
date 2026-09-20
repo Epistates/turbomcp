@@ -35,7 +35,7 @@ pub(super) async fn legacy_context(
 ) -> Result<Result<RequestContext, JsonRpcMessage>, ProtocolError> {
     let Some(sid) = session_id(req.params.as_ref()) else {
         let err = JsonRpcError {
-            code: -32002,
+            code: turbomcp_core::codes::NO_ACTIVE_SESSION,
             message: "server not initialized: send `initialize` first".to_owned(),
             data: None,
         };

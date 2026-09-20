@@ -158,14 +158,15 @@ async fn legacy_path_does_not_route_to_the_extension() {
     // On the legacy 2025-11-25 path, tasks/* are the core methods (without
     // `with_task_support` here they're method-not-found) — never the draft
     // extension. A legacy request lacks a session, so it's rejected upstream
-    // (-32002) before any task handling; the point is it is NOT -32601 from the
+    // before any task handling; the point is it is NOT -32601 from the
     // extension gate, i.e. the extension never sees legacy traffic.
     let mut svc = dispatcher();
     let meta = json!({ "io.modelcontextprotocol/protocolVersion": "2025-11-25" });
     let req = JsonRpcRequest::new(5, "tasks/get", Some(json!({ "_meta": meta })));
     let out = call(&mut svc, req).await;
     assert_eq!(
-        out["error"]["code"], -32002,
+        out["error"]["code"],
+        turbomcp_core::codes::NO_ACTIVE_SESSION,
         "legacy tasks/get without a session is an uninitialized-session error"
     );
 }

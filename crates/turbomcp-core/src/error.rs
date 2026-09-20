@@ -31,6 +31,18 @@ pub mod codes {
     /// The requested protocol version is not supported; `data` carries
     /// `{ supported, requested }`. HTTP 400.
     pub const UNSUPPORTED_PROTOCOL_VERSION: i32 = -32022;
+
+    /// A stateful (`2025-11-25`, `2025-06-18`) request arrived with no live
+    /// session: none was ever opened, or the one it named is gone. HTTP 400 /
+    /// 404 depending on which.
+    ///
+    /// **Not** `-32002`, which those same revisions allocate to
+    /// resource-not-found — sharing the number made a dead session and a
+    /// missing resource indistinguishable to any client that maps codes. This
+    /// condition has no allocated number, so it sits on the implementation-
+    /// defined floor, where the HTTP status is the load-bearing signal anyway
+    /// (the spec's session rules are written in terms of `404`).
+    pub const NO_ACTIVE_SESSION: i32 = -32000;
 }
 
 /// The result type returned by TurboMCP handlers and most fallible APIs.

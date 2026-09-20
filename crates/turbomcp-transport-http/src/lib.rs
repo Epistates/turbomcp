@@ -1703,7 +1703,7 @@ fn session_required_rejection(id: Option<&RequestId>) -> Response {
     transport_error(
         StatusCode::BAD_REQUEST,
         id,
-        -32002,
+        turbomcp_core::codes::NO_ACTIVE_SESSION,
         "the 2025-11-25 path requires an Mcp-Session-Id header (initialize first)".to_owned(),
         None,
     )
