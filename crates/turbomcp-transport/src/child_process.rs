@@ -52,8 +52,20 @@ pub struct ChildProcessConfig {
     /// Timeout for process startup
     pub startup_timeout: Duration,
 
-    /// Timeout for process shutdown
+    /// How long to wait for the child to exit on its own after its stdin is
+    /// closed, before escalating to a signal.
+    ///
+    /// MCP's stdio shutdown is close-stdin → wait → SIGTERM → SIGKILL, so this
+    /// is the window a server gets to run its `on_shutdown` hook, flush caches
+    /// and close handles.
     pub shutdown_timeout: Duration,
+
+    /// Grace period between SIGTERM and SIGKILL, on Unix.
+    ///
+    /// A child that ignored the closed stdin is unlikely to need long, so this
+    /// is deliberately much shorter than [`Self::shutdown_timeout`]. Windows
+    /// has no SIGTERM equivalent and skips this step.
+    pub sigterm_grace: Duration,
 
     /// Maximum message size in bytes
     pub max_message_size: usize,
@@ -74,6 +86,7 @@ impl Default for ChildProcessConfig {
             environment: None,
             startup_timeout: Duration::from_secs(30),
             shutdown_timeout: Duration::from_secs(10),
+            sigterm_grace: Duration::from_secs(2),
             max_message_size: 10 * 1024 * 1024, // 10MB
             buffer_size: 8192,
             kill_on_drop: true,
@@ -330,7 +343,14 @@ impl ChildProcessTransport {
         ))
     }
 
-    /// Stop the child process gracefully
+    /// Stop the child process following MCP's stdio shutdown sequence.
+    ///
+    /// §Shutdown > stdio prescribes three steps, in order: close the child's
+    /// input stream, wait for it to exit, and only then signal it — SIGTERM
+    /// first, SIGKILL last. Before 3.5.0 this sent SIGKILL immediately, which
+    /// is uncatchable: every MCP server launched as a child died without
+    /// running its `on_shutdown` hook, so cached writes, open database handles
+    /// and unpersisted state were lost on every disconnect.
     async fn stop_process(&self) -> TransportResult<()> {
         info!("Stopping child process");
 
@@ -338,27 +358,18 @@ impl ChildProcessTransport {
         *self.stdin_sender.lock().await = None;
         *self.stdout_receiver.lock().await = None;
 
-        // Abort drain tasks so they don't outlive the process. The previous
-        // implementation waited for stderr-EOF after `kill_on_drop`, which
-        // worked but left the tasks dangling on shutdown paths that didn't
-        // immediately drop the transport.
-        if let Some(handle) = self._stdin_task.lock().await.take() {
-            handle.abort();
-        }
-        if let Some(handle) = self._stdout_task.lock().await.take() {
-            handle.abort();
-        }
-        if let Some(handle) = self._stderr_task.lock().await.take() {
-            handle.abort();
+        // Step 1: close the child's stdin. The sender is gone, so the writer
+        // task ends on its own and drops the `BufWriter<ChildStdin>` with it —
+        // awaiting rather than aborting is what guarantees the pipe is actually
+        // closed before we start waiting for an exit that depends on it.
+        if let Some(handle) = self._stdin_task.lock().await.take()
+            && timeout(Duration::from_secs(1), handle).await.is_err()
+        {
+            warn!("stdin writer did not finish; the child may not see EOF");
         }
 
         if let Some(mut child) = self.child.lock().await.take() {
-            // Try graceful shutdown first
-            if let Err(e) = child.start_kill() {
-                warn!("Failed to send kill signal to child process: {}", e);
-            }
-
-            // Wait for process to exit with timeout
+            // Step 2: give it the configured window to exit voluntarily.
             match timeout(self.config.shutdown_timeout, child.wait()).await {
                 Ok(Ok(status)) => {
                     info!("Child process exited with status: {}", status);
@@ -367,12 +378,45 @@ impl ChildProcessTransport {
                     error!("Failed to wait for child process exit: {}", e);
                 }
                 Err(_) => {
-                    warn!("Child process shutdown timed out, forcing kill");
-                    if let Err(e) = child.kill().await {
-                        error!("Failed to force kill child process: {}", e);
+                    // Step 3: SIGTERM, then SIGKILL if it is not honoured.
+                    warn!("Child did not exit after stdin close; sending SIGTERM");
+                    #[cfg(unix)]
+                    if let Some(pid) = child.id()
+                        && let Err(e) = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(pid as i32),
+                            nix::sys::signal::Signal::SIGTERM,
+                        )
+                    {
+                        warn!("Failed to send SIGTERM to child process: {}", e);
+                    }
+
+                    // Windows has no SIGTERM; `start_kill` there is the only
+                    // option and is equivalent to the SIGKILL below.
+                    #[cfg(not(unix))]
+                    if let Err(e) = child.start_kill() {
+                        warn!("Failed to signal child process: {}", e);
+                    }
+
+                    if timeout(self.config.sigterm_grace, child.wait())
+                        .await
+                        .is_err()
+                    {
+                        warn!("Child ignored SIGTERM; forcing kill");
+                        if let Err(e) = child.kill().await {
+                            error!("Failed to force kill child process: {}", e);
+                        }
                     }
                 }
             }
+        }
+
+        // Drain tasks last, so stderr written during the child's own shutdown
+        // still reaches the log rather than being cut off by the abort.
+        if let Some(handle) = self._stdout_task.lock().await.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self._stderr_task.lock().await.take() {
+            handle.abort();
         }
 
         // Update state
@@ -544,11 +588,22 @@ impl Transport for ChildProcessTransport {
 impl Drop for ChildProcessTransport {
     fn drop(&mut self) {
         if self.config.kill_on_drop {
-            // Best-effort cleanup: try to lock and kill the child process
-            // Use try_lock since Drop is synchronous
+            // Last-resort cleanup for a transport dropped without
+            // `disconnect()`. Drop is synchronous, so there is nowhere to wait
+            // for a voluntary exit — but SIGTERM at least gives the child the
+            // chance to run its shutdown path, where SIGKILL gives it none.
+            // Tokio's own `kill_on_drop` still reaps whatever is left.
             if let Ok(mut child_guard) = self.child.try_lock()
-                && let Some(ref mut child) = child_guard.as_mut()
+                && let Some(child) = child_guard.as_mut()
             {
+                #[cfg(unix)]
+                if let Some(pid) = child.id() {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid as i32),
+                        nix::sys::signal::Signal::SIGTERM,
+                    );
+                }
+                #[cfg(not(unix))]
                 let _ = child.start_kill();
             }
         }
@@ -634,5 +689,87 @@ mod tests {
         }
         // Note: This test may fail in some CI environments where 'cat' is not available
         // or process spawning is restricted. That's expected.
+    }
+
+    /// MCP §Shutdown > stdio: close the input stream, then wait. A child that
+    /// exits on EOF must never be signalled at all.
+    ///
+    /// Before 3.5.0 this sent SIGKILL first and waited afterwards, so every
+    /// child MCP server died uncatchably and its `on_shutdown` hook — cache
+    /// flushes, database handles, persisted state — never ran.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdin_close_shuts_a_well_behaved_child_down_without_a_signal() {
+        // `sh -c 'cat >/dev/null; exit 7'`: reads until EOF on stdin, then
+        // exits with a status that only a voluntary exit can produce — a
+        // signalled process reports the signal instead.
+        let config = ChildProcessConfig {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "cat >/dev/null; exit 7".to_string()],
+            startup_timeout: Duration::from_secs(5),
+            shutdown_timeout: Duration::from_secs(5),
+            ..Default::default()
+        };
+
+        let transport = ChildProcessTransport::new(config);
+        if transport.connect().await.is_err() {
+            // Process spawning is restricted in some CI sandboxes.
+            return;
+        }
+        sleep(Duration::from_millis(100)).await;
+
+        let started = std::time::Instant::now();
+        transport.disconnect().await.expect("disconnect");
+
+        // The child exits as soon as it sees EOF, so this must not sit out the
+        // shutdown timeout — that would mean stdin was never actually closed.
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "a child that exits on EOF should not wait out the shutdown timeout"
+        );
+        assert_eq!(transport.state().await, TransportState::Disconnected);
+    }
+
+    /// A child that ignores its closed stdin is escalated to SIGTERM before
+    /// SIGKILL, so it still gets the chance to run a handler.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_child_that_ignores_eof_is_sigtermed_before_being_killed() {
+        // Traps SIGTERM and exits on it; ignores stdin entirely. If SIGTERM
+        // were never sent, this would only die to the final SIGKILL, which
+        // takes an extra `sigterm_grace` to reach.
+        let config = ChildProcessConfig {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "trap 'exit 0' TERM; while true; do sleep 0.05; done".to_string(),
+            ],
+            startup_timeout: Duration::from_secs(5),
+            shutdown_timeout: Duration::from_millis(300),
+            sigterm_grace: Duration::from_secs(5),
+            ..Default::default()
+        };
+
+        let transport = ChildProcessTransport::new(config);
+        if transport.connect().await.is_err() {
+            return;
+        }
+        sleep(Duration::from_millis(100)).await;
+
+        let started = std::time::Instant::now();
+        transport.disconnect().await.expect("disconnect");
+
+        // It cannot have exited before the shutdown window elapsed, and it must
+        // not have taken the full sigterm_grace — that would mean SIGTERM was
+        // never delivered and only SIGKILL ended it.
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(300),
+            "the child must get its full grace period before being signalled"
+        );
+        assert!(
+            elapsed < Duration::from_secs(4),
+            "SIGTERM should have been honoured well inside sigterm_grace, took {elapsed:?}"
+        );
     }
 }

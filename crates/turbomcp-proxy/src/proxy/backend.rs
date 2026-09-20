@@ -14,10 +14,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info};
 use turbomcp_client::Client;
+use turbomcp_protocol::Error;
 use turbomcp_protocol::types::{
     GetPromptResult, Prompt, ReadResourceResult, Resource, ResourceTemplate, Tool,
 };
-use turbomcp_protocol::{Error, PROTOCOL_VERSION};
 #[cfg(unix)]
 use turbomcp_transport::UnixTransport;
 use turbomcp_transport::{
@@ -513,16 +513,16 @@ impl BackendConnector {
 
         Ok(ServerSpec {
             server_info,
-            // The client crate's `InitializeResult` doesn't keep `protocol_version`;
-            // echo our compile-time constant. Spec-strict negotiation happens during
-            // the upstream `Client::initialize` itself.
-            protocol_version: PROTOCOL_VERSION.to_string(),
+            protocol_version: self.init_result.protocol_version.clone(),
             capabilities: Self::convert_capabilities(&self.init_result.server_capabilities),
             tools: Self::convert_tools(tools),
             resources: Self::convert_resources(resources),
             resource_templates: Self::convert_resource_templates(resource_templates),
             prompts: Self::convert_prompts(prompts),
-            instructions: None,
+            // The upstream's usage guidance is written for the model, so it has
+            // to survive the hop. Dropping it made a proxied server behave
+            // worse than the same server reached directly.
+            instructions: self.init_result.instructions.clone(),
         })
     }
 
@@ -821,14 +821,15 @@ impl BackendConnector {
                 client_version: "1.0.0".to_string(),
             }),
             spec: Arc::new(tokio::sync::Mutex::new(None)),
-            init_result: Arc::new(turbomcp_client::InitializeResult {
-                server_info: turbomcp_protocol::types::Implementation {
+            init_result: Arc::new(turbomcp_client::InitializeResult::new(
+                turbomcp_protocol::types::Implementation {
                     name: "test-backend".to_string(),
                     version: "1.0.0".to_string(),
                     ..Default::default()
                 },
-                server_capabilities: turbomcp_protocol::types::ServerCapabilities::default(),
-            }),
+                turbomcp_protocol::types::ServerCapabilities::default(),
+                turbomcp_protocol::PROTOCOL_VERSION,
+            )),
         }
     }
 }

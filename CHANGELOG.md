@@ -411,6 +411,40 @@ where the gap was visible on the wire.
   `GetPromptRequestParams.arguments` is typed `{ [key: string]: string }`;
   numbers and objects were transmitted and left for the server to refuse.
 
+### Lifecycle
+
+- **An unsupported negotiated version fails the handshake.** The client parsed
+  the server's `protocolVersion` and discarded it — no comparison, no warning,
+  no disconnect. Against a server answering `2024-11-05` it proceeded happily
+  and then sent 2025-11-25-shaped requests the server could not honour, so the
+  mismatch surfaced later as a string of unrelated-looking per-request failures.
+  It is now checked before the client marks itself initialized and before
+  `notifications/initialized` goes out; an unsupported version disconnects, as
+  §Version Negotiation prescribes.
+
+- **`InitializeResult` carries `protocol_version` and `instructions`.**
+  `instructions` is the one handshake field written for the model rather than
+  the client — the spec says it MAY be added to the system prompt — and it was
+  unreachable to applications entirely. turbomcp-proxy now relays both instead
+  of hardcoding a compile-time version and `instructions: None`, and
+  `ProxyService` overrides `instructions()` so a proxied server's guidance
+  survives the hop. `Client::negotiated_protocol_version()` retains the version
+  for callers that did not keep the result.
+
+  **Breaking:** `InitializeResult` gained two fields and is now
+  `#[non_exhaustive]`, so it can no longer be built by struct literal outside
+  the crate. `InitializeResult::new()` and `with_instructions()` replace that;
+  marking it `#[non_exhaustive]` in the same release keeps this to one break.
+
+- **Child MCP servers get a chance to shut down.** The stdio shutdown sequence
+  sent SIGKILL first and waited afterwards, so every server launched as a child
+  died uncatchably: cache flushes, database handles and persisted state in an
+  `on_shutdown` hook were silently lost on every disconnect. It now follows what
+  §Shutdown > stdio prescribes — close stdin, wait `shutdown_timeout` for a
+  voluntary exit, then SIGTERM, then SIGKILL after a new `sigterm_grace`. Drop
+  sends SIGTERM rather than SIGKILL for the same reason. `ChildProcessConfig`
+  gained `sigterm_grace`; build it with `..Default::default()`.
+
 ### Sampling
 
 `sampling/createMessage` is the one request a server assembles itself, so

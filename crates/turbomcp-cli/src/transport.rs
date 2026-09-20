@@ -481,6 +481,7 @@ fn create_stdio_transport(conn: &Connection) -> CliResult<ChildProcessTransport>
         max_message_size: 10 * 1024 * 1024, // 10MB
         buffer_size: 8192,                  // 8KB buffer
         kill_on_drop: true,                 // Kill process when client is dropped
+        ..Default::default()
     };
 
     // Create transport

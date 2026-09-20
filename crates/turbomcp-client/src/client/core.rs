@@ -62,6 +62,9 @@ pub(super) struct ClientInner<T: Transport + 'static> {
     /// Optional sampling handler (mutex for dynamic updates)
     pub(super) sampling_handler: Arc<Mutex<Option<Arc<dyn SamplingHandler>>>>,
 
+    /// Protocol version the server chose, once `initialize` has succeeded.
+    pub(super) negotiated_version: Arc<Mutex<Option<String>>>,
+
     /// Sub-capabilities advertised alongside `sampling` when a handler is set.
     ///
     /// Defaults to `{}`, which is the correct declaration for a client that
@@ -217,6 +220,7 @@ impl<T: Transport + 'static> Client<T> {
                 shutdown_requested: AtomicBool::new(false),
                 sampling_handler: Arc::new(Mutex::new(None)),
                 sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
+                negotiated_version: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
                 pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -271,6 +275,7 @@ impl<T: Transport + 'static> Client<T> {
                 shutdown_requested: AtomicBool::new(false),
                 sampling_handler: Arc::new(Mutex::new(None)),
                 sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
+                negotiated_version: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
                 pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -1350,6 +1355,27 @@ impl<T: Transport + 'static> Client<T> {
             .request("initialize", Some(serde_json::to_value(request)?))
             .await?;
 
+        // MCP §Version Negotiation: "If the client does not support the version
+        // in the server's response, it SHOULD disconnect." Checked before the
+        // client claims to be initialized and before `notifications/initialized`
+        // goes out, so an unsupported version aborts the handshake cleanly
+        // instead of surfacing later as a string of confusing per-request
+        // failures against a server that cannot honour the requests.
+        let negotiated = protocol_response.protocol_version.to_string();
+        if !turbomcp_protocol::SUPPORTED_VERSIONS.contains(&negotiated.as_str()) {
+            tracing::warn!(
+                negotiated = %negotiated,
+                supported = ?turbomcp_protocol::SUPPORTED_VERSIONS,
+                "Server negotiated an unsupported protocol version; disconnecting"
+            );
+            let _ = transport.disconnect().await;
+            return Err(Error::protocol_version_mismatch(
+                PROTOCOL_VERSION,
+                negotiated,
+            ));
+        }
+        *self.inner.negotiated_version.lock() = Some(negotiated.clone());
+
         // AtomicBool: lock-free store with Ordering::Relaxed
         self.inner.initialized.store(true, Ordering::Relaxed);
 
@@ -1363,7 +1389,19 @@ impl<T: Transport + 'static> Client<T> {
         Ok(InitializeResult {
             server_info: protocol_response.server_info,
             server_capabilities: protocol_response.capabilities,
+            protocol_version: negotiated,
+            instructions: protocol_response.instructions,
         })
+    }
+
+    /// Protocol version negotiated during `initialize`, if the handshake ran.
+    ///
+    /// Retained for the session so callers that did not keep the
+    /// [`InitializeResult`] — a proxy relaying the handshake, say — can still
+    /// answer which wire they are on.
+    #[must_use]
+    pub fn negotiated_protocol_version(&self) -> Option<String> {
+        self.inner.negotiated_version.lock().clone()
     }
 
     /// Subscribe to resource change notifications

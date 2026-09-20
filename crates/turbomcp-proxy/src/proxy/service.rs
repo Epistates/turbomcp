@@ -413,6 +413,15 @@ impl turbomcp_server::McpHandler for ProxyService {
         }
     }
 
+    /// Relay the upstream's usage guidance.
+    ///
+    /// `instructions` is the one handshake field written for the model rather
+    /// than the client, so a proxy that swallows it makes the server it fronts
+    /// measurably worse to work with than the same server reached directly.
+    fn instructions(&self) -> Option<String> {
+        self.spec.instructions.clone()
+    }
+
     fn server_capabilities(&self) -> turbomcp_protocol::types::ServerCapabilities {
         server_capabilities_from_spec(&self.spec.capabilities)
     }
