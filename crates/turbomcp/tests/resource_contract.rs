@@ -93,3 +93,102 @@ async fn an_unknown_uri_is_resource_not_found() {
     let response = read("mem://nope").await;
     assert_eq!(response["error"]["code"], -32002, "got {response}");
 }
+
+/// `ResourceTemplate.uriTemplate` is specified as RFC 6570. Dispatch used to
+/// take the text before the first `{` as a prefix and after the last `}` as a
+/// suffix and ignore everything between, so a template claimed URIs it could
+/// never have produced — and the handler, receiving the raw URI, served the
+/// wrong resource rather than erroring.
+///
+/// The concrete resource is declared *after* both templates here on purpose:
+/// which of two `#[resource]` attributes comes first in a file is not something
+/// an author should have to reason about.
+#[derive(Clone)]
+struct Db;
+
+#[server(name = "db", version = "1.0.0")]
+impl Db {
+    #[resource("db://{table}/rows/{id}.json")]
+    async fn row(&self, _uri: String, _ctx: &RequestContext) -> McpResult<String> {
+        Ok("row".to_string())
+    }
+
+    #[resource("db://{table}/meta.json")]
+    async fn meta(&self, _uri: String, _ctx: &RequestContext) -> McpResult<String> {
+        Ok("meta".to_string())
+    }
+
+    #[resource("db://health")]
+    async fn health(&self, _uri: String, _ctx: &RequestContext) -> McpResult<String> {
+        Ok("health".to_string())
+    }
+}
+
+async fn db_read(uri: &str) -> serde_json::Value {
+    Db.handle_request(
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "resources/read",
+            "params": { "uri": uri }
+        }),
+        RequestContext::stdio(),
+    )
+    .await
+    .unwrap()
+}
+
+fn body(response: &serde_json::Value) -> &str {
+    response["result"]["contents"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected a text body, got: {response}"))
+}
+
+#[tokio::test]
+async fn a_template_only_claims_uris_it_could_produce() {
+    assert_eq!(body(&db_read("db://users/rows/7.json").await), "row");
+
+    for impossible in [
+        "db://totally/unrelated/path.json",
+        "db://x.json",
+        "db://.json",
+        "db://users/rows/.json",
+    ] {
+        let response = db_read(impossible).await;
+        assert_eq!(
+            response["error"]["code"], -32002,
+            "{impossible} is not an instance of any template: {response}"
+        );
+    }
+}
+
+/// Two templates sharing a scheme and an extension reduced to the same
+/// prefix/suffix pair, so whichever was declared first took both.
+#[tokio::test]
+async fn sibling_templates_do_not_steal_each_others_traffic() {
+    assert_eq!(body(&db_read("db://users/meta.json").await), "meta");
+    assert_eq!(body(&db_read("db://orders/rows/3.json").await), "row");
+}
+
+/// A concrete resource appears in `resources/list` as something a client can
+/// read by name, so a template declared above it must not swallow the URI.
+#[tokio::test]
+async fn a_concrete_resource_wins_over_a_template_declared_before_it() {
+    assert_eq!(body(&db_read("db://health").await), "health");
+}
+
+/// A variable is one path segment; spanning them needs `{/var}`, which is not
+/// supported. Refusing to route beats quietly handing a handler a value it
+/// would use as a path.
+#[tokio::test]
+async fn traversal_shapes_do_not_route() {
+    for hostile in [
+        "db://../../etc/rows/1.json",
+        "db://%2e%2e/rows/1.json",
+        "db://users/rows/..%2fsecret.json",
+    ] {
+        let response = db_read(hostile).await;
+        assert_eq!(
+            response["error"]["code"], -32002,
+            "{hostile} should not reach a handler: {response}"
+        );
+    }
+}

@@ -1295,8 +1295,18 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         }
     });
 
-    // Generate resource dispatch code with proper URI template matching
-    let resource_dispatch_code = info.resources.iter().map(|resource| {
+    // Generate resource dispatch code with proper URI template matching.
+    //
+    // Concrete URIs are tried before templates regardless of declaration order.
+    // A concrete resource appears in `resources/list` as something a client can
+    // read by name, so a template declared above it must not be allowed to
+    // swallow that URI — the ordering of two `#[resource]` attributes in a file
+    // is not something an author should have to reason about.
+    let (concrete, templated): (Vec<_>, Vec<_>) = info
+        .resources
+        .iter()
+        .partition(|resource| !resource.uri_template.contains('{'));
+    let resource_dispatch_code = concrete.into_iter().chain(templated).map(|resource| {
         let uri_template = &resource.uri_template;
         let fn_name = &resource.fn_name;
 
@@ -1327,17 +1337,18 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             return __result;
         };
 
-        // Check if template has variables (contains '{')
         if uri_template.contains('{') {
-            // Extract prefix and suffix for template matching
-            // e.g., "file://{path}" -> prefix="file://", suffix=""
-            // e.g., "config://{name}/settings" -> prefix="config://", suffix="/settings"
-            let prefix = uri_template.split('{').next().unwrap_or("");
-            let suffix = uri_template.rsplit('}').next().unwrap_or("");
-
-            // Generate safe template matching code
+            // Matched against the template's actual RFC 6570 structure. The old
+            // matcher took the text before the first `{` as a prefix and after
+            // the last `}` as a suffix and ignored everything between, so
+            // `db://{table}/rows/{id}.json` also claimed
+            // `db://totally/unrelated/path.json`, `db://x.json` and even
+            // `db://.json` — and two templates sharing a scheme and extension
+            // were indistinguishable, so whichever was declared first took
+            // both. The handler still receives the full URI; this only decides
+            // which handler gets it.
             quote! {
-                if uri.starts_with(#prefix) && uri.ends_with(#suffix) && uri.len() >= #prefix.len() + #suffix.len() {
+                if #turbomcp::__macro_support::turbomcp_core::uri_template::matches(#uri_template, &uri) {
                     #dispatch
                 }
             }

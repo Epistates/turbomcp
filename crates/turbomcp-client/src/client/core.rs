@@ -1683,7 +1683,11 @@ impl<T: Transport + 'static> Client<T> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::invalid_request("Client not initialized"));
         }
-        let request = ListTasksRequest { cursor, limit };
+        let request = ListTasksRequest {
+            cursor,
+            limit,
+            _meta: None,
+        };
 
         self.inner
             .protocol

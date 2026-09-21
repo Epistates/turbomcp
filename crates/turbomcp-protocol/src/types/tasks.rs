@@ -509,15 +509,12 @@ pub struct GetTaskPayloadResult {
 /// use turbomcp_protocol::types::tasks::ListTasksRequest;
 ///
 /// // First page
-/// let request = ListTasksRequest {
-///     cursor: None,
-///     limit: None,
-/// };
+/// let request = ListTasksRequest::default();
 ///
-/// // Subsequent pages with custom limit
+/// // Subsequent pages
 /// let request = ListTasksRequest {
 ///     cursor: Some("next-page-cursor".to_string()),
-///     limit: Some(50),
+///     ..Default::default()
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -528,12 +525,17 @@ pub struct ListTasksRequest {
     /// - Use `nextCursor` from previous response for subsequent pages
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
-    /// Maximum number of tasks to return
+    /// **TurboMCP extension**: a page-size hint.
     ///
-    /// - Omit for server default (typically 100)
-    /// - Values > 1000 may be truncated by server
+    /// Not part of `PaginatedRequestParams` — the spec says page size is the
+    /// server's decision, and no other implementation reads this. A
+    /// spec-compliant receiver ignores it, so setting it is a request, never a
+    /// guarantee.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// Optional metadata for the request, per `RequestParams._meta`.
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Response from tasks/list containing paginated task list

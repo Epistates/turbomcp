@@ -598,31 +598,13 @@ impl<'a> McpHandler<'a> {
     /// - Segments containing null bytes ('\0')
     /// - Segments containing percent-encoded characters ('%')
     fn matches_template(template: &str, uri: &str) -> bool {
-        let template_parts: Vec<&str> = template.split('/').collect();
-        let uri_parts: Vec<&str> = uri.split('/').collect();
-
-        if template_parts.len() != uri_parts.len() {
-            return false;
-        }
-
-        for (t, u) in template_parts.iter().zip(uri_parts.iter()) {
-            if t.starts_with('{') && t.ends_with('}') {
-                // Template parameter - matches any non-empty segment
-                if u.is_empty() {
-                    return false;
-                }
-                // SECURITY: Reject path traversal attempts
-                if u.contains("..") || u.contains('\0') || u.contains('%') {
-                    return false;
-                }
-                continue;
-            }
-            if t != u {
-                return false;
-            }
-        }
-
-        true
+        // Shared with the native server so the two halves of the SDK route an
+        // identical URI identically. The previous matcher here compared
+        // '/'-separated segments and only understood a segment that was exactly
+        // `{var}`, so it wrongly refused `db://users/rows/7.json` against
+        // `db://{table}/rows/{id}.json` — the `{id}.json` segment is not a bare
+        // variable.
+        turbomcp_core::uri_template::matches(template, uri)
     }
 
     /// Extract template parameters from a matched URI.

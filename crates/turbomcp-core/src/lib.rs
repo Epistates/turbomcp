@@ -94,6 +94,7 @@ pub mod response;
 pub mod router;
 pub mod security;
 pub mod session;
+pub mod uri_template;
 
 /// Zero-copy message types using rkyv serialization.
 ///

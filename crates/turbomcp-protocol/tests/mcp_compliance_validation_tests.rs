@@ -335,6 +335,7 @@ fn test_elicitation_schema_object_valid() {
             default: None,
             enum_values: None,
             enum_names: None,
+            one_of: None,
         },
     );
 
@@ -389,6 +390,7 @@ fn test_enum_names_length_match() {
             "Option B".to_string(),
             "Option C".to_string(),
         ]),
+        one_of: None,
     };
 
     let mut properties = std::collections::HashMap::new();
@@ -422,6 +424,7 @@ fn test_enum_names_length_mismatch() {
         default: None,
         enum_values: Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]),
         enum_names: Some(vec!["Option A".to_string()]), // Only 1!
+        one_of: None,
     };
 
     let mut properties = std::collections::HashMap::new();
@@ -522,6 +525,7 @@ fn test_unknown_format_warning() {
         default: None,
         enum_values: None,
         enum_names: None,
+        one_of: None,
     };
 
     let mut properties = std::collections::HashMap::new();
@@ -560,6 +564,7 @@ fn test_full_mcp_compliance_scenario() {
             default: None,
             enum_values: None,
             enum_names: None,
+            one_of: None,
         },
     );
 
@@ -583,6 +588,7 @@ fn test_full_mcp_compliance_scenario() {
                 "Medium".to_string(),
                 "High".to_string(),
             ]),
+            one_of: None,
         },
     );
 

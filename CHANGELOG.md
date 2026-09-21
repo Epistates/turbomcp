@@ -411,6 +411,53 @@ where the gap was visible on the wire.
   `GetPromptRequestParams.arguments` is typed `{ [key: string]: string }`;
   numbers and objects were transmitted and left for the server to refuse.
 
+### Resources, elicitation and flood control
+
+- **`#[resource]` dispatch matches the URI template.** `ResourceTemplate.uriTemplate`
+  is specified as RFC 6570, but dispatch took the text before the first `{` as a
+  prefix and after the last `}` as a suffix and ignored everything between — so
+  `db://{table}/rows/{id}.json` also claimed `db://totally/unrelated/path.json`,
+  `db://x.json` and even `db://.json`, and two templates sharing a scheme and an
+  extension were indistinguishable, meaning whichever was declared first took
+  both. The handler received the raw URI, so it served the wrong resource rather
+  than erroring.
+
+  `turbomcp_core::uri_template` now matches against the template's real
+  structure. An interior variable is confined to one path segment; a trailing
+  variable takes the remainder, so the spec's own `file:///{path}` still means a
+  whole path. Concrete resources dispatch before templates regardless of
+  declaration order — which of two attributes comes first in a file is not
+  something an author should have to reason about. The WASM server calls the
+  same helper, so both halves of the SDK route an identical URI identically; its
+  old segment-count matcher wrongly refused `{id}.json`.
+
+- **The typed elicitation schema covers every shape the spec allows.** A
+  multi-select property failed the *whole* `ElicitationSchema` with `unknown
+  variant 'array'`, and a titled single-select parsed but dropped its `oneOf` on
+  the way back out. Both are silent from the client's side: the typed accessor
+  returns `None`, so a UI renders a free-text box where the server asked for a
+  dropdown, or declines outright. `PrimitiveSchemaDefinition` gains `one_of` and
+  an `Array` variant, with `add_enum_property` / `add_multi_select_property`
+  builders; all four of the spec's examples round-trip byte-identically.
+
+- **Log notifications are rate limited.** Nothing throttled them, so a handler
+  logging inside a loop flooded the client with no backpressure — and on the
+  line transports the notification queue shares the write side with responses,
+  so a log storm delayed the response to the very request producing it. The
+  budget is per session; over-budget messages are dropped rather than erroring,
+  since `ctx.log()` has to stay effectively infallible, and the count is
+  reported on the next admitted message so a client can see the gap. The SSE
+  subscriber queue is bounded too — it was unbounded, which is the one place a
+  well-behaved server could be made to exhaust its own memory.
+
+  Progress is deliberately *not* throttled: the spec lets the sender pick its
+  frequency, and coalescing risks swallowing the final `progress == total`.
+  `report_progress` now documents that, with a stride pattern.
+
+- **`ListTasksRequest` carries `_meta`**, and its `limit` is labelled the
+  TurboMCP extension it is — the spec has no such parameter and page size is the
+  server's decision. The invented server semantics in its docs are gone.
+
 ### Capabilities, pagination and metadata
 
 - **The client keeps the server's capabilities, and uses them.** §Operation

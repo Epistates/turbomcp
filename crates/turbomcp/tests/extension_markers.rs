@@ -505,7 +505,135 @@ async fn the_set_level_actually_filters_emitted_messages() {
         "at or above the requested level must still be sent"
     );
 
-    turbomcp_core::context::clear_min_log_level("filter-session");
+    turbomcp_core::context::clear_session_log_state("filter-session");
+}
+
+/// MCP logging: "Servers SHOULD rate limit log messages."
+///
+/// Nothing did, so a handler logging inside a loop flooded the client with no
+/// backpressure — and on the line transports the notification queue shares the
+/// write side with responses, so a log storm delayed the response to the very
+/// request producing it.
+#[tokio::test]
+async fn log_notifications_are_rate_limited_per_session() {
+    use turbomcp_core::context::MAX_LOG_NOTIFICATIONS_PER_SECOND;
+    use turbomcp_core::session::{McpSession, SessionFuture};
+    use turbomcp_protocol::context::RichContextExt;
+    use turbomcp_protocol::types::LogLevel;
+
+    #[derive(Debug, Default)]
+    struct Recorder {
+        sent: Mutex<Vec<serde_json::Value>>,
+    }
+    impl McpSession for Recorder {
+        fn call<'a>(
+            &'a self,
+            _m: &'a str,
+            _p: serde_json::Value,
+        ) -> SessionFuture<'a, serde_json::Value> {
+            Box::pin(async { Ok(serde_json::Value::Null) })
+        }
+        fn notify<'a>(&'a self, _m: &'a str, params: serde_json::Value) -> SessionFuture<'a, ()> {
+            Box::pin(async move {
+                self.sent.lock().unwrap().push(params);
+                Ok(())
+            })
+        }
+    }
+
+    turbomcp_core::context::clear_session_log_state("flooding-session");
+    let session = Arc::new(Recorder::default());
+    let ctx = RequestContext::stdio()
+        .with_session_id("flooding-session")
+        .with_session(session.clone() as Arc<dyn McpSession>);
+
+    let over_budget = MAX_LOG_NOTIFICATIONS_PER_SECOND + 50;
+    for n in 0..over_budget {
+        ctx.log(LogLevel::Info, format!("message {n}"), None)
+            .await
+            .expect("logging stays infallible even over budget");
+    }
+
+    assert_eq!(
+        session.sent.lock().unwrap().len(),
+        MAX_LOG_NOTIFICATIONS_PER_SECOND as usize,
+        "the budget is a ceiling, not a suggestion"
+    );
+
+    // Dropping silently would be worse than not sending: the client has no way
+    // to tell a quiet server from a throttled one.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    ctx.log(LogLevel::Info, "after the window", None)
+        .await
+        .unwrap();
+
+    let sent = session.sent.lock().unwrap();
+    let last = sent.last().expect("a message after the window reopened");
+    assert_eq!(last["data"], "after the window");
+    assert_eq!(
+        last["_meta"]["io.turbomcp/suppressedMessages"], 50,
+        "the gap is reported on the next admitted message: {last}"
+    );
+
+    drop(sent);
+    turbomcp_core::context::clear_session_log_state("flooding-session");
+}
+
+/// The budget is per session, so one chatty client cannot silence another.
+#[tokio::test]
+async fn one_session_cannot_spend_anothers_log_budget() {
+    use turbomcp_core::context::MAX_LOG_NOTIFICATIONS_PER_SECOND;
+    use turbomcp_core::session::{McpSession, SessionFuture};
+    use turbomcp_protocol::context::RichContextExt;
+    use turbomcp_protocol::types::LogLevel;
+
+    #[derive(Debug, Default)]
+    struct Recorder {
+        sent: Mutex<Vec<serde_json::Value>>,
+    }
+    impl McpSession for Recorder {
+        fn call<'a>(
+            &'a self,
+            _m: &'a str,
+            _p: serde_json::Value,
+        ) -> SessionFuture<'a, serde_json::Value> {
+            Box::pin(async { Ok(serde_json::Value::Null) })
+        }
+        fn notify<'a>(&'a self, _m: &'a str, params: serde_json::Value) -> SessionFuture<'a, ()> {
+            Box::pin(async move {
+                self.sent.lock().unwrap().push(params);
+                Ok(())
+            })
+        }
+    }
+
+    for id in ["noisy-session", "quiet-session"] {
+        turbomcp_core::context::clear_session_log_state(id);
+    }
+
+    let noisy_session = Arc::new(Recorder::default());
+    let noisy = RequestContext::stdio()
+        .with_session_id("noisy-session")
+        .with_session(noisy_session.clone() as Arc<dyn McpSession>);
+    for _ in 0..MAX_LOG_NOTIFICATIONS_PER_SECOND + 20 {
+        noisy.log(LogLevel::Info, "spam", None).await.unwrap();
+    }
+
+    let quiet_session = Arc::new(Recorder::default());
+    let quiet = RequestContext::stdio()
+        .with_session_id("quiet-session")
+        .with_session(quiet_session.clone() as Arc<dyn McpSession>);
+    quiet.log(LogLevel::Info, "hello", None).await.unwrap();
+
+    assert_eq!(quiet_session.sent.lock().unwrap().len(), 1);
+    assert!(
+        quiet_session.sent.lock().unwrap()[0].get("_meta").is_none(),
+        "a session that suppressed nothing carries no suppression marker"
+    );
+
+    for id in ["noisy-session", "quiet-session"] {
+        turbomcp_core::context::clear_session_log_state(id);
+    }
 }
 
 // ── completion/complete params are validated ───────────────────────────────

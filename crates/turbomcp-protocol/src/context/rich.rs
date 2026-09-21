@@ -365,12 +365,28 @@ impl RichContextExt for RequestContext {
             return Ok(());
         }
 
+        // MCP logging: "Servers SHOULD rate limit log messages." A handler
+        // logging inside a loop otherwise floods the client with no
+        // backpressure, and on the line transports the notification queue
+        // shares the write side with responses — so a log storm delays the
+        // response to the very request producing it.
+        let Some(suppressed) = self.admit_log() else {
+            return Ok(());
+        };
+
         let mut params = serde_json::json!({
             "level": level,
             "data": message.into(),
         });
         if let Some(logger) = logger {
             params["logger"] = serde_json::Value::String(logger);
+        }
+        if suppressed > 0 {
+            // Say so rather than leaving a silent hole: a client reading these
+            // messages needs to know it is not seeing all of them.
+            params["_meta"] = serde_json::json!({
+                "io.turbomcp/suppressedMessages": suppressed,
+            });
         }
 
         self.notify_client("notifications/message", params).await

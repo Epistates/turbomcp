@@ -919,6 +919,14 @@ pub trait ElicitationCompleteHandler: Send + Sync + std::fmt::Debug {
 /// includes a progress token, current progress value, optional total, and
 /// optional human-readable message.
 ///
+/// # Rate limiting
+///
+/// The server picks its own frequency, and a tool reporting once per loop
+/// iteration can arrive very fast. `max_concurrent_handlers` bounds how many
+/// of these run at once, not how many arrive — so a handler that does real
+/// work (a UI repaint, a write) should debounce rather than act on every
+/// notification.
+///
 /// # Examples
 ///
 /// ```rust,no_run

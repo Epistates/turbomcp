@@ -81,6 +81,62 @@ impl ElicitationSchema {
             default: None,
             enum_values: None,
             enum_names: None,
+            one_of: None,
+        };
+        self.properties.insert(name.clone(), property);
+        if required && let Some(required_fields) = self.required.as_mut() {
+            required_fields.push(name);
+        }
+        self
+    }
+
+    /// Add a single-select property rendered as a dropdown.
+    ///
+    /// Each option carries its own display title (SEP-1330 `oneOf` + `const`),
+    /// which is why this is preferred over the legacy `enum` + `enumNames`
+    /// pairing: a client never has to line two parallel arrays up itself.
+    #[must_use]
+    pub fn add_enum_property(
+        mut self,
+        name: String,
+        required: bool,
+        description: Option<String>,
+        options: Vec<EnumOption>,
+    ) -> Self {
+        let property = PrimitiveSchemaDefinition::String {
+            title: None,
+            description,
+            format: None,
+            min_length: None,
+            max_length: None,
+            default: None,
+            enum_values: None,
+            enum_names: None,
+            one_of: Some(options),
+        };
+        self.properties.insert(name.clone(), property);
+        if required && let Some(required_fields) = self.required.as_mut() {
+            required_fields.push(name);
+        }
+        self
+    }
+
+    /// Add a multi-select property.
+    #[must_use]
+    pub fn add_multi_select_property(
+        mut self,
+        name: String,
+        required: bool,
+        description: Option<String>,
+        items: MultiSelectItemsDefinition,
+    ) -> Self {
+        let property = PrimitiveSchemaDefinition::Array {
+            title: None,
+            description,
+            min_items: None,
+            max_items: None,
+            items,
+            default: None,
         };
         self.properties.insert(name.clone(), property);
         if required && let Some(required_fields) = self.required.as_mut() {
@@ -143,9 +199,11 @@ impl Default for ElicitationSchema {
 
 /// Per-field schema for an [`ElicitationSchema`].
 ///
-/// MCP 2025-11-25 allows String / Number / Integer / Boolean. For enums,
-/// prefer [`EnumSchema`] (SEP-1330) over the legacy `enum_values` / `enum_names`
-/// pattern on the `String` variant.
+/// Covers every shape MCP 2025-11-25 allows in `requestedSchema.properties`:
+/// String / Number / Integer / Boolean, the two single-select enum forms
+/// (`enum`, or `oneOf` with titles), and the two multi-select forms as
+/// [`Self::Array`]. For enums prefer `one_of` (SEP-1330) over the legacy
+/// `enum_values` / `enum_names` pattern.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum PrimitiveSchemaDefinition {
@@ -174,9 +232,16 @@ pub enum PrimitiveSchemaDefinition {
         #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
         enum_values: Option<Vec<String>>,
         /// Legacy display names for `enum_values` (deprecated; prefer
-        /// [`EnumSchema::TitledSingleSelect`]).
+        /// [`Self::String::one_of`]).
         #[serde(rename = "enumNames", skip_serializing_if = "Option::is_none")]
         enum_names: Option<Vec<String>>,
+        /// Titled single-select options (`oneOf` + `const`), SEP-1330.
+        ///
+        /// The preferred way to offer a dropdown: each option carries its own
+        /// display title, so a client does not have to pair two parallel
+        /// arrays the way `enum` + `enumNames` requires.
+        #[serde(rename = "oneOf", skip_serializing_if = "Option::is_none")]
+        one_of: Option<Vec<EnumOption>>,
     },
     /// Number-valued field.
     #[serde(rename = "number")]
@@ -229,6 +294,44 @@ pub enum PrimitiveSchemaDefinition {
         #[serde(skip_serializing_if = "Option::is_none")]
         default: Option<bool>,
     },
+    /// Multi-select field (SEP-1330): an array of values drawn from a fixed set.
+    ///
+    /// Without this variant the whole `ElicitationSchema` failed to deserialize
+    /// with `unknown variant 'array'` — so a client following the typed path
+    /// saw no schema at all for a request the spec fully permits.
+    #[serde(rename = "array")]
+    Array {
+        /// Optional human-readable title.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        /// Optional description.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        /// Minimum number of selections.
+        #[serde(rename = "minItems", skip_serializing_if = "Option::is_none")]
+        min_items: Option<u32>,
+        /// Maximum number of selections.
+        #[serde(rename = "maxItems", skip_serializing_if = "Option::is_none")]
+        max_items: Option<u32>,
+        /// The allowed options, titled (`anyOf`) or plain (`enum`).
+        items: MultiSelectItemsDefinition,
+        /// Optional default selection.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        default: Option<Vec<String>>,
+    },
+}
+
+/// The two item shapes a multi-select may take.
+///
+/// Untagged, with the titled form first: `anyOf` is the more specific shape, so
+/// trying it first stops a titled schema being read as an untitled one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum MultiSelectItemsDefinition {
+    /// `{ "anyOf": [{ "const": …, "title": … }] }`
+    Titled(MultiSelectItems),
+    /// `{ "type": "string", "enum": [ … ] }`
+    Untitled(UntitledMultiSelectItems),
 }
 
 // =============================================================================
@@ -459,6 +562,7 @@ mod tests {
             default: None,
             enum_values: None,
             enum_names: None,
+            one_of: None,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"type\":\"string\""));

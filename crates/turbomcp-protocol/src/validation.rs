@@ -572,8 +572,40 @@ impl ProtocolValidator {
                 enum_values,
                 enum_names,
                 format,
+                one_of,
                 ..
             } => {
+                // A dropdown described two ways is a dropdown a client has to
+                // guess at, and nothing says which wins.
+                if one_of.is_some() && enum_values.is_some() {
+                    ctx.add_error(
+                        "CONFLICTING_ENUM_FORMS",
+                        "a property may use `oneOf` or `enum`, not both".to_string(),
+                        Some(format!("{}.oneOf", field_path)),
+                    );
+                }
+
+                if let Some(options) = one_of {
+                    if options.is_empty() {
+                        ctx.add_error(
+                            "EMPTY_ENUM",
+                            "`oneOf` must offer at least one option".to_string(),
+                            Some(format!("{}.oneOf", field_path)),
+                        );
+                    }
+                    // Duplicate `const` values make the selection ambiguous.
+                    let mut seen = std::collections::HashSet::new();
+                    for option in options {
+                        if !seen.insert(option.const_value.as_str()) {
+                            ctx.add_error(
+                                "DUPLICATE_ENUM_VALUE",
+                                format!("duplicate `const` value '{}'", option.const_value),
+                                Some(format!("{}.oneOf", field_path)),
+                            );
+                        }
+                    }
+                }
+
                 // Validate enum/enumNames length match (schema.json:679-708)
                 if let (Some(values), Some(names)) = (enum_values, enum_names)
                     && values.len() != names.len()
@@ -610,6 +642,65 @@ impl ProtocolValidator {
             }
             PrimitiveSchemaDefinition::Boolean { .. } => {
                 // Boolean validation could go here
+            }
+            PrimitiveSchemaDefinition::Array {
+                min_items,
+                max_items,
+                items,
+                ..
+            } => {
+                if let (Some(min), Some(max)) = (min_items, max_items)
+                    && min > max
+                {
+                    ctx.add_error(
+                        "INVALID_ITEM_BOUNDS",
+                        format!("minItems ({min}) exceeds maxItems ({max})"),
+                        Some(format!("{}.minItems", field_path)),
+                    );
+                }
+
+                let options: Vec<&str> = match items {
+                    crate::types::MultiSelectItemsDefinition::Titled(items) => items
+                        .any_of
+                        .iter()
+                        .map(|option| option.const_value.as_str())
+                        .collect(),
+                    crate::types::MultiSelectItemsDefinition::Untitled(items) => {
+                        items.enum_values.iter().map(String::as_str).collect()
+                    }
+                };
+
+                if options.is_empty() {
+                    ctx.add_error(
+                        "EMPTY_ENUM",
+                        "a multi-select must offer at least one option".to_string(),
+                        Some(format!("{}.items", field_path)),
+                    );
+                } else if let Some(min) = min_items
+                    && *min as usize > options.len()
+                {
+                    // Asking for more selections than there are options makes
+                    // the field impossible to satisfy.
+                    ctx.add_error(
+                        "UNSATISFIABLE_MIN_ITEMS",
+                        format!(
+                            "minItems ({min}) exceeds the {} options offered",
+                            options.len()
+                        ),
+                        Some(format!("{}.minItems", field_path)),
+                    );
+                }
+
+                let mut seen = std::collections::HashSet::new();
+                for option in &options {
+                    if !seen.insert(*option) {
+                        ctx.add_error(
+                            "DUPLICATE_ENUM_VALUE",
+                            format!("duplicate option '{option}'"),
+                            Some(format!("{}.items", field_path)),
+                        );
+                    }
+                }
             }
         }
     }

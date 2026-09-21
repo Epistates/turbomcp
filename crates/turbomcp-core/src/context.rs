@@ -128,6 +128,44 @@ pub fn clear_min_log_level(session_id: &str) {
     }
 }
 
+/// Ceiling on `notifications/message` per session, per second.
+///
+/// MCP logging asks servers to rate limit log messages, and nothing here did.
+/// A handler logging inside a loop floods the client with no backpressure, and
+/// on the line transports the notification queue shares the write side with
+/// responses — so a log storm delays the response to the very request producing
+/// it. Generous enough that ordinary logging never notices.
+#[cfg(feature = "std")]
+pub const MAX_LOG_NOTIFICATIONS_PER_SECOND: u32 = 100;
+
+/// Per-session log budget: how many have gone out this window, and how many
+/// were dropped since the last one that did.
+#[cfg(feature = "std")]
+#[derive(Debug)]
+struct LogBudget {
+    window_start: std::time::Instant,
+    emitted: u32,
+    suppressed: u64,
+}
+
+#[cfg(feature = "std")]
+static LOG_BUDGET: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, LogBudget>>,
+> = std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
+/// Forget everything keyed to a session's logging state.
+///
+/// Both the minimum level and the rate budget outlive any single request, so
+/// they are keyed by session id and have to be released when the session ends
+/// or they live for the process.
+#[cfg(feature = "std")]
+pub fn clear_session_log_state(session_id: &str) {
+    clear_min_log_level(session_id);
+    if let Ok(mut map) = LOG_BUDGET.write() {
+        map.remove(session_id);
+    }
+}
+
 /// Metadata slot holding the client's `_meta.progressToken` for this request.
 ///
 /// Kept in [`RequestContext::metadata`] rather than as a struct field so the
@@ -571,6 +609,59 @@ impl RequestContext {
         true
     }
 
+    /// Claim a slot in this session's log budget.
+    ///
+    /// `Some(n)` means send it, where `n` is how many messages were dropped
+    /// since the last one that went out — annotate the message with it so the
+    /// client can see the gap rather than silently missing entries. `None`
+    /// means the budget is spent and this message should be dropped.
+    ///
+    /// Dropping rather than erroring is deliberate: `ctx.log()` and friends
+    /// have to stay effectively infallible, or every handler acquires an error
+    /// path for something that is pure diagnostics.
+    ///
+    /// Unlimited without a session id — there is nothing to key a budget on,
+    /// and the transports in that position are single-client anyway.
+    #[cfg(feature = "std")]
+    pub fn admit_log(&self) -> Option<u64> {
+        let Some(session_id) = self.session_id.as_ref() else {
+            return Some(0);
+        };
+        let Ok(mut budgets) = LOG_BUDGET.write() else {
+            // A poisoned lock must not silence logging.
+            return Some(0);
+        };
+
+        let now = std::time::Instant::now();
+        let budget = budgets.entry(session_id.clone()).or_insert(LogBudget {
+            window_start: now,
+            emitted: 0,
+            suppressed: 0,
+        });
+
+        // Fixed window rather than a token bucket: a burst that fits in the
+        // budget should go out at full speed, which is what a handler logging
+        // a short loop does.
+        if now.duration_since(budget.window_start) >= core::time::Duration::from_secs(1) {
+            budget.window_start = now;
+            budget.emitted = 0;
+        }
+
+        if budget.emitted >= MAX_LOG_NOTIFICATIONS_PER_SECOND {
+            budget.suppressed = budget.suppressed.saturating_add(1);
+            return None;
+        }
+
+        budget.emitted += 1;
+        Some(core::mem::take(&mut budget.suppressed))
+    }
+
+    /// `no_std` builds keep no session store, so nothing is throttled.
+    #[cfg(not(feature = "std"))]
+    pub fn admit_log(&self) -> Option<u64> {
+        Some(0)
+    }
+
     /// All HTTP headers, if the transport captured any.
     #[inline]
     pub fn headers(&self) -> Option<&HashbrownMap<String, String>> {
@@ -818,6 +909,35 @@ impl RequestContext {
     ///
     /// Use [`wants_progress`](Self::wants_progress) to skip expensive
     /// instrumentation when nobody is listening.
+    ///
+    /// # Rate limiting
+    ///
+    /// **Nothing here throttles progress — the frequency is yours to pick.**
+    /// The spec asks both parties to rate limit "to prevent flooding", but it
+    /// also lets the sender choose its own frequency, and coalescing inside
+    /// this method would risk swallowing the final `progress == total` update
+    /// that tells the client the operation finished.
+    ///
+    /// A tool reporting once per loop iteration will saturate a stdio pipe
+    /// ahead of its own response, and fan out unthrottled to an SSE stream over
+    /// HTTP. Emit on a stride or an interval instead:
+    ///
+    /// ```rust,ignore
+    /// let mut last = std::time::Instant::now();
+    /// for (done, item) in items.iter().enumerate() {
+    ///     process(item);
+    ///     if last.elapsed() > Duration::from_millis(100) {
+    ///         ctx.report_progress(done as f64, Some(items.len() as f64), None).await?;
+    ///         last = std::time::Instant::now();
+    ///     }
+    /// }
+    /// // The completing update always goes out.
+    /// ctx.report_progress(items.len() as f64, Some(items.len() as f64), None).await?;
+    /// ```
+    ///
+    /// Log notifications are different: those *are* throttled, because a log
+    /// has no equivalent of a final message that must not be dropped. See
+    /// [`MAX_LOG_NOTIFICATIONS_PER_SECOND`].
     ///
     /// # Arguments
     ///

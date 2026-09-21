@@ -84,6 +84,15 @@ const SERVER_REQUEST_TIMEOUT_SECS: u64 = 60;
 /// Maximum events retained per stream for `Last-Event-ID` replay.
 const MAX_REPLAY_EVENTS: usize = 64;
 
+/// Queue depth per SSE stream.
+///
+/// Bounded rather than unbounded: a client that stops reading its stream while
+/// the server keeps emitting would otherwise grow the queue until the process
+/// runs out of memory, which is the one place a well-behaved server could be
+/// made to hurt itself. A full queue drops the event and reports it
+/// undelivered, so the caller learns rather than silently losing it.
+const SSE_STREAM_BUFFER: usize = 256;
+
 /// Maximum SSE streams retained per session, attached or resumable.
 ///
 /// A stream entry outlives its connection so a reconnect can replay from it,
@@ -108,7 +117,7 @@ struct StreamState {
     /// The entry outlives the connection on purpose: §Resumability lets a
     /// client reconnect with `Last-Event-ID` and pick the stream back up, and
     /// it can only do that if the stream's cursor and history survived.
-    sender: Option<mpsc::UnboundedSender<SseEvent>>,
+    sender: Option<mpsc::Sender<SseEvent>>,
     /// Whether this is a standalone GET stream, and so eligible to carry
     /// messages unrelated to any running request.
     ///
@@ -123,7 +132,7 @@ struct StreamState {
 }
 
 impl StreamState {
-    fn new(sender: mpsc::UnboundedSender<SseEvent>, listening: bool) -> Self {
+    fn new(sender: mpsc::Sender<SseEvent>, listening: bool) -> Self {
         Self {
             sender: Some(sender),
             listening,
@@ -141,6 +150,11 @@ impl StreamState {
     /// accepted was reported to its caller as undelivered — `ctx.sample()`
     /// surfaces an error and drops its pending entry — so replaying it later
     /// would resurrect a request the server has already given up on.
+    ///
+    /// `try_send` rather than an awaited `send`: this runs under the session
+    /// map's write lock, so blocking here would stall every other session.
+    /// A full queue means the client has stopped reading, which is the same
+    /// situation as a closed one from the sender's point of view.
     fn emit(&mut self, session_id: &str, stream_id: &str, message: &str) -> bool {
         let Some(sender) = self.sender.as_ref() else {
             return false;
@@ -151,9 +165,20 @@ impl StreamState {
             format!("{session_id}-{stream_id}-{seq}"),
             Arc::from(message),
         );
-        if sender.send(event.clone()).is_err() {
-            self.sender = None;
-            return false;
+        match sender.try_send(event.clone()) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(
+                    session_id,
+                    stream_id,
+                    "SSE stream queue full; dropping event"
+                );
+                return false;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.sender = None;
+                return false;
+            }
         }
 
         self.next_seq = seq.saturating_add(1);
@@ -304,6 +329,11 @@ impl SessionManager {
     pub(crate) async fn remove_session(&self, session_id: &str) -> bool {
         let removed = self.sessions.write().await.remove(session_id).is_some();
         if removed {
+            // The log level and rate budget are keyed by session id and outlive
+            // any one request, so they leak for the life of the process unless
+            // released here — this is the only place that knows the session is
+            // over.
+            turbomcp_core::context::clear_session_log_state(session_id);
             tracing::debug!("Removed session: {}", session_id);
         }
         removed
@@ -314,16 +344,18 @@ impl SessionManager {
     pub async fn remove_session(&self, session_id: &str) -> bool {
         let removed = self.sessions.write().await.remove(session_id).is_some();
         if removed {
+            // The log level and rate budget are keyed by session id and outlive
+            // any one request, so they leak for the life of the process unless
+            // released here — this is the only place that knows the session is
+            // over.
+            turbomcp_core::context::clear_session_log_state(session_id);
             tracing::debug!("Removed session: {}", session_id);
         }
         removed
     }
 
     #[allow(dead_code)]
-    async fn subscribe_session_inner(
-        &self,
-        session_id: &str,
-    ) -> Option<mpsc::UnboundedReceiver<SseEvent>> {
+    async fn subscribe_session_inner(&self, session_id: &str) -> Option<mpsc::Receiver<SseEvent>> {
         self.open_stream(session_id, true)
             .await
             .map(|(_, _, rx)| rx)
@@ -338,16 +370,13 @@ impl SessionManager {
     pub(crate) async fn subscribe_session(
         &self,
         session_id: &str,
-    ) -> Option<mpsc::UnboundedReceiver<SseEvent>> {
+    ) -> Option<mpsc::Receiver<SseEvent>> {
         self.subscribe_session_inner(session_id).await
     }
 
     #[cfg(feature = "internal-bench")]
     #[doc(hidden)]
-    pub async fn subscribe_session(
-        &self,
-        session_id: &str,
-    ) -> Option<mpsc::UnboundedReceiver<SseEvent>> {
+    pub async fn subscribe_session(&self, session_id: &str) -> Option<mpsc::Receiver<SseEvent>> {
         self.subscribe_session_inner(session_id).await
     }
 
@@ -360,12 +389,12 @@ impl SessionManager {
         &self,
         session_id: &str,
         listening: bool,
-    ) -> Option<(String, String, mpsc::UnboundedReceiver<SseEvent>)> {
+    ) -> Option<(String, String, mpsc::Receiver<SseEvent>)> {
         let mut sessions = self.sessions.write().await;
         let data = sessions.get_mut(session_id)?;
 
         let stream_id = Uuid::new_v4().simple().to_string();
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(SSE_STREAM_BUFFER);
         data.streams
             .push((stream_id.clone(), StreamState::new(tx, listening)));
         Self::evict_excess_streams(data);
@@ -385,7 +414,7 @@ impl SessionManager {
         &self,
         session_id: &str,
         last_event_id: &str,
-    ) -> Option<(String, Vec<SseEvent>, mpsc::UnboundedReceiver<SseEvent>)> {
+    ) -> Option<(String, Vec<SseEvent>, mpsc::Receiver<SseEvent>)> {
         let (event_session, stream_id, last_seq) = parse_event_id(last_event_id)?;
         if event_session != session_id {
             tracing::warn!(
@@ -401,7 +430,7 @@ impl SessionManager {
         let data = sessions.get_mut(session_id)?;
         let (_, state) = data.streams.iter_mut().find(|(id, _)| *id == stream_id)?;
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(SSE_STREAM_BUFFER);
         state.sender = Some(tx);
         Some((stream_id, state.replay_after(last_seq), rx))
     }

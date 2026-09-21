@@ -17,9 +17,9 @@
 pub use turbomcp_types::{
     ElicitAction, ElicitRequestFormParams, ElicitRequestParams, ElicitRequestURLParams,
     ElicitResult, ElicitationCompleteNotification, ElicitationSchema, EnumOption, EnumSchema,
-    MultiSelectItems, PrimitiveSchemaDefinition, TitledMultiSelectEnumSchema,
-    TitledSingleSelectEnumSchema, URLElicitationRequiredError, UntitledMultiSelectEnumSchema,
-    UntitledMultiSelectItems, UntitledSingleSelectEnumSchema,
+    MultiSelectItems, MultiSelectItemsDefinition, PrimitiveSchemaDefinition,
+    TitledMultiSelectEnumSchema, TitledSingleSelectEnumSchema, URLElicitationRequiredError,
+    UntitledMultiSelectEnumSchema, UntitledMultiSelectItems, UntitledSingleSelectEnumSchema,
 };
 
 /// Backward-compat alias — canonical name is [`ElicitAction`].
