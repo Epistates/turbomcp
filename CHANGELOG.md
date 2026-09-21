@@ -670,37 +670,60 @@ emitted advertised a resumability that did not exist.
 
 ### What `cargo semver-checks` says
 
-Three of the twenty-five crates fail the check against the 3.4.0 baseline. The
-other twenty-two are clean. Since 3.x is maintained for backwards support, here
-is exactly what breaks and why each was judged acceptable.
+Five of the twenty-five crates fail the check against the 3.4.0 baseline; the
+other twenty are clean. Since 3.x is maintained for backwards support, here is
+exactly what breaks and why each was judged acceptable.
 
 - **`turbomcp-protocol`** (2 major) — the two removed `RichContextExt` progress
-  methods, covered above. Unfixable in place: an inherent method of the same
-  name wins over a trait method, so adding the correct `report_progress` would
-  have broken those call sites whatever we did with the trait. The removed
-  behaviour was a specification violation, and the trait was never reachable
-  from the `turbomcp` facade.
+  methods, covered above, plus `ProgressNotification._meta` and
+  `ListTasksRequest._meta`. The method removal is unfixable in place: an
+  inherent method of the same name wins over a trait method, so adding the
+  correct `report_progress` would have broken those call sites whatever we did
+  with the trait. The removed behaviour was a specification violation, and the
+  trait was never reachable from the `turbomcp` facade. The two `_meta` fields
+  are wire fields the schema has always allowed and we were not carrying;
+  `ListTasksRequest` is additionally behind the non-default `experimental-tasks`
+  feature.
 
 - **`turbomcp-wasm`** (2 major) — the `report_progress` → `log_progress` rename,
   which registers as one method removed and one added. Same root cause: the old
   name had to be freed for the inherent method. The console-logging behaviour is
   unchanged and available under the new name.
 
-- **`turbomcp-client`** (1 major) — `constructible_struct_adds_field` on
-  `HandlerRegistry.elicitation_complete`. This is the same lint 3.4.0 hit with
-  `ErrorContext`, and the same reasoning applies: the handler has to live
-  somewhere, every existing field on the struct is public, and so no addition
-  can be non-breaking. A downstream writing `HandlerRegistry { roots,
-  elicitation, log, … }` as an exhaustive literal stops compiling. The struct
-  derives `Default`, in-tree construction goes through `HandlerRegistry::new()`,
-  and the documented path has always been the `set_*_handler` methods, so the
-  realistic blast radius is nil.
+- **`turbomcp-client`** (2 major) —
+  `constructible_struct_adds_field` on `HandlerRegistry.elicitation_complete`,
+  and `InitializeResult` becoming `#[non_exhaustive]`.
 
-Everything else is additive. Notably `turbomcp-core` and `turbomcp-types` are
-both clean: the progress token lives in the existing `RequestContext::metadata`
-map behind `progress_token()` rather than in a new struct field, specifically to
-avoid repeating the `ErrorContext` argument on a far more widely constructed
-type, and `Root` moved crates without changing its shape.
+  The first is the same lint 3.4.0 hit with `ErrorContext`, and the same
+  reasoning applies: the handler has to live somewhere, every existing field is
+  public, so no addition can be non-breaking. The struct derives `Default`,
+  in-tree construction goes through `HandlerRegistry::new()`, and the documented
+  path has always been the `set_*_handler` methods.
+
+  The second is deliberate and is the point: `InitializeResult` grows with the
+  handshake, and this release adds two fields it should have carried from the
+  start. Marking it `#[non_exhaustive]` now, with `new()` and
+  `with_instructions()` constructors replacing struct-literal construction,
+  makes this the last time that shape breaks.
+
+- **`turbomcp-types`** (major) — `PrimitiveSchemaDefinition` gains a `one_of`
+  field on its `String` variant and a new `Array` variant, which an exhaustive
+  `match` without a `..` arm will notice. Both are required to represent
+  elicitation schemas the spec permits and we were silently failing to parse.
+  `URLElicitationRequiredError` also reshaped to the spec's required
+  `elicitations` array.
+
+- **`turbomcp-transport`** (major) — `ChildProcessConfig.sigterm_grace`, the same
+  exhaustive-literal lint. Build the config with `..Default::default()`; the new
+  field is what gives a child MCP server a window to shut down cleanly rather
+  than being SIGKILLed.
+
+Everything else is additive. Notably `turbomcp-core` is clean despite carrying
+most of this release's behaviour: the progress token lives in the existing
+`RequestContext::metadata` map behind `progress_token()` rather than in a new
+struct field, specifically to avoid repeating the `ErrorContext` argument on a
+far more widely constructed type, and `McpSession::protocol_version` is a
+defaulted trait method so existing implementations keep compiling.
 
 ## [3.4.0] - 2026-09-14
 
