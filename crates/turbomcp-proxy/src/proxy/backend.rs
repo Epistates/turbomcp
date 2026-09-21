@@ -478,31 +478,44 @@ impl BackendConnector {
     /// `notifications/{tools,resources,prompts}/list_changed`, see the proxy
     /// audit's MED on cache invalidation.
     async fn introspect_via_client(&self) -> ProxyResult<ServerSpec> {
-        // List tools
-        let tools = self
-            .client
-            .list_tools()
-            .await
-            .map_err(|e| ProxyError::backend(format!("Failed to list tools: {e}")))?;
+        // Each family is asked for only if the upstream declared it. MCP
+        // §Operation makes "only use capabilities that were successfully
+        // negotiated" a MUST, and a server that offers tools but no prompts is
+        // ordinary — introspecting it must yield an empty prompt list, not a
+        // failed introspection because `prompts/list` came back -32601.
+        let declared = &self.init_result.server_capabilities;
 
-        // List resources
-        let resources = self
-            .client
-            .list_resources()
-            .await
-            .map_err(|e| ProxyError::backend(format!("Failed to list resources: {e}")))?;
+        let tools = if declared.tools.is_some() {
+            self.client
+                .list_tools()
+                .await
+                .map_err(|e| ProxyError::backend(format!("Failed to list tools: {e}")))?
+        } else {
+            Vec::new()
+        };
 
-        let resource_templates =
-            self.client.list_resource_templates().await.map_err(|e| {
+        let (resources, resource_templates) = if declared.resources.is_some() {
+            let resources = self
+                .client
+                .list_resources()
+                .await
+                .map_err(|e| ProxyError::backend(format!("Failed to list resources: {e}")))?;
+            let templates = self.client.list_resource_templates().await.map_err(|e| {
                 ProxyError::backend(format!("Failed to list resource templates: {e}"))
             })?;
+            (resources, templates)
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
-        // List prompts
-        let prompts = self
-            .client
-            .list_prompts()
-            .await
-            .map_err(|e| ProxyError::backend(format!("Failed to list prompts: {e}")))?;
+        let prompts = if declared.prompts.is_some() {
+            self.client
+                .list_prompts()
+                .await
+                .map_err(|e| ProxyError::backend(format!("Failed to list prompts: {e}")))?
+        } else {
+            Vec::new()
+        };
 
         // Use the real InitializeResult captured at connect time.
         let server_info = ServerInfo {
@@ -827,7 +840,14 @@ impl BackendConnector {
                     version: "1.0.0".to_string(),
                     ..Default::default()
                 },
-                turbomcp_protocol::types::ServerCapabilities::default(),
+                // Introspection asks only for what the upstream declared, so
+                // the fixture has to declare everything it serves.
+                turbomcp_protocol::types::ServerCapabilities {
+                    tools: Some(turbomcp_protocol::types::ToolsCapabilities::default()),
+                    resources: Some(turbomcp_protocol::types::ResourcesCapabilities::default()),
+                    prompts: Some(turbomcp_protocol::types::PromptsCapabilities::default()),
+                    ..Default::default()
+                },
                 turbomcp_protocol::PROTOCOL_VERSION,
             )),
         }

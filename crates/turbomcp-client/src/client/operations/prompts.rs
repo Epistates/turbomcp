@@ -65,6 +65,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::invalid_request("Client not initialized"));
         }
+        self.require_server_capability(|caps| caps.prompts.is_some(), "prompts")?;
 
         let mut all_prompts = Vec::new();
         let mut cursor = None;
@@ -100,6 +101,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::invalid_request("Client not initialized"));
         }
+        self.require_server_capability(|caps| caps.prompts.is_some(), "prompts")?;
 
         let request = ListPromptsRequest {
             cursor,
@@ -173,6 +175,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::invalid_request("Client not initialized"));
         }
+        self.require_server_capability(|caps| caps.prompts.is_some(), "prompts")?;
 
         if name.is_empty() {
             return Err(Error::invalid_request("Prompt name cannot be empty"));

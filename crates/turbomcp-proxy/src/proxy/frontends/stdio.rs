@@ -154,7 +154,24 @@ impl StdioFrontend {
                     .capabilities()
                     .ok_or_else(|| turbomcp_protocol::Error::internal("Backend not initialized"))?)
             }
-            "tools/list" => self.backend.list_tools().await,
+            // Forwarded verbatim rather than through the backend's argument-less
+            // `list_*` helpers, so the client's `cursor` reaches the upstream
+            // server. The result relay below already passes `nextCursor` back
+            // down untouched; without the cursor going the other way the proxy
+            // was handing out a cursor it could not honour, and a client
+            // walking pages got page one forever. `_meta`/`progressToken` ride
+            // along for the same reason.
+            //
+            // JSON-RPC 2.0 §4 wants params to be an object or array when
+            // present, so an absent or null params becomes `{}`.
+            "tools/list" | "resources/list" | "resources/templates/list" | "prompts/list" => {
+                let params = request
+                    .params
+                    .clone()
+                    .filter(|params| !params.is_null())
+                    .unwrap_or_else(|| serde_json::json!({}));
+                self.backend.send_request(&request.method, params).await
+            }
             "tools/call" => {
                 let params = request.params.ok_or_else(|| {
                     turbomcp_protocol::Error::invalid_params("Missing params for tools/call")
@@ -165,8 +182,6 @@ impl StdioFrontend {
                 let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
                 self.backend.call_tool(name, arguments).await
             }
-            "resources/list" => self.backend.list_resources().await,
-            "resources/templates/list" => self.backend.list_resource_templates().await,
             "resources/read" => {
                 let params = request.params.ok_or_else(|| {
                     turbomcp_protocol::Error::invalid_params("Missing params for resources/read")
@@ -176,7 +191,6 @@ impl StdioFrontend {
                 })?;
                 self.backend.read_resource(uri).await
             }
-            "prompts/list" => self.backend.list_prompts().await,
             "prompts/get" => {
                 let params = request.params.ok_or_else(|| {
                     turbomcp_protocol::Error::invalid_params("Missing params for prompts/get")
@@ -295,5 +309,95 @@ mod tests {
     fn test_stdio_frontend_creation() {
         // This test just verifies that the structure compiles and can be created
         // Actual functionality requires integration tests with a running HTTP server
+    }
+
+    /// MCP §Pagination: a `cursor` the client sends means "return results
+    /// starting after this". The stdio frontend used to route `tools/list`
+    /// through an argument-less backend helper, so the cursor never left the
+    /// proxy — while the upstream's `nextCursor` was relayed down verbatim.
+    /// A client walking pages therefore got page one, forever: rmcp's
+    /// `list_all_tools` never terminates against it, and this SDK's own client
+    /// returns a thousand duplicate copies of page one.
+    ///
+    /// Asserted upstream rather than downstream because that is precisely where
+    /// the cursor went missing.
+    #[tokio::test]
+    async fn a_list_cursor_reaches_the_upstream_server() {
+        use crate::proxy::backends::http::HttpBackendConfig;
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let upstream = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/mcp"))
+            .and(body_partial_json(
+                serde_json::json!({"method": "initialize"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": turbomcp_protocol::PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "serverInfo": { "name": "paged-upstream", "version": "1.0.0" }
+                }
+            })))
+            .mount(&upstream)
+            .await;
+
+        // Only matches a tools/list that actually carries the cursor. An
+        // unmatched request 404s, so the assertion is the mock itself.
+        Mock::given(method("POST"))
+            .and(path("/mcp"))
+            .and(body_partial_json(serde_json::json!({
+                "method": "tools/list",
+                "params": { "cursor": "page-2" }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": { "tools": [{ "name": "second_page", "description": "" }] }
+            })))
+            .expect(1)
+            .mount(&upstream)
+            .await;
+
+        let backend = HttpBackend::new(HttpBackendConfig {
+            url: format!("{}/mcp", upstream.uri()),
+            auth_token: None,
+            timeout_secs: Some(5),
+            client_name: "test-proxy".to_string(),
+            client_version: "1.0.0".to_string(),
+        })
+        .await
+        .expect("backend connects");
+
+        let frontend = StdioFrontend::new(backend, StdioFrontendConfig::default());
+        let request: JsonRpcRequest = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": { "cursor": "page-2" }
+        }))
+        .expect("request parses");
+
+        frontend
+            .handle_request(request)
+            .await
+            .expect("the request is served");
+
+        // `.expect(1)` is verified on drop; make the failure explicit here too.
+        let cursored = upstream
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
+            .any(|body| body["params"]["cursor"] == "page-2");
+        assert!(
+            cursored,
+            "the client's cursor must reach the upstream server"
+        );
     }
 }

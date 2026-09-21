@@ -270,7 +270,7 @@ impl HttpBackend {
     ///
     /// Returns `ProxyError` if the request fails or the server returns an error.
     pub async fn list_tools(&self) -> ProxyResult<Value> {
-        self.send_request("tools/list", Value::Null).await
+        self.send_request("tools/list", serde_json::json!({})).await
     }
 
     /// Call a tool
@@ -292,7 +292,8 @@ impl HttpBackend {
     ///
     /// Returns `ProxyError` if the request fails or the server returns an error.
     pub async fn list_resources(&self) -> ProxyResult<Value> {
-        self.send_request("resources/list", Value::Null).await
+        self.send_request("resources/list", serde_json::json!({}))
+            .await
     }
 
     /// List available resource templates
@@ -301,7 +302,7 @@ impl HttpBackend {
     ///
     /// Returns `ProxyError` if the request fails or the server returns an error.
     pub async fn list_resource_templates(&self) -> ProxyResult<Value> {
-        self.send_request("resources/templates/list", Value::Null)
+        self.send_request("resources/templates/list", serde_json::json!({}))
             .await
     }
 
@@ -323,7 +324,8 @@ impl HttpBackend {
     ///
     /// Returns `ProxyError` if the request fails or the server returns an error.
     pub async fn list_prompts(&self) -> ProxyResult<Value> {
-        self.send_request("prompts/list", Value::Null).await
+        self.send_request("prompts/list", serde_json::json!({}))
+            .await
     }
 
     /// Get a prompt

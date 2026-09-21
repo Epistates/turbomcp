@@ -57,7 +57,8 @@
 //!
 //! - **Zero Boilerplate**: Just add `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]` attributes
 //! - **Automatic Schema Generation**: JSON schemas generated from Rust types
-//! - **Per-Parameter Documentation**: Use `#[description("...")]` for rich JSON Schema docs
+//! - **Per-Parameter Documentation**: Use `#[description("...")]` for rich JSON Schema docs,
+//!   and `#[title("...")]` on a `#[prompt]` argument for its display label
 //! - **Type-Safe Parameters**: Function parameters become tool arguments
 //! - **Doc Comments**: `///` comments become tool/resource/prompt descriptions
 //! - **Complex Type Support**: Use `schemars::JsonSchema` for nested object schemas
@@ -360,6 +361,17 @@ pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// Prompt methods generate message templates for LLM interactions.
 /// Function parameters become prompt arguments (HIGH-002).
 ///
+/// # Argument metadata
+///
+/// Two optional attributes per parameter, both surfaced in `prompts/list`:
+///
+/// - `#[description("...")]` — what the argument means.
+/// - `#[title("...")]` — a display label (SEP-973). Clients that render a
+///   prompt-argument form otherwise have only the raw Rust identifier to label
+///   the field, so a user is shown `repo_url` rather than "Repository URL".
+///
+/// An `Option<T>` parameter is reported as optional; anything else as required.
+///
 /// # Example
 ///
 /// ```ignore
@@ -375,8 +387,10 @@ pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///     #[prompt]
 ///     async fn code_review(
 ///         &self,
+///         #[title("Language")]
+///         #[description("Language the code is written in")]
 ///         language: String,
-///         style: Option<String>,
+///         #[title("Review style")] style: Option<String>,
 ///         ctx: &RequestContext,
 ///     ) -> String {
 ///         let style = style.unwrap_or_else(|| "concise".to_string());

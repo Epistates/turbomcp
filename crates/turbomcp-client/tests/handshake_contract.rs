@@ -233,3 +233,61 @@ async fn a_server_that_sends_no_instructions_yields_none() {
     let result = client.initialize().await.expect("handshake");
     assert!(result.instructions.is_none());
 }
+
+/// MCP §Operation: "Both parties MUST ... only use capabilities that were
+/// successfully negotiated."
+///
+/// The client used to keep no copy of the server's capabilities at all, so
+/// `prompts/list` went out to any server. A strict peer answers -32601 or
+/// closes the connection, and the caller gets an opaque transport error rather
+/// than "this server has no prompts".
+#[tokio::test]
+async fn prompts_are_not_requested_from_a_server_that_declared_none() {
+    let (transport, probe) = ScriptedServer::new(json!({
+        "protocolVersion": turbomcp_protocol::PROTOCOL_VERSION,
+        "capabilities": { "tools": {} },
+        "serverInfo": { "name": "tools-only", "version": "1.0.0" }
+    }));
+    let client = Client::new(transport);
+    client.initialize().await.expect("handshake");
+
+    let error = client
+        .list_prompts()
+        .await
+        .expect_err("prompts were never negotiated");
+    assert!(error.to_string().contains("prompts"), "{error}");
+
+    assert!(
+        !probe.methods_sent().contains(&"prompts/list".to_string()),
+        "an un-negotiated method must not reach the wire"
+    );
+
+    let error = client
+        .get_prompt("anything", None)
+        .await
+        .expect_err("prompts were never negotiated");
+    assert!(error.to_string().contains("prompts"), "{error}");
+}
+
+/// The gate is on the declaration, not on the contents: a server declaring
+/// `prompts: {}` and holding none is a normal, empty server.
+#[tokio::test]
+async fn a_declared_prompts_capability_lets_the_request_through() {
+    let (transport, probe) = ScriptedServer::new(json!({
+        "protocolVersion": turbomcp_protocol::PROTOCOL_VERSION,
+        "capabilities": { "prompts": {} },
+        "serverInfo": { "name": "prompted", "version": "1.0.0" }
+    }));
+    let client = Client::new(transport);
+    client.initialize().await.expect("handshake");
+
+    // The scripted server answers everything with the initialize result, so the
+    // call itself fails to deserialize — what matters is that it was sent.
+    let _ = client.list_prompts().await;
+    assert!(probe.methods_sent().contains(&"prompts/list".to_string()));
+    assert!(
+        client
+            .server_capabilities()
+            .is_some_and(|caps| caps.prompts.is_some())
+    );
+}

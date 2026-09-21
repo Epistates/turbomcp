@@ -411,6 +411,52 @@ where the gap was visible on the wire.
   `GetPromptRequestParams.arguments` is typed `{ [key: string]: string }`;
   numbers and objects were transmitted and left for the server to refuse.
 
+### Capabilities, pagination and metadata
+
+- **The client keeps the server's capabilities, and uses them.** §Operation
+  makes "only use capabilities that were successfully negotiated" a MUST on both
+  parties, but the client discarded the server's capabilities the moment the
+  handshake returned, so `prompts/list` went to any server at all. A strict peer
+  answers `-32601` or closes the connection, which reaches the caller as an
+  opaque transport failure rather than "this server has no prompts". The
+  capabilities are now retained, exposed as `Client::server_capabilities()`, and
+  checked before the three prompt entry points put anything on the wire.
+  turbomcp-proxy introspection likewise asks each family only if the upstream
+  declared it, so fronting a tools-only server yields an empty prompt list
+  instead of a failed introspection.
+
+- **The proxy's stdio frontend forwards pagination cursors.** It relayed the
+  upstream's `nextCursor` down to its client but dropped that client's `cursor`
+  on the way back up, so a client walking pages received page one forever:
+  rmcp's `list_all_tools` never terminates against it, and this SDK's own client
+  returns a thousand duplicate copies of page one. All four list methods now
+  forward the client's params verbatim, which carries `_meta` and
+  `progressToken` along with the cursor.
+
+- **Completion responses are held to 100 values.** "Maximum 100 items per
+  response" is a property of the wire rather than of any one handler, so it is
+  enforced in the router; truncating sets `hasMore`, which is what that flag is
+  for.
+
+- **`Client::complete()` is deprecated.** It predates the completion
+  specification: `handler_name` went out as a `ref/prompt` name — which must
+  identify a prompt from `prompts/list` — and the argument name was hardcoded to
+  `"partial"`, which no prompt declares. The best case was `-32602`; the likely
+  case was an empty value list that reads as "no suggestions". `complete_prompt`
+  and `complete_resource` were always the correct entry points.
+
+- **`#[title("…")]` on a prompt argument.** `PromptArgument.title` was hardcoded
+  to `None` with no attribute able to set it, so a client rendering the
+  slash-command form the spec illustrates had only the raw Rust identifier to
+  label the field — users saw `repo_url` rather than "Repository URL".
+
+- **`Root.uri` states its MUST and can be checked.** The schema says the URI
+  must start with `file://`; the doc comment called it "typical" and nothing
+  validated it. `validate_root_uri` and `Root::file()` are the checked path, and
+  the client warns per offending root when answering `roots/list` rather than
+  dropping it — silently removing a root the embedder meant to grant would take
+  the server's boundary information away with no signal at all.
+
 ### Lifecycle
 
 - **An unsupported negotiated version fails the handshake.** The client parsed

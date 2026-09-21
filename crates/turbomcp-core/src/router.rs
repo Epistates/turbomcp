@@ -604,7 +604,10 @@ pub async fn route_request<H: McpHandler>(
             }
 
             match handler.complete(params, ctx).await {
-                Ok(value) => JsonRpcOutgoing::success(id, value),
+                Ok(mut value) => {
+                    cap_completion_values(&mut value);
+                    JsonRpcOutgoing::success(id, value)
+                }
                 Err(err) => JsonRpcOutgoing::error(id, err),
             }
         }
@@ -614,6 +617,32 @@ pub async fn route_request<H: McpHandler>(
 
         // Unknown method
         _ => JsonRpcOutgoing::error(id, McpError::method_not_found(&request.method)),
+    }
+}
+
+/// Hold a completion result to the spec's 100-value ceiling.
+///
+/// "Maximum 100 items per response" is a property of the wire, not of any one
+/// handler, so it is enforced here rather than left to every `#[completion]`
+/// body to remember. Truncating sets `hasMore`, which is exactly what that flag
+/// is for; `total` is left alone, since a handler that reported one was telling
+/// the truth about how many matches exist.
+fn cap_completion_values(value: &mut Value) {
+    const MAX_COMPLETION_VALUES: usize = 100;
+
+    let Some(completion) = value.get_mut("completion") else {
+        return;
+    };
+    let Some(values) = completion.get_mut("values").and_then(Value::as_array_mut) else {
+        return;
+    };
+    if values.len() <= MAX_COMPLETION_VALUES {
+        return;
+    }
+
+    values.truncate(MAX_COMPLETION_VALUES);
+    if let Some(object) = completion.as_object_mut() {
+        object.insert("hasMore".into(), Value::Bool(true));
     }
 }
 

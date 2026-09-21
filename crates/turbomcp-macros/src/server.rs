@@ -149,6 +149,8 @@ pub struct PromptInfo {
 pub struct PromptArgumentInfo {
     /// Argument name
     pub name: String,
+    /// Human-readable label for the argument, from `#[title("...")]`
+    pub title: Option<String>,
     /// Argument description
     pub description: Option<String>,
     /// Whether the argument is required
@@ -689,9 +691,15 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
             // Pre-3.1 prompts always emitted `description: None`, leaving LLM
             // clients without per-argument docs.
             let description = extract_param_description(&pat_type.attrs);
+            // SEP-973 `title`: a display label for the argument. Without it a
+            // client building the slash-command form the spec illustrates has
+            // nothing but the raw Rust identifier to label the field, so the
+            // user sees `repo_url` rather than "Repository URL".
+            let title = extract_param_str_attr(&pat_type.attrs, "title");
 
             args.push(PromptArgumentInfo {
                 name,
+                title,
                 description,
                 required: !is_option,
             });
@@ -701,16 +709,21 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
     args
 }
 
-/// Extract the string from `#[description("...")]` on a function parameter.
-fn extract_param_description(attrs: &[syn::Attribute]) -> Option<String> {
+/// Extract the string from a `#[key("...")]` attribute on a function parameter.
+fn extract_param_str_attr(attrs: &[syn::Attribute], key: &str) -> Option<String> {
     for attr in attrs {
-        if attr.path().is_ident("description")
+        if attr.path().is_ident(key)
             && let Ok(s) = attr.parse_args::<syn::LitStr>()
         {
             return Some(s.value());
         }
     }
     None
+}
+
+/// Extract the string from `#[description("...")]` on a function parameter.
+fn extract_param_description(attrs: &[syn::Attribute]) -> Option<String> {
+    extract_param_str_attr(attrs, "description")
 }
 
 /// Extract doc comments from attributes.
@@ -758,14 +771,15 @@ fn strip_handler_attributes(impl_block: &ItemImpl) -> ItemImpl {
                     && !attr.path().is_ident("set_level")
                     && !attr.path().is_ident("roots_changed")
             });
-            // Strip #[description] from parameter attributes — the macro has already
-            // extracted their values for schema generation, so they must not survive
-            // into the compiler output where they'd trigger compile_error!().
+            // Strip #[description] / #[title] from parameter attributes — the macro
+            // has already extracted their values for schema generation, so they must
+            // not survive into the compiler output where they'd trigger
+            // compile_error!().
             for input in &mut method.sig.inputs {
                 if let syn::FnArg::Typed(pat_type) = input {
-                    pat_type
-                        .attrs
-                        .retain(|attr| !attr.path().is_ident("description"));
+                    pat_type.attrs.retain(|attr| {
+                        !attr.path().is_ident("description") && !attr.path().is_ident("title")
+                    });
                 }
             }
         }
@@ -1191,10 +1205,14 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                     Some(d) if !d.is_empty() => quote! { Some(#d.to_string()) },
                     _ => quote! { None },
                 };
+                let arg_title_code = match arg.title.as_deref() {
+                    Some(t) if !t.is_empty() => quote! { Some(#t.to_string()) },
+                    _ => quote! { None },
+                };
                 quote! {
                     #turbomcp::__macro_support::turbomcp_types::PromptArgument {
                         name: #arg_name.to_string(),
-                        title: None,
+                        title: #arg_title_code,
                         description: #arg_desc_code,
                         required: Some(#required),
                     }

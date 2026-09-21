@@ -65,6 +65,13 @@ pub(super) struct ClientInner<T: Transport + 'static> {
     /// Protocol version the server chose, once `initialize` has succeeded.
     pub(super) negotiated_version: Arc<Mutex<Option<String>>>,
 
+    /// Capabilities the server declared, once `initialize` has succeeded.
+    ///
+    /// MCP §Operation: "Both parties MUST ... only use capabilities that were
+    /// successfully negotiated." Keeping them is what makes that checkable
+    /// before a request goes on the wire.
+    pub(super) server_capabilities: Arc<Mutex<Option<ServerCapabilities>>>,
+
     /// Sub-capabilities advertised alongside `sampling` when a handler is set.
     ///
     /// Defaults to `{}`, which is the correct declaration for a client that
@@ -221,6 +228,7 @@ impl<T: Transport + 'static> Client<T> {
                 sampling_handler: Arc::new(Mutex::new(None)),
                 sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
                 negotiated_version: Arc::new(Mutex::new(None)),
+                server_capabilities: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
                 pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -276,6 +284,7 @@ impl<T: Transport + 'static> Client<T> {
                 sampling_handler: Arc::new(Mutex::new(None)),
                 sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
                 negotiated_version: Arc::new(Mutex::new(None)),
+                server_capabilities: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
                 pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -859,6 +868,24 @@ impl<T: Transport + 'static> Client<T> {
 
                 match roots_result {
                     Ok(roots) => {
+                        // `Root.uri` MUST start with `file://`. Warned rather
+                        // than dropped: a root the embedder meant to grant is
+                        // load-bearing, and silently removing it would take the
+                        // server's boundary information away with no signal at
+                        // all. A strict server may still reject the result, and
+                        // this is the line that says why.
+                        for root in &roots {
+                            if let Err(reason) =
+                                turbomcp_protocol::types::validate_root_uri(root.uri.as_str())
+                            {
+                                tracing::warn!(
+                                    uri = %root.uri,
+                                    %reason,
+                                    "roots/list: root URI violates MCP Root.uri; servers may reject it"
+                                );
+                            }
+                        }
+
                         let result_value =
                             serde_json::to_value(turbomcp_protocol::types::ListRootsResult {
                                 roots,
@@ -1375,6 +1402,7 @@ impl<T: Transport + 'static> Client<T> {
             ));
         }
         *self.inner.negotiated_version.lock() = Some(negotiated.clone());
+        *self.inner.server_capabilities.lock() = Some(protocol_response.capabilities.clone());
 
         // AtomicBool: lock-free store with Ordering::Relaxed
         self.inner.initialized.store(true, Ordering::Relaxed);
@@ -1402,6 +1430,39 @@ impl<T: Transport + 'static> Client<T> {
     #[must_use]
     pub fn negotiated_protocol_version(&self) -> Option<String> {
         self.inner.negotiated_version.lock().clone()
+    }
+
+    /// Capabilities the server declared during `initialize`, if it has run.
+    ///
+    /// Use this to branch on what a server actually offers rather than
+    /// discovering it from a `-32601`.
+    #[must_use]
+    pub fn server_capabilities(&self) -> Option<ServerCapabilities> {
+        self.inner.server_capabilities.lock().clone()
+    }
+
+    /// Refuse a request for a capability the server never negotiated.
+    ///
+    /// MCP §Operation makes this a MUST on both parties. Answering locally is
+    /// also the better error: a strict peer replies `-32601` or simply closes
+    /// the connection, and the caller is left with an opaque transport failure
+    /// instead of "this server has no prompts".
+    ///
+    /// Permissive when no capabilities are recorded — that means `initialize`
+    /// has not run, which the `initialized` check ahead of every call already
+    /// rejects with a clearer message.
+    pub(super) fn require_server_capability(
+        &self,
+        declared: impl FnOnce(&ServerCapabilities) -> bool,
+        name: &str,
+    ) -> Result<()> {
+        let capabilities = self.inner.server_capabilities.lock();
+        match capabilities.as_ref() {
+            Some(capabilities) if !declared(capabilities) => Err(Error::invalid_request(format!(
+                "server did not negotiate the `{name}` capability"
+            ))),
+            _ => Ok(()),
+        }
     }
 
     /// Subscribe to resource change notifications

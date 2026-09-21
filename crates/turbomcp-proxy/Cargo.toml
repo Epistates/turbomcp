@@ -96,6 +96,7 @@ proptest = "1.11"
 pretty_assertions = "1.4"
 criterion = { workspace = true, features = ["async_tokio"] }
 tracing-subscriber = { workspace = true }
+wiremock = { workspace = true }
 
 [features]
 default = ["cli", "runtime", "introspection"]

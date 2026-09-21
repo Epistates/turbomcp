@@ -46,14 +46,24 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         })
     }
 
-    /// Request completion suggestions from the server
+    /// Request completion suggestions from the server.
     ///
-    /// Simple completion interface for basic autocompletion needs.
-    /// Uses a prompt-based reference with hardcoded "partial" argument name.
+    /// # Deprecated
+    ///
+    /// This predates the completion specification and sends a request no
+    /// conforming server can answer. `handler_name` goes out as a
+    /// `ref/prompt` `name`, which the spec says identifies a prompt from
+    /// `prompts/list` — a "handler name" is not one — and the argument name is
+    /// hardcoded to `"partial"`, which is not an argument any prompt declares.
+    /// The best case is `-32602`; the likely case is an empty value list that
+    /// looks like "no suggestions".
+    ///
+    /// Use [`Self::complete_prompt`] or [`Self::complete_resource`], which name
+    /// a real reference and a real argument.
     ///
     /// # Arguments
     ///
-    /// * `handler_name` - The completion handler name
+    /// * `handler_name` - Sent as a `ref/prompt` name
     /// * `argument_value` - The partial value to complete
     ///
     /// # Examples
@@ -62,14 +72,22 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
     /// # async fn example() -> turbomcp_protocol::Result<()> {
-    /// let mut client = Client::new(StdioTransport::new());
+    /// let client = Client::new(StdioTransport::new());
     /// client.initialize().await?;
     ///
-    /// let result = client.complete("complete_path", "/usr/b").await?;
+    /// // The replacement: a prompt from `prompts/list`, and one of the
+    /// // arguments that prompt declares.
+    /// let result = client
+    ///     .complete_prompt("code_review", "language", "py", None)
+    ///     .await?;
     /// println!("Completions: {:?}", result.completion.values);
     /// # Ok(())
     /// # }
     /// ```
+    #[deprecated(
+        since = "3.5.0",
+        note = "sends a ref/prompt whose `name` is not a prompt and a hardcoded `partial` argument name, which conforming servers reject with -32602; use `complete_prompt` or `complete_resource`"
+    )]
     pub async fn complete(
         &self,
         handler_name: &str,

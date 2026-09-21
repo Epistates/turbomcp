@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 // `Root` and `ListRootsResult` are defined in `turbomcp-types` so that
 // `RequestContext::list_roots` can return them without inverting the crate
 // layering. Re-exported here so `turbomcp_protocol::types::Root` still resolves.
-pub use turbomcp_types::{ListRootsResult, Root};
+pub use turbomcp_types::{ListRootsResult, Root, validate_root_uri};
 
 /// List roots request with optional metadata
 /// Note: Roots do not support pagination, only metadata

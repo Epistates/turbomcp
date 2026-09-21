@@ -758,7 +758,16 @@ pub struct RootsCapabilities {
 /// would break them for no protocol benefit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Root {
-    /// Root URI, typically a `file://` URI.
+    /// The URI identifying the root.
+    ///
+    /// Per MCP 2025-06-18 and 2025-11-25 this **MUST** start with `file://`;
+    /// the schema notes the restriction may be relaxed in a future protocol
+    /// version. [`validate_root_uri`] checks it.
+    ///
+    /// Servers honouring "respect root boundaries" want
+    /// `turbomcp_protocol::security::validate_path_within` for the containment
+    /// half; the spec also makes validating these URIs against path traversal a
+    /// client-side MUST.
     pub uri: crate::primitives::Uri,
     /// Optional human-readable name for this root.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -766,6 +775,44 @@ pub struct Root {
     /// Optional metadata per the current MCP specification.
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<Value>,
+}
+
+impl Root {
+    /// Build a root from a `file://` URI, rejecting any other scheme.
+    ///
+    /// The validating constructor. Struct-literal construction still works, so
+    /// existing `RootsHandler` implementations are unaffected — but a root
+    /// built this way cannot be the one that gets a `roots/list` result
+    /// rejected by a strict server.
+    pub fn file(uri: impl Into<String>) -> Result<Self, &'static str> {
+        let uri = uri.into();
+        validate_root_uri(&uri)?;
+        Ok(Self {
+            uri: crate::primitives::Uri::new(uri),
+            name: None,
+            _meta: None,
+        })
+    }
+
+    /// Attach a human-readable name.
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+}
+
+/// Check a [`Root`] URI against the scheme restriction the schema imposes.
+///
+/// `Root.uri` says "this *must* start with file:// for now". Kept here rather
+/// than inside `Uri::new`, which is shared with resource URIs — those are
+/// deliberately scheme-free.
+pub fn validate_root_uri(uri: &str) -> Result<(), &'static str> {
+    if uri.starts_with("file://") {
+        Ok(())
+    } else {
+        Err("root URI must start with file://")
+    }
 }
 
 /// Result of a `roots/list` request.
