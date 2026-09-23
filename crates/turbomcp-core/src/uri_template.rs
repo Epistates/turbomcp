@@ -199,6 +199,15 @@ fn is_valid_trailing_variable(value: &str) -> bool {
             .any(|segment| segment == b"..")
 }
 
+/// A captured variable's value as it was before RFC 6570 expansion
+/// percent-encoded it.
+///
+/// `None` for malformed encoding, or a value that does not decode to UTF-8.
+#[must_use]
+pub fn decode(value: &str) -> Option<alloc::string::String> {
+    alloc::string::String::from_utf8(percent_decode(value)?).ok()
+}
+
 /// Decode `%XX` escapes. `None` for a `%` not followed by two hex digits.
 fn percent_decode(value: &str) -> Option<Vec<u8>> {
     let bytes = value.as_bytes();

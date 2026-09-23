@@ -283,19 +283,30 @@ impl OpenApiHandler {
 
         self.resource_operations(true).find_map(|op| {
             let template = Self::resource_uri(op);
-            let values = UriTemplate::parse(&template).captures(uri)?;
+            let captured = UriTemplate::parse(&template).captures(uri)?;
             let names = path_param_names(&op.path);
             // A path parameter is one segment, and RFC 6570 expansion encodes
-            // any `/` in a value. So a value holding one is not an expansion of
-            // this template: `…/users/{id}` taking `7/posts` belongs to
-            // `…/users/{id}/posts`.
-            if values.len() != names.len() || values.iter().any(|value| value.contains('/')) {
+            // any `/` in a value. So a raw `/` means this is not an expansion
+            // of this template — `…/users/{id}` taking `7/posts` belongs to
+            // `…/users/{id}/posts` — while an encoded one decodes to a value
+            // no single segment can carry.
+            if captured.len() != names.len() || captured.iter().any(|value| value.contains('/')) {
+                return None;
+            }
+            // Passed on decoded: the upstream request encodes each path
+            // segment itself, and encoding the expansion again would send
+            // `%2520` for a space.
+            let values = captured
+                .into_iter()
+                .map(turbomcp_core::uri_template::decode)
+                .collect::<Option<Vec<_>>>()?;
+            if values.iter().any(|value| value.contains('/')) {
                 return None;
             }
             let args = names
                 .into_iter()
                 .zip(values)
-                .map(|(name, value)| (name.to_string(), Value::String(value.to_string())))
+                .map(|(name, value)| (name.to_string(), Value::String(value)))
                 .collect();
             Some((op, args))
         })
