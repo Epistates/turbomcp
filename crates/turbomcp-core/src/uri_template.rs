@@ -89,6 +89,23 @@ impl<'a> UriTemplate<'a> {
     /// Whether `uri` is an instance of this template.
     #[must_use]
     pub fn matches(&self, uri: &str) -> bool {
+        self.walk(uri, |_| {})
+    }
+
+    /// What each variable took in `uri`, in template order, if `uri` is an
+    /// instance of this template.
+    ///
+    /// Matching is exactly [`Self::matches`]; this is for a handler that also
+    /// needs the values. Variables with no literal text between them
+    /// (`{a}{b}`) share one gap and so yield one value between them.
+    #[must_use]
+    pub fn captures<'u>(&self, uri: &'u str) -> Option<Vec<&'u str>> {
+        let mut values = Vec::new();
+        self.walk(uri, |value| values.push(value)).then_some(values)
+    }
+
+    /// Match `uri`, handing each variable's value to `value` along the way.
+    fn walk<'u>(&self, uri: &'u str, mut value: impl FnMut(&'u str)) -> bool {
         // A template with no variables is just a string.
         if self.is_concrete() {
             return self.literals.first().copied().unwrap_or("") == uri;
@@ -108,10 +125,14 @@ impl<'a> UriTemplate<'a> {
                     if !is_valid_variable(&rest[..index]) {
                         return false;
                     }
+                    value(&rest[..index]);
                     rest = &rest[index + literal.len()..];
                 }
                 // The whole template is one variable, so it takes everything.
-                None => return is_valid_trailing_variable(rest),
+                None => {
+                    value(rest);
+                    return is_valid_trailing_variable(rest);
+                }
             }
         } else {
             let Some(literal) = literals.next() else {
@@ -130,10 +151,12 @@ impl<'a> UriTemplate<'a> {
             if !is_valid_variable(&rest[..index]) {
                 return false;
             }
+            value(&rest[..index]);
             rest = &rest[index + literal.len()..];
         }
 
         if self.trailing_var {
+            value(rest);
             is_valid_trailing_variable(rest)
         } else {
             rest.is_empty()
@@ -278,6 +301,34 @@ mod tests {
     fn an_unclosed_brace_is_treated_as_literal() {
         assert!(matches("db://{table", "db://{table"));
         assert!(!matches("db://{table", "db://anything"));
+    }
+
+    #[test]
+    fn captures_returns_each_variable_in_order() {
+        let template = UriTemplate::parse("db://{table}/rows/{id}.json");
+        assert_eq!(
+            template.captures("db://users/rows/7.json"),
+            Some(alloc::vec!["users", "7"])
+        );
+        assert_eq!(template.captures("db://totally/unrelated/path.json"), None);
+
+        assert_eq!(
+            UriTemplate::parse("file:///{path}").captures("file:///deep/notes.txt"),
+            Some(alloc::vec!["deep/notes.txt"])
+        );
+        assert_eq!(
+            UriTemplate::parse("{host}/status").captures("example/status"),
+            Some(alloc::vec!["example"])
+        );
+        assert_eq!(
+            UriTemplate::parse("config://app").captures("config://app"),
+            Some(alloc::vec![])
+        );
+        // A refused trailing value is not captured either.
+        assert_eq!(
+            UriTemplate::parse("file:///{path}").captures("file:///../x"),
+            None
+        );
     }
 
     #[test]
