@@ -424,3 +424,108 @@ async fn an_endpoint_event_cannot_send_posts_to_another_origin() {
     let post = log.nth(Method::POST, 2).await;
     assert_eq!(post.header("authorization"), Some("Bearer secret"));
 }
+
+/// Hands out `fresh` once the server has challenged, and records what it
+/// was told.
+#[derive(Debug, Default)]
+struct Reauthenticates {
+    challenged: Mutex<Vec<turbomcp_http::AuthChallenge>>,
+}
+
+impl turbomcp_http::AuthProvider for Reauthenticates {
+    fn token(&self) -> turbomcp_http::AuthFuture<'_, Option<String>> {
+        let token = if self.challenged.lock().unwrap().is_empty() {
+            "stale"
+        } else {
+            "fresh"
+        };
+        Box::pin(async move { Some(token.to_string()) })
+    }
+
+    fn on_challenge<'a>(
+        &'a self,
+        challenge: &'a turbomcp_http::AuthChallenge,
+    ) -> turbomcp_http::AuthFuture<'a, bool> {
+        self.challenged.lock().unwrap().push(challenge.clone());
+        Box::pin(async { true })
+    }
+}
+
+fn refuse_unless_fresh(headers: &HeaderMap) -> Option<Response> {
+    let fresh = headers
+        .get(header::AUTHORIZATION)
+        .is_some_and(|value| value == "Bearer fresh");
+    (!fresh).then(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            [(
+                header::WWW_AUTHENTICATE,
+                r#"Bearer error="invalid_token", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp""#,
+            )],
+        )
+            .into_response()
+    })
+}
+
+/// MCP authorization: a client MUST parse a 401's `WWW-Authenticate` and use
+/// its `resource_metadata` to find where to get a token. The provider gets
+/// the parsed challenge, and the request is retried once with what it
+/// obtained.
+#[tokio::test]
+async fn a_challenge_reaches_the_auth_provider_and_the_request_is_retried() {
+    let log = Log::default();
+    let base_url = serve(
+        log.clone(),
+        Arc::new(|method, headers, _| {
+            if *method != Method::POST {
+                return StatusCode::METHOD_NOT_ALLOWED.into_response();
+            }
+            refuse_unless_fresh(headers).unwrap_or_else(|| initialize_result("2025-11-25", "s-1"))
+        }),
+    )
+    .await;
+
+    let provider = Arc::new(Reauthenticates::default());
+    let transport = client(
+        &base_url,
+        StreamableHttpClientConfig {
+            auth_provider: Some(provider.clone()),
+            ..Default::default()
+        },
+    );
+    transport.send(request(0, "initialize")).await.unwrap();
+    assert_eq!(next_message(&transport).await["id"], 0);
+
+    let challenged = provider.challenged.lock().unwrap().clone();
+    assert_eq!(challenged.len(), 1);
+    assert_eq!(
+        challenged[0].resource_metadata.as_deref(),
+        Some("https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+    );
+    let posts = log.all(Method::POST);
+    assert_eq!(posts[0].header("authorization"), Some("Bearer stale"));
+    assert_eq!(posts[1].header("authorization"), Some("Bearer fresh"));
+}
+
+/// Without a provider the refusal is an authentication error that carries
+/// the challenge, not a generic connection failure.
+#[tokio::test]
+async fn a_challenge_without_a_provider_is_an_authentication_error() {
+    let base_url = serve(
+        Log::default(),
+        Arc::new(|_, headers, _| refuse_unless_fresh(headers).unwrap()),
+    )
+    .await;
+
+    let transport = client(&base_url, StreamableHttpClientConfig::default());
+    let error = transport
+        .send(request(0, "initialize"))
+        .await
+        .expect_err("the server refused");
+    match error {
+        TransportError::AuthenticationFailed(detail) => {
+            assert!(detail.contains("resource metadata at"), "{detail}")
+        }
+        other => panic!("expected an authentication failure, got {other:?}"),
+    }
+}

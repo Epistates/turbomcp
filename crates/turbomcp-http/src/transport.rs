@@ -314,6 +314,14 @@ pub struct StreamableHttpClientConfig {
     /// Authentication token
     pub auth_token: Option<String>,
 
+    /// Supplies the bearer token, and replaces it when the server refuses it.
+    ///
+    /// When set, it takes precedence over [`Self::auth_token`]. A `401` or
+    /// `403` challenge is handed to it, and the request retried once if it
+    /// then has a token — the path MCP's authorization spec describes for a
+    /// client discovering, from a server's challenge, where to get one.
+    pub auth_provider: Option<Arc<dyn crate::AuthProvider>>,
+
     /// Custom headers
     pub headers: HashMap<String, String>,
 
@@ -365,6 +373,7 @@ impl Default for StreamableHttpClientConfig {
             timeout: Duration::from_secs(30),
             retry_policy: RetryPolicy::default(),
             auth_token: None,
+            auth_provider: None,
             headers: HashMap::new(),
             user_agent: Some(format!("TurboMCP-Client/{}", env!("CARGO_PKG_VERSION"))),
             protocol_version: "2025-11-25".to_string(),
@@ -440,7 +449,11 @@ impl SessionState {
             headers.insert("Mcp-Session-Id", session_value);
         }
 
-        if let Some(token) = &self.config.auth_token
+        let token = match &self.config.auth_provider {
+            Some(provider) => provider.token().await,
+            None => self.config.auth_token.clone(),
+        };
+        if let Some(token) = token
             && let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token))
         {
             headers.insert(header::AUTHORIZATION, auth_value);
@@ -749,6 +762,15 @@ impl StreamableHttpClientTransport {
             .unwrap_or_else(|| self.get_endpoint_url())
     }
 
+    /// Hand a server's refusal to the auth provider. `true` means the
+    /// provider now has a token worth retrying with.
+    async fn answer_challenge(&self, challenge: &crate::AuthChallenge) -> bool {
+        match &self.config.auth_provider {
+            Some(provider) => provider.on_challenge(challenge).await,
+            None => false,
+        }
+    }
+
     /// Forget a session the server has terminated, and say so.
     ///
     /// §Session Management: a client that gets 404 for a request carrying
@@ -873,6 +895,22 @@ impl StreamableHttpClientTransport {
             if response.status() == reqwest::StatusCode::NOT_FOUND {
                 info!("Session no longer exists; stopping standalone SSE stream");
                 break;
+            }
+
+            // Refused for want of a usable token. Counted as a failed attempt
+            // even when the provider has a new one, so a server that keeps
+            // refusing exhausts the retry policy rather than being hammered.
+            if let Some(challenge) = auth_challenge(&response) {
+                let retry = match &config.auth_provider {
+                    Some(provider) => provider.on_challenge(&challenge).await,
+                    None => false,
+                };
+                if !retry {
+                    warn!("Standalone SSE stream refused: {challenge}");
+                    break;
+                }
+                attempt += 1;
+                continue;
             }
 
             if !response.status().is_success() {
@@ -1291,6 +1329,23 @@ impl StreamableHttpClientTransport {
     }
 }
 
+/// The server's authorization challenge, if `response` is a refusal.
+///
+/// `401` is always one. `403` is only when it carries a `Bearer` challenge:
+/// without one it is the Origin check or similar, which no token fixes.
+fn auth_challenge(response: &reqwest::Response) -> Option<crate::AuthChallenge> {
+    let status = response.status();
+    let www_authenticate = response
+        .headers()
+        .get(header::WWW_AUTHENTICATE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let is_challenge = status == reqwest::StatusCode::UNAUTHORIZED
+        || (status == reqwest::StatusCode::FORBIDDEN
+            && www_authenticate.to_ascii_lowercase().contains("bearer"));
+    is_challenge.then(|| crate::AuthChallenge::parse(status.as_u16(), www_authenticate))
+}
+
 impl Transport for StreamableHttpClientTransport {
     fn send(
         &self,
@@ -1305,34 +1360,49 @@ impl Transport for StreamableHttpClientTransport {
             // Get message endpoint (discovered or default)
             let url = self.get_message_endpoint_url().await;
 
-            // Build headers with proper Accept negotiation
-            let headers = self
-                .session
-                .headers(Some("application/json, text/event-stream"))
-                .await;
-            let had_session = headers.contains_key("mcp-session-id");
-
-            // `timeout` covers the request up to its headers and, for a JSON
-            // answer, its body. An SSE answer is read with a per-chunk idle
-            // bound instead; see `read_post_stream`.
-            let deadline = tokio::time::Instant::now() + self.config.timeout;
             let timed_out = || TransportError::RequestTimeout {
                 operation: "HTTP POST".to_string(),
                 timeout: self.config.timeout,
             };
 
-            // Send POST request
-            let request = self
-                .http_client
-                .post(&url)
-                .headers(headers)
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(message.payload.to_vec())
-                .send();
-            let response = tokio::time::timeout_at(deadline, request)
-                .await
-                .map_err(|_| timed_out())?
-                .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
+            // At most two attempts: a refusal the auth provider can answer is
+            // retried once with the token it obtained.
+            let mut challenged = false;
+            let (response, had_session, deadline) = loop {
+                // Build headers with proper Accept negotiation
+                let headers = self
+                    .session
+                    .headers(Some("application/json, text/event-stream"))
+                    .await;
+                let had_session = headers.contains_key("mcp-session-id");
+
+                // `timeout` covers the request up to its headers and, for a
+                // JSON answer, its body. An SSE answer is read with a
+                // per-chunk idle bound instead; see `read_post_stream`.
+                let deadline = tokio::time::Instant::now() + self.config.timeout;
+
+                // Send POST request
+                let request = self
+                    .http_client
+                    .post(&url)
+                    .headers(headers)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(message.payload.to_vec())
+                    .send();
+                let response = tokio::time::timeout_at(deadline, request)
+                    .await
+                    .map_err(|_| timed_out())?
+                    .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
+
+                if let Some(challenge) = auth_challenge(&response) {
+                    if !challenged && self.answer_challenge(&challenge).await {
+                        challenged = true;
+                        continue;
+                    }
+                    return Err(TransportError::AuthenticationFailed(challenge.to_string()));
+                }
+                break (response, had_session, deadline);
+            };
 
             // A 404 on a request that carried `Mcp-Session-Id` means the
             // server no longer knows that session — it restarted, or the

@@ -95,7 +95,10 @@
 #![deny(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod auth;
 mod transport;
+
+pub use auth::{AuthChallenge, AuthFuture, AuthProvider};
 
 // Re-export the transport implementation
 pub use transport::{
