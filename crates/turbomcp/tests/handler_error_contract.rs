@@ -529,3 +529,61 @@ async fn prompt_errors_propagate_for_non_mcp_error_types() {
         "about tides"
     );
 }
+
+// ── 10. -32042 is a protocol error even from a #[tool] ─────────────────────
+
+/// Every other `McpError` from a `#[tool]` becomes an `isError` result. URL
+/// elicitation required is the exception: the spec defines it as a JSON-RPC
+/// error whose `data.elicitations` the client acts on, and folded into a tool
+/// result the client never sees it — so it must stay a -32042 error with its
+/// `data` intact.
+#[tokio::test]
+async fn url_elicitation_required_propagates_as_a_jsonrpc_error() {
+    use turbomcp_core::error::ErrorKind;
+
+    #[derive(Clone)]
+    struct Gate;
+
+    #[server(name = "gate", version = "1.0.0")]
+    impl Gate {
+        #[tool]
+        async fn connect(&self) -> McpResult<String> {
+            Err(
+                McpError::new(ErrorKind::UrlElicitationRequired, "Authorization required")
+                    .with_data(serde_json::json!({
+                        "elicitations": [{
+                            "mode": "url",
+                            "elicitationId": "550e8400-e29b-41d4-a716-446655440000",
+                            "url": "https://example.com/connect",
+                            "message": "Authorize access to your files."
+                        }]
+                    })),
+            )
+        }
+    }
+
+    let response = Gate
+        .handle_request(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": { "name": "connect", "arguments": {} }
+            }),
+            RequestContext::stdio(),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        response.get("result").is_none(),
+        "must not be a tool result: {response}"
+    );
+    let error = &response["error"];
+    assert_eq!(error["code"], -32042, "{response}");
+    let elicitation = &error["data"]["elicitations"][0];
+    assert_eq!(elicitation["mode"], "url");
+    assert_eq!(
+        elicitation["elicitationId"],
+        "550e8400-e29b-41d4-a716-446655440000"
+    );
+    assert_eq!(elicitation["url"], "https://example.com/connect");
+}
