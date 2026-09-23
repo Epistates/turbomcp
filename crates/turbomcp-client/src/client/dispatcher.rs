@@ -28,12 +28,22 @@
 //!
 //! This ensures that there's only ONE consumer of `transport.receive()`,
 //! eliminating race conditions by centralizing all message routing.
+//!
+//! ## Notification ordering
+//!
+//! Notifications are handled one at a time, in the order they arrived, by a
+//! single worker task. Requests are not: each runs in its own task, because a
+//! server may well have several outstanding and a slow elicitation must not
+//! hold up a sampling request. A notification's meaning can depend on its
+//! position — progress values must increase, and a log line after the one
+//! before it — which per-notification tasks did not preserve.
 
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{Notify, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use turbomcp_protocol::jsonrpc::{
     JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
 };
@@ -48,8 +58,23 @@ type RequestHandler = Arc<dyn Fn(JsonRpcRequest) -> Result<()> + Send + Sync>;
 
 /// Type alias for notification handler functions
 ///
-/// The handler receives a notification and processes it asynchronously.
-type NotificationHandler = Arc<dyn Fn(JsonRpcNotification) -> Result<()> + Send + Sync>;
+/// The dispatcher awaits the returned future before handling the next
+/// notification, which is what keeps them in arrival order.
+type NotificationHandler = Arc<dyn Fn(JsonRpcNotification) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// Work for the notification worker, in arrival order.
+enum Queued {
+    /// A notification to hand to the notification handler.
+    Notification(JsonRpcNotification),
+    /// Acknowledged once everything queued before it has been handled.
+    Flush(oneshot::Sender<()>),
+}
+
+tokio::task_local! {
+    /// Set while the notification worker runs a handler, so a handler that
+    /// itself waits for a flush does not wait on its own completion.
+    static IN_NOTIFICATION_WORKER: ();
+}
 
 /// Message dispatcher that routes incoming JSON-RPC messages
 ///
@@ -114,6 +139,10 @@ pub(super) struct MessageDispatcher {
     /// This is set by the Client to handle incoming notifications from the server.
     notification_handler: Arc<Mutex<Option<NotificationHandler>>>,
 
+    /// Queue feeding the notification worker. Taken on shutdown, which lets
+    /// the worker drain what is already queued and exit.
+    notifications: Arc<Mutex<Option<mpsc::UnboundedSender<Queued>>>>,
+
     /// Shutdown signal for graceful termination
     ///
     /// When `shutdown()` is called, this notify wakes up the background task
@@ -135,17 +164,78 @@ impl MessageDispatcher {
     ///
     /// Returns a new `MessageDispatcher` with the routing task running.
     pub fn new<T: Transport + 'static>(transport: Arc<T>) -> Arc<Self> {
+        let (notifications, queue) = mpsc::unbounded_channel();
         let dispatcher = Arc::new(Self {
             response_waiters: Arc::new(Mutex::new(HashMap::new())),
             request_handler: Arc::new(Mutex::new(None)),
             notification_handler: Arc::new(Mutex::new(None)),
+            notifications: Arc::new(Mutex::new(Some(notifications))),
             shutdown: Arc::new(Notify::new()),
         });
 
         // Start background routing task
         Self::spawn_routing_task(dispatcher.clone(), transport);
+        Self::spawn_notification_worker(Arc::clone(&dispatcher.notification_handler), queue);
 
         dispatcher
+    }
+
+    /// Run queued notifications through the handler one at a time.
+    ///
+    /// The queue is unbounded on purpose. Bounded, a full queue would stall
+    /// the routing task — and with it every response — behind a slow handler,
+    /// and deadlock outright on a handler that awaits a request of its own.
+    fn spawn_notification_worker(
+        handler: Arc<Mutex<Option<NotificationHandler>>>,
+        mut queue: mpsc::UnboundedReceiver<Queued>,
+    ) {
+        tokio::spawn(async move {
+            while let Some(work) = queue.recv().await {
+                match work {
+                    Queued::Notification(notification) => {
+                        let handler = handler.lock().clone();
+                        if let Some(handler) = handler {
+                            IN_NOTIFICATION_WORKER
+                                .scope((), handler(notification))
+                                .await;
+                        } else {
+                            tracing::debug!(
+                                "Received notification but no handler registered: method={}",
+                                notification.method
+                            );
+                        }
+                    }
+                    Queued::Flush(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+            tracing::debug!("Notification worker terminated");
+        });
+    }
+
+    /// Wait until every notification received so far has been handled.
+    ///
+    /// A response and the progress notifications before it arrive in order,
+    /// but the response goes straight to its waiter while notifications queue
+    /// for the worker. Without this, a call could return before its handler
+    /// had seen the progress that preceded the result.
+    ///
+    /// A no-op when called from inside a notification handler, which would
+    /// otherwise be waiting for itself to finish.
+    pub async fn flush_notifications(&self) {
+        if IN_NOTIFICATION_WORKER.try_with(|_| ()).is_ok() {
+            return;
+        }
+        let (done, flushed) = oneshot::channel();
+        let queued = self
+            .notifications
+            .lock()
+            .as_ref()
+            .is_some_and(|queue| queue.send(Queued::Flush(done)).is_ok());
+        if queued {
+            let _ = flushed.await;
+        }
     }
 
     /// Register a request handler for server-initiated requests
@@ -245,6 +335,7 @@ impl MessageDispatcher {
     /// ensuring proper cleanup of background resources.
     pub fn shutdown(&self) {
         self.response_waiters.lock().clear();
+        self.notifications.lock().take();
         self.shutdown.notify_one();
         tracing::info!("Message dispatcher shutdown initiated");
     }
@@ -262,7 +353,7 @@ impl MessageDispatcher {
     fn spawn_routing_task<T: Transport + 'static>(dispatcher: Arc<Self>, transport: Arc<T>) {
         let response_waiters = dispatcher.response_waiters.clone();
         let request_handler = dispatcher.request_handler.clone();
-        let notification_handler = dispatcher.notification_handler.clone();
+        let notifications = dispatcher.notifications.clone();
         let shutdown = dispatcher.shutdown.clone();
 
         tokio::spawn(async move {
@@ -295,8 +386,8 @@ impl MessageDispatcher {
                                     msg,
                                     &response_waiters,
                                     &request_handler,
-                                    &notification_handler,
-                                ).await {
+                                    &notifications,
+                                ) {
                                     tracing::error!("Error routing message: {}", e);
                                 }
                             }
@@ -376,17 +467,17 @@ impl MessageDispatcher {
     /// * `msg` - The raw transport message to route
     /// * `response_waiters` - Map of request IDs to oneshot senders
     /// * `request_handler` - Optional request handler
-    /// * `notification_handler` - Optional notification handler
+    /// * `notifications` - Queue feeding the notification worker
     ///
     /// # Errors
     ///
     /// Returns an error if the message cannot be parsed as valid JSON-RPC.
     /// Handler errors are logged but do not propagate.
-    async fn route_message(
+    fn route_message(
         msg: TransportMessage,
         response_waiters: &Arc<Mutex<HashMap<MessageId, oneshot::Sender<JsonRpcResponse>>>>,
         request_handler: &Arc<Mutex<Option<RequestHandler>>>,
-        notification_handler: &Arc<Mutex<Option<NotificationHandler>>>,
+        notifications: &Arc<Mutex<Option<mpsc::UnboundedSender<Queued>>>>,
     ) -> Result<()> {
         // Parse as JSON-RPC message
         let json_msg: JsonRpcMessage = serde_json::from_slice(&msg.payload)
@@ -441,21 +532,19 @@ impl MessageDispatcher {
             }
 
             JsonRpcMessage::Notification(notification) => {
-                // Route to notification handler
+                // Queued, not handled here: the routing task must stay free
+                // to deliver responses, or a handler awaiting one deadlocks.
                 tracing::debug!(
                     "Routing server notification: method={}",
                     notification.method
                 );
 
-                if let Some(handler) = notification_handler.lock().as_ref() {
-                    if let Err(e) = handler(notification) {
-                        tracing::error!("Notification handler error: {}", e);
-                    }
-                } else {
-                    tracing::debug!(
-                        "Received notification but no handler registered: method={}",
-                        notification.method
-                    );
+                let queued = notifications
+                    .lock()
+                    .as_ref()
+                    .is_some_and(|queue| queue.send(Queued::Notification(notification)).is_ok());
+                if !queued {
+                    tracing::debug!("Dropping notification received after shutdown");
                 }
             }
         }
@@ -470,6 +559,7 @@ impl std::fmt::Debug for MessageDispatcher {
             .field("response_waiters", &"<Arc<Mutex<HashMap>>>")
             .field("request_handler", &"<Arc<Mutex<Option<Handler>>>>")
             .field("notification_handler", &"<Arc<Mutex<Option<Handler>>>>")
+            .field("notifications", &"<mpsc::UnboundedSender>")
             .field("shutdown", &"<Arc<Notify>>")
             .finish()
     }

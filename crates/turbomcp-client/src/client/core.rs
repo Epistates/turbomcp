@@ -19,8 +19,10 @@
 //! - **`Arc<ClientInner<T>>`** for cheap cloning
 
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use tokio::sync::Semaphore;
 
@@ -31,11 +33,11 @@ use turbomcp_protocol::types::{
     ClientCapabilities as ProtocolClientCapabilities, InitializeResult as ProtocolInitializeResult,
     *,
 };
-use turbomcp_protocol::{Error, PROTOCOL_VERSION, Result};
+use turbomcp_protocol::{Error, MessageId, PROTOCOL_VERSION, Result};
 use turbomcp_transport::{Transport, TransportConfig, TransportMessage};
 
 use super::config::InitializeResult;
-use super::protocol::ProtocolClient;
+use super::protocol::{Deadline, ProtocolClient, RequestError, RequestOptions};
 use crate::{
     ClientCapabilities,
     handlers::{HandlerError, HandlerRegistry},
@@ -94,9 +96,33 @@ pub(super) struct ClientInner<T: Transport + 'static> {
     /// Handler registry for bidirectional communication (mutex for registration)
     pub(super) handlers: Arc<Mutex<HandlerRegistry>>,
 
-    /// ✅ Semaphore for bounded concurrency of request/notification handlers
+    /// ✅ Semaphore for bounded concurrency of server-initiated request handlers
     /// Limits concurrent server-initiated request handlers to prevent resource exhaustion
     pub(super) handler_semaphore: Arc<Semaphore>,
+
+    /// Server-initiated requests still being handled, by id.
+    ///
+    /// A server that sends `notifications/cancelled` for one of these has
+    /// stopped waiting for it; the entry is how the handler gets stopped too,
+    /// rather than running to completion and answering a request nobody wants.
+    pub(super) server_requests: Arc<Mutex<HashMap<MessageId, tokio::task::AbortHandle>>>,
+
+    /// The `initialize` request the handshake last sent.
+    ///
+    /// Kept so a session the server has dropped can be re-established with
+    /// exactly the declaration the caller chose, rather than the defaults.
+    pub(super) initialize_request: Mutex<Option<InitializeRequest>>,
+
+    /// Incremented by every completed handshake.
+    ///
+    /// A request that failed because its session expired records the value
+    /// it was sent under; if it has moved on by the time the request gets the
+    /// renewal lock, another request has already re-initialized.
+    pub(super) session_generation: AtomicU64,
+
+    /// Serialises session renewal, so concurrent requests that all hit the
+    /// same expired session start one new session between them, not several.
+    pub(super) session_renewal: tokio::sync::Mutex<()>,
 }
 
 /// The core MCP client implementation
@@ -163,6 +189,10 @@ pub(super) struct ClientInner<T: Transport + 'static> {
 /// ```
 pub struct Client<T: Transport + 'static> {
     pub(super) inner: Arc<ClientInner<T>>,
+
+    /// Per-request timeout for calls made through this handle; see
+    /// [`Client::with_timeout`]. `None` uses the transport configuration.
+    pub(super) timeout: Option<Duration>,
 }
 
 /// Clone implementation via Arc (same pattern as reqwest/AWS SDK)
@@ -173,6 +203,7 @@ impl<T: Transport + 'static> Clone for Client<T> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            timeout: self.timeout,
         }
     }
 }
@@ -221,28 +252,7 @@ impl<T: Transport + 'static> Client<T> {
 
     /// Create a new client with an explicit transport configuration.
     pub fn new_with_config(transport: T, config: TransportConfig) -> Self {
-        let capabilities = ClientCapabilities::default();
-        let client = Self {
-            inner: Arc::new(ClientInner {
-                protocol: ProtocolClient::with_config(transport, config),
-                capabilities: capabilities.clone(),
-                initialized: AtomicBool::new(false),
-                shutdown_requested: AtomicBool::new(false),
-                sampling_handler: Arc::new(Mutex::new(None)),
-                sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
-                elicitation_url: AtomicBool::new(false),
-                declared_capabilities: Arc::new(Mutex::new(None)),
-                negotiated_version: Arc::new(Mutex::new(None)),
-                server_capabilities: Arc::new(Mutex::new(None)),
-                handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
-                handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
-            }),
-        };
-
-        // Register dispatcher handlers for bidirectional communication
-        client.register_dispatcher_handlers();
-
-        client
+        Self::with_capabilities_and_config(transport, ClientCapabilities::default(), config)
     }
 
     /// Create a new client with custom capabilities
@@ -293,7 +303,12 @@ impl<T: Transport + 'static> Client<T> {
                 server_capabilities: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
+                server_requests: Arc::new(Mutex::new(HashMap::new())),
+                initialize_request: Mutex::new(None),
+                session_generation: AtomicU64::new(0),
+                session_renewal: tokio::sync::Mutex::new(()),
             }),
+            timeout: None,
         };
 
         // Register dispatcher handlers for bidirectional communication
@@ -604,9 +619,10 @@ impl<T: Transport + 'static> Client<T> {
     ///
     /// ## How It Works
     ///
-    /// The handlers are synchronous closures that spawn async tasks to do the
-    /// actual work. This allows the dispatcher to continue routing messages
-    /// without blocking on handler execution.
+    /// Each server request runs in its own task, so a slow elicitation does
+    /// not hold up a sampling request, and is recorded by id until it
+    /// finishes so `notifications/cancelled` can abort it. Notifications are
+    /// handled one at a time, in arrival order, by the dispatcher's worker.
     fn register_dispatcher_handlers(&self) {
         let dispatcher = self.inner.protocol.dispatcher();
         let client_for_requests = self.clone();
@@ -614,14 +630,25 @@ impl<T: Transport + 'static> Client<T> {
 
         // Request handler (elicitation, sampling, etc.)
         let semaphore = Arc::clone(&self.inner.handler_semaphore);
+        let in_flight = Arc::clone(&self.inner.server_requests);
         let request_handler = Arc::new(move |request: JsonRpcRequest| {
             let client = client_for_requests.clone();
             let method = request.method.clone();
             let req_id = request.id.clone();
             let semaphore = Arc::clone(&semaphore);
+            let key = req_id.clone();
+            let finished = InFlightServerRequest {
+                requests: Arc::clone(&in_flight),
+                id: req_id.clone(),
+            };
+            let (registered, is_registered) = tokio::sync::oneshot::channel::<()>();
 
             // ✅ Spawn async task with bounded concurrency
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
+                // Not before its entry exists: a handler that finished first
+                // would remove nothing and leave the entry behind for good.
+                let _ = is_registered.await;
+                let _finished = finished;
                 // Acquire permit (blocks if 100 requests already in flight)
                 let _permit = match semaphore.acquire().await {
                     Ok(permit) => permit,
@@ -655,32 +682,22 @@ impl<T: Transport + 'static> Client<T> {
                     );
                 }
             });
+            in_flight.lock().insert(key, task.abort_handle());
+            let _ = registered.send(());
             Ok(())
         });
 
-        // Notification handler
-        let semaphore_notif = Arc::clone(&self.inner.handler_semaphore);
-        let notification_handler = Arc::new(move |notification: JsonRpcNotification| {
+        // Notification handler. The dispatcher awaits it before the next
+        // notification, so handlers see notifications in arrival order.
+        let notification_handler: Arc<
+            dyn Fn(JsonRpcNotification) -> futures::future::BoxFuture<'static, ()> + Send + Sync,
+        > = Arc::new(move |notification: JsonRpcNotification| {
             let client = client_for_notifications.clone();
-            let semaphore = Arc::clone(&semaphore_notif);
-
-            // ✅ Spawn async task with bounded concurrency
-            tokio::spawn(async move {
-                // Acquire permit (blocks if 100 handlers already in flight)
-                let _permit = match semaphore.acquire().await {
-                    Ok(permit) => permit,
-                    Err(_) => {
-                        tracing::warn!("Handler semaphore closed, dropping notification");
-                        return;
-                    }
-                };
-
+            Box::pin(async move {
                 if let Err(e) = client.handle_notification(notification).await {
                     tracing::error!("Error handling server notification: {}", e);
                 }
-                // Permit automatically released on drop ✅
-            });
-            Ok(())
+            })
         });
 
         // Register handlers synchronously - no race condition!
@@ -1064,17 +1081,34 @@ impl<T: Transport + 'static> Client<T> {
     async fn handle_notification(&self, notification: JsonRpcNotification) -> Result<()> {
         match notification.method.as_str() {
             "notifications/progress" => {
+                let progress: crate::handlers::ProgressNotification =
+                    serde_json::from_value(notification.params.unwrap_or(serde_json::Value::Null))
+                        .map_err(|e| {
+                            Error::internal(format!("Invalid progress notification: {}", e))
+                        })?;
+
+                // progress.mdx: notifications "MUST only reference tokens that
+                // were provided in an active request". One for a token this
+                // client never issued, or whose request has finished, is not
+                // progress on anything, so the handler never sees it. Recording
+                // it also restarts the request's timeout.
+                if !self
+                    .inner
+                    .protocol
+                    .progress()
+                    .record(&progress.progress_token)
+                {
+                    tracing::debug!(
+                        token = %progress.progress_token,
+                        "Ignoring progress for a token no request is waiting on"
+                    );
+                    return Ok(());
+                }
+
                 // Route to progress handler
                 let handler_opt = self.inner.handlers.lock().get_progress_handler();
 
                 if let Some(handler) = handler_opt {
-                    let progress: crate::handlers::ProgressNotification = serde_json::from_value(
-                        notification.params.unwrap_or(serde_json::Value::Null),
-                    )
-                    .map_err(|e| {
-                        Error::internal(format!("Invalid progress notification: {}", e))
-                    })?;
-
                     if let Err(e) = handler.handle_progress(progress).await {
                         tracing::error!("Progress handler error: {}", e);
                     }
@@ -1178,19 +1212,37 @@ impl<T: Transport + 'static> Client<T> {
             }
 
             "notifications/cancelled" => {
-                // Route to cancellation handler
+                // cancellation.mdx: malformed cancellations SHOULD be ignored.
+                let cancellation: crate::handlers::CancelledNotification =
+                    match serde_json::from_value(
+                        notification.params.unwrap_or(serde_json::Value::Null),
+                    ) {
+                        Ok(cancellation) => cancellation,
+                        Err(e) => {
+                            tracing::debug!("Ignoring malformed cancellation notification: {e}");
+                            return Ok(());
+                        }
+                    };
+
+                // The server has stopped waiting for one of its requests to
+                // us. Its receiver SHOULD stop processing and not send a
+                // response; aborting the handler's task does both. An unknown
+                // or finished id is the race the spec allows for, and is
+                // ignored.
+                if let Some(request_id) = &cancellation.request_id
+                    && let Some(task) = self.inner.server_requests.lock().remove(request_id)
+                {
+                    task.abort();
+                    tracing::debug!(
+                        request_id = ?request_id,
+                        reason = cancellation.reason.as_deref().unwrap_or(""),
+                        "Server cancelled its request; abandoning the handler"
+                    );
+                }
+
                 let handler_opt = self.inner.handlers.lock().get_cancellation_handler();
 
                 if let Some(handler) = handler_opt {
-                    // Parse cancellation notification
-                    let cancellation: crate::handlers::CancelledNotification =
-                        serde_json::from_value(
-                            notification.params.unwrap_or(serde_json::Value::Null),
-                        )
-                        .map_err(|e| {
-                            Error::internal(format!("Invalid cancellation notification: {}", e))
-                        })?;
-
                     // Call handler
                     if let Err(e) = handler.handle_cancellation(cancellation).await {
                         tracing::error!("Cancellation handler error: {}", e);
@@ -1245,6 +1297,26 @@ impl<T: Transport + 'static> Client<T> {
                     tracing::debug!(
                         "Elicitation complete notification received (no handler registered)"
                     );
+                }
+            }
+
+            "notifications/tasks/status" => {
+                // Optional (tasks.mdx: requestors MUST NOT rely on it), but
+                // when it reports a terminal status the task's progress token
+                // is finished with, whether or not anything polls for it.
+                match serde_json::from_value::<
+                    turbomcp_protocol::types::tasks::TaskStatusNotification,
+                >(notification.params.unwrap_or(serde_json::Value::Null))
+                {
+                    Ok(status) => {
+                        tracing::debug!(
+                            task_id = %status.task_id,
+                            status = ?status.status,
+                            "Task status notification"
+                        );
+                        self.observe_task_status(&status.task_id, status.status);
+                    }
+                    Err(e) => tracing::debug!("Ignoring malformed task status notification: {e}"),
                 }
             }
 
@@ -1408,6 +1480,9 @@ impl<T: Transport + 'static> Client<T> {
 
         let requested = request.protocol_version.to_string();
         let declared = request.capabilities.clone();
+        *self.inner.initialize_request.lock() = Some(request.clone());
+        // Not the retrying `Client::request`: this is the request that starts
+        // a session, so it must never try to renew one.
         let protocol_response: ProtocolInitializeResult = self
             .inner
             .protocol
@@ -1445,6 +1520,7 @@ impl<T: Transport + 'static> Client<T> {
 
         // AtomicBool: lock-free store with Ordering::Relaxed
         self.inner.initialized.store(true, Ordering::Relaxed);
+        self.inner.session_generation.fetch_add(1, Ordering::AcqRel);
 
         // Convert protocol response to client response type
         Ok(InitializeResult {
@@ -1496,6 +1572,112 @@ impl<T: Transport + 'static> Client<T> {
             ))),
             _ => Ok(()),
         }
+    }
+
+    /// A handle whose requests wait at most `timeout` for their response.
+    ///
+    /// The handle shares this client's connection and state — it is a clone
+    /// with a different timeout, not a new client:
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # use std::time::Duration;
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
+    /// let client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// // A slow tool gets ten minutes; everything else keeps the default.
+    /// let result = client
+    ///     .with_timeout(Duration::from_secs(600))
+    ///     .call_tool("reindex", None, None)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// It replaces the transport configuration's `timeouts.request` for
+    /// those requests, and raises `timeouts.total` to match if that is
+    /// shorter. A request that asked for progress restarts its timeout on
+    /// every progress notification, up to that `total`. When a request times
+    /// out, the server is sent `notifications/cancelled` for it (for a
+    /// task-augmented call, `tasks/cancel` for its task).
+    #[must_use]
+    pub fn with_timeout(&self, timeout: Duration) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            timeout: Some(timeout),
+        }
+    }
+
+    /// The deadline for requests made through this handle.
+    pub(super) fn deadline(&self) -> Deadline {
+        self.timeout.map_or(Deadline::Configured, Deadline::Within)
+    }
+
+    /// Send a request, renewing the session once if the server has dropped it.
+    pub(super) async fn request<R: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<R> {
+        self.request_with(
+            method,
+            params,
+            RequestOptions::with_deadline(self.deadline()),
+        )
+        .await
+    }
+
+    /// [`Self::request`] with per-request options.
+    ///
+    /// Streamable HTTP answers a request for a session the server has
+    /// terminated with 404, and the client "MUST start a new session by
+    /// sending a new `InitializeRequest`". The transport forgets the session
+    /// and says so; this starts the new one and sends the request again —
+    /// once, so a server that keeps expiring sessions cannot loop it.
+    pub(super) async fn request_with<R: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+        options: RequestOptions,
+    ) -> Result<R> {
+        let session = self.inner.session_generation.load(Ordering::Acquire);
+        match self
+            .inner
+            .protocol
+            .request_with(method, params.as_ref(), &options)
+            .await
+        {
+            Err(RequestError::SessionExpired(error)) => {
+                self.renew_session(session, error).await?;
+                self.inner
+                    .protocol
+                    .request_with(method, params.as_ref(), &options)
+                    .await
+                    .map_err(Error::from)
+            }
+            result => result.map_err(Error::from),
+        }
+    }
+
+    /// Start a new session in place of `expired`, unless another request
+    /// already has.
+    ///
+    /// Re-sends the `initialize` request the caller last used, so the new
+    /// session declares what the old one did.
+    async fn renew_session(&self, expired: u64, error: Error) -> Result<()> {
+        let _renewing = self.inner.session_renewal.lock().await;
+        if self.inner.session_generation.load(Ordering::Acquire) != expired {
+            return Ok(());
+        }
+        let Some(request) = self.inner.initialize_request.lock().clone() else {
+            return Err(error);
+        };
+
+        tracing::info!("Server session expired; initializing a new one");
+        self.inner.initialized.store(false, Ordering::Relaxed);
+        self.initialize_with_request(request).await.map(|_| ())
     }
 
     /// Subscribe to resource change notifications
@@ -1550,15 +1732,13 @@ impl<T: Transport + 'static> Client<T> {
             _meta: None,
         };
 
-        self.inner
-            .protocol
-            .request(
-                "resources/subscribe",
-                Some(serde_json::to_value(request).map_err(|e| {
-                    Error::internal(format!("Failed to serialize subscribe request: {}", e))
-                })?),
-            )
-            .await
+        self.request(
+            "resources/subscribe",
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::internal(format!("Failed to serialize subscribe request: {}", e))
+            })?),
+        )
+        .await
     }
 
     /// Unsubscribe from resource change notifications
@@ -1612,15 +1792,13 @@ impl<T: Transport + 'static> Client<T> {
             _meta: None,
         };
 
-        self.inner
-            .protocol
-            .request(
-                "resources/unsubscribe",
-                Some(serde_json::to_value(request).map_err(|e| {
-                    Error::internal(format!("Failed to serialize unsubscribe request: {}", e))
-                })?),
-            )
-            .await
+        self.request(
+            "resources/unsubscribe",
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::internal(format!("Failed to serialize unsubscribe request: {}", e))
+            })?),
+        )
+        .await
     }
 
     /// Get the client's capabilities configuration
@@ -1653,15 +1831,16 @@ impl<T: Transport + 'static> Client<T> {
             task_id: task_id.to_string(),
         };
 
-        self.inner
-            .protocol
+        let task: Task = self
             .request(
                 "tasks/get",
                 Some(serde_json::to_value(request).map_err(|e| {
                     Error::internal(format!("Failed to serialize get_task request: {}", e))
                 })?),
             )
-            .await
+            .await?;
+        self.observe_task_status(&task.task_id, task.status);
+        Ok(task)
     }
 
     /// Cancel a running task (tasks/cancel)
@@ -1684,15 +1863,16 @@ impl<T: Transport + 'static> Client<T> {
             task_id: task_id.to_string(),
         };
 
-        self.inner
-            .protocol
+        let task: Task = self
             .request(
                 "tasks/cancel",
                 Some(serde_json::to_value(request).map_err(|e| {
                     Error::internal(format!("Failed to serialize cancel_task request: {}", e))
                 })?),
             )
-            .await
+            .await?;
+        self.observe_task_status(&task.task_id, task.status);
+        Ok(task)
     }
 
     /// List all tasks (tasks/list)
@@ -1722,21 +1902,30 @@ impl<T: Transport + 'static> Client<T> {
             _meta: None,
         };
 
-        self.inner
-            .protocol
+        let listed: ListTasksResult = self
             .request(
                 "tasks/list",
                 Some(serde_json::to_value(request).map_err(|e| {
                     Error::internal(format!("Failed to serialize list_tasks request: {}", e))
                 })?),
             )
-            .await
+            .await?;
+        for task in &listed.tasks {
+            self.observe_task_status(&task.task_id, task.status);
+        }
+        Ok(listed)
     }
 
     /// Retrieve the result of a completed task (tasks/result)
     ///
     /// Blocks until the task reaches a terminal state (completed, failed, or cancelled),
     /// then returns the operation result.
+    ///
+    /// Because the server holds this request open for as long as the task
+    /// runs, it has no timeout by default — the transport's request timeout
+    /// would otherwise fail every task that outlived it. Call it through
+    /// [`Client::with_timeout`] to bound the wait; `tasks/get` polls without
+    /// blocking.
     ///
     /// # Arguments
     ///
@@ -1754,9 +1943,8 @@ impl<T: Transport + 'static> Client<T> {
             task_id: task_id.to_string(),
         };
 
-        self.inner
-            .protocol
-            .request(
+        let result = self
+            .request_with(
                 "tasks/result",
                 Some(serde_json::to_value(request).map_err(|e| {
                     Error::internal(format!(
@@ -1764,8 +1952,33 @@ impl<T: Transport + 'static> Client<T> {
                         e
                     ))
                 })?),
+                RequestOptions::with_deadline(
+                    self.timeout.map_or(Deadline::Unbounded, Deadline::Within),
+                ),
             )
-            .await
+            .await;
+        // tasks/result answers only once the task is terminal — with its
+        // result or its error. A transport failure says nothing about it.
+        let terminal = match &result {
+            Ok(_) => true,
+            Err(e) => e.kind != turbomcp_protocol::ErrorKind::Transport,
+        };
+        if terminal {
+            self.observe_task_status(task_id, TaskStatus::Completed);
+        }
+        result
+    }
+
+    /// Release what the client keeps for a task once it reaches a terminal
+    /// status: the progress token of the request that created it.
+    pub(super) fn observe_task_status(
+        &self,
+        task_id: &str,
+        status: turbomcp_protocol::types::tasks::TaskStatus,
+    ) {
+        if status.is_terminal() {
+            self.inner.protocol.progress().finish_task(task_id);
+        }
     }
 
     // Note: Capability detection methods (has_*_handler, get_*_capabilities)
@@ -1823,6 +2036,19 @@ impl<T: Transport + 'static> Client<T> {
         } else {
             None
         }
+    }
+}
+
+/// Removes a server request from [`ClientInner::server_requests`] when its
+/// task ends — by completing, panicking or being aborted alike.
+struct InFlightServerRequest {
+    requests: Arc<Mutex<HashMap<MessageId, tokio::task::AbortHandle>>>,
+    id: MessageId,
+}
+
+impl Drop for InFlightServerRequest {
+    fn drop(&mut self) {
+        self.requests.lock().remove(&self.id);
     }
 }
 

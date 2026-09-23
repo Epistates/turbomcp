@@ -112,7 +112,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         } else {
             None
         };
-        self.inner.protocol.request("prompts/list", params).await
+        self.request("prompts/list", params).await
     }
 
     /// Get a specific prompt template with argument support
@@ -211,14 +211,12 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             _meta: None,
         };
 
-        self.inner
-            .protocol
-            .request(
-                "prompts/get",
-                Some(serde_json::to_value(request).map_err(|e| {
-                    Error::internal(format!("Failed to serialize prompt request: {}", e))
-                })?),
-            )
-            .await
+        self.request(
+            "prompts/get",
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::internal(format!("Failed to serialize prompt request: {}", e))
+            })?),
+        )
+        .await
     }
 }

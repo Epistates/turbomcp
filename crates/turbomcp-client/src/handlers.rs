@@ -931,13 +931,18 @@ pub trait ElicitationCompleteHandler: Send + Sync + std::fmt::Debug {
 /// includes a progress token, current progress value, optional total, and
 /// optional human-readable message.
 ///
-/// # Rate limiting
+/// # Ordering and rate
+///
+/// Notifications are handled one at a time, in the order they arrived, so a
+/// handler sees progress values in the order the server reported them, and
+/// sees all of a call's progress before the call returns. Only notifications
+/// for a token of a call still in flight (or of a task it created that is not
+/// yet terminal) are delivered.
 ///
 /// The server picks its own frequency, and a tool reporting once per loop
-/// iteration can arrive very fast. `max_concurrent_handlers` bounds how many
-/// of these run at once, not how many arrive — so a handler that does real
-/// work (a UI repaint, a write) should debounce rather than act on every
-/// notification.
+/// iteration can arrive very fast. Every other notification waits behind this
+/// handler, so one that does real work (a UI repaint, a write) should return
+/// quickly and debounce rather than act on every notification.
 ///
 /// # Examples
 ///
