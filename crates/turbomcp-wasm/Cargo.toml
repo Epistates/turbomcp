@@ -19,9 +19,10 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["browser"]
 # Browser target with wasm-bindgen
-browser = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-wasm-bindgen", "futures-channel"]
+# turbomcp-transport-streamable parses SSE answers to client POSTs.
+browser = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-wasm-bindgen", "futures-channel", "dep:turbomcp-transport-streamable"]
 # WASI Preview 2 target - full runtime support for Wasmtime, WasmEdge, etc.
-wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url"]
+wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url", "dep:turbomcp-transport-streamable"]
 # Console logging for debugging
 console-log = ["browser", "console_error_panic_hook"]
 # WASM server support - MCP servers running in WASM environments (Cloudflare Workers, etc.)

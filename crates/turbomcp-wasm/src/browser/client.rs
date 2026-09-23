@@ -85,17 +85,23 @@ impl McpClient {
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
+        crate::client_http::check_negotiated_version(result.protocol_version.as_str())
+            .map_err(|e| JsValue::from_str(&e))?;
+
         self.initialized = true;
         self.server_info = Some(result.server_info.clone());
         self.server_capabilities = Some(result.capabilities.clone());
         self.protocol_version = result.protocol_version.to_string();
+        self.transport
+            .set_protocol_version(self.protocol_version.clone());
 
-        // Send initialized notification
-        let _: serde_json::Value = self
-            .transport
-            .request("notifications/initialized", None::<()>)
+        // `notifications/initialized` is a notification: it carries no id
+        // and gets no response. Sending it as a request made spec-following
+        // servers answer with an error, or wait for a reply that never came.
+        self.transport
+            .notify("notifications/initialized", None::<()>)
             .await
-            .unwrap_or_default();
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
     }

@@ -45,6 +45,17 @@ pub struct HttpTransport {
     next_id: AtomicU64,
     /// Whether the transport is open
     is_open: AtomicBool,
+    /// Session id the server issued at `initialize`
+    session_id: RefCell<Option<String>>,
+    /// Protocol version negotiated at `initialize`
+    protocol_version: RefCell<Option<String>>,
+}
+
+/// A POST's reply, as far as the JSON-RPC layer needs it.
+#[cfg_attr(not(target_os = "wasi"), allow(dead_code))]
+struct HttpReply {
+    content_type: Option<String>,
+    body: String,
 }
 
 impl HttpTransport {
@@ -64,7 +75,50 @@ impl HttpTransport {
             timeout_ms: 30_000, // 30 second default
             next_id: AtomicU64::new(1),
             is_open: AtomicBool::new(true),
+            session_id: RefCell::new(None),
+            protocol_version: RefCell::new(None),
         }
+    }
+
+    /// Record the protocol version negotiated at `initialize`, sent as
+    /// `MCP-Protocol-Version` from then on.
+    pub fn set_protocol_version(&self, version: impl Into<String>) {
+        *self.protocol_version.borrow_mut() = Some(version.into());
+    }
+
+    /// The session id the server issued, if any.
+    #[must_use]
+    pub fn session_id(&self) -> Option<String> {
+        self.session_id.borrow().clone()
+    }
+
+    /// Every header a POST carries: the caller's, then the protocol's own.
+    ///
+    /// Streamable HTTP requires `Accept` to list both answer forms, the
+    /// session id on every request after `initialize`, and the negotiated
+    /// version alongside it.
+    #[cfg_attr(not(target_os = "wasi"), allow(dead_code))]
+    fn outgoing_headers(&self) -> Vec<(String, String)> {
+        let mut headers: Vec<(String, String)> = self
+            .headers
+            .borrow()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        headers.push(("Accept".to_string(), crate::client_http::ACCEPT.to_string()));
+        if let Some(session_id) = self.session_id.borrow().as_ref() {
+            headers.push((
+                crate::client_http::SESSION_ID_HEADER.to_string(),
+                session_id.clone(),
+            ));
+        }
+        if let Some(version) = self.protocol_version.borrow().as_ref() {
+            headers.push((
+                crate::client_http::PROTOCOL_VERSION_HEADER.to_string(),
+                version.clone(),
+            ));
+        }
+        headers
     }
 
     /// Add a custom header to all requests
@@ -87,7 +141,7 @@ impl HttpTransport {
     }
 
     /// Make an HTTP POST request using WASI
-    fn http_post(&self, body: &str) -> Result<String, TransportError> {
+    fn http_post(&self, body: &str) -> Result<HttpReply, TransportError> {
         #[cfg(target_os = "wasi")]
         {
             use wasi::http::outgoing_handler;
@@ -121,7 +175,7 @@ impl HttpTransport {
 
             // Create headers
             let headers = Fields::new();
-            for (key, value) in self.headers.borrow().iter() {
+            for (key, value) in &self.outgoing_headers() {
                 headers
                     .append(&key.to_lowercase(), value.as_bytes())
                     .map_err(|e| {
@@ -199,12 +253,27 @@ impl HttpTransport {
 
             // Check status
             let status = response.status();
-            if status < 200 || status >= 300 {
+            if !(200..300).contains(&status) {
                 return Err(TransportError::Http {
                     status,
                     message: format!("HTTP request failed with status {status}"),
                 });
             }
+
+            // Keep the session the server issued, and note the body's form
+            let response_headers = response.headers();
+            let header = |name: &str| {
+                response_headers
+                    .get(name)
+                    .into_iter()
+                    .next()
+                    .and_then(|value| String::from_utf8(value).ok())
+            };
+            if let Some(session_id) = header("mcp-session-id") {
+                *self.session_id.borrow_mut() = Some(session_id);
+            }
+            let content_type = header("content-type");
+            drop(response_headers);
 
             // Read response body
             let incoming_body = response.consume().map_err(|_| {
@@ -216,20 +285,16 @@ impl HttpTransport {
                 .map_err(|_| TransportError::Connection("Failed to get body stream".to_string()))?;
 
             let mut response_bytes = Vec::new();
-            loop {
-                match body_stream.blocking_read(65536) {
-                    Ok(chunk) => {
-                        if chunk.is_empty() {
-                            break;
-                        }
-                        response_bytes.extend_from_slice(&chunk);
-                    }
-                    Err(_) => break,
+            while let Ok(chunk) = body_stream.blocking_read(65536) {
+                if chunk.is_empty() {
+                    break;
                 }
+                response_bytes.extend_from_slice(&chunk);
             }
 
-            String::from_utf8(response_bytes)
-                .map_err(|e| TransportError::Io(format!("Invalid UTF-8 in response: {e}")))
+            let body = String::from_utf8(response_bytes)
+                .map_err(|e| TransportError::Io(format!("Invalid UTF-8 in response: {e}")))?;
+            Ok(HttpReply { content_type, body })
         }
 
         #[cfg(not(target_os = "wasi"))]
@@ -263,10 +328,13 @@ impl Transport for HttpTransport {
 
         // Serialize and send
         let request_json = serde_json::to_string(&request)?;
-        let response_json = self.http_post(&request_json)?;
+        let reply = self.http_post(&request_json)?;
 
-        // Parse response
-        let response: JsonRpcResponse<R> = serde_json::from_str(&response_json)?;
+        // Parse response: the body is JSON, or an SSE stream carrying it
+        let message =
+            crate::client_http::response_message(reply.content_type.as_deref(), &reply.body, id)
+                .map_err(TransportError::Protocol)?;
+        let response: JsonRpcResponse<R> = serde_json::from_value(message)?;
 
         // Check response ID matches (structural compare; tolerates any spec-valid id type)
         if !response.id_matches(id) {
@@ -292,7 +360,7 @@ impl Transport for HttpTransport {
         let notification = JsonRpcNotification::new(method, params);
         let json = serde_json::to_string(&notification)?;
 
-        // For notifications, we still send but ignore the response
+        // The server answers a notification 202 with no body.
         let _ = self.http_post(&json)?;
 
         Ok(())
@@ -349,5 +417,24 @@ mod tests {
         assert!(transport.is_ready());
         transport.close().unwrap();
         assert!(!transport.is_ready());
+    }
+
+    #[test]
+    fn posts_carry_streamable_http_headers() {
+        let transport = HttpTransport::new("https://api.example.com/mcp");
+        let names: Vec<_> = transport
+            .outgoing_headers()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert!(names.contains(&"Accept".to_string()));
+        assert!(!names.contains(&"Mcp-Session-Id".to_string()));
+
+        *transport.session_id.borrow_mut() = Some("mcp-abc".into());
+        transport.set_protocol_version("2025-06-18");
+        let headers = transport.outgoing_headers();
+        assert!(headers.contains(&("Accept".into(), crate::client_http::ACCEPT.into())));
+        assert!(headers.contains(&("Mcp-Session-Id".into(), "mcp-abc".into())));
+        assert!(headers.contains(&("MCP-Protocol-Version".into(), "2025-06-18".into())));
     }
 }
