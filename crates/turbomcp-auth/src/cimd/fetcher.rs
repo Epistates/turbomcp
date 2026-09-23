@@ -70,6 +70,10 @@ pub struct FetcherConfig {
     pub max_response_size: usize,
 
     /// Request timeout (default: 5 seconds)
+    ///
+    /// NOTE: requests go through `SsrfValidator`'s DNS-pinned client (see
+    /// `fetch_pinned`), so the *effective* timeout is the `SsrfPolicy`'s, not
+    /// this field's. Both default to 5s.
     pub request_timeout: Duration,
 
     /// Default cache TTL if no cache headers present (default: 1 hour)
@@ -85,6 +89,8 @@ pub struct FetcherConfig {
     pub rate_limit_window: Duration,
 
     /// User agent for HTTP requests
+    ///
+    /// NOTE: not currently applied — see the note on `request_timeout`.
     pub user_agent: String,
 }
 
@@ -111,10 +117,9 @@ impl Default for FetcherConfig {
 /// - Response size limits
 /// - Request timeouts
 pub struct MetadataFetcher {
-    /// HTTP client
-    client: reqwest::Client,
-
-    /// SSRF validator
+    /// SSRF validator. Also the source of the HTTP client used for every
+    /// request — see `fetch_pinned` for why there's no separately-built
+    /// `reqwest::Client` here.
     ssrf_validator: Arc<SsrfValidator>,
 
     /// Configuration
@@ -146,15 +151,7 @@ impl MetadataFetcher {
         ssrf_validator: SsrfValidator,
         config: FetcherConfig,
     ) -> Result<Self, FetcherError> {
-        let client = reqwest::Client::builder()
-            .timeout(config.request_timeout)
-            .user_agent(&config.user_agent)
-            .redirect(reqwest::redirect::Policy::none()) // Don't follow redirects (security)
-            .build()
-            .map_err(|e| FetcherError::HttpError(format!("Failed to create HTTP client: {}", e)))?;
-
         Ok(Self {
-            client,
             ssrf_validator: Arc::new(ssrf_validator),
             config,
             cache: Arc::new(DashMap::new()),
@@ -179,27 +176,21 @@ impl MetadataFetcher {
         &self,
         client_id_url: &str,
     ) -> Result<ValidatedClientMetadata, FetcherError> {
-        // 1. Validate URL with SSRF protection
-        debug!("Validating client_id URL: {}", client_id_url);
-        self.ssrf_validator.validate_url(client_id_url)?;
-
-        // 2. Check rate limits
+        // 1. Check rate limits
         self.check_rate_limit(client_id_url)?;
 
-        // 3. Check cache
+        // 2. Check cache
         if let Some(cached) = self.get_cached(client_id_url) {
             debug!("Returning cached metadata for: {}", client_id_url);
             return Ok(cached);
         }
 
-        // 4. Fetch from network
+        // 3. Validate URL and fetch over a DNS-pinned client (see
+        // `fetch_pinned`) — a client_id URL is, by definition, attacker
+        // (client) controlled, so this is exactly the SSRF surface the MCP
+        // spec calls out for CIMD.
         debug!("Fetching metadata from network: {}", client_id_url);
-        let response = self
-            .client
-            .get(client_id_url)
-            .send()
-            .await
-            .map_err(|e| FetcherError::HttpError(format!("Request failed: {}", e)))?;
+        let response = self.fetch_pinned(client_id_url).await?;
 
         // Check response status
         if !response.status().is_success() {
@@ -278,6 +269,25 @@ impl MetadataFetcher {
         entry.count += 1;
 
         Ok(())
+    }
+
+    /// Validate a URL against the SSRF policy and fetch it over a client
+    /// whose DNS resolution is pinned to the IP addresses that validation
+    /// just checked — validating separately from fetching leaves a TOCTOU gap
+    /// an attacker can exploit via DNS rebinding (resolve to a public IP for
+    /// the check, a private/metadata IP for the fetch moments later).
+    ///
+    /// NOTE: as with `discovery::DiscoveryFetcher::fetch_pinned`, the
+    /// effective request timeout and redirect policy come from
+    /// `self.ssrf_validator`'s `SsrfPolicy`, not from `self.config`.
+    async fn fetch_pinned(&self, url: &str) -> Result<reqwest::Response, FetcherError> {
+        self.ssrf_validator.validate_url(url)?;
+        let (client, pinned_url) = self.ssrf_validator.create_pinned_client(url)?;
+        client
+            .get(&pinned_url)
+            .send()
+            .await
+            .map_err(|e| FetcherError::HttpError(format!("Request failed: {}", e)))
     }
 
     /// Get cached metadata if valid

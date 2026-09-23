@@ -38,10 +38,10 @@ pub enum FetcherError {
     ValidationFailed(#[from] DiscoveryError),
 
     /// All discovery endpoints failed
-    #[error("All discovery endpoints failed. RFC 8414: {oauth2_error}, OIDC: {oidc_error}")]
+    #[error("All discovery endpoints failed: {attempts:?}")]
     AllEndpointsFailed {
-        oauth2_error: String,
-        oidc_error: String,
+        /// `(url, error)` for every endpoint tried, in priority order
+        attempts: Vec<(String, String)>,
     },
 
     /// Invalid issuer URL
@@ -70,6 +70,14 @@ pub struct FetcherConfig {
     pub max_response_size: usize,
 
     /// Request timeout (default: 5 seconds)
+    ///
+    /// NOTE: requests now go through [`crate::ssrf::SsrfValidator`]'s
+    /// DNS-pinned client (see `fetch_pinned`) rather than a client built from
+    /// this config, so the *effective* timeout is
+    /// `SsrfPolicy::request_timeout` on the validator passed to
+    /// [`DiscoveryFetcher::new`]/[`DiscoveryFetcher::with_config`]. Both
+    /// default to 5s; set the SSRF policy's timeout if you need a different
+    /// value.
     pub request_timeout: Duration,
 
     /// Default cache TTL if no cache headers present (default: 1 hour)
@@ -79,9 +87,16 @@ pub struct FetcherConfig {
     pub max_cache_ttl: Duration,
 
     /// User agent for HTTP requests
+    ///
+    /// NOTE: not currently applied — see the note on `request_timeout`.
     pub user_agent: String,
 
     /// Whether to try OIDC discovery if RFC 8414 fails (default: true)
+    ///
+    /// Only consulted for issuers *without* a path component (RFC 8414 is the
+    /// only mandatory endpoint there per the MCP spec); for issuers with a
+    /// path, both OIDC forms are always tried after RFC 8414, per the spec's
+    /// discovery priority order.
     pub fallback_to_oidc: bool,
 }
 
@@ -102,21 +117,14 @@ impl Default for FetcherConfig {
 ///
 /// Fetches and caches OAuth 2.0 Authorization Server Metadata (RFC 8414) and
 /// OpenID Connect Discovery 1.0 documents with:
-/// - SSRF protection
-/// - Multi-endpoint discovery (RFC 8414 first, OIDC Discovery as fallback)
+/// - SSRF protection (DNS-pinned fetches, see `fetch_pinned`)
+/// - Multi-endpoint discovery, MCP 2025-11-25 priority order (see `fetch`)
 /// - HTTP caching (respects Cache-Control headers)
 /// - Response size limits
-/// - Request timeouts
-///
-/// ## Discovery Endpoint Priority
-///
-/// 1. RFC 8414: `/.well-known/oauth-authorization-server[/path]`
-/// 2. OIDC Discovery: `/.well-known/openid-configuration` (if fallback enabled)
 pub struct DiscoveryFetcher {
-    /// HTTP client
-    client: reqwest::Client,
-
-    /// SSRF validator
+    /// SSRF validator. Also the source of the HTTP client used for every
+    /// request — see `fetch_pinned` for why there's no separately-built
+    /// `reqwest::Client` here.
     ssrf_validator: Arc<SsrfValidator>,
 
     /// Configuration
@@ -145,15 +153,7 @@ impl DiscoveryFetcher {
         ssrf_validator: SsrfValidator,
         config: FetcherConfig,
     ) -> Result<Self, FetcherError> {
-        let client = reqwest::Client::builder()
-            .timeout(config.request_timeout)
-            .user_agent(&config.user_agent)
-            .redirect(reqwest::redirect::Policy::none()) // Don't follow redirects (security)
-            .build()
-            .map_err(|e| FetcherError::HttpError(format!("Failed to create HTTP client: {}", e)))?;
-
         Ok(Self {
-            client,
             ssrf_validator: Arc::new(ssrf_validator),
             config,
             cache: Arc::new(DashMap::new()),
@@ -162,13 +162,27 @@ impl DiscoveryFetcher {
 
     /// Fetch discovery metadata from an issuer URL
     ///
-    /// This method tries multiple discovery endpoints in priority order:
-    /// 1. RFC 8414: `/.well-known/oauth-authorization-server[/path]`
-    /// 2. OIDC Discovery: `/.well-known/openid-configuration` (if enabled)
+    /// Implements the endpoint priority order the MCP 2025-11-25 spec requires
+    /// ("Authorization Server Metadata Discovery"), which differs depending on
+    /// whether the issuer URL has a path component:
+    ///
+    /// For an issuer *with* a path (e.g. `https://auth.example.com/tenant1`):
+    /// 1. RFC 8414 with path insertion: `/.well-known/oauth-authorization-server/tenant1`
+    /// 2. OIDC Discovery with path insertion: `/.well-known/openid-configuration/tenant1`
+    /// 3. OIDC Discovery with path appending: `/tenant1/.well-known/openid-configuration`
+    ///
+    /// For an issuer *without* a path:
+    /// 1. RFC 8414: `/.well-known/oauth-authorization-server`
+    /// 2. OIDC Discovery: `/.well-known/openid-configuration`
+    ///
+    /// Every endpoint is tried in order until one succeeds; this is the only
+    /// discovery algorithm in the crate (see [`crate::jwt::JwtValidator`],
+    /// which is built on top of this fetcher rather than reimplementing its
+    /// own, narrower version).
     ///
     /// # Errors
     ///
-    /// Returns [`FetcherError`] if all discovery endpoints fail
+    /// Returns [`FetcherError::AllEndpointsFailed`] if every endpoint fails.
     pub async fn fetch(&self, issuer: &str) -> Result<ValidatedDiscoveryMetadata, FetcherError> {
         // Validate issuer URL
         let issuer_url = url::Url::parse(issuer)
@@ -186,47 +200,43 @@ impl DiscoveryFetcher {
             return Ok(cached);
         }
 
-        // Try RFC 8414 first
-        let oauth2_url = self.build_oauth2_discovery_url(&issuer_url)?;
-        debug!("Trying RFC 8414 discovery: {}", oauth2_url);
+        let has_path = {
+            let path = issuer_url.path().trim_end_matches('/');
+            !path.is_empty() && path != "/"
+        };
 
-        match self.fetch_oauth2(&oauth2_url, issuer).await {
-            Ok(metadata) => {
-                debug!("Successfully fetched RFC 8414 metadata for: {}", issuer);
-                Ok(metadata)
-            }
-            Err(e) => {
-                debug!("RFC 8414 discovery failed: {}", e);
+        // (is_oidc, url) pairs, in the spec-mandated priority order.
+        let mut endpoints = vec![(false, self.build_oauth2_discovery_url(&issuer_url)?)];
+        if has_path {
+            endpoints.push((true, self.build_oidc_path_insertion_url(&issuer_url)?));
+            endpoints.push((true, self.build_oidc_path_appending_url(&issuer_url)?));
+        } else if self.config.fallback_to_oidc {
+            endpoints.push((true, self.build_oidc_path_insertion_url(&issuer_url)?));
+        }
 
-                // Try OIDC Discovery as fallback if enabled
-                if self.config.fallback_to_oidc {
-                    let oidc_url = self.build_oidc_discovery_url(&issuer_url)?;
-                    debug!("Trying OIDC Discovery fallback: {}", oidc_url);
+        let mut attempts = Vec::with_capacity(endpoints.len());
+        for (is_oidc, url) in endpoints {
+            debug!(url = %url, "Trying authorization server discovery endpoint");
+            let result = if is_oidc {
+                self.fetch_oidc(&url, issuer).await
+            } else {
+                self.fetch_oauth2(&url, issuer).await
+            };
 
-                    match self.fetch_oidc(&oidc_url, issuer).await {
-                        Ok(metadata) => {
-                            debug!("Successfully fetched OIDC metadata for: {}", issuer);
-                            Ok(metadata)
-                        }
-                        Err(oidc_error) => {
-                            warn!(
-                                "Both RFC 8414 and OIDC Discovery failed for issuer: {}",
-                                issuer
-                            );
-                            Err(FetcherError::AllEndpointsFailed {
-                                oauth2_error: e.to_string(),
-                                oidc_error: oidc_error.to_string(),
-                            })
-                        }
-                    }
-                } else {
-                    Err(e)
+            match result {
+                Ok(metadata) => {
+                    debug!(url = %url, "Successfully fetched authorization server metadata");
+                    return Ok(metadata);
                 }
+                Err(e) => attempts.push((url, e.to_string())),
             }
         }
+
+        warn!(issuer = %issuer, "All authorization server discovery endpoints failed");
+        Err(FetcherError::AllEndpointsFailed { attempts })
     }
 
-    /// Build RFC 8414 discovery URL
+    /// Build RFC 8414 discovery URL (path-insertion form)
     ///
     /// For issuer without path: `https://example.com/.well-known/oauth-authorization-server`
     /// For issuer with path: `https://example.com/.well-known/oauth-authorization-server/path`
@@ -247,12 +257,31 @@ impl DiscoveryFetcher {
         Ok(url.to_string())
     }
 
-    /// Build OIDC Discovery URL
+    /// Build the OIDC Discovery URL, path-insertion form.
     ///
-    /// Always: `https://example.com/.well-known/openid-configuration`
-    fn build_oidc_discovery_url(&self, issuer: &url::Url) -> Result<String, FetcherError> {
+    /// For issuer without path: `https://example.com/.well-known/openid-configuration`
+    /// For issuer with path: `https://example.com/.well-known/openid-configuration/path`
+    fn build_oidc_path_insertion_url(&self, issuer: &url::Url) -> Result<String, FetcherError> {
         let mut url = issuer.clone();
-        url.set_path("/.well-known/openid-configuration");
+
+        let path = url.path().trim_end_matches('/');
+        let discovery_path = if path.is_empty() || path == "/" {
+            "/.well-known/openid-configuration".to_string()
+        } else {
+            format!("/.well-known/openid-configuration{}", path)
+        };
+
+        url.set_path(&discovery_path);
+        Ok(url.to_string())
+    }
+
+    /// Build the OIDC Discovery URL, path-appending form (only meaningful for
+    /// issuers with a path component): `https://example.com/path/.well-known/openid-configuration`
+    fn build_oidc_path_appending_url(&self, issuer: &url::Url) -> Result<String, FetcherError> {
+        let mut url = issuer.clone();
+
+        let path = url.path().trim_end_matches('/');
+        url.set_path(&format!("{}/.well-known/openid-configuration", path));
         Ok(url.to_string())
     }
 
@@ -262,16 +291,12 @@ impl DiscoveryFetcher {
         discovery_url: &str,
         issuer: &str,
     ) -> Result<ValidatedDiscoveryMetadata, FetcherError> {
-        // Validate URL with SSRF protection
-        self.ssrf_validator.validate_url(discovery_url)?;
-
-        // Fetch from network
-        let response = self
-            .client
-            .get(discovery_url)
-            .send()
-            .await
-            .map_err(|e| FetcherError::HttpError(format!("Request failed: {}", e)))?;
+        // Validate URL, then fetch over a client whose DNS resolution is
+        // pinned to the IPs that were just validated (see `fetch_pinned` doc
+        // comment for why: validating a URL and then fetching it over an
+        // unrelated connection is a TOCTOU gap — DNS can resolve differently
+        // between the two).
+        let response = self.fetch_pinned(discovery_url).await?;
 
         // Check response status
         if !response.status().is_success() {
@@ -320,16 +345,7 @@ impl DiscoveryFetcher {
         discovery_url: &str,
         issuer: &str,
     ) -> Result<ValidatedDiscoveryMetadata, FetcherError> {
-        // Validate URL with SSRF protection
-        self.ssrf_validator.validate_url(discovery_url)?;
-
-        // Fetch from network
-        let response = self
-            .client
-            .get(discovery_url)
-            .send()
-            .await
-            .map_err(|e| FetcherError::HttpError(format!("Request failed: {}", e)))?;
+        let response = self.fetch_pinned(discovery_url).await?;
 
         // Check response status
         if !response.status().is_success() {
@@ -370,6 +386,36 @@ impl DiscoveryFetcher {
         self.cache_metadata(issuer, validated.clone(), cache_ttl);
 
         Ok(validated)
+    }
+
+    /// Validate a URL against the SSRF policy and fetch it over a client
+    /// whose DNS resolution is pinned to the IP addresses that validation
+    /// just checked.
+    ///
+    /// `self.client` (built once, in `with_config`, from `FetcherConfig`) is
+    /// deliberately *not* used for the actual request: resolving the
+    /// hostname during `validate_url` and then handing the same hostname to
+    /// an independent client for the real connection is a TOCTOU gap — an
+    /// attacker who controls DNS for the issuer's host can return a benign IP
+    /// for the validation lookup and a private/metadata IP for the follow-up
+    /// lookup the independent client performs milliseconds later (DNS
+    /// rebinding). `SsrfValidator::create_pinned_client` resolves once,
+    /// validates every resolved IP, and returns a client hard-pinned to that
+    /// address, so the request physically cannot land anywhere else.
+    ///
+    /// Note this means the request's timeout and redirect policy come from
+    /// `self.ssrf_validator`'s [`crate::ssrf::SsrfPolicy`], not from
+    /// `self.config` — both default to 5s / no-redirects, but a caller who
+    /// customizes only `FetcherConfig::request_timeout` won't see it applied
+    /// here.
+    async fn fetch_pinned(&self, url: &str) -> Result<reqwest::Response, FetcherError> {
+        self.ssrf_validator.validate_url(url)?;
+        let (client, pinned_url) = self.ssrf_validator.create_pinned_client(url)?;
+        client
+            .get(&pinned_url)
+            .send()
+            .await
+            .map_err(|e| FetcherError::HttpError(format!("Request failed: {}", e)))
     }
 
     /// Get cached metadata if valid
@@ -508,19 +554,74 @@ mod tests {
         );
     }
 
+    /// AU-10: the OIDC path-insertion form must insert the issuer's path
+    /// after `/.well-known/openid-configuration`, not drop it — dropping it
+    /// means two different tenants under the same host resolve to the same
+    /// discovery document.
     #[test]
-    fn test_oidc_discovery_url_building() {
+    fn test_oidc_path_insertion_url_building() {
         let validator = SsrfValidator::default();
         let fetcher = DiscoveryFetcher::new(validator).unwrap();
 
-        // Always uses same path regardless of issuer
         let issuer = url::Url::parse("https://example.com").unwrap();
-        let url = fetcher.build_oidc_discovery_url(&issuer).unwrap();
+        let url = fetcher.build_oidc_path_insertion_url(&issuer).unwrap();
         assert_eq!(url, "https://example.com/.well-known/openid-configuration");
 
-        let issuer = url::Url::parse("https://example.com/issuer1").unwrap();
-        let url = fetcher.build_oidc_discovery_url(&issuer).unwrap();
-        assert_eq!(url, "https://example.com/.well-known/openid-configuration");
+        let issuer = url::Url::parse("https://auth.example.com/tenant1").unwrap();
+        let url = fetcher.build_oidc_path_insertion_url(&issuer).unwrap();
+        assert_eq!(
+            url,
+            "https://auth.example.com/.well-known/openid-configuration/tenant1"
+        );
+    }
+
+    /// AU-10: the third priority-order endpoint for path-bearing issuers.
+    #[test]
+    fn test_oidc_path_appending_url_building() {
+        let validator = SsrfValidator::default();
+        let fetcher = DiscoveryFetcher::new(validator).unwrap();
+
+        let issuer = url::Url::parse("https://auth.example.com/tenant1").unwrap();
+        let url = fetcher.build_oidc_path_appending_url(&issuer).unwrap();
+        assert_eq!(
+            url,
+            "https://auth.example.com/tenant1/.well-known/openid-configuration"
+        );
+    }
+
+    /// AU-10: the MCP 2025-11-25 spec's exact priority order — path-bearing
+    /// issuers try 3 endpoints (RFC 8414, then OIDC path-insertion, then OIDC
+    /// path-appending); path-free issuers try 2 (RFC 8414, then OIDC).
+    #[test]
+    fn test_discovery_priority_order_matches_spec() {
+        let validator = SsrfValidator::default();
+        let fetcher = DiscoveryFetcher::new(validator).unwrap();
+
+        let with_path = url::Url::parse("https://auth.example.com/tenant1").unwrap();
+        assert_eq!(
+            vec![
+                fetcher.build_oauth2_discovery_url(&with_path).unwrap(),
+                fetcher.build_oidc_path_insertion_url(&with_path).unwrap(),
+                fetcher.build_oidc_path_appending_url(&with_path).unwrap(),
+            ],
+            vec![
+                "https://auth.example.com/.well-known/oauth-authorization-server/tenant1",
+                "https://auth.example.com/.well-known/openid-configuration/tenant1",
+                "https://auth.example.com/tenant1/.well-known/openid-configuration",
+            ]
+        );
+
+        let no_path = url::Url::parse("https://auth.example.com").unwrap();
+        assert_eq!(
+            vec![
+                fetcher.build_oauth2_discovery_url(&no_path).unwrap(),
+                fetcher.build_oidc_path_insertion_url(&no_path).unwrap(),
+            ],
+            vec![
+                "https://auth.example.com/.well-known/oauth-authorization-server",
+                "https://auth.example.com/.well-known/openid-configuration",
+            ]
+        );
     }
 
     #[test]

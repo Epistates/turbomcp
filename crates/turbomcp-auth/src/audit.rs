@@ -596,7 +596,12 @@ mod system_time_serde {
         D: Deserializer<'de>,
     {
         let secs = u64::deserialize(deserializer)?;
-        Ok(UNIX_EPOCH + Duration::from_secs(secs))
+        // Checked: UNIX_EPOCH + Duration::from_secs(secs) panics for a secs
+        // value that overflows the platform's SystemTime range, and this
+        // deserializes whatever's in the audit record (a stored/replayed
+        // event, not necessarily something this process wrote).
+        crate::context::checked_system_time(secs)
+            .ok_or_else(|| serde::de::Error::custom("timestamp out of representable range"))
     }
 }
 

@@ -19,6 +19,19 @@ use serde_json::Value;
 // Import from existing types module to avoid duplication
 pub use crate::types::{TokenInfo, UserInfo};
 
+/// Convert a Unix-seconds claim (`exp`/`iat`/`nbf`) to `SystemTime` without
+/// the panic that `UNIX_EPOCH + Duration::from_secs(secs)` raises when `secs`
+/// overflows the platform's representable range.
+///
+/// These values come from JWT claims — either a token we're deserializing
+/// (untrusted until signature verification, which may not even have run yet
+/// for this field) or one we're about to encode. A single out-of-range claim
+/// must not be able to abort the process; callers get `None` and decide how
+/// to fail (closed, in every caller in this crate).
+pub(crate) fn checked_system_time(secs: u64) -> Option<SystemTime> {
+    UNIX_EPOCH.checked_add(Duration::from_secs(secs))
+}
+
 /// Validation configuration for AuthContext
 #[derive(Debug, Clone)]
 pub struct ValidationConfig {
@@ -208,7 +221,8 @@ mod systemtime_serde {
         D: Deserializer<'de>,
     {
         let secs = u64::deserialize(deserializer)?;
-        Ok(UNIX_EPOCH + Duration::from_secs(secs))
+        checked_system_time(secs)
+            .ok_or_else(|| serde::de::Error::custom("timestamp out of representable range"))
     }
 }
 
@@ -236,7 +250,12 @@ mod systemtime_serde_opt {
         D: Deserializer<'de>,
     {
         let opt: Option<u64> = Option::deserialize(deserializer)?;
-        Ok(opt.map(|secs| UNIX_EPOCH + Duration::from_secs(secs)))
+        match opt {
+            Some(secs) => checked_system_time(secs)
+                .map(Some)
+                .ok_or_else(|| serde::de::Error::custom("timestamp out of representable range")),
+            None => Ok(None),
+        }
     }
 }
 
@@ -300,9 +319,15 @@ impl AuthContext {
 
         // Fall back to exp claim (JWT expiration)
         if let Some(exp) = self.exp {
-            let exp_time = UNIX_EPOCH + Duration::from_secs(exp);
-            if SystemTime::now() > exp_time {
-                return true;
+            match checked_system_time(exp) {
+                Some(exp_time) => {
+                    if SystemTime::now() > exp_time {
+                        return true;
+                    }
+                }
+                // An unrepresentable exp can't be a legitimate future
+                // expiration — fail closed.
+                None => return true,
             }
         }
 
@@ -327,10 +352,15 @@ impl AuthContext {
         if config.validate_exp
             && let Some(exp) = self.exp
         {
-            let exp_time = UNIX_EPOCH + Duration::from_secs(exp);
-            let exp_with_leeway = exp_time + config.leeway;
-            if now > exp_with_leeway {
-                return Err(AuthError::TokenExpired);
+            match checked_system_time(exp).and_then(|t| t.checked_add(config.leeway)) {
+                Some(exp_with_leeway) => {
+                    if now > exp_with_leeway {
+                        return Err(AuthError::TokenExpired);
+                    }
+                }
+                // Unrepresentable exp can't be a legitimate future
+                // expiration - fail closed.
+                None => return Err(AuthError::TokenExpired),
             }
         }
 
@@ -338,9 +368,14 @@ impl AuthContext {
         if config.validate_nbf
             && let Some(nbf) = self.nbf
         {
-            let nbf_time = UNIX_EPOCH + Duration::from_secs(nbf);
-            if nbf_time > now + config.leeway {
-                return Err(AuthError::TokenNotYetValid);
+            match checked_system_time(nbf) {
+                Some(nbf_time) => {
+                    if nbf_time > now + config.leeway {
+                        return Err(AuthError::TokenNotYetValid);
+                    }
+                }
+                // Unrepresentable nbf can never be satisfied - fail closed.
+                None => return Err(AuthError::TokenNotYetValid),
             }
         }
 
