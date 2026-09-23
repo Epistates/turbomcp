@@ -65,7 +65,10 @@ fn stdout_carries_only_json_rpc_even_when_verbose() {
         &mut stdin,
         &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
     );
-    send(&mut stdin, &json!({ "jsonrpc": "2.0", "id": 2, "method": "ping" }));
+    send(
+        &mut stdin,
+        &json!({ "jsonrpc": "2.0", "id": 2, "method": "ping" }),
+    );
     send(
         &mut stdin,
         &json!({
@@ -106,7 +109,10 @@ fn stdout_carries_only_json_rpc_even_when_verbose() {
     assert_eq!(responses[0]["id"], 1);
     assert_eq!(responses[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(responses[0]["result"]["serverInfo"]["name"], "fake-proxy");
-    assert_eq!(responses[1], json!({ "jsonrpc": "2.0", "id": 2, "result": {} }));
+    assert_eq!(
+        responses[1],
+        json!({ "jsonrpc": "2.0", "id": 2, "result": {} })
+    );
     assert_eq!(responses[2]["id"], 3);
     assert_eq!(responses[2]["result"]["content"][0]["text"], "echoed");
 }

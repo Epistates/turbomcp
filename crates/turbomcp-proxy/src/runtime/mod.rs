@@ -638,84 +638,22 @@ impl RuntimeProxyBuilder {
 
     /// Strict SSRF validation - blocks all private networks
     async fn validate_host_strict(host: &str, port: u16) -> ProxyResult<()> {
-        // Block well-known cloud metadata endpoints
-        if Self::is_cloud_metadata_endpoint(host) {
-            return Err(ProxyError::configuration_with_key(
+        Self::validate_host_addresses(host, port, |ip| match classify_ip(ip) {
+            IpClass::Loopback | IpClass::Public => Ok(()),
+            IpClass::Metadata => Err(metadata_blocked(ip)),
+            IpClass::Private => Err(ProxyError::configuration_with_key(
                 format!(
-                    "Cloud metadata endpoint blocked: {host}. \
-                    For internal proxies, use SsrfProtection::Balanced with allowed networks."
+                    "Private {} address blocked: {ip}. \
+                    For internal proxies, configure:\n  \
+                    SsrfProtection::Balanced {{ \
+                    allowed_private_networks: vec![IpNetwork::from_str(\"10.0.0.0/8\")?] }}",
+                    match canonical_ip(ip) {
+                        IpAddr::V4(_) => "IPv4",
+                        IpAddr::V6(_) => "IPv6",
+                    }
                 ),
                 "url",
-            ));
-        }
-
-        // Strip brackets from IPv6 addresses (URL format uses [::1])
-        let host_without_brackets = host.trim_start_matches('[').trim_end_matches(']');
-
-        // Try parsing as IPv4
-        if let Ok(ip) = host_without_brackets.parse::<Ipv4Addr>() {
-            if ip.is_loopback() {
-                return Ok(()); // Localhost is always allowed
-            }
-            if ip.is_private() || ip.is_link_local() {
-                return Err(ProxyError::configuration_with_key(
-                    format!(
-                        "Private IPv4 address blocked: {ip}. \
-                        For internal proxies, configure:\n  \
-                        SsrfProtection::Balanced {{ \
-                        allowed_private_networks: vec![IpNetwork::from_str(\"10.0.0.0/8\")?] }}"
-                    ),
-                    "url",
-                ));
-            }
-            return Ok(());
-        }
-
-        // Try parsing as IPv6
-        if let Ok(ip) = host_without_brackets.parse::<Ipv6Addr>() {
-            if ip.is_loopback() {
-                return Ok(()); // Localhost is always allowed
-            }
-            let is_private = Self::is_private_ipv6(&ip);
-            if is_private {
-                return Err(ProxyError::configuration_with_key(
-                    format!(
-                        "Private IPv6 address blocked: {ip}. \
-                        For internal proxies, configure:\n  \
-                        SsrfProtection::Balanced {{ \
-                        allowed_private_networks: vec![IpNetwork::from_str(\"fc00::/7\")?] }}"
-                    ),
-                    "url",
-                ));
-            }
-            return Ok(());
-        }
-
-        Self::validate_hostname_resolution(host, port, |_host, ip| match ip {
-            IpAddr::V4(ipv4) => {
-                if ipv4.is_loopback() {
-                    Ok(())
-                } else if ipv4.is_private() || ipv4.is_link_local() {
-                    Err(ProxyError::configuration_with_key(
-                        format!("Resolved private IPv4 address blocked: {ipv4}"),
-                        "url",
-                    ))
-                } else {
-                    Ok(())
-                }
-            }
-            IpAddr::V6(ipv6) => {
-                if ipv6.is_loopback() {
-                    Ok(())
-                } else if Self::is_private_ipv6(&ipv6) {
-                    Err(ProxyError::configuration_with_key(
-                        format!("Resolved private IPv6 address blocked: {ipv6}"),
-                        "url",
-                    ))
-                } else {
-                    Ok(())
-                }
-            }
+            )),
         })
         .await
     }
@@ -726,68 +664,64 @@ impl RuntimeProxyBuilder {
         port: u16,
         allowed_networks: &[IpNetwork],
     ) -> ProxyResult<()> {
-        // Always block cloud metadata endpoints, even in balanced mode
-        if Self::is_cloud_metadata_endpoint(host) {
+        Self::validate_host_addresses(host, port, |ip| {
+            Self::validate_ip_balanced(ip, allowed_networks)
+        })
+        .await
+    }
+
+    fn validate_ip_balanced(ip: IpAddr, allowed_networks: &[IpNetwork]) -> ProxyResult<()> {
+        match classify_ip(ip) {
+            IpClass::Loopback | IpClass::Public => Ok(()),
+            // Always blocked, even in balanced mode: no allowlist entry
+            // should ever be read as permission to reach instance metadata.
+            IpClass::Metadata => Err(metadata_blocked(ip)),
+            IpClass::Private => {
+                let canonical = canonical_ip(ip);
+                if allowed_networks
+                    .iter()
+                    .any(|net| net.contains(ip) || net.contains(canonical))
+                {
+                    debug!("Private IP {} allowed by configured network", ip);
+                    Ok(())
+                } else {
+                    Err(ProxyError::configuration_with_key(
+                        format!(
+                            "Private IP {ip} not in allowed networks. Allowed networks: {allowed_networks:?}"
+                        ),
+                        "url",
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Apply `validate_ip` to the host's address: the literal if it is one,
+    /// otherwise every address it resolves to.
+    ///
+    /// Metadata hostnames are refused by name first, since they resolve only
+    /// inside the cloud network they belong to.
+    async fn validate_host_addresses<F>(
+        host: &str,
+        port: u16,
+        mut validate_ip: F,
+    ) -> ProxyResult<()>
+    where
+        F: FnMut(IpAddr) -> ProxyResult<()>,
+    {
+        if matches!(host, "metadata.google.internal" | "metadata") {
             return Err(ProxyError::configuration_with_key(
                 format!("Cloud metadata endpoint blocked: {host}"),
                 "url",
             ));
         }
 
-        // Strip brackets from IPv6 addresses (URL format uses [::1])
-        let host_without_brackets = host.trim_start_matches('[').trim_end_matches(']');
-
-        // Parse as IP address
-        let ip = if let Ok(ipv4) = host_without_brackets.parse::<Ipv4Addr>() {
-            IpAddr::V4(ipv4)
-        } else if let Ok(ipv6) = host_without_brackets.parse::<Ipv6Addr>() {
-            IpAddr::V6(ipv6)
-        } else {
-            return Self::validate_hostname_resolution(host, port, |_host, ip| {
-                Self::validate_ip_balanced(ip, allowed_networks)
-            })
-            .await;
-        };
-
-        Self::validate_ip_balanced(ip, allowed_networks)
-    }
-
-    fn validate_ip_balanced(ip: IpAddr, allowed_networks: &[IpNetwork]) -> ProxyResult<()> {
-        match ip {
-            IpAddr::V4(ipv4) if ipv4.is_loopback() => return Ok(()),
-            IpAddr::V6(ipv6) if ipv6.is_loopback() => return Ok(()),
-            _ => {}
+        // `Url::host_str` keeps the brackets on an IPv6 literal.
+        let literal = host.trim_start_matches('[').trim_end_matches(']');
+        if let Ok(ip) = literal.parse::<IpAddr>() {
+            return validate_ip(ip);
         }
 
-        let is_private = match ip {
-            IpAddr::V4(ipv4) => ipv4.is_private() || ipv4.is_link_local(),
-            IpAddr::V6(ipv6) => Self::is_private_ipv6(&ipv6),
-        };
-
-        if is_private && !allowed_networks.iter().any(|net| net.contains(ip)) {
-            return Err(ProxyError::configuration_with_key(
-                format!(
-                    "Private IP {ip} not in allowed networks. Allowed networks: {allowed_networks:?}"
-                ),
-                "url",
-            ));
-        }
-
-        if is_private {
-            debug!("Private IP {} allowed by configured network", ip);
-        }
-
-        Ok(())
-    }
-
-    async fn validate_hostname_resolution<F>(
-        host: &str,
-        port: u16,
-        mut validate_ip: F,
-    ) -> ProxyResult<()>
-    where
-        F: FnMut(&str, IpAddr) -> ProxyResult<()>,
-    {
         let resolved = tokio::net::lookup_host((host, port)).await.map_err(|e| {
             ProxyError::configuration_with_key(
                 format!("Failed to resolve host '{host}': {e}"),
@@ -798,7 +732,7 @@ impl RuntimeProxyBuilder {
         let mut saw_ip = false;
         for addr in resolved {
             saw_ip = true;
-            validate_ip(host, addr.ip())?;
+            validate_ip(addr.ip())?;
         }
 
         if !saw_ip {
@@ -809,41 +743,6 @@ impl RuntimeProxyBuilder {
         }
 
         Ok(())
-    }
-
-    /// Check if hostname is a known cloud metadata endpoint
-    fn is_cloud_metadata_endpoint(host: &str) -> bool {
-        // AWS/GCP metadata (IPv4 link-local)
-        if host == "169.254.169.254" {
-            return true;
-        }
-
-        // Azure metadata (specific IP)
-        if host == "168.63.129.16" {
-            return true;
-        }
-
-        // GCP metadata hostname
-        if host == "metadata.google.internal" || host == "metadata" {
-            return true;
-        }
-
-        false
-    }
-
-    /// Check if IPv6 address is private/internal
-    fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
-        // Unique local addresses (ULA) - fc00::/7
-        if ip.segments()[0] & 0xfe00 == 0xfc00 {
-            return true;
-        }
-
-        // Link-local addresses - fe80::/10
-        if ip.segments()[0] & 0xffc0 == 0xfe80 {
-            return true;
-        }
-
-        false
     }
 
     /// Validate working directory (path traversal protection)
@@ -902,6 +801,103 @@ fn is_localhost(host: &str) -> bool {
         .and_then(|s| s.strip_suffix(']'))
         .unwrap_or(host);
     matches!(normalized, "localhost" | "127.0.0.1" | "::1")
+}
+
+/// What an address means for SSRF purposes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IpClass {
+    /// This host. Always allowed: the proxy fronting a local server is the
+    /// primary use case.
+    Loopback,
+    /// A cloud instance-metadata endpoint. Never allowed.
+    Metadata,
+    /// Not publicly routable: private, link-local, shared (CGNAT),
+    /// unspecified or "this network".
+    Private,
+    /// Anything else.
+    Public,
+}
+
+/// The IPv4 address an IPv6 address stands for, if it stands for one.
+///
+/// IPv4-mapped (`::ffff:a.b.c.d`) addresses are how dual-stack sockets reach
+/// IPv4 hosts, and NAT64 (`64:ff9b::/96`) addresses are translated to their
+/// embedded IPv4 address by the network. Either one let a private or metadata
+/// address through as an innocuous-looking IPv6 literal, because only the
+/// IPv6 rules were ever applied to it.
+fn canonical_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return IpAddr::V4(v4);
+            }
+            let segments = v6.segments();
+            if segments[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                let [a, b] = segments[6].to_be_bytes();
+                let [c, d] = segments[7].to_be_bytes();
+                return IpAddr::V4(Ipv4Addr::new(a, b, c, d));
+            }
+            ip
+        }
+        IpAddr::V4(_) => ip,
+    }
+}
+
+/// Classify an address, comparing addresses rather than strings so that
+/// every spelling of one (`169.254.169.254`, `::ffff:a9fe:a9fe`,
+/// `64:ff9b::a9fe:a9fe`) gets the same answer.
+fn classify_ip(ip: IpAddr) -> IpClass {
+    match canonical_ip(ip) {
+        IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            if v4.is_loopback() {
+                IpClass::Loopback
+            } else if v4 == Ipv4Addr::new(169, 254, 169, 254)
+                || v4 == Ipv4Addr::new(168, 63, 129, 16)
+            {
+                // AWS/GCP/Azure IMDS and Azure's wireserver.
+                IpClass::Metadata
+            } else if v4.is_private()
+                || v4.is_link_local()
+                // 100.64.0.0/10, shared address space (RFC 6598): carrier-grade
+                // NAT, and inside some clouds, internal service addresses.
+                || (octets[0] == 100 && octets[1] & 0xc0 == 64)
+                // 0.0.0.0/8, "this network": 0.0.0.0 reaches the local host.
+                || octets[0] == 0
+                || v4.is_broadcast()
+            {
+                IpClass::Private
+            } else {
+                IpClass::Public
+            }
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() {
+                IpClass::Loopback
+            } else if v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x254) {
+                // AWS IMDS over IPv6.
+                IpClass::Metadata
+            } else if v6.is_unspecified()
+                // fc00::/7 unique local, fe80::/10 link-local
+                || v6.segments()[0] & 0xfe00 == 0xfc00
+                || v6.segments()[0] & 0xffc0 == 0xfe80
+            {
+                IpClass::Private
+            } else {
+                IpClass::Public
+            }
+        }
+    }
+}
+
+fn metadata_blocked(ip: IpAddr) -> ProxyError {
+    ProxyError::configuration_with_key(
+        format!(
+            "Cloud metadata endpoint blocked: {ip}. \
+            For internal proxies, use SsrfProtection::Balanced with allowed networks."
+        ),
+        "url",
+    )
 }
 
 /// Runtime proxy instance
@@ -1321,6 +1317,81 @@ mod tests {
             RuntimeProxyBuilder::validate_host("127.0.0.1", 443, &validation_config)
                 .await
                 .is_ok()
+        );
+    }
+
+    /// Every spelling of a private or metadata address is refused, not just
+    /// the dotted-quad one. IPv4-mapped and NAT64 IPv6 literals used to get
+    /// only the IPv6 rules, CGNAT and `0.0.0.0/8` weren't private, and the
+    /// metadata check compared strings.
+    #[tokio::test]
+    async fn strict_mode_refuses_every_spelling_of_an_internal_address() {
+        let validation_config = BackendValidationConfig::default();
+        for host in [
+            "[::ffff:10.0.0.1]",
+            "[::ffff:169.254.169.254]",
+            "[64:ff9b::a9fe:a9fe]",
+            "[64:ff9b::a00:1]",
+            "100.64.0.1",
+            "100.127.255.254",
+            "0.0.0.0",
+            "0.1.2.3",
+            "[::]",
+            "[fd00:ec2::254]",
+        ] {
+            assert!(
+                RuntimeProxyBuilder::validate_host(host, 443, &validation_config)
+                    .await
+                    .is_err(),
+                "{host} must be refused"
+            );
+        }
+
+        for host in ["8.8.8.8", "100.128.0.1", "[2606:4700::1111]", "[::1]"] {
+            assert!(
+                RuntimeProxyBuilder::validate_host(host, 443, &validation_config)
+                    .await
+                    .is_ok(),
+                "{host} must be allowed"
+            );
+        }
+    }
+
+    /// Balanced mode honours an allowlisted network whichever way the
+    /// address is spelled, and never lets an allowlist reach metadata.
+    #[tokio::test]
+    async fn balanced_mode_compares_addresses_not_spellings() {
+        let validation_config = BackendValidationConfig {
+            ssrf_protection: SsrfProtection::Balanced {
+                allowed_private_networks: vec![
+                    "10.0.0.0/8".parse().unwrap(),
+                    "169.254.0.0/16".parse().unwrap(),
+                ],
+            },
+            ..Default::default()
+        };
+
+        assert!(
+            RuntimeProxyBuilder::validate_host("[::ffff:10.1.2.3]", 443, &validation_config)
+                .await
+                .is_ok()
+        );
+        for metadata in [
+            "169.254.169.254",
+            "[::ffff:a9fe:a9fe]",
+            "[64:ff9b::a9fe:a9fe]",
+        ] {
+            assert!(
+                RuntimeProxyBuilder::validate_host(metadata, 443, &validation_config)
+                    .await
+                    .is_err(),
+                "{metadata} is metadata and must stay blocked"
+            );
+        }
+        assert!(
+            RuntimeProxyBuilder::validate_host("100.64.0.1", 443, &validation_config)
+                .await
+                .is_err()
         );
     }
 
