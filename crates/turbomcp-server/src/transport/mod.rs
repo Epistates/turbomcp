@@ -17,6 +17,7 @@
 //! line-based protocols (STDIO, TCP, Unix).
 
 mod line;
+mod session;
 
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -74,9 +75,12 @@ pub(crate) async fn route_catching_panics<H: McpHandler>(
                 panic = %detail,
                 "Handler panicked; answering with an internal error"
             );
-            // `id` is `None` for a notification, and an error with no id is
-            // suppressed by `should_send()` — correct, since notifications
-            // take no reply.
+            // A notification takes no reply, error or otherwise. `should_send`
+            // does send an error with no id — it has to, for parse errors — so
+            // the notification case is answered with nothing here.
+            if id.is_none() {
+                return JsonRpcOutgoing::notification_ack();
+            }
             JsonRpcOutgoing::error(
                 id,
                 McpError::internal(format!("Handler panicked while serving {method}")),
@@ -126,6 +130,54 @@ impl Drop for PendingHandlerGuard {
         if let Some(key) = self.key.take() {
             self.handlers.remove(&key);
         }
+    }
+}
+
+/// Register an in-flight request so `notifications/cancelled` can reach it.
+///
+/// Returns the request's cancellation token and the guard that unregisters it
+/// however the handler exits. A notification has no id to cancel by, so it
+/// gets a token nobody else holds.
+pub(crate) fn register_pending_handler(
+    handlers: &Arc<DashMap<String, CancellationToken>>,
+    id: Option<&Value>,
+) -> (CancellationToken, PendingHandlerGuard) {
+    let token = CancellationToken::new();
+    let key = id.map(jsonrpc_id_key);
+    if let Some(ref key) = key
+        && handlers.insert(key.clone(), token.clone()).is_some()
+    {
+        // Sequential id reuse is fine and not rejected. *Concurrent* reuse is
+        // not: the client cannot match two responses carrying one id, and this
+        // overwrote the first handler's cancellation token. Report it rather
+        // than refusing to serve.
+        tracing::warn!(
+            request_id = %key,
+            "Request id reused while the first is still in flight",
+        );
+    }
+    (token, PendingHandlerGuard::new(Arc::clone(handlers), key))
+}
+
+/// Act on a `notifications/cancelled`: signal the named in-flight handler.
+///
+/// Unknown and already-finished ids are ignored, as the cancellation utility
+/// requires.
+pub(crate) fn cancel_pending_handler(
+    handlers: &DashMap<String, CancellationToken>,
+    params: Option<&Value>,
+) {
+    let Some(request_id) = params.and_then(|p| p.get("requestId")) else {
+        return;
+    };
+    let key = jsonrpc_id_key(request_id);
+    if let Some((_, token)) = handlers.remove(&key) {
+        let reason = params
+            .and_then(|p| p.get("reason"))
+            .and_then(|r| r.as_str())
+            .unwrap_or("client requested cancellation");
+        tracing::debug!(request_id = %key, reason = %reason, "Cancelling in-flight handler");
+        token.cancel();
     }
 }
 

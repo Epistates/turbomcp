@@ -14,19 +14,22 @@
 //! let (client_transport, server_handle) = channel::run_in_process(&handler).await?;
 //! ```
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use turbomcp_core::error::{ErrorKind, McpError, McpResult};
+use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
-use turbomcp_types::{ClientCapabilities, ProtocolVersion};
+use turbomcp_types::ProtocolVersion;
 
-use crate::context::{Cancellable, McpSession, RequestContext, SessionFuture};
+use crate::config::ServerConfig;
+use crate::context::{Cancellable, RequestContext};
 use crate::router;
-use crate::transport::jsonrpc_id_key;
+use crate::transport::session::{
+    ConnectionCleanup, ConnectionSession, OutboundRequests, SHUTDOWN_GRACE, SessionCommand,
+    readable_id,
+};
 use crate::transport::{MAX_MESSAGE_SIZE, SessionState};
 
 use turbomcp_transport::{
@@ -36,9 +39,6 @@ use turbomcp_transport::{
 
 /// Default channel buffer size.
 const DEFAULT_CHANNEL_BUFFER: usize = 256;
-
-/// Maximum number of in-flight server-to-client requests.
-const MAX_PENDING_REQUESTS: usize = 64;
 
 // ── ChannelTransport (client-side Transport impl) ───────────────────────
 
@@ -140,81 +140,6 @@ impl Transport for ChannelTransport {
     }
 }
 
-// ── Session handle for bidirectional communication ──────────────────────
-
-#[derive(Debug, Clone)]
-struct ChannelSessionHandle {
-    request_tx: mpsc::Sender<SessionCommand>,
-    client_capabilities: Arc<RwLock<Option<ClientCapabilities>>>,
-    protocol_version: Arc<RwLock<Option<ProtocolVersion>>>,
-}
-
-#[derive(Debug)]
-enum SessionCommand {
-    Request {
-        method: String,
-        params: serde_json::Value,
-        response_tx: oneshot::Sender<McpResult<serde_json::Value>>,
-    },
-    Notify {
-        method: String,
-        params: serde_json::Value,
-    },
-}
-
-impl McpSession for ChannelSessionHandle {
-    fn client_capabilities<'a>(&'a self) -> SessionFuture<'a, Option<ClientCapabilities>> {
-        Box::pin(async move { Ok(self.client_capabilities.read().await.clone()) })
-    }
-
-    fn protocol_version<'a>(&'a self) -> SessionFuture<'a, Option<ProtocolVersion>> {
-        Box::pin(async move { Ok(self.protocol_version.read().await.clone()) })
-    }
-
-    fn call<'a>(
-        &'a self,
-        method: &'a str,
-        params: serde_json::Value,
-    ) -> SessionFuture<'a, serde_json::Value> {
-        Box::pin(async move {
-            let (response_tx, response_rx) = oneshot::channel();
-            self.request_tx
-                .send(SessionCommand::Request {
-                    method: method.to_string(),
-                    params,
-                    response_tx,
-                })
-                .await
-                .map_err(|_| McpError::internal("Session closed"))?;
-
-            // Bounded: an unanswered server-to-client request would otherwise
-            // park the handler forever, which is a hung tool call and a leaked
-            // task per occurrence, entirely at the peer's discretion.
-            match tokio::time::timeout(super::SERVER_REQUEST_TIMEOUT, response_rx).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(_)) => Err(McpError::internal("Response channel closed")),
-                Err(_) => Err(McpError::timeout(format!(
-                    "client did not answer {method} within {:?}",
-                    super::SERVER_REQUEST_TIMEOUT
-                ))),
-            }
-        })
-    }
-
-    fn notify<'a>(&'a self, method: &'a str, params: serde_json::Value) -> SessionFuture<'a, ()> {
-        Box::pin(async move {
-            self.request_tx
-                .send(SessionCommand::Notify {
-                    method: method.to_string(),
-                    params,
-                })
-                .await
-                .map_err(|_| McpError::internal("Session closed"))?;
-            Ok(())
-        })
-    }
-}
-
 // ── Channel transport runner (server-side) ──────────────────────────────
 
 /// Run a handler on an in-process channel transport.
@@ -247,6 +172,26 @@ pub async fn run_in_process_with_buffer<H: McpHandler + 'static>(
     handler: &H,
     buffer_size: usize,
 ) -> McpResult<(ChannelTransport, tokio::task::JoinHandle<McpResult<()>>)> {
+    spawn_server(handler, buffer_size, None).await
+}
+
+/// Like `run_in_process` but with a server configuration.
+///
+/// The configuration governs the `initialize` handshake — protocol version
+/// negotiation and required client capabilities — and the message size
+/// limit, exactly as it does on the other transports.
+pub async fn run_in_process_with_config<H: McpHandler + 'static>(
+    handler: &H,
+    config: &ServerConfig,
+) -> McpResult<(ChannelTransport, tokio::task::JoinHandle<McpResult<()>>)> {
+    spawn_server(handler, DEFAULT_CHANNEL_BUFFER, Some(config.clone())).await
+}
+
+async fn spawn_server<H: McpHandler + 'static>(
+    handler: &H,
+    buffer_size: usize,
+    config: Option<ServerConfig>,
+) -> McpResult<(ChannelTransport, tokio::task::JoinHandle<McpResult<()>>)> {
     handler.on_initialize().await?;
 
     // Client → Server channel
@@ -258,7 +203,7 @@ pub async fn run_in_process_with_buffer<H: McpHandler + 'static>(
 
     let handler = handler.clone();
     let server_handle =
-        tokio::spawn(async move { run_server_loop(handler, server_rx, server_tx).await });
+        tokio::spawn(async move { run_server_loop(handler, server_rx, server_tx, config).await });
 
     Ok((client_transport, server_handle))
 }
@@ -276,14 +221,17 @@ async fn run_server_loop<H: McpHandler>(
     handler: H,
     mut incoming: mpsc::Receiver<TransportMessage>,
     outgoing: mpsc::Sender<TransportMessage>,
+    config: Option<ServerConfig>,
 ) -> McpResult<()> {
-    // Channel for session commands (server-to-client requests/notifications)
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<SessionCommand>(32);
-    let session_handle = Arc::new(ChannelSessionHandle {
-        request_tx: cmd_tx,
-        client_capabilities: Arc::new(RwLock::new(None)),
-        protocol_version: Arc::new(RwLock::new(None)),
-    });
+    let max_message_size = config
+        .as_ref()
+        .map_or(MAX_MESSAGE_SIZE, |config| config.max_message_size);
+
+    // Handlers reach the client through the session; this loop is the only
+    // writer to the channel.
+    let (session, mut cmd_rx) = ConnectionSession::new();
+    let session_handle = Arc::new(session);
+    let new_ctx = || RequestContext::channel().with_session_id(session_handle.id());
 
     // Channel for completed handler responses
     let (response_tx, mut response_rx) = mpsc::channel::<router::JsonRpcOutgoing>(32);
@@ -291,26 +239,48 @@ async fn run_server_loop<H: McpHandler>(
     // In-flight handler cancellation tokens, keyed by JSON-RPC id; signalled
     // by `notifications/cancelled` per MCP 2025-11-25.
     let pending_handlers: Arc<DashMap<String, CancellationToken>> = Arc::new(DashMap::new());
+    let _cleanup = ConnectionCleanup::new(&pending_handlers, &session_handle);
 
-    // Server-to-client pending request tracking
-    let mut pending_requests =
-        HashMap::<serde_json::Value, oneshot::Sender<McpResult<serde_json::Value>>>::new();
-    let mut next_request_id = 1u64;
+    // Requests this server has sent the client and not yet seen answered.
+    let mut outbound = OutboundRequests::default();
     let mut session_state = SessionState::Uninitialized;
 
     loop {
         tokio::select! {
+            // Biased, with outgoing server-to-client messages ahead of
+            // completed responses: a handler emits progress and logs while it
+            // is still running, so they belong on the wire before the
+            // response that concludes it. Unbiased, tokio picked a ready
+            // branch at random and roughly half the time put the response
+            // first — breaking "progress notifications MUST stop after
+            // completion".
+            biased;
+
+            // Outgoing server-to-client requests/notifications
+            Some(cmd) = cmd_rx.recv() => {
+                if let Some(frame) = outbound.frame(cmd) {
+                    send_value_msg(&outgoing, &frame).await?;
+                }
+            }
+
+            // Completed handler responses
+            Some(response) = response_rx.recv() => {
+                if response.should_send() {
+                    send_response_msg(&outgoing, &response).await?;
+                }
+            }
+
             // Incoming from client
             msg = incoming.recv() => {
                 let Some(msg) = msg else { break; };
 
                 // Check message size
-                if msg.payload.len() > MAX_MESSAGE_SIZE {
+                if msg.payload.len() > max_message_size {
                     send_error_msg(
                         &outgoing,
                         None,
                         McpError::invalid_request(format!(
-                            "Message exceeds maximum size of {MAX_MESSAGE_SIZE} bytes"
+                            "Message exceeds maximum size of {max_message_size} bytes"
                         )),
                     ).await?;
                     continue;
@@ -325,259 +295,184 @@ async fn run_server_loop<H: McpHandler>(
                     }
                 };
 
-                // Check if it's a response to a server-to-client request
-                if let Some(id) = value.get("id")
-                    && (value.get("result").is_some() || value.get("error").is_some())
+                // A response to one of our server-to-client requests.
+                if outbound.resolve(&value) {
+                    continue;
+                }
+
+                let id = readable_id(&value);
+                let request = match router::parse_request_from_value(value) {
+                    Ok(request) => request,
+                    Err(e) => {
+                        send_error_msg(&outgoing, id, e).await?;
+                        continue;
+                    }
+                };
+
+                if request.method == "initialize" {
+                    let client_capabilities =
+                        super::client_capabilities_from_initialize_params(
+                            request.params.as_ref(),
+                        );
+
+                    if matches!(session_state, SessionState::Initialized(_)) {
+                        send_error_msg(
+                            &outgoing,
+                            request.id.clone(),
+                            McpError::invalid_request("Session already initialized"),
+                        )
+                        .await?;
+                        continue;
+                    }
+
+                    let ctx = new_ctx();
+                    let response = router::route_request_with_config(
+                        &handler,
+                        request,
+                        &ctx,
+                        config.as_ref(),
+                    )
+                    .await;
+
+                    if let Some(ref result) = response.result
+                        && let Some(v) =
+                            result.get("protocolVersion").and_then(|v| v.as_str())
+                    {
+                        let version = ProtocolVersion::from(v);
+                        session_state = SessionState::Initialized(
+                            super::InitializedSessionState::new(version.clone()),
+                        );
+                        session_handle
+                            .set_initialized(client_capabilities, version)
+                            .await;
+                    }
+
+                    if response.should_send() {
+                        send_response_msg(&outgoing, &response).await?;
+                    }
+                } else if request.method == "notifications/cancelled" {
+                    super::cancel_pending_handler(&pending_handlers, request.params.as_ref());
+                } else if request.method == "notifications/initialized" {
+                    let h = handler.clone();
+                    let resp_tx = response_tx.clone();
+                    let ctx = new_ctx().with_session(session_handle.clone());
+
+                    tokio::spawn(async move {
+                        let response = router::route_request(&h, request, &ctx).await;
+                        let _ = resp_tx.send(response).await;
+                    });
+                } else if request.method == "ping"
+                    && matches!(session_state, SessionState::Uninitialized)
                 {
-                    if let Some(tx) = pending_requests.remove(id) {
-                        if let Some(error) = value.get("error") {
-                            let mcp_error = serde_json::from_value::<turbomcp_core::jsonrpc::JsonRpcError>(error.clone())
-                                .map(|e| McpError::new(ErrorKind::from_i32(e.code), e.message))
-                                .unwrap_or_else(|_| McpError::internal("Failed to parse error response"));
-                            let _ = tx.send(Err(mcp_error));
-                        } else {
-                            let result = value.get("result").cloned().unwrap_or(serde_json::Value::Null);
-                            let _ = tx.send(Ok(result));
-                        }
+                    // Lifecycle permits ping before initialize has completed.
+                    let ctx = new_ctx().with_session(session_handle.clone());
+                    let response = router::route_request(&handler, request, &ctx).await;
+                    if response.should_send() {
+                        send_response_msg(&outgoing, &response).await?;
                     }
                 } else {
-                    // Parse as JSON-RPC request directly from the Value
-                    // (avoids re-serializing to string then re-parsing like LineTransportRunner does)
-                    match serde_json::from_value::<turbomcp_core::jsonrpc::JsonRpcIncoming>(value) {
-                        Ok(request) => {
-                            if request.method == "initialize" {
-                                let client_capabilities =
-                                    super::client_capabilities_from_initialize_params(
-                                        request.params.as_ref(),
-                                    );
-
-                                if matches!(session_state, SessionState::Initialized(_)) {
-                                    send_error_msg(
-                                        &outgoing,
-                                        request.id.clone(),
-                                        McpError::invalid_request("Session already initialized"),
-                                    )
-                                    .await?;
-                                    continue;
-                                }
-
-                                let ctx = RequestContext::channel();
-                                let response = router::route_request_with_config(
-                                    &handler,
-                                    request,
-                                    &ctx,
-                                    None,
+                    // Notifications (id=None) MUST NOT receive responses per
+                    // JSON-RPC 2.0, so rejection paths stay silent for them.
+                    let is_notification = request.id.is_none();
+                    let version = match &mut session_state {
+                        SessionState::Initialized(session) => {
+                            session.protocol_version().clone()
+                        }
+                        SessionState::Uninitialized => {
+                            if !is_notification {
+                                send_error_msg(
+                                    &outgoing,
+                                    request.id.clone(),
+                                    McpError::invalid_request(
+                                        "Server not initialized. Send 'initialize' first.",
+                                    ),
                                 )
-                                .await;
-
-                                if let Some(ref result) = response.result
-                                    && let Some(v) =
-                                        result.get("protocolVersion").and_then(|v| v.as_str())
-                                {
-                                    let version = ProtocolVersion::from(v);
-                                    session_state = SessionState::Initialized(
-                                        super::InitializedSessionState::new(version.clone()),
-                                    );
-                                    *session_handle.client_capabilities.write().await =
-                                        Some(client_capabilities);
-                                    *session_handle.protocol_version.write().await = Some(version);
-                                }
-
-                                if response.should_send() {
-                                    send_response_msg(&outgoing, &response).await?;
-                                }
-                            } else if request.method == "notifications/cancelled" {
-                                if let Some(req_id) = request
-                                    .params
-                                    .as_ref()
-                                    .and_then(|p| p.get("requestId"))
-                                {
-                                    let key = jsonrpc_id_key(req_id);
-                                    if let Some((_, token)) = pending_handlers.remove(&key) {
-                                        let reason = request
-                                            .params
-                                            .as_ref()
-                                            .and_then(|p| p.get("reason"))
-                                            .and_then(|r| r.as_str())
-                                            .unwrap_or("client requested cancellation");
-                                        tracing::debug!(
-                                            request_id = %key,
-                                            reason = %reason,
-                                            "Cancelling in-flight handler",
-                                        );
-                                        token.cancel();
-                                    }
-                                }
-                            } else if request.method == "notifications/initialized" {
-                                let h = handler.clone();
-                                let session = session_handle.clone();
-                                let resp_tx = response_tx.clone();
-                                let ctx = RequestContext::channel().with_session(session);
-
-                                tokio::spawn(async move {
-                                    let response = router::route_request(&h, request, &ctx).await;
-                                    let _ = resp_tx.send(response).await;
-                                });
-                            } else if request.method == "ping"
-                                && matches!(session_state, SessionState::Uninitialized)
-                            {
-                                // Lifecycle permits ping before initialize has completed.
-                                let ctx =
-                                    RequestContext::channel().with_session(session_handle.clone());
-                                let response = router::route_request(&handler, request, &ctx).await;
-                                if response.should_send() {
-                                    send_response_msg(&outgoing, &response).await?;
-                                }
-                            } else {
-                                // Notifications (id=None) MUST NOT receive responses per
-                                // JSON-RPC 2.0, so rejection paths stay silent for them.
-                                let is_notification = request.id.is_none();
-                                let version = match &mut session_state {
-                                    SessionState::Initialized(session) => {
-                                        session.protocol_version().clone()
-                                    }
-                                    SessionState::Uninitialized => {
-                                        if !is_notification {
-                                            send_error_msg(
-                                                &outgoing,
-                                                request.id.clone(),
-                                                McpError::invalid_request(
-                                                    "Server not initialized. Send 'initialize' first.",
-                                                ),
-                                            )
-                                            .await?;
-                                        }
-                                        continue;
-                                    }
-                                };
-
-                                // Spawn the handler with a per-request cancellation
-                                // token so `notifications/cancelled` can signal it.
-                                let h = handler.clone();
-                                let session = session_handle.clone();
-                                let resp_tx = response_tx.clone();
-                                let token = CancellationToken::new();
-                                let cancel_key = request.id.as_ref().map(jsonrpc_id_key);
-                                if let Some(ref key) = cancel_key
-                                    && pending_handlers.insert(key.clone(), token.clone()).is_some()
-                                {
-                                    // Sequential id reuse is fine and no longer rejected.
-                                    // *Concurrent* reuse is not: the client cannot match
-                                    // two responses carrying one id, and this overwrote
-                                    // the first handler's cancellation token. Report it
-                                    // rather than refusing to serve.
-                                    tracing::warn!(
-                                        request_id = %key,
-                                        "Request id reused while the first is still in flight",
-                                    );
-                                }
-                                // Kept so the spawned task can tell whether it
-                                // was cancelled before publishing its result.
-                                let cancel_signal = token.clone();
-                                let ctx = RequestContext::channel()
-                                    .with_session(session)
-                                    .with_cancellation_token(
-                                        Arc::new(token) as Arc<dyn Cancellable>,
-                                    );
-                                let guard = super::PendingHandlerGuard::new(
-                                    Arc::clone(&pending_handlers),
-                                    cancel_key,
-                                );
-
-                                tokio::spawn(async move {
-                                    // RAII cleanup runs on every exit path,
-                                    // including handler panic.
-                                    let _guard = guard;
-                                    let response = super::route_catching_panics(
-                                        &h, request, &ctx, &version,
-                                    )
-                                    .await;
-                                    // See the note in line.rs.
-                                    if cancel_signal.is_cancelled() {
-                                        return;
-                                    }
-                                    let _ = resp_tx.send(response).await;
-                                });
+                                .await?;
                             }
-                        }
-                        Err(e) => {
-                            send_error_msg(&outgoing, None, McpError::parse_error(e.to_string())).await?;
-                        }
-                    }
-                }
-            }
-
-            // Completed handler responses
-            Some(response) = response_rx.recv() => {
-                if response.should_send() {
-                    send_response_msg(&outgoing, &response).await?;
-                }
-            }
-
-            // Outgoing server-to-client requests/notifications
-            Some(cmd) = cmd_rx.recv() => {
-                match cmd {
-                    SessionCommand::Request { method, params, response_tx } => {
-                        if pending_requests.len() >= MAX_PENDING_REQUESTS {
-                            let _ = response_tx.send(Err(McpError::internal(
-                                "Too many pending server-to-client requests"
-                            )));
                             continue;
                         }
+                    };
 
-                        let id = serde_json::json!(format!("s-{next_request_id}"));
-                        next_request_id += 1;
-                        pending_requests.insert(id.clone(), response_tx);
+                    // Spawn the handler with a per-request cancellation
+                    // token so `notifications/cancelled` can signal it.
+                    let h = handler.clone();
+                    let resp_tx = response_tx.clone();
+                    let (token, guard) =
+                        super::register_pending_handler(&pending_handlers, request.id.as_ref());
+                    // Kept so the spawned task can tell whether it
+                    // was cancelled before publishing its result.
+                    let cancel_signal = token.clone();
+                    let ctx = new_ctx()
+                        .with_session(session_handle.clone())
+                        .with_cancellation_token(Arc::new(token) as Arc<dyn Cancellable>);
 
-                        let request = serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "method": method,
-                            "params": params
-                        });
-
-                        let payload = serde_json::to_vec(&request)
-                            .map_err(|e| McpError::internal(e.to_string()))?;
-
-                        outgoing.send(TransportMessage::new(
-                            turbomcp_protocol::MessageId::from(format!("s-req-{}", next_request_id - 1)),
-                            payload.into(),
-                        ))
-                        .await
-                        .map_err(|_| McpError::internal("Channel closed"))?;
-                    }
-                    SessionCommand::Notify { method, params } => {
-                        let notification = serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "method": method,
-                            "params": params
-                        });
-
-                        let payload = serde_json::to_vec(&notification)
-                            .map_err(|e| McpError::internal(e.to_string()))?;
-
-                        outgoing.send(TransportMessage::new(
-                            turbomcp_protocol::MessageId::from("notification"),
-                            payload.into(),
-                        ))
-                        .await
-                        .map_err(|_| McpError::internal("Channel closed"))?;
-                    }
+                    tokio::spawn(async move {
+                        // RAII cleanup runs on every exit path,
+                        // including handler panic.
+                        let _guard = guard;
+                        let response =
+                            super::route_catching_panics(&h, request, &ctx, &version).await;
+                        // See the note in line.rs.
+                        if cancel_signal.is_cancelled() {
+                            return;
+                        }
+                        let _ = resp_tx.send(response).await;
+                    });
                 }
             }
         }
     }
 
-    // Drain remaining handler responses
+    // The client has gone; see the matching note in line.rs.
+    outbound.close();
     drop(response_tx);
-    while let Some(response) = response_rx.recv().await {
-        if response.should_send() {
-            send_response_msg(&outgoing, &response).await?;
+    let drained = tokio::time::timeout(SHUTDOWN_GRACE, async {
+        loop {
+            tokio::select! {
+                biased;
+                Some(cmd) = cmd_rx.recv() => match cmd {
+                    SessionCommand::Request { response_tx, .. } => {
+                        let _ = response_tx.send(Err(McpError::internal("Session closed")));
+                    }
+                    notification => {
+                        if let Some(frame) = outbound.frame(notification) {
+                            let _ = send_value_msg(&outgoing, &frame).await;
+                        }
+                    }
+                },
+                response = response_rx.recv() => {
+                    let Some(response) = response else { break };
+                    if response.should_send() {
+                        let _ = send_response_msg(&outgoing, &response).await;
+                    }
+                }
+            }
         }
+    })
+    .await;
+    if drained.is_err() {
+        tracing::warn!(
+            "Handlers still running {SHUTDOWN_GRACE:?} after the client disconnected; cancelling them"
+        );
     }
 
     handler.on_shutdown().await?;
 
+    Ok(())
+}
+
+/// Serialize and send a server-initiated message over the channel.
+async fn send_value_msg(
+    tx: &mpsc::Sender<TransportMessage>,
+    value: &serde_json::Value,
+) -> McpResult<()> {
+    let payload = serde_json::to_vec(value).map_err(|e| McpError::internal(e.to_string()))?;
+    tx.send(TransportMessage::new(
+        turbomcp_protocol::MessageId::from("server-message"),
+        payload.into(),
+    ))
+    .await
+    .map_err(|_| McpError::internal("Channel closed"))?;
     Ok(())
 }
 

@@ -9,25 +9,25 @@
 //! by spawning handler dispatch on separate tasks. This prevents deadlocks
 //! when a handler awaits a client response via `session.call()`.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use turbomcp_core::error::{ErrorKind, McpError, McpResult};
+use turbomcp_core::error::McpError;
 use turbomcp_core::handler::McpHandler;
-use turbomcp_types::{ClientCapabilities, ProtocolVersion};
+use turbomcp_types::ProtocolVersion;
 
 use crate::config::ServerConfig;
-use crate::context::{Cancellable, McpSession, RequestContext, SessionFuture};
+use crate::context::{Cancellable, RequestContext};
 use crate::router;
 
-use super::{MAX_MESSAGE_SIZE, SessionState, jsonrpc_id_key};
-
-/// Maximum number of in-flight server-to-client requests before back-pressure.
-const MAX_PENDING_REQUESTS: usize = 64;
+use super::session::{
+    ConnectionCleanup, ConnectionSession, OutboundRequests, SHUTDOWN_GRACE, SessionCommand,
+    readable_id,
+};
+use super::{MAX_MESSAGE_SIZE, SessionState};
 
 /// Trait for types that can read lines.
 pub trait LineReader: AsyncBufRead + Unpin + Send {}
@@ -37,82 +37,76 @@ impl<T: AsyncBufRead + Unpin + Send> LineReader for T {}
 pub trait LineWriter: AsyncWrite + Unpin + Send {}
 impl<T: AsyncWrite + Unpin + Send> LineWriter for T {}
 
-/// Handle for a bidirectional session.
-#[derive(Debug, Clone)]
-pub struct SessionHandle {
-    request_tx: mpsc::Sender<SessionCommand>,
-    client_capabilities: Arc<RwLock<Option<ClientCapabilities>>>,
-    protocol_version: Arc<RwLock<Option<ProtocolVersion>>>,
-}
-
-#[derive(Debug)]
-enum SessionCommand {
-    Request {
-        method: String,
-        params: serde_json::Value,
-        response_tx: oneshot::Sender<McpResult<serde_json::Value>>,
-    },
-    Notify {
-        method: String,
-        params: serde_json::Value,
-    },
-}
-
-impl McpSession for SessionHandle {
-    fn client_capabilities<'a>(&'a self) -> SessionFuture<'a, Option<ClientCapabilities>> {
-        Box::pin(async move { Ok(self.client_capabilities.read().await.clone()) })
-    }
-
-    fn protocol_version<'a>(&'a self) -> SessionFuture<'a, Option<ProtocolVersion>> {
-        Box::pin(async move { Ok(self.protocol_version.read().await.clone()) })
-    }
-
-    fn call<'a>(
-        &'a self,
-        method: &'a str,
-        params: serde_json::Value,
-    ) -> SessionFuture<'a, serde_json::Value> {
-        Box::pin(async move {
-            let (response_tx, response_rx) = oneshot::channel();
-            self.request_tx
-                .send(SessionCommand::Request {
-                    method: method.to_string(),
-                    params,
-                    response_tx,
-                })
-                .await
-                .map_err(|_| McpError::internal("Session closed"))?;
-
-            // Bounded: an unanswered server-to-client request would otherwise
-            // park the handler forever, which is a hung tool call and a leaked
-            // task per occurrence, entirely at the peer's discretion.
-            match tokio::time::timeout(super::SERVER_REQUEST_TIMEOUT, response_rx).await {
-                Ok(Ok(result)) => result,
-                Ok(Err(_)) => Err(McpError::internal("Response channel closed")),
-                Err(_) => Err(McpError::timeout(format!(
-                    "client did not answer {method} within {:?}",
-                    super::SERVER_REQUEST_TIMEOUT
-                ))),
-            }
-        })
-    }
-
-    fn notify<'a>(&'a self, method: &'a str, params: serde_json::Value) -> SessionFuture<'a, ()> {
-        Box::pin(async move {
-            self.request_tx
-                .send(SessionCommand::Notify {
-                    method: method.to_string(),
-                    params,
-                })
-                .await
-                .map_err(|_| McpError::internal("Session closed"))?;
-            Ok(())
-        })
-    }
-}
-
 /// Channel for completed handler responses to be written back to the client.
 type HandlerResponse = router::JsonRpcOutgoing;
+
+/// One line off the wire, as far as the reader task could make it out.
+enum LineRead {
+    /// A complete line, newline stripped.
+    Line(String),
+    /// A line longer than the limit. Its bytes were discarded as they
+    /// arrived rather than buffered.
+    TooLong,
+    /// A line that is not UTF-8, so cannot be JSON.
+    NotUtf8,
+}
+
+/// Read one newline-terminated line, holding at most `limit` bytes of it.
+///
+/// `read_line` buffers the whole line before the caller can look at its
+/// length, so a peer that sends gigabytes without a newline grows the buffer
+/// until the process is killed — reachable by anyone who can connect over TCP
+/// or Unix. Here an over-long line is discarded as it streams past and the
+/// reader resynchronises at the next newline.
+///
+/// `Ok(None)` is end of input.
+async fn read_bounded_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    limit: usize,
+) -> std::io::Result<Option<LineRead>> {
+    let mut line = Vec::new();
+    let mut too_long = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            // End of input. A final line without a newline still counts.
+            return Ok(match (too_long, line.is_empty()) {
+                (true, _) => Some(LineRead::TooLong),
+                (false, true) => None,
+                (false, false) => Some(finish_line(line)),
+            });
+        }
+
+        let newline = available.iter().position(|&b| b == b'\n');
+        let content = &available[..newline.unwrap_or(available.len())];
+        if !too_long {
+            if line.len() + content.len() > limit {
+                too_long = true;
+                line = Vec::new();
+            } else {
+                line.extend_from_slice(content);
+            }
+        }
+
+        let consumed = newline.map_or(available.len(), |at| at + 1);
+        reader.consume(consumed);
+
+        if newline.is_some() {
+            return Ok(Some(if too_long {
+                LineRead::TooLong
+            } else {
+                finish_line(line)
+            }));
+        }
+    }
+}
+
+fn finish_line(line: Vec<u8>) -> LineRead {
+    match String::from_utf8(line) {
+        Ok(line) => LineRead::Line(line),
+        Err(_) => LineRead::NotUtf8,
+    }
+}
 
 /// Shared runner for line-based transports (STDIO, TCP, Unix).
 #[derive(Debug)]
@@ -161,13 +155,16 @@ impl<H: McpHandler> LineTransportRunner<H> {
         W: LineWriter,
         F: Fn() -> RequestContext,
     {
-        // Channel for session commands (server-to-client requests/notifications)
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<SessionCommand>(32);
-        let session_handle = Arc::new(SessionHandle {
-            request_tx: cmd_tx,
-            client_capabilities: Arc::new(RwLock::new(None)),
-            protocol_version: Arc::new(RwLock::new(None)),
-        });
+        let max_message_size = self
+            .config
+            .as_ref()
+            .map_or(MAX_MESSAGE_SIZE, |config| config.max_message_size);
+
+        // Handlers reach the client through the session; this loop is the
+        // only writer to the connection.
+        let (session, mut cmd_rx) = ConnectionSession::new();
+        let session_handle = Arc::new(session);
+        let new_ctx = || ctx_factory().with_session_id(session_handle.id());
 
         // Channel for completed handler responses
         let (response_tx, mut response_rx) = mpsc::channel::<HandlerResponse>(32);
@@ -177,12 +174,10 @@ impl<H: McpHandler> LineTransportRunner<H> {
         // cleared when the task finishes, and signalled when the client sends
         // `notifications/cancelled` per MCP 2025-11-25 §Cancellation.
         let pending_handlers: Arc<DashMap<String, CancellationToken>> = Arc::new(DashMap::new());
+        let _cleanup = ConnectionCleanup::new(&pending_handlers, &session_handle);
 
-        // Server-to-client pending request tracking
-        let mut pending_requests =
-            HashMap::<serde_json::Value, oneshot::Sender<McpResult<serde_json::Value>>>::new();
-        // Use string-prefixed IDs to avoid collision with client-originated integer IDs
-        let mut next_request_id = 1u64;
+        // Requests this server has sent the client and not yet seen answered.
+        let mut outbound = OutboundRequests::default();
 
         // MCP session lifecycle state. Enforces that `initialize` succeeds
         // before any other requests are processed, and prevents duplicate init.
@@ -190,9 +185,8 @@ impl<H: McpHandler> LineTransportRunner<H> {
 
         // Read on a dedicated task rather than inside the `select!` below.
         //
-        // `AsyncBufReadExt::read_line` is explicitly NOT cancel safe: tokio
-        // documents that when it loses a `select!` race, "some data may have
-        // been partially read, and this data is lost". The other arms here are
+        // Reading a line is not cancel safe: when it loses a `select!` race,
+        // what was read of the line so far is lost. The other arms here are
         // fed by concurrently spawned handler tasks, so losing that race is
         // routine — any request that does not arrive in a single poll (large
         // `tools/call` arguments, TCP segmentation, a pipe write split across
@@ -202,14 +196,13 @@ impl<H: McpHandler> LineTransportRunner<H> {
         // Moving the read onto its own task takes it out of the select
         // entirely: nothing ever cancels it mid-line, and the loop awaits
         // `recv()`, which IS cancel safe.
-        let (line_tx, mut line_rx) = mpsc::channel::<std::io::Result<String>>(32);
+        let (line_tx, mut line_rx) = mpsc::channel::<std::io::Result<LineRead>>(32);
         tokio::spawn(async move {
             let mut reader = reader;
             loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => break, // EOF
-                    Ok(_) => {
+                match read_bounded_line(&mut reader, max_message_size).await {
+                    Ok(None) => break, // EOF
+                    Ok(Some(line)) => {
                         // Send error means the transport loop is gone.
                         if line_tx.send(Ok(line)).await.is_err() {
                             break;
@@ -225,366 +218,292 @@ impl<H: McpHandler> LineTransportRunner<H> {
 
         loop {
             tokio::select! {
-                            biased;
+                biased;
 
-                            // Incoming from client
-                            maybe_line = line_rx.recv() => {
-                                // Channel closed: the reader task hit EOF or an error it
-                                // already reported.
-                                let Some(line_result) = maybe_line else { break };
-                                let line = line_result
-                                    .map_err(|e| McpError::internal(format!("Failed to read line: {e}")))?;
+                // Incoming from client
+                maybe_line = line_rx.recv() => {
+                    // Channel closed: the reader task hit EOF or an error it
+                    // already reported.
+                    let Some(line_result) = maybe_line else { break };
+                    let line = match line_result
+                        .map_err(|e| McpError::internal(format!("Failed to read line: {e}")))?
+                    {
+                        LineRead::Line(line) => line,
+                        // Reported as an error and skipped, so an oversized
+                        // frame does not take the connection down with it.
+                        LineRead::TooLong => {
+                            self.send_error(
+                                &mut writer,
+                                None,
+                                McpError::invalid_request(format!(
+                                    "Message exceeds maximum size of {max_message_size} bytes",
+                                )),
+                            ).await?;
+                            continue;
+                        }
+                        LineRead::NotUtf8 => {
+                            self.send_error(
+                                &mut writer,
+                                None,
+                                McpError::parse_error("message is not valid UTF-8"),
+                            ).await?;
+                            continue;
+                        }
+                    };
 
-                                let trimmed = line.trim();
-                                if trimmed.is_empty() {
-                                    continue;
-                                }
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
 
-                                // Check message size limit to prevent DoS. Reported as an
-                                // error and skipped, so an oversized frame does not take
-                                // the connection down with it.
-                                if line.len() > MAX_MESSAGE_SIZE {
+                    // Try parsing as a general JSON-RPC message
+                    let value: serde_json::Value = match serde_json::from_str(trimmed) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            self.send_error(&mut writer, None, McpError::parse_error(e.to_string())).await?;
+                            continue;
+                        }
+                    };
+
+                    // A response to one of our server-to-client requests.
+                    if outbound.resolve(&value) {
+                        continue;
+                    }
+
+                    let id = readable_id(&value);
+                    // Reuse the already-parsed `Value` rather than re-parsing
+                    // the raw line — saves one full JSON parse per message.
+                    let request = match router::parse_request_from_value(value) {
+                        Ok(request) => request,
+                        Err(e) => {
+                            self.send_error(&mut writer, id, e).await?;
+                            continue;
+                        }
+                    };
+
+                    if request.method == "initialize" {
+                        let client_capabilities =
+                            super::client_capabilities_from_initialize_params(
+                                request.params.as_ref(),
+                            );
+
+                        // Reject duplicate initialize per MCP spec.
+                        if matches!(session_state, SessionState::Initialized(_)) {
+                            self.send_error(
+                                &mut writer,
+                                request.id.clone(),
+                                McpError::invalid_request("Session already initialized"),
+                            )
+                            .await?;
+                            continue;
+                        }
+
+                        // Handle initialize inline (not spawned) so we can
+                        // capture the negotiated protocol version. Per the
+                        // MCP spec, initialize is always the first request
+                        // and the client waits for the response, so there
+                        // is no deadlock risk from blocking the loop here.
+                        //
+                        // NOTE: Handlers MUST NOT call session.call() during
+                        // initialize dispatch — the transport loop is blocked
+                        // here and cannot process the server-to-client
+                        // request, which would deadlock.
+                        let ctx = new_ctx();
+                        let response = router::route_request_with_config(
+                            &self.handler,
+                            request,
+                            &ctx,
+                            self.config.as_ref(),
+                        )
+                        .await;
+
+                        // Extract the negotiated version from a successful
+                        // response. On failure (error response), session
+                        // stays Uninitialized and subsequent non-init
+                        // requests will be rejected.
+                        if let Some(ref result) = response.result
+                            && let Some(v) =
+                                result.get("protocolVersion").and_then(|v| v.as_str())
+                        {
+                            let version = ProtocolVersion::from(v);
+                            tracing::info!(version = %version, "Protocol version negotiated");
+                            session_state = SessionState::Initialized(
+                                super::InitializedSessionState::new(version.clone()),
+                            );
+                            session_handle
+                                .set_initialized(client_capabilities, version)
+                                .await;
+                        }
+
+                        if response.should_send() {
+                            self.send_response(&mut writer, &response).await?;
+                        }
+                    } else if request.method == "notifications/cancelled" {
+                        // MCP 2025-11-25 §Cancellation: signal the matching
+                        // in-flight handler. Notifications have no response,
+                        // so we consume here.
+                        super::cancel_pending_handler(&pending_handlers, request.params.as_ref());
+                    } else if request.method == "notifications/initialized" {
+                        // Lifecycle notification — allowed pre-init.
+                        let handler = self.handler.clone();
+                        let resp_tx = response_tx.clone();
+                        let ctx = new_ctx().with_session(session_handle.clone());
+
+                        tokio::spawn(async move {
+                            let response = router::route_request(&handler, request, &ctx).await;
+                            let _ = resp_tx.send(response).await;
+                        });
+                    } else if request.method == "ping"
+                        && matches!(session_state, SessionState::Uninitialized)
+                    {
+                        // Lifecycle permits ping before initialize has completed.
+                        let ctx = new_ctx().with_session(session_handle.clone());
+                        let response = router::route_request(&self.handler, request, &ctx).await;
+                        if response.should_send() {
+                            self.send_response(&mut writer, &response).await?;
+                        }
+                    } else {
+                        // All other requests require a successful initialize.
+                        // Notifications (id=None) MUST NOT receive responses
+                        // per JSON-RPC 2.0, so rejection paths stay silent.
+                        let is_notification = request.id.is_none();
+                        let version = match &mut session_state {
+                            SessionState::Initialized(session) => {
+                                session.protocol_version().clone()
+                            }
+                            SessionState::Uninitialized => {
+                                if !is_notification {
                                     self.send_error(
                                         &mut writer,
-                                        None,
-                                        McpError::invalid_request(format!(
-                                            "Message exceeds maximum size of {MAX_MESSAGE_SIZE} bytes",
-                                        )),
-                                    ).await?;
-                                    continue;
+                                        request.id.clone(),
+                                        McpError::invalid_request(
+                                            "Server not initialized. Send 'initialize' first.",
+                                        ),
+                                    )
+                                    .await?;
                                 }
-
-                                // Try parsing as a general JSON-RPC message
-                                let value: serde_json::Value = match serde_json::from_str(trimmed) {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        self.send_error(&mut writer, None, McpError::parse_error(e.to_string())).await?;
-                                        continue;
-                                    }
-                                };
-
-                                // Check if it's a response to one of our server-to-client requests
-                                if let Some(id) = value.get("id") && (value.get("result").is_some() || value.get("error").is_some()) {
-                                    if let Some(tx) = pending_requests.remove(id) {
-                                        if let Some(error) = value.get("error") {
-                                            let mcp_error = serde_json::from_value::<turbomcp_core::jsonrpc::JsonRpcError>(error.clone())
-                                                .map(|e| McpError::new(ErrorKind::from_i32(e.code), e.message))
-                                                .unwrap_or_else(|_| McpError::internal("Failed to parse error response"));
-                                            let _ = tx.send(Err(mcp_error));
-                                        } else {
-                                            let result = value.get("result").cloned().unwrap_or(serde_json::Value::Null);
-                                            let _ = tx.send(Ok(result));
-                                        }
-                                    } else {
-                                        tracing::warn!(id = %id, "Received response for unknown request ID");
-                                    }
-                                } else {
-                                    // Reuse the already-parsed `Value` rather than re-parsing
-                                    // the raw line — saves one full JSON parse per message.
-                                    match router::parse_request_from_value(value) {
-                                        Ok(request) => {
-                                            if request.method == "initialize" {
-                                                let client_capabilities =
-                                                    super::client_capabilities_from_initialize_params(
-                                                        request.params.as_ref(),
-                                                    );
-
-                                                // Reject duplicate initialize per MCP spec.
-                                                if matches!(session_state, SessionState::Initialized(_)) {
-                                                    self.send_error(
-                                                        &mut writer,
-                                                        request.id.clone(),
-                                                        McpError::invalid_request(
-                                                            "Session already initialized",
-                                                        ),
-                                                    )
-                                                    .await?;
-                                                    continue;
-                                                }
-
-                                                // Handle initialize inline (not spawned) so we can
-                                                // capture the negotiated protocol version. Per the
-                                                // MCP spec, initialize is always the first request
-                                                // and the client waits for the response, so there
-                                                // is no deadlock risk from blocking the loop here.
-                                                //
-                                                // NOTE: Handlers MUST NOT call session.call() during
-                                                // initialize dispatch — the transport loop is blocked
-                                                // here and cannot process the server-to-client
-                                                // request, which would deadlock.
-                                                let ctx = ctx_factory();
-                                                let response = router::route_request_with_config(
-                                                    &self.handler,
-                                                    request,
-                                                    &ctx,
-                                                    self.config.as_ref(),
-                                                )
-                                                .await;
-
-                                                // Extract the negotiated version from a successful
-                                                // response. On failure (error response), session
-                                                // stays Uninitialized and subsequent non-init
-                                                // requests will be rejected.
-                                                if let Some(ref result) = response.result
-                                                    && let Some(v) =
-                                                        result.get("protocolVersion").and_then(|v| v.as_str())
-                                                {
-                                                    let version = ProtocolVersion::from(v);
-                                                    tracing::info!(
-                                                        version = %version,
-                                                        "Protocol version negotiated"
-                                                    );
-                                                    session_state = SessionState::Initialized(
-                                                        super::InitializedSessionState::new(
-                                                            version.clone(),
-                                                        ),
-                                                    );
-                                                    *session_handle.client_capabilities.write().await =
-                                                        Some(client_capabilities);
-                                                    *session_handle.protocol_version.write().await =
-                                                        Some(version);
-                                                }
-
-                                                if response.should_send() {
-                                                    self.send_response(&mut writer, &response).await?;
-                                                }
-                                            } else if request.method == "notifications/cancelled" {
-                                                // MCP 2025-11-25 §Cancellation: signal the
-                                                // matching in-flight handler. Notifications
-                                                // have no response, so we consume here.
-                                                if let Some(req_id) = request
-                                                    .params
-                                                    .as_ref()
-                                                    .and_then(|p| p.get("requestId"))
-                                                {
-                                                    let key = jsonrpc_id_key(req_id);
-                                                    if let Some((_, token)) =
-                                                        pending_handlers.remove(&key)
-                                                    {
-                                                        let reason = request
-                                                            .params
-                                                            .as_ref()
-                                                            .and_then(|p| p.get("reason"))
-                                                            .and_then(|r| r.as_str())
-                                                            .unwrap_or("client requested cancellation");
-                                                        tracing::debug!(
-                                                            request_id = %key,
-                                                            reason = %reason,
-                                                            "Cancelling in-flight handler",
-                                                        );
-                                                        token.cancel();
-                                                    }
-                                                }
-                                            } else if request.method == "notifications/initialized" {
-                                                // Lifecycle notification — allowed pre-init.
-                                                let handler = self.handler.clone();
-                                                let resp_tx = response_tx.clone();
-                                                let ctx = ctx_factory().with_session(session_handle.clone());
-
-                                                tokio::spawn(async move {
-                                                    let response = router::route_request(
-                                                        &handler, request, &ctx,
-                                                    )
-                                                    .await;
-                                                    let _ = resp_tx.send(response).await;
-                                                });
-                                            } else if request.method == "ping"
-                                                && matches!(session_state, SessionState::Uninitialized)
-                                            {
-                                                // Lifecycle permits ping before initialize has completed.
-                                                let ctx = ctx_factory().with_session(session_handle.clone());
-                                                let response =
-                                                    router::route_request(&self.handler, request, &ctx).await;
-                                                if response.should_send() {
-                                                    self.send_response(&mut writer, &response).await?;
-                                                }
-                                            } else {
-                                                // All other requests require a successful initialize.
-                                                // Notifications (id=None) MUST NOT receive responses
-                                                // per JSON-RPC 2.0, so rejection paths stay silent.
-                                                let is_notification = request.id.is_none();
-                                                let version = match &mut session_state {
-                                                    SessionState::Initialized(session) => {
-                                                        session.protocol_version().clone()
-                                                    }
-                                                    SessionState::Uninitialized => {
-                                                        if !is_notification {
-                                                            self.send_error(
-                                                                &mut writer,
-                                                                request.id.clone(),
-                                                                McpError::invalid_request(
-                                                                    "Server not initialized. Send 'initialize' first.",
-                                                                ),
-                                                            )
-                                                            .await?;
-                                                        }
-                                                        continue;
-                                                    }
-                                                };
-
-                                                // Spawn handler on a separate task to prevent
-                                                // deadlocks when the handler uses session.call()
-                                                // for sampling/elicitation. Install a per-request
-                                                // CancellationToken into the context and register
-                                                // it so `notifications/cancelled` from the client
-                                                // can signal the handler.
-                                                let handler = self.handler.clone();
-                                                let session = session_handle.clone();
-                                                let resp_tx = response_tx.clone();
-                                                let token = CancellationToken::new();
-                                                // Kept so the spawned task can tell whether it was cancelled
-                                                // before publishing its result.
-                                                let cancel_signal = token.clone();
-                                                let cancel_key = request.id.as_ref().map(jsonrpc_id_key);
-                                                if let Some(ref key) = cancel_key
-                                                    && pending_handlers
-                                                        .insert(key.clone(), token.clone())
-                                                        .is_some()
-                                                {
-                                                    // Sequential id reuse is fine and no longer rejected.
-                                                    // *Concurrent* reuse is not: the client cannot match
-                                                    // two responses carrying one id, and this overwrote the
-                                                    // first handler's cancellation token. Report it rather
-                                                    // than refusing to serve.
-                                                    tracing::warn!(
-                                                        request_id = %key,
-                                                        "Request id reused while the first is still in flight",
-                                                    );
-                                                }
-                                                let ctx = ctx_factory()
-                                                    .with_session(session)
-                                                    .with_cancellation_token(
-                                                        Arc::new(token) as Arc<dyn Cancellable>,
-                                                    );
-            let guard = super::PendingHandlerGuard::new(
-                                                    Arc::clone(&pending_handlers),
-                                                    cancel_key,
-                                                );
-
-                                                tokio::spawn(async move {
-                                                    // RAII: the guard removes the registry
-                                                    // entry on every exit path, including a
-                                                    // panic in the handler.
-                                                    let _guard = guard;
-                                                    let response = super::route_catching_panics(
-                                                        &handler, request, &ctx, &version,
-                                                    )
-                                                    .await;
-                                                    // A cancelled request gets no response.
-                                                    // The client has already been told to
-                                                    // forget this id, so answering it now
-                                                    // is an unsolicited reply — and it is
-                                                    // what made cancellation cosmetic:
-                                                    // handlers stopped being awaited but
-                                                    // their results were sent regardless.
-                                                    if cancel_signal.is_cancelled() {
-                                                        return;
-                                                    }
-                                                    // If channel is closed the transport loop has exited; ignore.
-                                                    let _ = resp_tx.send(response).await;
-                                                });
-                                            }
-                                        }
-                                        Err(e) => {
-                                            self.send_error(&mut writer, None, e).await?;
-                                        }
-                                    }
-                                }
+                                continue;
                             }
+                        };
 
-                            // Outgoing server-to-client requests/notifications.
-                            //
-                            // Drained ahead of completed responses: a handler emits these
-                            // while it is still running, so they belong on the wire before
-                            // the response that concludes it. Progress notifications in
-                            // particular must stop once an operation completes, which a
-                            // response-first order would violate. The channel is bounded
-                            // and only in-flight handlers write to it, so responses cannot
-                            // be starved.
-                            Some(cmd) = cmd_rx.recv() => {
-                                match cmd {
-                                    SessionCommand::Request { method, params, response_tx } => {
-                                        // Guard against unbounded pending request growth
-                                        if pending_requests.len() >= MAX_PENDING_REQUESTS {
-                                            tracing::error!(
-                                                count = pending_requests.len(),
-                                                "Too many pending server-to-client requests"
-                                            );
-                                            let _ = response_tx.send(Err(McpError::internal(
-                                                "Too many pending server-to-client requests"
-                                            )));
-                                            continue;
-                                        }
+                        // Spawn handler on a separate task to prevent
+                        // deadlocks when the handler uses session.call()
+                        // for sampling/elicitation. Install a per-request
+                        // CancellationToken into the context and register
+                        // it so `notifications/cancelled` from the client
+                        // can signal the handler.
+                        let handler = self.handler.clone();
+                        let resp_tx = response_tx.clone();
+                        let (token, guard) = super::register_pending_handler(
+                            &pending_handlers,
+                            request.id.as_ref(),
+                        );
+                        // Kept so the spawned task can tell whether it was
+                        // cancelled before publishing its result.
+                        let cancel_signal = token.clone();
+                        let ctx = new_ctx()
+                            .with_session(session_handle.clone())
+                            .with_cancellation_token(Arc::new(token) as Arc<dyn Cancellable>);
 
-                                        // Use string-prefixed IDs to avoid collision with client IDs
-                                        let id = serde_json::json!(format!("s-{next_request_id}"));
-                                        next_request_id += 1;
-
-                                        pending_requests.insert(id.clone(), response_tx);
-
-                                        let request = serde_json::json!({
-                                            "jsonrpc": "2.0",
-                                            "id": id,
-                                            "method": method,
-                                            "params": params
-                                        });
-
-                                        let req_str = serde_json::to_string(&request)
-                                            .map_err(|e| McpError::internal(e.to_string()))?;
-                                        writer.write_all(req_str.as_bytes()).await
-                                            .map_err(|e| McpError::internal(format!("Failed to write: {e}")))?;
-                                        writer.write_all(b"\n").await
-                                            .map_err(|e| McpError::internal(format!("Failed to write newline: {e}")))?;
-                                        writer.flush().await
-                                            .map_err(|e| McpError::internal(format!("Failed to flush: {e}")))?;
-                                    }
-                                    SessionCommand::Notify { method, params } => {
-                                        let notification = serde_json::json!({
-                                            "jsonrpc": "2.0",
-                                            "method": method,
-                                            "params": params
-                                        });
-
-                                        let notif_str = serde_json::to_string(&notification)
-                                            .map_err(|e| McpError::internal(e.to_string()))?;
-                                        writer.write_all(notif_str.as_bytes()).await
-                                            .map_err(|e| McpError::internal(format!("Failed to write: {e}")))?;
-                                        writer.write_all(b"\n").await
-                                            .map_err(|e| McpError::internal(format!("Failed to write newline: {e}")))?;
-                                        writer.flush().await
-                                            .map_err(|e| McpError::internal(format!("Failed to flush: {e}")))?;
-                                    }
-                                }
+                        tokio::spawn(async move {
+                            // RAII: the guard removes the registry entry on
+                            // every exit path, including a panic in the
+                            // handler.
+                            let _guard = guard;
+                            let response =
+                                super::route_catching_panics(&handler, request, &ctx, &version)
+                                    .await;
+                            // A cancelled request gets no response. The
+                            // client has already been told to forget this
+                            // id, so answering it now is an unsolicited
+                            // reply — and it is what made cancellation
+                            // cosmetic: handlers stopped being awaited but
+                            // their results were sent regardless.
+                            if cancel_signal.is_cancelled() {
+                                return;
                             }
+                            // If channel is closed the transport loop has exited; ignore.
+                            let _ = resp_tx.send(response).await;
+                        });
+                    }
+                }
 
-                            // Completed handler responses ready to write back
-                            Some(response) = response_rx.recv() => {
-                                if response.should_send() {
-                                    self.send_response(&mut writer, &response).await?;
-                                }
-                            }
-                        }
-        }
+                // Outgoing server-to-client requests/notifications.
+                //
+                // Drained ahead of completed responses: a handler emits these
+                // while it is still running, so they belong on the wire before
+                // the response that concludes it. Progress notifications in
+                // particular must stop once an operation completes, which a
+                // response-first order would violate. The channel is bounded
+                // and only in-flight handlers write to it, so responses cannot
+                // be starved.
+                Some(cmd) = cmd_rx.recv() => {
+                    if let Some(frame) = outbound.frame(cmd) {
+                        self.send_value(&mut writer, &frame).await?;
+                    }
+                }
 
-        // Drop our response_tx so the channel closes once all spawned tasks finish
-        drop(response_tx);
-
-        // Drain remaining handler responses from in-flight tasks
-        while let Some(response) = response_rx.recv().await {
-            if response.should_send() {
-                self.send_response(&mut writer, &response).await?;
+                // Completed handler responses ready to write back
+                Some(response) = response_rx.recv() => {
+                    if response.should_send() {
+                        self.send_response(&mut writer, &response).await?;
+                    }
+                }
             }
         }
 
-        // Log abandoned pending requests on shutdown
-        if !pending_requests.is_empty() {
+        // The client has gone. Nothing it could answer will arrive, so
+        // handlers awaiting a reply learn that now rather than at their
+        // timeout.
+        outbound.close();
+
+        // Let in-flight handlers finish, for up to `SHUTDOWN_GRACE`, writing
+        // what they produce on a best-effort basis. The command queue has to
+        // keep draining meanwhile: a handler blocked sending progress into a
+        // full queue would otherwise never finish, and neither would this
+        // function — which on TCP and Unix held the connection's slot forever.
+        drop(response_tx);
+        let drained = tokio::time::timeout(SHUTDOWN_GRACE, async {
+            loop {
+                tokio::select! {
+                    biased;
+                    Some(cmd) = cmd_rx.recv() => match cmd {
+                        SessionCommand::Request { response_tx, .. } => {
+                            let _ = response_tx.send(Err(McpError::internal("Session closed")));
+                        }
+                        notification => {
+                            if let Some(frame) = outbound.frame(notification) {
+                                let _ = self.send_value(&mut writer, &frame).await;
+                            }
+                        }
+                    },
+                    response = response_rx.recv() => {
+                        let Some(response) = response else { break };
+                        if response.should_send() {
+                            let _ = self.send_response(&mut writer, &response).await;
+                        }
+                    }
+                }
+            }
+        })
+        .await;
+        if drained.is_err() {
             tracing::warn!(
-                count = pending_requests.len(),
-                "Abandoning pending server-to-client requests on transport shutdown"
+                "Handlers still running {SHUTDOWN_GRACE:?} after the client disconnected; cancelling them"
             );
         }
 
         Ok(())
+    }
+
+    /// Write one JSON value as a line.
+    async fn send_value<W: LineWriter>(
+        &self,
+        writer: &mut W,
+        value: &serde_json::Value,
+    ) -> Result<(), McpError> {
+        let line = serde_json::to_string(value).map_err(|e| McpError::internal(e.to_string()))?;
+        self.write_line(writer, &line).await
     }
 
     /// Send a JSON-RPC response.
@@ -594,10 +513,14 @@ impl<H: McpHandler> LineTransportRunner<H> {
         response: &router::JsonRpcOutgoing,
     ) -> Result<(), McpError> {
         let response_str = router::serialize_response(response)?;
+        self.write_line(writer, &response_str).await
+    }
+
+    async fn write_line<W: LineWriter>(&self, writer: &mut W, line: &str) -> Result<(), McpError> {
         writer
-            .write_all(response_str.as_bytes())
+            .write_all(line.as_bytes())
             .await
-            .map_err(|e| McpError::internal(format!("Failed to write response: {e}")))?;
+            .map_err(|e| McpError::internal(format!("Failed to write: {e}")))?;
         writer
             .write_all(b"\n")
             .await
@@ -908,6 +831,163 @@ mod tests {
             output_str.contains("\"id\":1"),
             "Should continue processing after parse error"
         );
+    }
+
+    /// A handler that is still emitting when the client disconnects.
+    #[derive(Clone)]
+    struct Chatty;
+
+    #[allow(clippy::manual_async_fn)]
+    impl McpHandler for Chatty {
+        fn server_info(&self) -> ServerInfo {
+            ServerInfo::new("chatty", "1.0.0")
+        }
+        fn list_tools(&self) -> Vec<Tool> {
+            vec![Tool::new(
+                "chatter",
+                "Emits more notifications than the queue holds",
+            )]
+        }
+        fn list_resources(&self) -> Vec<Resource> {
+            vec![]
+        }
+        fn list_prompts(&self) -> Vec<Prompt> {
+            vec![]
+        }
+        fn call_tool<'a>(
+            &'a self,
+            _name: &'a str,
+            _args: Value,
+            ctx: &'a CoreRequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ToolResult>> + Send + 'a {
+            async move {
+                for n in 0..200 {
+                    let _ = ctx
+                        .notify_client("notifications/message", serde_json::json!({ "n": n }))
+                        .await;
+                }
+                Ok(ToolResult::text("done"))
+            }
+        }
+        fn read_resource<'a>(
+            &'a self,
+            uri: &'a str,
+            _ctx: &'a CoreRequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ResourceResult>> + Send + 'a {
+            let uri = uri.to_string();
+            async move { Err(McpError::resource_not_found(&uri)) }
+        }
+        fn get_prompt<'a>(
+            &'a self,
+            name: &'a str,
+            _args: Option<Value>,
+            _ctx: &'a CoreRequestContext,
+        ) -> impl std::future::Future<Output = McpResult<PromptResult>> + Send + 'a {
+            let name = name.to_string();
+            async move { Err(McpError::prompt_not_found(&name)) }
+        }
+        fn on_roots_list_changed<'a>(
+            &'a self,
+            _ctx: &'a CoreRequestContext,
+        ) -> impl std::future::Future<Output = McpResult<()>> + Send + 'a {
+            async { panic!("hook blew up") }
+        }
+    }
+
+    /// The client closes its end while a handler is mid-stream. The command
+    /// queue used to go undrained after EOF, so the handler blocked on it
+    /// forever and `run` never returned — on stdio `on_shutdown` never ran,
+    /// and on TCP/Unix the connection's slot was never released.
+    #[tokio::test]
+    async fn eof_while_a_handler_is_emitting_does_not_hang() {
+        let runner = LineTransportRunner::new(Chatty);
+        let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"chatter"}}"#;
+        let input = format!("{}{}\n", init_handshake(), call);
+        let reader = BufReader::new(Cursor::new(input));
+        let mut output = Vec::new();
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            runner.run(reader, &mut output, RequestContext::stdio),
+        )
+        .await
+        .expect("run must return once the client has gone")
+        .expect("clean shutdown");
+    }
+
+    /// A notification is never answered — not even when its hook panics.
+    #[tokio::test]
+    async fn a_panicking_notification_hook_sends_nothing() {
+        let runner = LineTransportRunner::new(Chatty);
+        let changed = r#"{"jsonrpc":"2.0","method":"notifications/roots/list_changed"}"#;
+        let input = format!("{}{}\n", init_handshake(), changed);
+        let reader = BufReader::new(Cursor::new(input));
+        let mut output = Vec::new();
+
+        runner
+            .run(reader, &mut output, RequestContext::stdio)
+            .await
+            .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let lines: Vec<&str> = output.trim().lines().collect();
+        assert_eq!(lines.len(), 1, "only the initialize response: {output}");
+    }
+
+    /// An envelope that is invalid but has a readable id is answered on that
+    /// id, so the client's waiter resolves.
+    #[tokio::test]
+    async fn an_invalid_request_is_answered_on_its_own_id() {
+        let runner = LineTransportRunner::new(TestHandler);
+        let input = "{\"jsonrpc\":\"1.0\",\"id\":7,\"method\":\"ping\"}\n";
+        let reader = BufReader::new(Cursor::new(input));
+        let mut output = Vec::new();
+
+        runner
+            .run(reader, &mut output, RequestContext::stdio)
+            .await
+            .unwrap();
+
+        let response: Value =
+            serde_json::from_str(String::from_utf8(output).unwrap().trim()).expect("one response");
+        assert_eq!(response["id"], 7, "{response}");
+        assert_eq!(response["error"]["code"], -32600, "{response}");
+    }
+
+    /// An over-long line is dropped as it streams in, and the reader picks
+    /// up at the next line. It used to be buffered whole before its length
+    /// was checked, which on TCP/Unix let any peer exhaust memory.
+    #[tokio::test]
+    async fn read_bounded_line_discards_an_over_long_line() {
+        let input = format!("{}\nok\n\u{1F600}\nlast", "x".repeat(100));
+        let mut reader = BufReader::with_capacity(8, Cursor::new(input.into_bytes()));
+
+        assert!(matches!(
+            read_bounded_line(&mut reader, 16).await.unwrap(),
+            Some(LineRead::TooLong)
+        ));
+        assert!(matches!(
+            read_bounded_line(&mut reader, 16).await.unwrap(),
+            Some(LineRead::Line(line)) if line == "ok"
+        ));
+        assert!(matches!(
+            read_bounded_line(&mut reader, 16).await.unwrap(),
+            Some(LineRead::Line(line)) if line == "\u{1F600}"
+        ));
+        assert!(matches!(
+            read_bounded_line(&mut reader, 16).await.unwrap(),
+            Some(LineRead::Line(line)) if line == "last"
+        ));
+        assert!(read_bounded_line(&mut reader, 16).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn read_bounded_line_reports_invalid_utf8() {
+        let mut reader = BufReader::new(Cursor::new(vec![0xff, 0xfe, b'\n']));
+        assert!(matches!(
+            read_bounded_line(&mut reader, 16).await.unwrap(),
+            Some(LineRead::NotUtf8)
+        ));
     }
 
     // H-22: Clean EOF returns Ok
