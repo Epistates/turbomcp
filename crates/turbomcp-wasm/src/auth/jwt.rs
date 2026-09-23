@@ -453,9 +453,10 @@ impl Authenticator for WasmJwtAuthenticator {
 impl WasmJwtAuthenticator {
     /// Verify signature with automatic key rotation handling.
     ///
-    /// If signature verification fails and a `kid` is specified, refreshes the
-    /// JWKS cache and retries once. This handles the case where keys were
-    /// rotated (Cloudflare rotates every 6 weeks).
+    /// Rotation is detected by the token naming a `kid` the cached set lacks,
+    /// in which case [`JwksCache::find_key`] refreshes (at most once per 30
+    /// seconds). A signature that fails against a key we already hold is just
+    /// a bad token: refreshing on it let every forged token trigger a fetch.
     async fn verify_with_key_rotation(
         &self,
         header: &JwtHeader,
@@ -475,31 +476,8 @@ impl WasmJwtAuthenticator {
                 .ok_or_else(|| AuthError::KeyNotFound("No suitable key found".to_string()))?
         };
 
-        // First attempt at signature verification
-        let valid = self
-            .verify_signature(&jwk, algorithm, signing_input, signature)
-            .await?;
-
-        if valid {
-            return Ok(true);
-        }
-
-        // If signature failed and we have a kid, try refreshing the JWKS
-        // This handles key rotation scenarios
-        if let Some(ref kid) = header.kid {
-            // Force refresh the JWKS cache
-            if self.jwks_cache.refresh().await.is_ok() {
-                // Try to find the key again
-                if let Ok(refreshed_jwk) = self.jwks_cache.find_key(kid).await {
-                    // Retry verification with the refreshed key
-                    return self
-                        .verify_signature(&refreshed_jwk, algorithm, signing_input, signature)
-                        .await;
-                }
-            }
-        }
-
-        Ok(false)
+        self.verify_signature(&jwk, algorithm, signing_input, signature)
+            .await
     }
 }
 
