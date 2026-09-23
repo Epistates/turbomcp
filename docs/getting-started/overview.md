@@ -10,7 +10,7 @@ TurboMCP provides:
 - **Type-safe handlers** with compile-time validation
 - **Multiple transports** (STDIO, HTTP/SSE, WebSocket, TCP, Unix sockets, gRPC)
 - **Full protocol support** including tools, resources, prompts, sampling, and elicitation
-- **Dependency injection** for clean separation of concerns
+- **Request context** for per-request metadata and server-to-client calls
 - **Production features** like graceful shutdown, observability, and error handling
 - **Edge computing support** with WASM and WASI (v3)
 
@@ -44,9 +44,10 @@ The Model Context Protocol (MCP) is a standard protocol that enables Claude and 
 
 ### Traditional Approach
 
-Building MCP servers traditionally requires:
+Building MCP servers traditionally requires code like this (a sketch, not a
+TurboMCP API):
 
-```rust
+```rust,ignore
 // Manual schema definition
 let tool_schema = json!({
     "name": "get_weather",
@@ -76,9 +77,18 @@ match request.method {
 With TurboMCP, you just write handlers:
 
 ```rust
-#[tool]
-async fn get_weather(city: String) -> McpResult<String> {
-    Ok(format!("Weather for {}", city))
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Weather;
+
+#[server(name = "weather", version = "1.0.0")]
+impl Weather {
+    /// Get the weather for a city
+    #[tool]
+    async fn get_weather(&self, city: String) -> McpResult<String> {
+        Ok(format!("Weather for {}", city))
+    }
 }
 ```
 
@@ -135,22 +145,34 @@ Each layer is independent and can be used separately or together.
 
 ### Handlers
 
-Handlers are async functions decorated with macros that define what your server can do:
+Handlers are async methods in a `#[server]` impl block, marked with the kind of
+capability they provide:
 
 ```rust
-#[tool]
-async fn my_tool(param: String) -> McpResult<String> {
-    Ok("result".to_string())
-}
+use turbomcp::prelude::*;
 
-#[resource]
-async fn my_resource() -> McpResult<String> {
-    Ok("resource content".to_string())
-}
+#[derive(Clone)]
+struct MyServer;
 
-#[prompt]
-async fn my_prompt() -> McpResult<String> {
-    Ok("prompt content".to_string())
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// A tool the model can call
+    #[tool]
+    async fn my_tool(&self, param: String) -> McpResult<String> {
+        Ok("result".to_string())
+    }
+
+    /// A resource the client can read, by URI
+    #[resource("app://status")]
+    async fn my_resource(&self, uri: String, ctx: &RequestContext) -> McpResult<String> {
+        Ok("resource content".to_string())
+    }
+
+    /// A prompt template the user can pick
+    #[prompt]
+    async fn my_prompt(&self, ctx: &RequestContext) -> McpResult<String> {
+        Ok("prompt content".to_string())
+    }
 }
 ```
 
@@ -159,63 +181,129 @@ async fn my_prompt() -> McpResult<String> {
 All error types unified into `McpError`:
 
 ```rust
-use turbomcp::{McpError, McpResult};
+use turbomcp::prelude::*;
 
-#[tool]
-async fn handler(input: String) -> McpResult<String> {
-    if input.is_empty() {
-        return Err(McpError::invalid_params("Input required"));
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    #[tool]
+    async fn handler(&self, input: String) -> McpResult<String> {
+        if input.is_empty() {
+            return Err(McpError::invalid_params("Input required"));
+        }
+        Ok(input)
     }
-    Ok(input)
 }
 ```
 
-### Context Injection
+### State and Context
 
-Handlers can request injected dependencies:
+Handlers are methods, so application state lives on the server type (behind an
+`Arc` so the type stays cheap to clone). Per-request information comes from an
+optional `ctx: &RequestContext` parameter:
 
 ```rust
-#[tool]
-async fn my_handler(
-    config: Config,      // Application configuration
-    logger: Logger,      // Structured logging
-    cache: Cache,        // In-memory cache
-    db: Database,        // Database connection
-) -> McpResult<String> {
-    // Use injected dependencies
-    Ok("result".to_string())
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use turbomcp::prelude::*;
+
+#[derive(Clone, Default)]
+struct MyServer {
+    cache: Arc<RwLock<HashMap<String, String>>>,
+}
+
+#[server]
+impl MyServer {
+    #[tool]
+    async fn my_handler(&self, key: String, ctx: &RequestContext) -> McpResult<String> {
+        let cached = self.cache.read().await.get(&key).cloned();
+        Ok(format!("{key} = {cached:?} (request {})", ctx.request_id()))
+    }
 }
 ```
 
 ### Multiple Transports
 
-Add transports as needed – start with STDIO, add HTTP/OAuth/WebSocket later:
+Add transports as needed – start with STDIO, add HTTP/WebSocket later. Each
+`run_*` method needs its transport's Cargo feature; gRPC lives in the separate
+`turbomcp-grpc` crate.
 
 ```rust
-let server = McpServer::new()
-    .stdio()              // Standard I/O
-    .http(8080)           // HTTP + Server-Sent Events
-    .websocket(8081)      // WebSocket support
-    .tcp(9000)            // TCP networking
-    .grpc(50051)          // gRPC (v3)
-    .run()
-    .await?;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    #[tool]
+    async fn ping(&self) -> String {
+        "pong".to_string()
+    }
+}
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    match std::env::var("TRANSPORT").as_deref() {
+        Ok("http") => MyServer.run_http("0.0.0.0:8080").await,      // Streamable HTTP
+        Ok("ws") => MyServer.run_websocket("0.0.0.0:8081").await,   // WebSocket
+        Ok("tcp") => MyServer.run_tcp("0.0.0.0:9000").await,        // TCP
+        _ => MyServer.run_stdio().await,                            // Standard I/O
+    }
+}
 ```
 
-### Tower Middleware (v3)
+### Middleware (v3)
 
-Compose middleware using Tower:
+Wrap any handler in typed MCP middleware; the stack is itself a handler, so it
+runs on any transport:
 
 ```rust
-use tower::ServiceBuilder;
-use turbomcp_auth::tower::AuthLayer;
-use turbomcp_telemetry::tower::TelemetryLayer;
+use serde_json::Value;
+use std::future::Future;
+use std::pin::Pin;
+use turbomcp::prelude::*;
+use turbomcp_server::{McpMiddleware, MiddlewareStack, Next};
 
-let service = ServiceBuilder::new()
-    .layer(TelemetryLayer::new(config))
-    .layer(AuthLayer::new(auth_config))
-    .service(my_handler);
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    #[tool]
+    async fn ping(&self) -> String {
+        "pong".to_string()
+    }
+}
+
+struct Audit;
+
+impl McpMiddleware for Audit {
+    fn on_call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            eprintln!("tool {name} called");
+            next.call_tool(name, args, ctx).await
+        })
+    }
+}
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MiddlewareStack::new(MyServer).with_middleware(Audit).run_stdio().await
+}
 ```
+
+Tower layers for authentication and telemetry are covered in the
+[Tower Middleware guide](../guide/tower-middleware.md).
 
 ### WASM Support (v3)
 
@@ -242,14 +330,15 @@ const tools = await client.listTools();
 
 ## Examples Repository
 
-See the [examples/](https://github.com/turbomcp/turbomcp/tree/main/crates/turbomcp/examples) directory for:
+See the [examples/](https://github.com/Epistates/turbomcp/tree/main/crates/turbomcp/examples) directory for:
 
 - `hello_world.rs` - Minimal example
 - `macro_server.rs` - Using macros
 - `stateful.rs` - Maintaining state
-- `sampling_server.rs` - Bidirectional communication
-- `http_app.rs` - HTTP transport
-- And 20+ more real-world patterns
+- `transports_demo.rs` - Choosing a transport
+- `middleware.rs` - Typed middleware
+- `test_client.rs` - In-memory testing with `McpTestClient`
+- And 10 more patterns
 
 ## Additional Resources
 

@@ -17,12 +17,13 @@ Update `Cargo.toml`:
 [package]
 name = "weather-mcp-server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 turbomcp = { version = "3.5.0", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
+schemars = "1"
 ```
 
 ## Build a Weather Server
@@ -53,17 +54,20 @@ struct WeatherData {
 #[server(name = "weather-server", version = "1.0.0")]
 impl WeatherServer {
     /// Get current weather for a city
+    ///
+    /// `Json<T>` sends the value as structured content and advertises
+    /// `WeatherData`'s schema as the tool's output schema.
     #[tool]
     async fn get_weather(
         &self,
         #[description("City name (e.g. 'New York')")]
         city: String,
-    ) -> McpResult<WeatherData> {
+    ) -> McpResult<Json<WeatherData>> {
         // Check cache
         {
             let cache = self.cache.lock().unwrap();
             if let Some(data) = cache.get(&city) {
-                return Ok(data.clone());
+                return Ok(Json(data.clone()));
             }
         }
 
@@ -80,20 +84,20 @@ impl WeatherServer {
             cache.insert(city, weather.clone());
         }
 
-        Ok(weather)
+        Ok(Json(weather))
     }
 
     /// List all cities we have data for
     #[resource("weather://cities")]
-    async fn list_cities(&self) -> String {
+    async fn list_cities(&self, uri: String, ctx: &RequestContext) -> McpResult<String> {
         let cache = self.cache.lock().unwrap();
         let cities: Vec<String> = cache.keys().cloned().collect();
-        cities.join(", ")
+        Ok(cities.join(", "))
     }
 
     /// Get a weather analysis prompt
-    #[prompt("analyze-weather")]
-    async fn analyze_prompt(&self, city: String) -> String {
+    #[prompt]
+    async fn analyze_weather(&self, city: String, ctx: &RequestContext) -> String {
         format!("Analyze the weather patterns for {}, focusing on temperature trends.", city)
     }
 }
@@ -143,20 +147,27 @@ turbomcp-cli tools call get_weather \
 
 ## Add HTTP Transport
 
-Want to expose your server over HTTP instead of STDIO? Just change the run command:
+Want to expose your server over HTTP instead of STDIO? Replace `main` in the
+file above with this (the `full` feature already includes `http`):
 
-```rust
+```rust,ignore
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = WeatherServer { /* ... */ };
+    let server = WeatherServer {
+        cache: Arc::new(Mutex::new(std::collections::HashMap::new())),
+    };
 
-    // Run via HTTP
-    server.run_http("0.0.0.0:8080".parse()?)
-        .await?;
-    
+    // Streamable HTTP at http://localhost:8080/mcp
+    server.run_http("0.0.0.0:8080").await?;
     Ok(())
 }
 ```
+
+By default the HTTP transport refuses requests that carry no `Origin` header
+unless they come from the local machine, which suits local testing. To serve
+non-browser clients over the network, configure the server through
+`ServerConfig::builder().allow_missing_origin(true)` and pair that with
+authorization; see the [Authentication guide](../guide/authentication.md).
 
 ## Key Concepts Applied
 

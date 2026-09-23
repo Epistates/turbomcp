@@ -51,7 +51,9 @@ Your server state goes here. It must derive `Clone` because it's shared across a
 
 ### 3. Implement the Handler
 
-```rust
+This excerpt and the next are pieces of the complete example above:
+
+```rust,ignore
 #[server(name = "hello-server", version = "1.0.0")]
 impl HelloServer {
     #[tool("Say hello")]
@@ -73,7 +75,7 @@ The `#[tool]` macro:
 
 ### 4. Run the Server
 
-```rust
+```rust,ignore
 HelloServer.run_stdio().await?;
 ```
 
@@ -108,6 +110,11 @@ turbomcp-cli tools call hello --arguments '{"name": "World"}' \
 Add as many handlers as you want:
 
 ```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MathServer;
+
 #[server(name = "math-server", version = "1.0.0")]
 impl MathServer {
     #[tool("Add two numbers")]
@@ -115,33 +122,49 @@ impl MathServer {
         a + b
     }
 
-    #[resource("config://app")]
-    async fn get_config(&self) -> String {
-        r#"{"debug": true}"#.to_string()
+    /// Application configuration
+    #[resource("config://app", mime_type = "application/json")]
+    async fn get_config(&self, uri: String, ctx: &RequestContext) -> McpResult<String> {
+        Ok(r#"{"debug": true}"#.to_string())
     }
 
-    #[prompt("code-review")]
-    async fn review_prompt(&self, code: String) -> String {
+    /// Ask for a code review
+    #[prompt]
+    async fn code_review(&self, code: String, ctx: &RequestContext) -> String {
         format!("Review this code:\n\n{}", code)
     }
 }
 ```
 
-Note: You can return simple types like `i32` or `String` directly! The macros handle the conversion to `McpResult`.
+Note: tools and prompts can return simple types like `i32` or `String` directly; the macros convert them. Each handler kind has its own signature:
+
+- A **tool** takes its arguments as parameters.
+- A **resource** takes the requested `uri` and the request context, and returns `McpResult<T>`. The URI (or URI template) is the attribute's first argument.
+- A **prompt** takes `String` or `Option<String>` arguments, then the request context. Its name is the method name; `#[prompt("...")]` sets the description.
 
 ## Add Documentation
 
 Enhance your handlers with descriptions for the LLM:
 
 ```rust
-#[tool]
-async fn add(
-    #[description("The first number")]
-    a: i32,
-    #[description("The second number")]
-    b: i32,
-) -> i32 {
-    a + b
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MathServer;
+
+#[server(name = "math-server", version = "1.0.0")]
+impl MathServer {
+    /// Add two numbers
+    #[tool]
+    async fn add(
+        &self,
+        #[description("The first number")]
+        a: i32,
+        #[description("The second number")]
+        b: i32,
+    ) -> i32 {
+        a + b
+    }
 }
 ```
 
