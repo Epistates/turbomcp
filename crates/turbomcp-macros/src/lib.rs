@@ -67,6 +67,7 @@
 
 use proc_macro::TokenStream;
 
+mod attrs;
 mod schema;
 mod server;
 mod tool;
@@ -232,6 +233,22 @@ pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// # Attribute keys
+///
+/// `#[tool]`, `#[resource]`, and `#[prompt]` share one grammar. All three
+/// accept `description`, `title`, `tags`, `version`, and `icons`; an explicit
+/// `description` takes precedence over the doc comment. `#[tool]` adds:
+///
+/// - `read_only`, `destructive`, `idempotent`, `open_world` = `true`/`false` —
+///   the `ToolAnnotations` hints
+/// - `output_schema = Type` — overrides the schema inferred from a `Json<T>`
+///   return
+/// - `task_support = "forbidden" | "optional" | "required"` — advertised as
+///   `execution.taskSupport`. Declaration only: clients use task augmentation
+///   only against a server that also advertises `tasks.requests.tools.call`.
+///
+/// An unknown key is a compile error that lists the accepted ones.
+///
 /// # Cancellation
 ///
 /// Per MCP §Cancellation, a client may send `notifications/cancelled` to
@@ -332,6 +349,31 @@ pub fn tool(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///     // ...
 /// }
 /// ```
+///
+/// # Attribute keys
+///
+/// After the URI, `#[resource]` accepts the keys every marker shares
+/// (`description`, `title`, `tags`, `version`, `icons` — see
+/// [`macro@tool`]) plus:
+///
+/// - `mime_type = "..."`
+/// - `audience = ["user", "assistant"]`, `priority = 0.0..=1.0`, and
+///   `last_modified = "2025-01-12T15:00:58Z"` — the `ResourceAnnotations`
+/// - `size = N` — the size in bytes; concrete URIs only, since a template
+///   stands for many resources
+///
+/// ```ignore
+/// #[resource(
+///     "docs://readme",
+///     mime_type = "text/markdown",
+///     audience = ["user"],
+///     priority = 0.9,
+///     size = 2048
+/// )]
+/// async fn readme(&self, uri: String, ctx: &RequestContext) -> String {
+///     // ...
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
     // Resource attribute must be used within a #[server] impl block
@@ -383,6 +425,13 @@ pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///   the field, so a user is shown `repo_url` rather than "Repository URL".
 ///
 /// An `Option<T>` parameter is reported as optional; anything else as required.
+///
+/// # Attribute keys
+///
+/// `#[prompt]` accepts the keys every marker shares — `description`, `title`,
+/// `tags`, `version`, `icons` (see [`macro@tool`]) — or the
+/// `#[prompt("description")]` shorthand. An explicit `description` takes
+/// precedence over the doc comment.
 ///
 /// # Example
 ///

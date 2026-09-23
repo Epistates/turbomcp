@@ -57,6 +57,8 @@ use quote::quote;
 use syn::ext::IdentExt;
 use syn::{FnArg, ItemFn, Pat, PatType, Signature, Type};
 
+use crate::attrs::{CommonAttrs, parse_lit_bool, parse_marker_attrs};
+
 /// Information about a tool handler method.
 #[derive(Clone)]
 pub struct ToolInfo {
@@ -81,6 +83,8 @@ pub struct ToolInfo {
     /// Optional output-schema source type. The macro emits
     /// `schemars::schema_for!(ty)` and stores the result as `Tool.outputSchema`.
     pub output_schema: Option<Type>,
+    /// `TaskSupportLevel` variant for `execution.taskSupport`, if declared.
+    pub task_support: Option<syn::Ident>,
 }
 
 /// Boolean hints copied verbatim into `ToolAnnotations`.
@@ -121,21 +125,26 @@ pub struct ParameterInfo {
 /// Parsed attributes from the #[tool(...)] macro.
 #[derive(Default)]
 pub struct ToolAttrs {
-    /// Tool description
-    pub description: Option<String>,
-    /// Tags for categorization
-    pub tags: Vec<String>,
-    /// Version string
-    pub version: Option<String>,
-    /// Human-readable title (SEP-973).
-    pub title: Option<String>,
-    /// Icon URIs (SEP-973). Plain string array; each entry becomes an `Icon`.
-    pub icons: Vec<String>,
+    /// Keys every handler marker shares (`description`, `tags`, ...).
+    pub common: CommonAttrs,
     /// `ToolAnnotations` boolean hints.
     pub annotations: ToolAnnotationFlags,
     /// Output-schema source type (`output_schema = MyType`).
     pub output_schema: Option<Type>,
+    /// `task_support = "..."`: the `TaskSupportLevel` variant to advertise
+    /// as `execution.taskSupport`.
+    pub task_support: Option<syn::Ident>,
 }
+
+/// Keys only `#[tool]` accepts, on top of [`CommonAttrs`].
+const TOOL_KEYS: &[&str] = &[
+    "read_only",
+    "destructive",
+    "idempotent",
+    "open_world",
+    "output_schema",
+    "task_support",
+];
 
 impl ToolAttrs {
     /// Parse tool attributes from a syn::Attribute.
@@ -154,234 +163,54 @@ impl ToolAttrs {
 
         // Handle #[tool("description")] shorthand
         if let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone()) {
-            attrs.description = Some(lit.value());
+            attrs.common.description = Some(lit.value());
             return Ok(attrs);
         }
 
-        // Parse #[tool(description = "...", tags = [...], version = "...", ...)]
-        let parser = syn::meta::parser(|meta| {
-            if meta.path.is_ident("description") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                attrs.description = Some(value.value());
-            } else if meta.path.is_ident("tags") {
-                // Parse tags = ["a", "b", "c"]
-                attrs.tags = parse_lit_str_array(&meta)?;
-            } else if meta.path.is_ident("version") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                attrs.version = Some(value.value());
-            } else if meta.path.is_ident("title") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                attrs.title = Some(value.value());
-            } else if meta.path.is_ident("icons") {
-                // Surface only `src` from the attribute. The MCP `Icon` schema
-                // also carries mimeType / sizes / theme; users wanting richer
-                // icons can construct them via the runtime builder.
-                attrs.icons = parse_lit_str_array(&meta)?;
-            } else if meta.path.is_ident("read_only") {
-                attrs.annotations.read_only = Some(meta.value()?.parse::<syn::LitBool>()?.value);
+        let Self {
+            common,
+            annotations,
+            output_schema,
+            task_support,
+        } = &mut attrs;
+        *common = parse_marker_attrs(meta_list.tokens.clone(), "tool", TOOL_KEYS, |meta| {
+            if meta.path.is_ident("read_only") {
+                annotations.read_only = Some(parse_lit_bool(meta)?);
             } else if meta.path.is_ident("destructive") {
-                attrs.annotations.destructive = Some(meta.value()?.parse::<syn::LitBool>()?.value);
+                annotations.destructive = Some(parse_lit_bool(meta)?);
             } else if meta.path.is_ident("idempotent") {
-                attrs.annotations.idempotent = Some(meta.value()?.parse::<syn::LitBool>()?.value);
+                annotations.idempotent = Some(parse_lit_bool(meta)?);
             } else if meta.path.is_ident("open_world") {
-                attrs.annotations.open_world = Some(meta.value()?.parse::<syn::LitBool>()?.value);
+                annotations.open_world = Some(parse_lit_bool(meta)?);
             } else if meta.path.is_ident("output_schema") {
                 // `output_schema = SomeType` — accept any syn::Type so generics
                 // and qualified paths work.
-                attrs.output_schema = Some(meta.value()?.parse::<Type>()?);
+                *output_schema = Some(meta.value()?.parse::<Type>()?);
+            } else if meta.path.is_ident("task_support") {
+                let value: syn::LitStr = meta.value()?.parse()?;
+                let variant = match value.value().as_str() {
+                    "forbidden" => "Forbidden",
+                    "optional" => "Optional",
+                    "required" => "Required",
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            &value,
+                            format!(
+                                "unknown task_support `{other}`; expected \"forbidden\", \
+                                 \"optional\", or \"required\""
+                            ),
+                        ));
+                    }
+                };
+                *task_support = Some(syn::Ident::new(variant, value.span()));
             } else {
-                // Unknown key — surface a clear compile-time error instead of
-                // silently dropping it. A typo like `descriptio = "..."` would
-                // previously parse, leaving the resulting tool with the default
-                // description and no diagnostic.
-                let key = meta
-                    .path
-                    .get_ident()
-                    .map(|i| i.to_string())
-                    .unwrap_or_else(|| "<unknown>".to_string());
-                return Err(meta.error(format!(
-                    "unknown #[tool] attribute key `{key}`; expected one of `description`, `tags`, `version`, `title`, `icons`, `read_only`, `destructive`, `idempotent`, `open_world`, `output_schema`",
-                )));
+                return Ok(false);
             }
-            Ok(())
-        });
-
-        // Try to parse, but if it fails with the nested parser, try an alternative
-        if syn::parse::Parser::parse2(parser, meta_list.tokens.clone()).is_err() {
-            // Alternative: parse comma-separated items including array literals
-            attrs = Self::parse_alternative(&meta_list.tokens)?;
-        }
+            Ok(true)
+        })?;
 
         Ok(attrs)
     }
-
-    /// Alternative parser for complex attribute syntax.
-    ///
-    /// Used as a fallback when the `syn::meta::parser` path fails. Handles
-    /// scalar string keys, the `tags`/`icons` array forms, and the boolean
-    /// hints. `output_schema` (a `Type`) is intentionally unsupported here —
-    /// stringly extracting a Rust type is brittle, and the primary parser
-    /// already covers the realistic syntax.
-    fn parse_alternative(tokens: &proc_macro2::TokenStream) -> Result<Self, syn::Error> {
-        let mut attrs = Self::default();
-        let token_str = tokens.to_string();
-
-        attrs.description = parse_quoted_value(&token_str, "description");
-        attrs.version = parse_quoted_value(&token_str, "version");
-        attrs.title = parse_quoted_value(&token_str, "title");
-        attrs.tags = parse_string_array(&token_str, "tags");
-        attrs.icons = parse_string_array(&token_str, "icons");
-        attrs.annotations.read_only = parse_bool_value(&token_str, "read_only");
-        attrs.annotations.destructive = parse_bool_value(&token_str, "destructive");
-        attrs.annotations.idempotent = parse_bool_value(&token_str, "idempotent");
-        attrs.annotations.open_world = parse_bool_value(&token_str, "open_world");
-
-        Ok(attrs)
-    }
-}
-
-/// Parse `["a", "b", ...]` from a `syn::meta::ParseNestedMeta` value position.
-///
-/// Used by the primary `syn::meta::parser` for array-valued attribute keys
-/// (`tags`, `icons`). Without this the meta parser would bail on the bracketed
-/// value and the alternative string-based parser would take over — losing any
-/// attrs (like `output_schema = Type`) that only the primary parser supports.
-fn parse_lit_str_array(meta: &syn::meta::ParseNestedMeta<'_>) -> Result<Vec<String>, syn::Error> {
-    let value = meta.value()?;
-    let arr;
-    syn::bracketed!(arr in value);
-    let parsed: syn::punctuated::Punctuated<syn::LitStr, syn::Token![,]> =
-        syn::punctuated::Punctuated::parse_terminated(&arr)?;
-    Ok(parsed.into_iter().map(|s| s.value()).collect())
-}
-
-/// Parse a `key = "value"` pattern from a stringified token stream.
-///
-/// Fallback for complex attribute syntax when standard parsing fails. Walks
-/// the token stream looking for the bare ident `key`, an `=` punct, and a
-/// string literal — this avoids substring matches inside other identifiers
-/// or string values (e.g. a description containing the word `version` would
-/// previously poison the lookup).
-pub fn parse_quoted_value(token_str: &str, key: &str) -> Option<String> {
-    let tokens = syn::parse_str::<proc_macro2::TokenStream>(token_str).ok()?;
-    let mut iter = tokens.into_iter().peekable();
-
-    while let Some(token) = iter.next() {
-        let proc_macro2::TokenTree::Ident(ident) = &token else {
-            continue;
-        };
-        if ident != key {
-            continue;
-        }
-        // Expect `=` punct next.
-        let Some(proc_macro2::TokenTree::Punct(p)) = iter.next() else {
-            continue;
-        };
-        if p.as_char() != '=' {
-            continue;
-        }
-        // Expect a string literal next.
-        let Some(proc_macro2::TokenTree::Literal(lit)) = iter.next() else {
-            continue;
-        };
-        // syn parses `Literal` -> `LitStr` to safely unquote and unescape.
-        if let Ok(s) = syn::parse_str::<syn::LitStr>(&lit.to_string()) {
-            return Some(s.value());
-        }
-    }
-
-    None
-}
-
-/// Parse `key = ["a", "b", "c"]` pattern from a stringified token stream.
-///
-/// Fallback for complex attribute syntax when standard parsing fails. Walks
-/// tokens to find the `key` ident, an `=` punct, and a bracketed group, then
-/// extracts the string literals inside. This avoids substring collisions —
-/// for example, a description containing the literal `key` text or `[`
-/// would previously break the parser.
-pub fn parse_string_array(token_str: &str, key: &str) -> Vec<String> {
-    let Ok(tokens) = syn::parse_str::<proc_macro2::TokenStream>(token_str) else {
-        return Vec::new();
-    };
-    let mut iter = tokens.into_iter();
-
-    while let Some(token) = iter.next() {
-        let proc_macro2::TokenTree::Ident(ident) = &token else {
-            continue;
-        };
-        if ident != key {
-            continue;
-        }
-        let Some(proc_macro2::TokenTree::Punct(p)) = iter.next() else {
-            continue;
-        };
-        if p.as_char() != '=' {
-            continue;
-        }
-        let Some(proc_macro2::TokenTree::Group(group)) = iter.next() else {
-            continue;
-        };
-        if group.delimiter() != proc_macro2::Delimiter::Bracket {
-            continue;
-        }
-
-        return group
-            .stream()
-            .into_iter()
-            .filter_map(|tt| {
-                if let proc_macro2::TokenTree::Literal(lit) = tt {
-                    syn::parse_str::<syn::LitStr>(&lit.to_string())
-                        .ok()
-                        .map(|s| s.value())
-                } else {
-                    None
-                }
-            })
-            .collect();
-    }
-
-    Vec::new()
-}
-
-/// Back-compat alias: `tags = [...]`.
-pub fn parse_tags_array(token_str: &str) -> Vec<String> {
-    parse_string_array(token_str, "tags")
-}
-
-/// Parse `key = true|false` from a stringified token stream.
-///
-/// Used by the alternative attribute parser. Returns `None` if the key is
-/// absent, the value is malformed, or the literal isn't a boolean.
-pub fn parse_bool_value(token_str: &str, key: &str) -> Option<bool> {
-    let tokens = syn::parse_str::<proc_macro2::TokenStream>(token_str).ok()?;
-    let mut iter = tokens.into_iter();
-
-    while let Some(token) = iter.next() {
-        let proc_macro2::TokenTree::Ident(ident) = &token else {
-            continue;
-        };
-        if ident != key {
-            continue;
-        }
-        let Some(proc_macro2::TokenTree::Punct(p)) = iter.next() else {
-            continue;
-        };
-        if p.as_char() != '=' {
-            continue;
-        }
-        let Some(next) = iter.next() else {
-            continue;
-        };
-        // `true` / `false` arrive as `Ident`s, not `Literal`s.
-        return match next {
-            proc_macro2::TokenTree::Ident(b) if b == "true" => Some(true),
-            proc_macro2::TokenTree::Ident(b) if b == "false" => Some(false),
-            _ => None,
-        };
-    }
-
-    None
 }
 
 impl ToolInfo {
@@ -389,9 +218,13 @@ impl ToolInfo {
     pub fn from_fn(item: &ItemFn, attrs: ToolAttrs) -> Result<Self, syn::Error> {
         let name = item.sig.ident.unraw().to_string();
 
-        // Get description from doc comments or attribute
+        // An explicit description wins over the doc comment.
         let doc_description = extract_doc_comments(&item.attrs);
-        let description = attrs.description.or(doc_description).unwrap_or_default();
+        let description = attrs
+            .common
+            .description
+            .or(doc_description)
+            .unwrap_or_default();
 
         // Analyze parameters
         let parameters = analyze_parameters(&item.sig)?;
@@ -401,10 +234,10 @@ impl ToolInfo {
             description,
             sig: item.sig.clone(),
             parameters,
-            tags: attrs.tags,
-            version: attrs.version,
-            title: attrs.title,
-            icons: attrs.icons,
+            tags: attrs.common.tags,
+            version: attrs.common.version,
+            title: attrs.common.title,
+            icons: attrs.common.icons,
             annotations: attrs.annotations,
             // An explicit `output_schema = T` always wins; otherwise infer it
             // from a `Json<T>` return, which is the wrapper whose whole purpose
@@ -412,6 +245,7 @@ impl ToolInfo {
             output_schema: attrs
                 .output_schema
                 .or_else(|| infer_output_schema_type(&item.sig)),
+            task_support: attrs.task_support,
         })
     }
 }
@@ -879,6 +713,26 @@ pub fn generate_annotations_code(
             idempotent_hint: #idempotent,
             open_world_hint: #open_world,
             title: #title_code,
+        })
+    }
+}
+
+/// Generate `Tool.execution` as `Option<ToolExecution>` from `task_support`.
+///
+/// This is declaration only. Clients may attempt task augmentation only when
+/// the server also advertises `tasks.requests.tools.call`, which a
+/// `#[server]` does not; the key exists so the catalogue can say what the spec
+/// lets a tool say about itself.
+pub fn generate_execution_code(
+    task_support: &Option<syn::Ident>,
+    krate: &TokenStream,
+) -> TokenStream {
+    let Some(level) = task_support else {
+        return quote! { None };
+    };
+    quote! {
+        Some(#krate::__macro_support::turbomcp_types::ToolExecution {
+            task_support: Some(#krate::__macro_support::turbomcp_types::TaskSupportLevel::#level),
         })
     }
 }
