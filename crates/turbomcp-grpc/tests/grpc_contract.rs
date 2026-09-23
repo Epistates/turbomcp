@@ -4,10 +4,17 @@
 //! through the real client, so a field the proto or the conversions lose shows
 //! up here the way a user would see it.
 
+use std::future::Future;
+use std::pin::Pin;
+
+use serde_json::json;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
-use turbomcp_grpc::McpGrpcServer;
 use turbomcp_grpc::client::{McpGrpcClient, McpGrpcClientConfig};
+use turbomcp_grpc::server::ToolHandler;
+use turbomcp_grpc::{GrpcResult, McpGrpcServer};
+use turbomcp_protocol::types::CallToolResult;
+use turbomcp_types::{Content, Tool, ToolAnnotations, ToolInputSchema};
 
 /// Serve `server` on an ephemeral loopback port and return its URL.
 async fn spawn(server: McpGrpcServer) -> String {
@@ -88,4 +95,90 @@ async fn client_refuses_a_version_it_does_not_support() {
 
     assert!(err.to_string().contains("1999-01-01"), "{err}");
     assert!(client.server_info().is_none());
+}
+
+// =============================================================================
+// Metadata survives the wire
+// =============================================================================
+
+struct StructuredResult;
+
+impl ToolHandler for StructuredResult {
+    fn call_tool(
+        &self,
+        _name: &str,
+        _arguments: Option<serde_json::Value>,
+    ) -> Pin<Box<dyn Future<Output = GrpcResult<CallToolResult>> + Send + '_>> {
+        Box::pin(async {
+            Ok(CallToolResult {
+                content: vec![Content::text("3 hits")],
+                is_error: None,
+                structured_content: Some(json!({"hits": 3})),
+                meta: Some([("requestCost".to_string(), json!(7))].into()),
+            })
+        })
+    }
+}
+
+fn annotated_tool() -> Tool {
+    Tool {
+        name: "search".into(),
+        description: Some("Searches the index".into()),
+        input_schema: ToolInputSchema::default(),
+        title: Some("Search".into()),
+        icons: None,
+        annotations: Some(ToolAnnotations {
+            read_only_hint: Some(true),
+            destructive_hint: Some(false),
+            idempotent_hint: None,
+            open_world_hint: None,
+            title: None,
+        }),
+        execution: None,
+        output_schema: Some(
+            serde_json::from_value(json!({
+                "type": "object",
+                "properties": {"hits": {"type": "integer"}},
+                "required": ["hits"]
+            }))
+            .expect("output schema"),
+        ),
+        meta: Some([("ui".to_string(), json!({"resourceUri": "ui://search"}))].into()),
+    }
+}
+
+#[tokio::test]
+async fn tools_list_carries_hints_output_schema_and_meta() {
+    let url = spawn(McpGrpcServer::builder().add_tool(annotated_tool()).build()).await;
+    let mut client = connect_requesting(&url, turbomcp_protocol::PROTOCOL_VERSION).await;
+
+    let tools = client.list_tools().await.expect("list tools");
+
+    // A read-only hint that vanishes in transit makes a client treat the tool
+    // as destructive; a missing output schema means structured results go
+    // unvalidated.
+    assert_eq!(tools, vec![annotated_tool()]);
+}
+
+#[tokio::test]
+async fn tools_call_carries_structured_content_and_meta() {
+    let url = spawn(
+        McpGrpcServer::builder()
+            .add_tool(annotated_tool())
+            .tool_handler(StructuredResult)
+            .build(),
+    )
+    .await;
+    let mut client = connect_requesting(&url, turbomcp_protocol::PROTOCOL_VERSION).await;
+
+    let result = client.call_tool("search", None).await.expect("call tool");
+
+    assert_eq!(result.structured_content, Some(json!({"hits": 3})));
+    assert_eq!(
+        result
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("requestCost")),
+        Some(&json!(7))
+    );
 }
