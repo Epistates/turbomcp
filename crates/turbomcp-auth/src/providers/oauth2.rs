@@ -24,8 +24,9 @@ pub struct OAuth2Provider {
     name: String,
     /// OAuth2 client for handling flows
     client: Arc<OAuth2Client>,
-    /// MCP server canonical URI (RFC 8707) - required for token binding
-    #[allow(dead_code)]
+    /// MCP server canonical URI (RFC 8707) - required for token binding.
+    /// Checked against the token's audience on every `validate_token` call
+    /// (see `validate_audience_binding`) — previously stored but never read.
     resource_uri: String,
     /// HTTP client for userinfo endpoint
     http_client: reqwest::Client,
@@ -124,6 +125,63 @@ impl OAuth2Provider {
                 .time_to_live(std::time::Duration::from_secs(300))
                 .build(),
             introspection_client: Some(introspection_client),
+        }
+    }
+
+    /// Verify the token's audience includes this server's resource URI (RFC
+    /// 8707 / MCP: "servers MUST validate that access tokens were issued
+    /// specifically for them as the intended audience").
+    ///
+    /// The audience comes from whichever independent source can name it:
+    /// - If introspection is configured, its `aud` field — RFC 7662 responses
+    ///   come straight from the authorization server, so this is trustworthy
+    ///   without a local signature check.
+    /// - Otherwise, an unverified decode of the token's own `aud` claim (if
+    ///   it's a compact JWT). This crate has no JWKS for arbitrary third-party
+    ///   IdPs here, so the claim can't be cryptographically verified in this
+    ///   code path — it's used only as an *additional* binding check after
+    ///   `fetch_user_info`'s round trip has already proven the token is live
+    ///   and was accepted by the provider that issued it, never as the sole
+    ///   trust decision.
+    ///
+    /// If neither source can name an audience, or the resource URI isn't
+    /// configured, this fails closed rather than silently skipping the check.
+    async fn validate_audience_binding(&self, token: &str) -> McpResult<()> {
+        if self.resource_uri.is_empty() {
+            return Err(McpError::internal(
+                "OAuth2Provider has no resource_uri configured; refusing to validate tokens \
+                 without an audience to check against (RFC 8707)"
+                    .to_string(),
+            ));
+        }
+
+        let audiences = if let Some(ref introspection_client) = self.introspection_client {
+            let response = introspection_client
+                .introspect(token, Some("access_token"))
+                .await?;
+            response.aud.as_ref().and_then(aud_claim_to_vec)
+        } else {
+            jwt_audience_unverified(token)
+        };
+
+        let audiences = audiences.ok_or_else(|| {
+            McpError::invalid_params(
+                "Unable to determine token audience (not a JWT and no introspection endpoint \
+                 configured); refusing per RFC 8707"
+                    .to_string(),
+            )
+        })?;
+
+        if audiences
+            .iter()
+            .any(|aud| crate::server::validate_audience(aud, &self.resource_uri).is_ok())
+        {
+            Ok(())
+        } else {
+            Err(McpError::invalid_params(format!(
+                "Token audience {audiences:?} does not include this server's resource URI '{}'",
+                self.resource_uri
+            )))
         }
     }
 
@@ -247,6 +305,12 @@ impl AuthProvider for OAuth2Provider {
     ) -> Pin<Box<dyn Future<Output = McpResult<AuthContext>> + Send + '_>> {
         let token = token.to_string();
         Box::pin(async move {
+            // RFC 8707 / MCP: validate the token was issued for this server
+            // before trusting anything else about it. Checked on every call
+            // (cached or not) since the cache only remembers that the token
+            // was live at fetch_user_info time, not its audience.
+            self.validate_audience_binding(&token).await?;
+
             // Check moka cache first — thread-safe, no lock required
             if let Some(cached) = self.token_cache.get(&token).await {
                 let elapsed = cached
@@ -379,6 +443,46 @@ impl AuthProvider for OAuth2Provider {
     }
 }
 
+/// Extract audience value(s) from an RFC 7662 introspection response's `aud`
+/// field, which per RFC 9068 may be a single string or an array of strings.
+fn aud_claim_to_vec(value: &serde_json::Value) -> Option<Vec<String>> {
+    match value {
+        serde_json::Value::String(s) => Some(vec![s.clone()]),
+        serde_json::Value::Array(items) => {
+            let strings: Vec<String> = items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            if strings.is_empty() {
+                None
+            } else {
+                Some(strings)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Decode a compact JWT's `aud` claim without verifying the signature.
+///
+/// Returns `None` if `token` isn't a 3-part compact JWT or has no `aud`
+/// claim — callers must treat that as "audience unknown", not "audience
+/// matches". See [`OAuth2Provider::validate_audience_binding`] for why an
+/// unverified decode is acceptable here (it's a supplementary check after
+/// independent proof of validity, not the sole trust decision).
+fn jwt_audience_unverified(token: &str) -> Option<Vec<String>> {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return None; // not a compact JWT
+    }
+
+    let decoded = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    aud_claim_to_vec(claims.get("aud")?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,6 +505,7 @@ mod tests {
             dpop_config: None,
             mcp_resource_uri: None,
             auto_resource_indicators: true,
+            allow_custom_scheme_redirect: false,
         };
 
         let oauth_client = OAuth2Client::new(&config, ProviderType::Generic)
@@ -413,5 +518,100 @@ mod tests {
 
         assert_eq!(provider.name(), "test");
         assert_eq!(provider.provider_type(), AuthProviderType::OAuth2);
+    }
+
+    fn provider_with_resource_uri(resource_uri: &str) -> OAuth2Provider {
+        let config = OAuth2Config {
+            client_id: "test-client".to_string(),
+            client_secret: "test-secret".to_string().into(),
+            auth_url: "https://provider.example.com/oauth/authorize".to_string(),
+            token_url: "https://provider.example.com/oauth/token".to_string(),
+            revocation_url: None,
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+            scopes: vec!["openid".to_string()],
+            flow_type: crate::config::OAuth2FlowType::AuthorizationCode,
+            additional_params: std::collections::HashMap::new(),
+            security_level: Default::default(),
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
+            mcp_resource_uri: None,
+            auto_resource_indicators: true,
+            allow_custom_scheme_redirect: false,
+        };
+        let oauth_client = OAuth2Client::new(&config, ProviderType::Generic).expect("OAuth2Client");
+        OAuth2Provider::new(
+            "test".to_string(),
+            Arc::new(oauth_client),
+            resource_uri.to_string(),
+        )
+    }
+
+    /// Builds an unsigned (structurally valid) compact JWT carrying the given
+    /// `aud` claim — enough to exercise `jwt_audience_unverified`, which
+    /// never checks the signature.
+    fn unsigned_jwt_with_aud(aud: serde_json::Value) -> String {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none","typ":"JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::json!({ "aud": aud }).to_string());
+        format!("{header}.{payload}.")
+    }
+
+    /// AU-3: a token whose aud claim matches the server's resource_uri passes.
+    #[tokio::test]
+    async fn test_validate_audience_binding_accepts_matching_aud() {
+        let provider = provider_with_resource_uri("https://mcp.example.com");
+        let token = unsigned_jwt_with_aud(serde_json::json!("https://mcp.example.com"));
+
+        assert!(provider.validate_audience_binding(&token).await.is_ok());
+    }
+
+    /// AU-3: a token issued for a *different* resource must be rejected —
+    /// this is the confused-deputy case RFC 8707 exists to prevent.
+    #[tokio::test]
+    async fn test_validate_audience_binding_rejects_mismatched_aud() {
+        let provider = provider_with_resource_uri("https://mcp.example.com");
+        let token = unsigned_jwt_with_aud(serde_json::json!("https://other-server.example.com"));
+
+        assert!(provider.validate_audience_binding(&token).await.is_err());
+    }
+
+    /// AU-3: an array-valued aud claim matches if any entry matches.
+    #[tokio::test]
+    async fn test_validate_audience_binding_accepts_matching_aud_in_array() {
+        let provider = provider_with_resource_uri("https://mcp.example.com");
+        let token = unsigned_jwt_with_aud(serde_json::json!([
+            "https://other.example.com",
+            "https://mcp.example.com"
+        ]));
+
+        assert!(provider.validate_audience_binding(&token).await.is_ok());
+    }
+
+    /// AU-3: an opaque (non-JWT) token with no introspection configured
+    /// can't have its audience determined — must fail closed, not skip the check.
+    #[tokio::test]
+    async fn test_validate_audience_binding_rejects_opaque_token_without_introspection() {
+        let provider = provider_with_resource_uri("https://mcp.example.com");
+
+        assert!(
+            provider
+                .validate_audience_binding("opaque-token-abc123")
+                .await
+                .is_err()
+        );
+    }
+
+    /// AU-3: a misconfigured provider (no resource_uri) must fail closed with
+    /// a clear config error, not silently skip audience validation.
+    #[tokio::test]
+    async fn test_validate_audience_binding_fails_closed_without_resource_uri() {
+        let provider = provider_with_resource_uri("");
+        let token = unsigned_jwt_with_aud(serde_json::json!("https://mcp.example.com"));
+
+        let err = provider
+            .validate_audience_binding(&token)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("resource_uri"));
     }
 }
