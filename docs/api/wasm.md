@@ -69,7 +69,9 @@ const client = new McpClient("https://api.example.com/mcp");
 withAuth(token: string): McpClient
 ```
 
-Add Bearer token authentication.
+Add Bearer token authentication. Like `withHeader` and `withTimeout`, it
+consumes the client and returns a configured one, so always use the returned
+value; the original object can no longer be called.
 
 ```javascript
 const client = new McpClient(url)
@@ -433,42 +435,27 @@ interface PromptMessage {
 
 ## Error Handling
 
-### McpError
+### Rejections
 
-```typescript
-class McpError extends Error {
-    code: number;
-    message: string;
-    data?: object;
-}
-```
+A failed call rejects its promise with a string describing the error: the
+server's JSON-RPC error (for example `Method not found: ...` for code
+`-32601`), a transport failure, or a response that could not be parsed. There
+is no error class to test with `instanceof`.
 
-### Error Codes
-
-| Code | Description |
-|------|-------------|
-| -32700 | Parse error |
-| -32600 | Invalid request |
-| -32601 | Method not found |
-| -32602 | Invalid params |
-| -32603 | Internal error |
+A tool that ran and failed is not a rejection: the promise resolves with a
+`CallToolResult` whose `isError` is `true`.
 
 ### Error Handling Example
 
 ```javascript
-import { McpClient, McpError } from 'turbomcp-wasm';
-
 try {
-    const result = await client.callTool("unknown_tool", {});
-} catch (error) {
-    if (error instanceof McpError) {
-        console.error(`MCP Error [${error.code}]: ${error.message}`);
-        if (error.data) {
-            console.error("Details:", error.data);
-        }
-    } else {
-        console.error("Network error:", error);
+    const result = await client.callTool("my_tool", {});
+    if (result.isError) {
+        console.error("Tool failed:", result.content);
     }
+} catch (error) {
+    // A string: JSON-RPC error, network failure, or parse failure
+    console.error("MCP request failed:", error);
 }
 ```
 
@@ -513,8 +500,9 @@ export function useMcpClient(url: string, token?: string) {
         async function initClient() {
             try {
                 await init();
-                const c = new McpClient(url);
-                if (token) c.withAuth(token);
+                // withAuth consumes the client and returns a new one: use its result
+                let c = new McpClient(url);
+                if (token) c = c.withAuth(token);
                 await c.initialize();
                 setClient(c);
             } catch (e) {
@@ -584,7 +572,8 @@ wasm-opt -Os -o optimized.wasm pkg/turbomcp_wasm_bg.wasm
 
 ## Server API (wasm-server feature)
 
-The `wasm-server` feature provides server-side MCP implementation for edge platforms.
+The `wasm-server` feature provides server-side MCP implementation for edge
+platforms such as Cloudflare Workers. Build for `wasm32-unknown-unknown`.
 
 ### Installation
 
@@ -614,235 +603,130 @@ The prelude provides convenient imports:
 use turbomcp_wasm::prelude::*;
 
 // Imports:
-// - McpServer, McpServerBuilder
+// - McpServer, McpServerBuilder, WasmHandlerExt
 // - ToolResult, ToolError, ResourceResult, PromptResult
 // - IntoToolResponse, Text, Json, Image
+// - McpError, McpResult, ErrorKind, McpHandler, Tool, Resource, Prompt
+// - worker's Request, Response, Env, Context
 // - #[server], #[tool], #[resource], #[prompt] macros (with "macros" feature)
 ```
+
+The prelude does not include worker's `#[event]` macro or its `Result` alias;
+import those from `worker`.
 
 ### McpServer
 
 The main server struct that handles incoming MCP requests.
-
-#### builder
-
-```rust
-McpServer::builder(name: impl Into<String>, version: impl Into<String>) -> McpServerBuilder
-```
-
-Create a new server builder.
+`McpServer::builder(name, version)` returns a `McpServerBuilder`, and
+`handle(req)` answers a Cloudflare Worker request:
 
 ```rust
-let server = McpServer::builder("my-server", "1.0.0")
-    .build();
+use turbomcp_wasm::prelude::*;
+use worker::{event, Result};
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    let server = McpServer::builder("my-server", "1.0.0")
+        .description("An edge MCP server")
+        .instructions("Call `status` to check the server")
+        .tool_no_args("status", "Get server status", || async move { "Server is running" })
+        .build();
+
+    server.handle(req).await
+}
 ```
 
-#### handle
-
-```rust
-async fn handle(&self, req: worker::Request) -> worker::Result<worker::Response>
-```
-
-Handle an incoming Cloudflare Worker request.
-
-```rust
-server.handle(req).await
-```
+`handle` serves stateless JSON-RPC over POST with the default `EndpointConfig`:
+JSON bodies up to 1 MiB, and browser `Origin`s limited to loopback ones.
+`McpServer` implements `McpHandler`, so to accept other origins use
+`WasmHandlerExt::handle_worker_request_with_config(req, &config)` with an
+`EndpointConfig` built by `allow_origin(...)`. The `streamable` feature adds
+sessions and SSE.
 
 ### McpServerBuilder
 
-Builder for configuring and creating an MCP server.
+Builder for configuring and creating an MCP server. Its methods:
 
-#### description
+| Method | Handler shape |
+|---|---|
+| `description(text)`, `instructions(text)` | — |
+| `tool(name, description, handler)` | `Fn(A) -> Fut`, `A: Deserialize + JsonSchema`; output any `IntoToolResponse` |
+| `tool_no_args(name, description, handler)` | `Fn() -> Fut` |
+| `tool_raw(name, description, handler)` | `Fn(serde_json::Value) -> Fut`, no schema |
+| `tool_with_ctx`, `tool_with_ctx_no_args`, `tool_with_ctx_raw` | as above, with `Arc<RequestContext>` first |
+| `resource(uri, name, description, handler)` | `Fn(String) -> Fut`; output `ResourceResult` or `Result<ResourceResult, E>` |
+| `resource_template(uri_template, name, description, handler)` | same, for an RFC 6570 template |
+| `resource_with_ctx`, `resource_template_with_ctx` | `Fn(Arc<RequestContext>, String) -> Fut` |
+| `prompt(name, description, handler)` | `Fn(Option<A>) -> Fut`, `A: Deserialize + JsonSchema`; output `PromptResult` or `Result<PromptResult, E>` |
+| `prompt_no_args(name, description, handler)` | `Fn() -> Fut` |
+| `prompt_with_ctx`, `prompt_with_ctx_no_args` | with `Arc<RequestContext>` first |
+| `build()` | Produces the `McpServer` |
 
-```rust
-fn description(self, description: impl Into<String>) -> Self
-```
-
-Set the server description shown to clients.
-
-#### instructions
-
-```rust
-fn instructions(self, instructions: impl Into<String>) -> Self
-```
-
-Set server instructions shown to clients.
-
-#### tool
-
-```rust
-fn tool<A, F, Fut, R>(
-    self,
-    name: impl Into<String>,
-    description: impl Into<String>,
-    handler: F,
-) -> Self
-where
-    A: DeserializeOwned + JsonSchema + 'static,
-    F: Fn(A) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = R> + Send + 'static,
-    R: IntoToolResponse + 'static,
-```
-
-Register a tool with typed arguments. The argument type must implement `JsonSchema` for automatic schema generation. The return type can be any type implementing `IntoToolResponse`.
+Handlers must be `Clone` (a closure is, when what it captures is). The
+argument type's `JsonSchema` becomes the tool's input schema, and a prompt's
+argument struct fields become its prompt arguments. The capabilities
+advertised in `initialize` follow what was registered.
 
 ```rust
-#[derive(Deserialize, JsonSchema)]
-struct AddArgs { a: i64, b: i64 }
+use serde::Deserialize;
+use turbomcp_wasm::prelude::*;
 
-// Simple return - uses IntoToolResponse
-.tool("add", "Add two numbers", |args: AddArgs| async move {
-    args.a + args.b
-})
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AddArgs {
+    a: i64,
+    b: i64,
+}
 
-// Or with explicit ToolResult
-.tool("add", "Add two numbers", |args: AddArgs| async move {
-    ToolResult::text(format!("{}", args.a + args.b))
-})
-```
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GreetArgs {
+    name: String,
+}
 
-#### tool_no_args
-
-```rust
-fn tool_no_args<F, Fut, R>(
-    self,
-    name: impl Into<String>,
-    description: impl Into<String>,
-    handler: F,
-) -> Self
-where
-    F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = R> + Send + 'static,
-    R: IntoToolResponse + 'static,
-```
-
-Register a tool without arguments.
-
-```rust
-.tool_no_args("status", "Get server status", || async move {
-    "Server is running"
-})
-```
-
-#### raw_tool
-
-```rust
-fn raw_tool<F, Fut, R>(
-    self,
-    name: impl Into<String>,
-    description: impl Into<String>,
-    handler: F,
-) -> Self
-where
-    R: IntoToolResponse + 'static,
-```
-
-Register a tool with raw JSON arguments (no schema validation).
-
-#### resource
-
-```rust
-fn resource<F, Fut>(
-    self,
-    uri: impl Into<String>,
-    name: impl Into<String>,
-    description: impl Into<String>,
-    handler: F,
-) -> Self
-```
-
-Register a static resource.
-
-```rust
-.resource(
-    "config://settings",
-    "Settings",
-    "App settings",
-    |uri: String| async move {
-        ResourceResult::text(&uri, "config data")
-    },
-)
-```
-
-#### resource_template
-
-```rust
-fn resource_template<F, Fut>(
-    self,
-    uri_template: impl Into<String>,
-    name: impl Into<String>,
-    description: impl Into<String>,
-    handler: F,
-) -> Self
-```
-
-Register a dynamic resource template.
-
-```rust
-.resource_template(
-    "user://{id}",
-    "User",
-    "User by ID",
-    |uri: String| async move {
-        let id = uri.split('/').last().unwrap_or("0");
-        ResourceResult::text(&uri, format!("User {}", id))
-    },
-)
-```
-
-#### prompt
-
-```rust
-fn prompt<A, F, Fut>(
-    self,
-    name: impl Into<String>,
-    description: impl Into<String>,
-    handler: F,
-) -> Self
-where
-    A: DeserializeOwned + JsonSchema + 'static,
-    F: Fn(Option<A>) -> Fut + Send + Sync + 'static,
-```
-
-Register a prompt with typed arguments.
-
-```rust
-.prompt("greeting", "Generate greeting", |args: Option<GreetArgs>| async move {
-    let name = args.map(|a| a.name).unwrap_or("World".into());
-    PromptResult::user(format!("Hello, {}!", name))
-})
-```
-
-#### prompt_no_args
-
-```rust
-fn prompt_no_args<F, Fut>(
-    self,
-    name: impl Into<String>,
-    description: impl Into<String>,
-    handler: F,
-) -> Self
-```
-
-Register a prompt without arguments.
-
-```rust
-.prompt_no_args("help", "Get help", || async move {
-    PromptResult::user("How can I help?")
-})
+fn build_server() -> McpServer {
+    McpServer::builder("my-server", "1.0.0")
+        // Simple return - uses IntoToolResponse
+        .tool("add", "Add two numbers", |args: AddArgs| async move { args.a + args.b })
+        // Or with explicit ToolResult
+        .tool("add_text", "Add two numbers", |args: AddArgs| async move {
+            ToolResult::text(format!("{}", args.a + args.b))
+        })
+        // No arguments
+        .tool_no_args("status", "Get server status", || async move { "Server is running" })
+        // Raw JSON arguments (no schema validation)
+        .tool_raw("echo", "Echo any JSON", |args: serde_json::Value| async move {
+            format!("Received: {args}")
+        })
+        // A static resource
+        .resource("config://settings", "Settings", "App settings", |uri: String| async move {
+            ResourceResult::text(&uri, "config data")
+        })
+        // A resource template: the handler receives the full URI
+        .resource_template("user://{id}", "User", "User by ID", |uri: String| async move {
+            let id = uri.trim_start_matches("user://").to_string();
+            ResourceResult::text(&uri, format!("User {id}"))
+        })
+        // A prompt with optional typed arguments
+        .prompt("greeting", "Generate greeting", |args: Option<GreetArgs>| async move {
+            let name = args.map(|a| a.name).unwrap_or_else(|| "World".into());
+            PromptResult::user(format!("Hello, {name}!"))
+        })
+        .prompt_no_args("help", "Get help", || async move {
+            PromptResult::user("How can I help?")
+        })
+        .build()
+}
 ```
 
 ### ToolResult
 
-Result type for tool handlers.
+Result type for tool handlers (an alias for `CallToolResult`).
 
 | Method | Description |
 |--------|-------------|
 | `text(text)` | Create text result |
-| `json(value)` | Create JSON result |
-| `error(message)` | Create error result |
-| `image(data, mime_type)` | Create image result |
+| `json(&value)` | Create a JSON text result; returns `Result<ToolResult, serde_json::Error>` |
+| `error(message)` | Create error result (`isError: true`) |
+| `image(data, mime_type)` | Create image result (`data` is base64) |
 | `contents(vec)` | Create multi-content result |
 
 ### ResourceResult
@@ -852,8 +736,8 @@ Result type for resource handlers.
 | Method | Description |
 |--------|-------------|
 | `text(uri, content)` | Create text resource |
-| `json(uri, value)` | Create JSON resource |
-| `binary(uri, data, mime_type)` | Create binary resource |
+| `json(uri, &value)` | Create JSON resource; returns `Result<ResourceResult, serde_json::Error>` |
+| `binary(uri, base64_data, mime_type)` | Create binary resource from base64-encoded data |
 
 ### PromptResult
 
@@ -863,7 +747,7 @@ Result type for prompt handlers.
 |--------|-------------|
 | `user(text)` | Create user message |
 | `assistant(text)` | Create assistant message |
-| `messages(vec)` | Create multi-message prompt |
+| `new(vec)` | Create multi-message prompt from `Vec<Message>` |
 | `with_description(text)` | Add description |
 | `add_user(text)` | Append user message |
 | `add_assistant(text)` | Append assistant message |
@@ -876,25 +760,47 @@ The `IntoToolResponse` trait enables ergonomic handler returns (axum-inspired). 
 |------|----------|
 | `String` | Converted to text content |
 | `&str` | Converted to text content |
-| `i32`, `i64`, `u32`, `u64`, `f32`, `f64` | Converted to text (string representation) |
+| Integer and float types | Converted to text (string representation) |
 | `bool` | Converted to text (`"true"` or `"false"`) |
+| `()` | Empty result |
 | `Text(String)` | Explicit text content wrapper |
 | `Json<T>` | JSON serialization of value |
 | `Image { data, mime_type }` | Base64-encoded image |
 | `ToolResult` | Direct tool result (full control) |
-| `Result<T, E>` | Ok → response, Err → error result |
-| `Option<T>` | Some → response, None → empty result |
+| `Result<T, E>` where `E: Into<ToolError>` | Ok → response, Err → error result |
+| `Option<T>` | Some → response, None → the text `"No result"` |
 
 **Example:**
 
 ```rust
-// Return any IntoToolResponse type
-.tool("greet", "Greet", |args: Args| async move { format!("Hello, {}!", args.name) })
-.tool("count", "Count", |args: Args| async move { args.items.len() as i64 })
-.tool("data", "Get data", |_: Args| async move { Json(my_struct) })
-.tool("fallible", "Might fail", |args: Args| async move {
-    if args.valid { Ok("Success") } else { Err(ToolError::new("Invalid")) }
-})
+use serde::{Deserialize, Serialize};
+use turbomcp_wasm::prelude::*;
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct Args {
+    name: String,
+    items: Vec<String>,
+    valid: bool,
+}
+
+#[derive(Clone, Serialize)]
+struct Report {
+    total: usize,
+}
+
+fn build_server() -> McpServer {
+    // Return any IntoToolResponse type
+    McpServer::builder("demo", "1.0.0")
+        .tool("greet", "Greet", |args: Args| async move { format!("Hello, {}!", args.name) })
+        .tool("count", "Count", |args: Args| async move { args.items.len() as i64 })
+        .tool("data", "Get data", |args: Args| async move {
+            Json(Report { total: args.items.len() })
+        })
+        .tool("fallible", "Might fail", |args: Args| async move {
+            if args.valid { Ok("Success") } else { Err(ToolError::new("Invalid")) }
+        })
+        .build()
+}
 ```
 
 ### ToolError
@@ -902,28 +808,50 @@ The `IntoToolResponse` trait enables ergonomic handler returns (axum-inspired). 
 Error type for tool handlers.
 
 ```rust
+use turbomcp_wasm::prelude::*;
+
 // Create error
-ToolError::new("Something went wrong")
+let plain = ToolError::new("Something went wrong");
 
 // With code
-ToolError::with_code(-32000, "Custom error")
+let coded = ToolError::with_code(-32000, "Custom error");
 
-// From other errors
-let err: ToolError = my_error.into();  // via IntoToolError trait
+// From other errors: `From` impls cover McpError, serde_json, io, UTF-8 and
+// number-parsing errors, strings, and boxed errors, so `?` works on them
+fn parse(input: &str) -> Result<i64, ToolError> {
+    Ok(input.parse::<i64>()?)
+}
+
+// Anything else that implements Display, with context, via IntoToolError
+use turbomcp_wasm::wasm_server::IntoToolError;
+
+fn parse_url(input: &str) -> Result<std::net::IpAddr, ToolError> {
+    input.parse().map_err(|e: std::net::AddrParseError| e.tool_err("invalid address"))
+}
 ```
 
 ## Procedural Macros (macros feature)
 
-The `macros` feature provides zero-boilerplate server definition.
+The `macros` feature provides zero-boilerplate server definition. These are
+separate from `turbomcp`'s native `#[server]` macro: they generate a builder
+call, not an `McpHandler` impl, and have their own rules below.
 
 ### #[server]
 
 Transforms an impl block into an MCP server.
 
 ```rust
+use turbomcp_wasm::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
 #[server(name = "my-server", version = "1.0.0", description = "Optional description")]
 impl MyServer {
-    // ... methods
+    #[tool("Get server status")]
+    async fn status(&self) -> String {
+        "OK".to_string()
+    }
 }
 ```
 
@@ -931,34 +859,56 @@ impl MyServer {
 
 | Attribute | Required | Description |
 |-----------|----------|-------------|
-| `name` | Yes | Server name |
+| `name` | No | Server name (default: `"mcp-server"`) |
 | `version` | No | Server version (default: `"1.0.0"`) |
 | `description` | No | Server description |
+
+Values must be string literals. Unlike the native macro, other keys are
+ignored rather than rejected.
 
 **Generated Methods:**
 
 | Method | Description |
 |--------|-------------|
 | `into_mcp_server(self) -> McpServer` | Create MCP server from instance |
-| `get_tools_metadata() -> Vec<(&str, &str)>` | Get (name, description) for all tools |
-| `get_resources_metadata() -> Vec<(&str, &str)>` | Get (uri, name) for all resources |
-| `get_prompts_metadata() -> Vec<(&str, &str)>` | Get (name, description) for all prompts |
+| `get_tools_metadata()` | `(name, description, tags, version)` for each tool |
+| `get_resources_metadata()` | `(uri_template, name, tags, version)` for each resource |
+| `get_prompts_metadata()` | `(name, description, tags, version)` for each prompt |
+| `get_tool_tags()`, `get_resource_tags()`, `get_prompt_tags()` | `(name, tags)` for components with tags |
 | `server_info() -> (&str, &str)` | Get (name, version) |
 
 ### #[tool]
 
-Mark a method as an MCP tool handler.
+Mark a method as an MCP tool handler. It takes `&self` and, optionally, one
+argument struct (`Deserialize + JsonSchema`), which becomes the input schema.
+An `Arc<RequestContext>` parameter before it gives the handler the request
+context. `#[tool]`, `#[resource]`, and `#[prompt]` accept a description string,
+or `description = "..."`, `tags = [...]`, and `version = "..."`.
 
 ```rust
-#[tool("Description of what this tool does")]
-async fn my_tool(&self, args: MyArgs) -> ReturnType {
-    // implementation
+use serde::Deserialize;
+use turbomcp_wasm::prelude::*;
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct MyArgs {
+    query: String,
 }
 
-// Without arguments
-#[tool("Get server status")]
-async fn status(&self) -> String {
-    "OK".to_string()
+#[derive(Clone)]
+struct Tools;
+
+#[server(name = "tools")]
+impl Tools {
+    #[tool("Description of what this tool does")]
+    async fn search(&self, args: MyArgs) -> String {
+        format!("results for {}", args.query)
+    }
+
+    // Without arguments
+    #[tool("Get server status")]
+    async fn status(&self) -> String {
+        "OK".to_string()
+    }
 }
 ```
 
@@ -966,46 +916,68 @@ async fn status(&self) -> String {
 
 ### #[resource]
 
-Mark a method as an MCP resource handler.
+Mark a method as an MCP resource handler. It takes `&self` and the requested
+URI, and returns a `ResourceResult` or `Result<ResourceResult, E>`.
 
 ```rust
-#[resource("config://app")]
-async fn config(&self, uri: String) -> ResourceResult {
-    ResourceResult::text(&uri, "config data")
+use serde::Serialize;
+use turbomcp_wasm::prelude::*;
+
+#[derive(Serialize)]
+struct User {
+    id: u64,
 }
 
-// Template URIs
-#[resource("user://{id}")]
-async fn user(&self, uri: String) -> ResourceResult {
-    let id = uri.split('/').last().unwrap_or("0");
-    ResourceResult::json(&uri, &User { id: id.parse().unwrap_or(0) })
+#[derive(Clone)]
+struct Resources;
+
+#[server(name = "resources")]
+impl Resources {
+    #[resource("config://app")]
+    async fn config(&self, uri: String) -> ResourceResult {
+        ResourceResult::text(&uri, "config data")
+    }
+
+    // Template URIs
+    #[resource("user://{id}")]
+    async fn user(&self, uri: String) -> Result<ResourceResult, serde_json::Error> {
+        let id = uri.trim_start_matches("user://").parse().unwrap_or(0);
+        ResourceResult::json(&uri, &User { id })
+    }
 }
 ```
 
 ### #[prompt]
 
-Mark a method as an MCP prompt handler.
+Mark a method as an MCP prompt handler. It takes `&self` and returns a
+`PromptResult` or `Result<PromptResult, E>`.
 
 ```rust
-// Without arguments
-#[prompt("Help prompt")]
-async fn help(&self) -> PromptResult {
-    PromptResult::user("How can I help?")
-}
+use turbomcp_wasm::prelude::*;
 
-// With optional arguments
-#[prompt("Greeting prompt")]
-async fn greeting(&self, args: Option<GreetArgs>) -> PromptResult {
-    let name = args.map(|a| a.name).unwrap_or("World".into());
-    PromptResult::user(format!("Hello, {}!", name))
+#[derive(Clone)]
+struct Prompts;
+
+#[server(name = "prompts")]
+impl Prompts {
+    #[prompt("Help prompt")]
+    async fn help(&self) -> PromptResult {
+        PromptResult::user("How can I help?")
+    }
 }
 ```
+
+A prompt method with arguments (`args: Option<Args>`) does not currently
+compile: the macro wraps the declared type in a second `Option`. Register
+prompts that take arguments with `McpServerBuilder::prompt` instead, as in the
+builder example above.
 
 ### Complete Macro Example
 
 ```rust
-use turbomcp_wasm::prelude::*;
 use serde::Deserialize;
+use turbomcp_wasm::prelude::*;
+use worker::event;
 
 #[derive(Clone)]
 struct Calculator;
@@ -1034,7 +1006,7 @@ impl Calculator {
     }
 
     #[resource("config://calculator")]
-    async fn config(&self, uri: String) -> ResourceResult {
+    async fn config(&self, uri: String) -> Result<ResourceResult, serde_json::Error> {
         ResourceResult::json(&uri, &serde_json::json!({"precision": 10}))
     }
 
@@ -1045,7 +1017,7 @@ impl Calculator {
 }
 
 #[event(fetch)]
-async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> worker::Result<Response> {
     Calculator.into_mcp_server().handle(req).await
 }
 ```
