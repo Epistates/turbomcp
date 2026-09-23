@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 use turbomcp_protocol::types::{
     CallToolResult, GetPromptResult, ResourceContent, ServerCapabilities,
 };
@@ -341,8 +341,6 @@ impl McpGrpcServerBuilder {
 
     /// Validate that registered capabilities have matching handlers
     fn validate_capabilities(&self) {
-        use tracing::warn;
-
         // Check tools capability vs handler
         if let Some(ref tools_cap) = self.capabilities.tools {
             if !self.tools.is_empty() && self.tool_handler.is_none() {
@@ -397,6 +395,28 @@ impl McpGrpcServerBuilder {
 impl Default for McpGrpcServerBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Relay broadcast notifications to one subscriber until the server goes away.
+///
+/// A subscriber that falls more than the channel's capacity behind gets
+/// `Lagged` from the receiver. That is lost history, not a dead channel: the
+/// receiver has already skipped ahead and the next `recv` succeeds. Ending the
+/// stream there silently cut a slow client off from every later notification.
+fn notification_stream(
+    mut rx: broadcast::Receiver<proto::Notification>,
+) -> impl Stream<Item = Result<proto::Notification, Status>> + Send {
+    async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(notification) => yield Ok(notification),
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(skipped, "Notification subscriber lagged; dropped notifications");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
     }
 }
 
@@ -624,15 +644,8 @@ impl McpService for McpGrpcServer {
         let _req = request.into_inner();
         info!("Client subscribing to notifications");
 
-        let mut rx = self.notification_tx.subscribe();
-
-        let stream = async_stream::stream! {
-            while let Ok(notification) = rx.recv().await {
-                yield Ok(notification);
-            }
-        };
-
-        Ok(Response::new(Box::pin(stream)))
+        let rx = self.notification_tx.subscribe();
+        Ok(Response::new(Box::pin(notification_stream(rx))))
     }
 
     #[instrument(skip(self, request), fields(method = "SetLoggingLevel"))]
@@ -687,6 +700,51 @@ impl McpService for McpGrpcServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_stream::StreamExt;
+
+    fn resource_updated(uri: &str) -> proto::Notification {
+        proto::Notification {
+            notification: Some(proto::notification::Notification::ResourceUpdated(
+                proto::ResourceUpdatedNotification {
+                    uri: uri.to_string(),
+                },
+            )),
+        }
+    }
+
+    fn uri_of(item: Option<Result<proto::Notification, Status>>) -> String {
+        match item
+            .expect("stream ended")
+            .expect("stream yielded an error")
+        {
+            proto::Notification {
+                notification: Some(proto::notification::Notification::ResourceUpdated(n)),
+            } => n.uri,
+            other => panic!("unexpected notification: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn notification_stream_survives_a_lagging_subscriber() {
+        let (tx, rx) = broadcast::channel(2);
+        let mut stream = std::pin::pin!(notification_stream(rx));
+
+        // Overrun the channel before the subscriber reads anything, so its
+        // first `recv` reports `Lagged` for the three it missed.
+        for i in 0..5 {
+            tx.send(resource_updated(&format!("n{i}"))).unwrap();
+        }
+
+        assert_eq!(uri_of(stream.next().await), "n3");
+        assert_eq!(uri_of(stream.next().await), "n4");
+
+        tx.send(resource_updated("after")).unwrap();
+        assert_eq!(uri_of(stream.next().await), "after");
+
+        // Only the server going away ends the subscription.
+        drop(tx);
+        assert!(stream.next().await.is_none());
+    }
 
     #[test]
     fn test_server_builder() {
