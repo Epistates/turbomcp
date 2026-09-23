@@ -76,20 +76,32 @@ impl<H: McpHandler> HandlerWrapper<H> {
         Self { handler }
     }
 
-    fn list_tools(&self) -> Vec<Tool> {
-        self.handler.list_tools()
+    fn list_tools(&self, ctx: Option<&RequestContext>) -> Vec<Tool> {
+        match ctx {
+            Some(ctx) => self.handler.list_tools_for(ctx),
+            None => self.handler.list_tools(),
+        }
     }
 
-    fn list_resources(&self) -> Vec<Resource> {
-        self.handler.list_resources()
+    fn list_resources(&self, ctx: Option<&RequestContext>) -> Vec<Resource> {
+        match ctx {
+            Some(ctx) => self.handler.list_resources_for(ctx),
+            None => self.handler.list_resources(),
+        }
     }
 
-    fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
-        self.handler.list_resource_templates()
+    fn list_resource_templates(&self, ctx: Option<&RequestContext>) -> Vec<ResourceTemplate> {
+        match ctx {
+            Some(ctx) => self.handler.list_resource_templates_for(ctx),
+            None => self.handler.list_resource_templates(),
+        }
     }
 
-    fn list_prompts(&self) -> Vec<Prompt> {
-        self.handler.list_prompts()
+    fn list_prompts(&self, ctx: Option<&RequestContext>) -> Vec<Prompt> {
+        match ctx {
+            Some(ctx) => self.handler.list_prompts_for(ctx),
+            None => self.handler.list_prompts(),
+        }
     }
 
     async fn call_tool(
@@ -127,10 +139,11 @@ impl<H: McpHandler> Clone for HandlerWrapper<H> {
 trait DynHandler: Send + Sync {
     fn dyn_clone(&self) -> Box<dyn DynHandler>;
     fn dyn_server_capabilities(&self) -> ServerCapabilities;
-    fn dyn_list_tools(&self) -> Vec<Tool>;
-    fn dyn_list_resources(&self) -> Vec<Resource>;
-    fn dyn_list_resource_templates(&self) -> Vec<ResourceTemplate>;
-    fn dyn_list_prompts(&self) -> Vec<Prompt>;
+    // `None` lists without a caller; `Some` lists for the caller of `ctx`.
+    fn dyn_list_tools(&self, ctx: Option<&RequestContext>) -> Vec<Tool>;
+    fn dyn_list_resources(&self, ctx: Option<&RequestContext>) -> Vec<Resource>;
+    fn dyn_list_resource_templates(&self, ctx: Option<&RequestContext>) -> Vec<ResourceTemplate>;
+    fn dyn_list_prompts(&self, ctx: Option<&RequestContext>) -> Vec<Prompt>;
     fn dyn_call_tool<'a>(
         &'a self,
         name: &'a str,
@@ -185,20 +198,20 @@ impl<H: McpHandler> DynHandler for HandlerWrapper<H> {
         self.handler.server_capabilities()
     }
 
-    fn dyn_list_tools(&self) -> Vec<Tool> {
-        self.list_tools()
+    fn dyn_list_tools(&self, ctx: Option<&RequestContext>) -> Vec<Tool> {
+        self.list_tools(ctx)
     }
 
-    fn dyn_list_resources(&self) -> Vec<Resource> {
-        self.list_resources()
+    fn dyn_list_resources(&self, ctx: Option<&RequestContext>) -> Vec<Resource> {
+        self.list_resources(ctx)
     }
 
-    fn dyn_list_resource_templates(&self) -> Vec<ResourceTemplate> {
-        self.list_resource_templates()
+    fn dyn_list_resource_templates(&self, ctx: Option<&RequestContext>) -> Vec<ResourceTemplate> {
+        self.list_resource_templates(ctx)
     }
 
-    fn dyn_list_prompts(&self) -> Vec<Prompt> {
-        self.list_prompts()
+    fn dyn_list_prompts(&self, ctx: Option<&RequestContext>) -> Vec<Prompt> {
+        self.list_prompts(ctx)
     }
 
     fn dyn_call_tool<'a>(
@@ -478,20 +491,40 @@ impl CompositeHandler {
     /// embedded resource in a prompt message, therefore carried the mount's
     /// own unprefixed URI, which the client cannot read back: sending it to
     /// `resources/read` fails to match any mount.
-    fn prefix_uris_in_content(prefix: &str, blocks: &mut [turbomcp_types::Content]) {
+    ///
+    /// Only URIs the mount itself serves are rewritten. A link to
+    /// `https://example.com/doc` is one the client fetches directly; prefixed,
+    /// it became a composite URI no mount serves.
+    fn prefix_uris_in_content(
+        mounted: &MountedHandler,
+        ctx: &RequestContext,
+        blocks: &mut [turbomcp_types::Content],
+    ) {
         use turbomcp_types::Content;
+
+        let mut served: Option<(Vec<Resource>, Vec<ResourceTemplate>)> = None;
+        let mut scope = |uri: &mut String| {
+            let (resources, templates) = served.get_or_insert_with(|| {
+                (
+                    mounted.handler.dyn_list_resources(Some(ctx)),
+                    mounted.handler.dyn_list_resource_templates(Some(ctx)),
+                )
+            });
+            let serves = resources.iter().any(|r| r.uri == *uri)
+                || templates
+                    .iter()
+                    .any(|t| turbomcp_core::uri_template::matches(&t.uri_template, uri));
+            if serves {
+                *uri = Self::prefix_resource_uri(&mounted.prefix, uri);
+            }
+        };
+
         for block in blocks {
             match block {
-                Content::ResourceLink(link) => {
-                    link.uri = Self::prefix_resource_uri(prefix, &link.uri);
-                }
+                Content::ResourceLink(link) => scope(&mut link.uri),
                 Content::Resource(embedded) => match &mut embedded.resource {
-                    turbomcp_types::ResourceContents::Text(text) => {
-                        text.uri = Self::prefix_resource_uri(prefix, &text.uri);
-                    }
-                    turbomcp_types::ResourceContents::Blob(blob) => {
-                        blob.uri = Self::prefix_resource_uri(prefix, &blob.uri);
-                    }
+                    turbomcp_types::ResourceContents::Text(text) => scope(&mut text.uri),
+                    turbomcp_types::ResourceContents::Blob(blob) => scope(&mut blob.uri),
                 },
                 _ => {}
             }
@@ -556,6 +589,51 @@ impl CompositeHandler {
         best
     }
 
+    fn tools(&self, ctx: Option<&RequestContext>) -> Vec<Tool> {
+        let mut tools = Vec::new();
+        for mounted in self.handlers.iter() {
+            for mut tool in mounted.handler.dyn_list_tools(ctx) {
+                tool.name = Self::prefix_tool_name(&mounted.prefix, &tool.name);
+                tools.push(tool);
+            }
+        }
+        tools
+    }
+
+    fn resources(&self, ctx: Option<&RequestContext>) -> Vec<Resource> {
+        let mut resources = Vec::new();
+        for mounted in self.handlers.iter() {
+            for mut resource in mounted.handler.dyn_list_resources(ctx) {
+                resource.uri = Self::prefix_resource_uri(&mounted.prefix, &resource.uri);
+                resources.push(resource);
+            }
+        }
+        resources
+    }
+
+    fn resource_templates(&self, ctx: Option<&RequestContext>) -> Vec<ResourceTemplate> {
+        let mut templates = Vec::new();
+        for mounted in self.handlers.iter() {
+            for mut template in mounted.handler.dyn_list_resource_templates(ctx) {
+                template.uri_template =
+                    Self::prefix_resource_template_uri(&mounted.prefix, &template.uri_template);
+                templates.push(template);
+            }
+        }
+        templates
+    }
+
+    fn prompts(&self, ctx: Option<&RequestContext>) -> Vec<Prompt> {
+        let mut prompts = Vec::new();
+        for mounted in self.handlers.iter() {
+            for mut prompt in mounted.handler.dyn_list_prompts(ctx) {
+                prompt.name = Self::prefix_prompt_name(&mounted.prefix, &prompt.name);
+                prompts.push(prompt);
+            }
+        }
+        prompts
+    }
+
     /// Find a handler by prefix.
     fn find_handler(&self, prefix: &str) -> Option<&MountedHandler> {
         self.handlers.iter().find(|h| h.prefix == prefix)
@@ -607,9 +685,10 @@ fn merge_server_capabilities(target: &mut ServerCapabilities, source: ServerCapa
     if target.completions.is_none() {
         target.completions = source.completions;
     }
-    if target.tasks.is_none() {
-        target.tasks = source.tasks;
-    }
+    // `tasks` is deliberately not merged. Task ids are minted by each mount
+    // and the composite has no way to route `tasks/get` or `tasks/result`
+    // back to the mount that owns an id, so advertising it would promise
+    // methods that answer "not supported".
 
     if let Some(source_extensions) = source.extensions {
         target
@@ -648,48 +727,38 @@ impl McpHandler for CompositeHandler {
     }
 
     fn list_tools(&self) -> Vec<Tool> {
-        let mut tools = Vec::new();
-        for mounted in self.handlers.iter() {
-            for mut tool in mounted.handler.dyn_list_tools() {
-                tool.name = Self::prefix_tool_name(&mounted.prefix, &tool.name);
-                tools.push(tool);
-            }
-        }
-        tools
+        self.tools(None)
     }
 
     fn list_resources(&self) -> Vec<Resource> {
-        let mut resources = Vec::new();
-        for mounted in self.handlers.iter() {
-            for mut resource in mounted.handler.dyn_list_resources() {
-                resource.uri = Self::prefix_resource_uri(&mounted.prefix, &resource.uri);
-                resources.push(resource);
-            }
-        }
-        resources
+        self.resources(None)
     }
 
     fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
-        let mut templates = Vec::new();
-        for mounted in self.handlers.iter() {
-            for mut template in mounted.handler.dyn_list_resource_templates() {
-                template.uri_template =
-                    Self::prefix_resource_template_uri(&mounted.prefix, &template.uri_template);
-                templates.push(template);
-            }
-        }
-        templates
+        self.resource_templates(None)
     }
 
     fn list_prompts(&self) -> Vec<Prompt> {
-        let mut prompts = Vec::new();
-        for mounted in self.handlers.iter() {
-            for mut prompt in mounted.handler.dyn_list_prompts() {
-                prompt.name = Self::prefix_prompt_name(&mounted.prefix, &prompt.name);
-                prompts.push(prompt);
-            }
-        }
-        prompts
+        self.prompts(None)
+    }
+
+    // Each mount lists for the caller too, so a per-session layer inside a
+    // mount still applies.
+
+    fn list_tools_for(&self, ctx: &RequestContext) -> Vec<Tool> {
+        self.tools(Some(ctx))
+    }
+
+    fn list_resources_for(&self, ctx: &RequestContext) -> Vec<Resource> {
+        self.resources(Some(ctx))
+    }
+
+    fn list_resource_templates_for(&self, ctx: &RequestContext) -> Vec<ResourceTemplate> {
+        self.resource_templates(Some(ctx))
+    }
+
+    fn list_prompts_for(&self, ctx: &RequestContext) -> Vec<Prompt> {
+        self.prompts(Some(ctx))
     }
 
     fn call_tool<'a>(
@@ -708,11 +777,12 @@ impl McpHandler for CompositeHandler {
                 .find_handler(prefix)
                 .ok_or_else(|| McpError::tool_not_found(name))?;
 
+            let scoped = ctx.clone().with_resource_uri_scope(prefix);
             let mut result = handler
                 .handler
-                .dyn_call_tool(original_name, args, ctx)
+                .dyn_call_tool(original_name, args, &scoped)
                 .await?;
-            Self::prefix_uris_in_content(prefix, &mut result.content);
+            Self::prefix_uris_in_content(handler, ctx, &mut result.content);
             Ok(result)
         }
     }
@@ -733,7 +803,11 @@ impl McpHandler for CompositeHandler {
                 .find_handler(prefix)
                 .ok_or_else(|| McpError::resource_not_found(uri))?;
 
-            let mut result = handler.handler.dyn_read_resource(original_uri, ctx).await?;
+            let scoped = ctx.clone().with_resource_uri_scope(prefix);
+            let mut result = handler
+                .handler
+                .dyn_read_resource(original_uri, &scoped)
+                .await?;
             // Echo back the URI the client actually asked for, not the mount's
             // internal one — a client comparing them would otherwise see a
             // resource it never requested.
@@ -767,14 +841,19 @@ impl McpHandler for CompositeHandler {
                 .find_handler(prefix)
                 .ok_or_else(|| McpError::prompt_not_found(name))?;
 
+            let scoped = ctx.clone().with_resource_uri_scope(prefix);
             let mut result = handler
                 .handler
-                .dyn_get_prompt(original_name, args, ctx)
+                .dyn_get_prompt(original_name, args, &scoped)
                 .await?;
             // Prompt messages can embed resources too; same reasoning as
             // `call_tool`.
             for message in &mut result.messages {
-                Self::prefix_uris_in_content(prefix, core::slice::from_mut(&mut message.content));
+                Self::prefix_uris_in_content(
+                    handler,
+                    ctx,
+                    core::slice::from_mut(&mut message.content),
+                );
             }
             Ok(result)
         }
@@ -795,7 +874,11 @@ impl McpHandler for CompositeHandler {
                 .find_handler(prefix)
                 .ok_or_else(|| McpError::resource_not_found(uri))?;
 
-            handler.handler.dyn_subscribe(original_uri, ctx).await
+            // Scoped, because a subscription is what the mount later answers
+            // with `notifications/resources/updated` — which has to carry the
+            // URI the client subscribed with.
+            let scoped = ctx.clone().with_resource_uri_scope(prefix);
+            handler.handler.dyn_subscribe(original_uri, &scoped).await
         }
     }
 
@@ -813,7 +896,8 @@ impl McpHandler for CompositeHandler {
                 .find_handler(prefix)
                 .ok_or_else(|| McpError::resource_not_found(uri))?;
 
-            handler.handler.dyn_unsubscribe(original_uri, ctx).await
+            let scoped = ctx.clone().with_resource_uri_scope(prefix);
+            handler.handler.dyn_unsubscribe(original_uri, &scoped).await
         }
     }
 

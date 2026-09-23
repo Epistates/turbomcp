@@ -179,12 +179,45 @@ fn is_valid_variable(value: &str) -> bool {
 /// unambiguously takes the remainder. `file:///{path}` is the spec's own
 /// example and means a whole path.
 ///
-/// The `..`, `%` and NUL rejections are a path-traversal guard: a handler
+/// The value is judged as it decodes, since RFC 6570 expansion
+/// percent-encodes: a client expanding `{path}` with `My Docs/a.txt` sends
+/// `My%20Docs/a.txt`, and refusing every `%` made such a resource unreachable.
+/// What is refused is a `..` path segment or a NUL — in raw or encoded form —
+/// and malformed percent-encoding. That is a path-traversal guard: a handler
 /// receives the raw URI and commonly uses the variable as a path component, so
-/// refusing to route is a safer default than serving something unintended. It
-/// matches the guard the WASM server already applied.
+/// refusing to route is a safer default than serving something unintended.
 fn is_valid_trailing_variable(value: &str) -> bool {
-    !value.is_empty() && !value.contains("..") && !value.contains('%') && !value.contains('\0')
+    if value.is_empty() {
+        return false;
+    }
+    let Some(decoded) = percent_decode(value) else {
+        return false;
+    };
+    !decoded.contains(&0)
+        && !decoded
+            .split(|&b| b == b'/')
+            .any(|segment| segment == b"..")
+}
+
+/// Decode `%XX` escapes. `None` for a `%` not followed by two hex digits.
+fn percent_decode(value: &str) -> Option<Vec<u8>> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes.get(i + 1..i + 3)?;
+            let hi = char::from(hex[0]).to_digit(16)?;
+            let lo = char::from(hex[1]).to_digit(16)?;
+            // Two hex digits make at most 0xFF, so this cannot truncate.
+            decoded.push((hi * 16 + lo) as u8);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Some(decoded)
 }
 
 /// Whether `uri` is an instance of `template`.
@@ -270,16 +303,28 @@ mod tests {
 
     #[test]
     fn traversal_shapes_are_refused() {
-        for hostile in [
-            "file:///../secret.txt",
-            "file:///%2e%2e.txt",
-            "file:///a%00b.txt",
+        for (template, hostile) in [
+            ("file:///{path}", "file:///../secret.txt"),
+            ("file:///{path}", "file:///docs/../../secret.txt"),
+            ("file:///{path}", "file:///%2e%2e/secret.txt"),
+            ("file:///{path}", "file:///docs/%2E%2E%2Fsecret.txt"),
+            ("file:///{name}.txt", "file:///a%00b.txt"),
+            ("file:///{name}.txt", "file:///bad%zz.txt"),
+            ("file:///{name}.txt", "file:///trunc%2.txt"),
         ] {
-            assert!(
-                !matches("file:///{name}.txt", hostile),
-                "{hostile} should not route"
-            );
+            assert!(!matches(template, hostile), "{hostile} should not route");
         }
+    }
+
+    /// RFC 6570 expansion percent-encodes, so an encoded value is an ordinary
+    /// instance of the template — refusing every `%` made such resources
+    /// unreachable.
+    #[test]
+    fn percent_encoded_values_route() {
+        assert!(matches("file:///{path}", "file:///My%20Docs/a.txt"));
+        assert!(matches("db://{table}/rows", "db://order%20items/rows"));
+        // `..` inside a name is not a traversal; only a whole segment is.
+        assert!(matches("git://{range}", "git://v1..v2"));
     }
 
     #[test]

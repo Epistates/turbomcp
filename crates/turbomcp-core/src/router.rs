@@ -85,6 +85,20 @@ fn progress_token(request: &JsonRpcIncoming) -> Option<Value> {
 /// points past the end. The spec's own guidance is `-32602` for an invalid
 /// cursor, and failing loudly beats serving page one again, which a client
 /// walking pages would read as an infinite list.
+/// The `cursor` param of a list request.
+///
+/// Absent or `null` means the first page. The schema types `Cursor` as a
+/// string, and pagination says invalid cursors SHOULD be answered with
+/// -32602; a number or object used to be silently read as "first page",
+/// which restarts a client's walk without telling it.
+fn cursor_param(params: Option<&serde_json::Value>) -> Result<Option<&str>, McpError> {
+    match params.and_then(|params| params.get("cursor")) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(cursor)) => Ok(Some(cursor)),
+        Some(_) => Err(McpError::invalid_params("cursor must be a string")),
+    }
+}
+
 fn paginate<T>(
     items: alloc::vec::Vec<T>,
     kind: &str,
@@ -253,12 +267,16 @@ pub async fn route_request<H: McpHandler>(
 
         // Tool methods
         "tools/list" => {
-            let cursor = request
-                .params
-                .as_ref()
-                .and_then(|params| params.get("cursor"))
-                .and_then(|value| value.as_str());
-            match paginate(handler.list_tools(), "tools", cursor, handler.page_size()) {
+            let cursor = match cursor_param(request.params.as_ref()) {
+                Ok(cursor) => cursor,
+                Err(err) => return JsonRpcOutgoing::error(id, err),
+            };
+            match paginate(
+                handler.list_tools_for(ctx),
+                "tools",
+                cursor,
+                handler.page_size(),
+            ) {
                 Ok((tools, next_cursor)) => {
                     let mut result = serde_json::json!({ "tools": tools });
                     if let Some(next) = next_cursor {
@@ -300,13 +318,12 @@ pub async fn route_request<H: McpHandler>(
 
         // Resource methods
         "resources/list" => {
-            let cursor = request
-                .params
-                .as_ref()
-                .and_then(|params| params.get("cursor"))
-                .and_then(|value| value.as_str());
+            let cursor = match cursor_param(request.params.as_ref()) {
+                Ok(cursor) => cursor,
+                Err(err) => return JsonRpcOutgoing::error(id, err),
+            };
             match paginate(
-                handler.list_resources(),
+                handler.list_resources_for(ctx),
                 "resources",
                 cursor,
                 handler.page_size(),
@@ -323,13 +340,12 @@ pub async fn route_request<H: McpHandler>(
         }
 
         "resources/templates/list" => {
-            let cursor = request
-                .params
-                .as_ref()
-                .and_then(|params| params.get("cursor"))
-                .and_then(|value| value.as_str());
+            let cursor = match cursor_param(request.params.as_ref()) {
+                Ok(cursor) => cursor,
+                Err(err) => return JsonRpcOutgoing::error(id, err),
+            };
             match paginate(
-                handler.list_resource_templates(),
+                handler.list_resource_templates_for(ctx),
                 "resourceTemplates",
                 cursor,
                 handler.page_size(),
@@ -372,13 +388,12 @@ pub async fn route_request<H: McpHandler>(
 
         // Prompt methods
         "prompts/list" => {
-            let cursor = request
-                .params
-                .as_ref()
-                .and_then(|params| params.get("cursor"))
-                .and_then(|value| value.as_str());
+            let cursor = match cursor_param(request.params.as_ref()) {
+                Ok(cursor) => cursor,
+                Err(err) => return JsonRpcOutgoing::error(id, err),
+            };
             match paginate(
-                handler.list_prompts(),
+                handler.list_prompts_for(ctx),
                 "prompts",
                 cursor,
                 handler.page_size(),
@@ -423,7 +438,10 @@ pub async fn route_request<H: McpHandler>(
         // Task methods (SEP-1686)
         "tasks/list" => {
             let params = request.params.unwrap_or_default();
-            let cursor = params.get("cursor").and_then(|v| v.as_str());
+            let cursor = match cursor_param(Some(&params)) {
+                Ok(cursor) => cursor,
+                Err(err) => return JsonRpcOutgoing::error(id, err),
+            };
             let limit = params
                 .get("limit")
                 .and_then(|v| v.as_u64())
@@ -505,6 +523,14 @@ pub async fn route_request<H: McpHandler>(
 
         // Logging
         "logging/setLevel" => {
+            // A server that did not declare `logging` does not implement this
+            // method, whatever the params say.
+            if handler.server_capabilities().logging.is_none() {
+                return JsonRpcOutgoing::error(
+                    id,
+                    McpError::capability_not_supported("logging/setLevel"),
+                );
+            }
             let params = request.params.unwrap_or_default();
             let Some(level) = params.get("level").and_then(|v| v.as_str()) else {
                 return JsonRpcOutgoing::error(id, McpError::invalid_params("Missing level"));

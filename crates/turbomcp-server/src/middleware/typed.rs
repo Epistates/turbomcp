@@ -501,6 +501,120 @@ impl<H: McpHandler> McpHandler for MiddlewareStack<H> {
     ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend {
         async move { self.next().shutdown().await }
     }
+
+    // Everything below has no middleware hook and goes straight to the
+    // wrapped handler. It has to be forwarded all the same: the stack
+    // advertises the handler's capabilities, and a method left to the trait
+    // default answers "not supported" for a capability the client was told
+    // exists.
+
+    fn instructions(&self) -> Option<String> {
+        self.handler.handler.instructions()
+    }
+
+    fn list_tools_for(&self, ctx: &RequestContext) -> Vec<Tool> {
+        self.handler.handler.list_tools_for(ctx)
+    }
+
+    fn list_resources_for(&self, ctx: &RequestContext) -> Vec<Resource> {
+        self.handler.handler.list_resources_for(ctx)
+    }
+
+    fn list_resource_templates_for(&self, ctx: &RequestContext) -> Vec<ResourceTemplate> {
+        self.handler.handler.list_resource_templates_for(ctx)
+    }
+
+    fn list_prompts_for(&self, ctx: &RequestContext) -> Vec<Prompt> {
+        self.handler.handler.list_prompts_for(ctx)
+    }
+
+    fn page_size(&self) -> Option<usize> {
+        self.handler.handler.page_size()
+    }
+
+    fn subscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        self.handler.handler.subscribe(uri, ctx)
+    }
+
+    fn unsubscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        self.handler.handler.unsubscribe(uri, ctx)
+    }
+
+    fn set_log_level<'a>(
+        &'a self,
+        level: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        self.handler.handler.set_log_level(level, ctx)
+    }
+
+    fn complete<'a>(
+        &'a self,
+        params: Value,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<Value>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        self.handler.handler.complete(params, ctx)
+    }
+
+    fn on_roots_list_changed<'a>(
+        &'a self,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        self.handler.handler.on_roots_list_changed(ctx)
+    }
+
+    fn list_tasks<'a>(
+        &'a self,
+        cursor: Option<&'a str>,
+        limit: Option<usize>,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<turbomcp_types::ListTasksResult>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        self.handler.handler.list_tasks(cursor, limit, ctx)
+    }
+
+    fn get_task<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<turbomcp_types::Task>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        self.handler.handler.get_task(task_id, ctx)
+    }
+
+    fn cancel_task<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<turbomcp_types::Task>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        self.handler.handler.cancel_task(task_id, ctx)
+    }
+
+    fn get_task_result<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<Value>> + turbomcp_core::marker::MaybeSend + 'a
+    {
+        self.handler.handler.get_task_result(task_id, ctx)
+    }
 }
 
 #[cfg(test)]

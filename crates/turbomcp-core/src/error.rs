@@ -299,6 +299,9 @@ impl McpError {
     }
 
     /// Create a resource not found error
+    ///
+    /// Carries `data: {"uri": ...}`, the shape the spec's resources error
+    /// example uses, so a client can tell which of several reads failed.
     #[must_use]
     pub fn resource_not_found(uri: impl Into<String>) -> Self {
         let uri = uri.into();
@@ -308,6 +311,7 @@ impl McpError {
         )
         .with_operation("resource_lookup")
         .with_component("resource_provider")
+        .with_data(serde_json::json!({ "uri": uri }))
     }
 
     /// Create a resource access denied error

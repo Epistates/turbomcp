@@ -345,10 +345,17 @@ impl ToolInputSchema {
     /// Create from a JSON value (typically from schemars).
     ///
     /// Falls back to [`ToolInputSchema::default`] if the value cannot be
-    /// deserialized as a schema (e.g. not an object).
+    /// deserialized as a schema (e.g. not an object). A schema without a
+    /// `type` gets `"type": "object"`: the spec types `inputSchema` as an
+    /// object schema with `type: "object"` required, and a schemars root such
+    /// as a bare `oneOf` has none.
     #[must_use]
     pub fn from_value(value: Value) -> Self {
-        serde_json::from_value(value).unwrap_or_default()
+        let mut schema: Self = serde_json::from_value(value).unwrap_or_default();
+        if schema.schema_type.is_none() {
+            schema.schema_type = Some(Value::String("object".into()));
+        }
+        schema
     }
 
     /// Borrow `properties` as a JSON object map if present.
@@ -863,6 +870,24 @@ impl PromptArgument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `inputSchema.type` is required to be `"object"`; a schemars root with
+    /// only `oneOf`, or a hand-written `{properties}`, used to go out without
+    /// one.
+    #[test]
+    fn input_schema_from_value_always_has_a_type() {
+        for raw in [
+            serde_json::json!({ "properties": { "a": { "type": "string" } } }),
+            serde_json::json!({ "oneOf": [{ "required": ["a"] }, { "required": ["b"] }] }),
+        ] {
+            let schema = ToolInputSchema::from_value(raw);
+            assert_eq!(
+                serde_json::to_value(&schema).unwrap()["type"],
+                "object",
+                "{schema:?}"
+            );
+        }
+    }
 
     #[test]
     fn test_server_info() {

@@ -55,8 +55,9 @@ use crate::context::RequestContext;
 use crate::error::McpResult;
 use crate::marker::{MaybeSend, MaybeSync};
 use turbomcp_types::{
-    Prompt, PromptResult, PromptsCapabilities, Resource, ResourceResult, ResourceTemplate,
-    ResourcesCapabilities, ServerCapabilities, ServerInfo, Tool, ToolResult, ToolsCapabilities,
+    LoggingCapabilities, Prompt, PromptResult, PromptsCapabilities, Resource, ResourceResult,
+    ResourceTemplate, ResourcesCapabilities, ServerCapabilities, ServerInfo, Tool, ToolResult,
+    ToolsCapabilities,
 };
 
 /// The unified MCP handler trait.
@@ -249,6 +250,13 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
             });
         }
 
+        // Every handler can emit `notifications/message` through the request
+        // context, and the spec says a server that emits log messages MUST
+        // declare `logging`. Declaring it also commits the server to accepting
+        // `logging/setLevel`, which the router handles on every handler's
+        // behalf.
+        capabilities.logging = Some(LoggingCapabilities::default());
+
         capabilities
     }
 
@@ -278,6 +286,38 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
     ///
     /// Called in response to `prompts/list` requests.
     fn list_prompts(&self) -> Vec<Prompt>;
+
+    // ===== Per-caller listings =====
+    //
+    // The router answers the `*/list` requests through these, passing the
+    // request's context. They default to the context-free listings above; a
+    // layer whose catalogue depends on the caller — per-session visibility,
+    // say — overrides them. Without them such a layer could gate calls by
+    // session but not listings, so a client was offered tools it could not
+    // call and never shown the ones it could.
+
+    /// The tools visible to the caller of `ctx`. Defaults to [`Self::list_tools`].
+    fn list_tools_for(&self, _ctx: &RequestContext) -> Vec<Tool> {
+        self.list_tools()
+    }
+
+    /// The resources visible to the caller of `ctx`. Defaults to
+    /// [`Self::list_resources`].
+    fn list_resources_for(&self, _ctx: &RequestContext) -> Vec<Resource> {
+        self.list_resources()
+    }
+
+    /// The resource templates visible to the caller of `ctx`. Defaults to
+    /// [`Self::list_resource_templates`].
+    fn list_resource_templates_for(&self, _ctx: &RequestContext) -> Vec<ResourceTemplate> {
+        self.list_resource_templates()
+    }
+
+    /// The prompts visible to the caller of `ctx`. Defaults to
+    /// [`Self::list_prompts`].
+    fn list_prompts_for(&self, _ctx: &RequestContext) -> Vec<Prompt> {
+        self.list_prompts()
+    }
 
     // ===== Request Handlers =====
 
@@ -465,20 +505,18 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
     ///
     /// Called in response to `logging/setLevel`. The level is the raw spec
     /// string (`"debug" | "info" | "notice" | "warning" | "error" |
-    /// "critical" | "alert" | "emergency"`). The default returns
-    /// `capability_not_supported`; servers advertising the `logging`
-    /// capability must override and persist the level for use by their
-    /// `LoggingNotification`-emitting code.
+    /// "critical" | "alert" | "emergency"`), already validated.
+    ///
+    /// The router records the level for the session and filters the
+    /// context's log helpers by it, so the default accepts and does nothing
+    /// more. Override to observe level changes — for example to adjust a
+    /// logger of your own — or return an error to refuse one.
     fn set_log_level<'a>(
         &'a self,
         _level: &'a str,
         _ctx: &'a RequestContext,
     ) -> impl Future<Output = McpResult<()>> + MaybeSend + 'a {
-        async {
-            Err(crate::error::McpError::capability_not_supported(
-                "logging/setLevel",
-            ))
-        }
+        async { Ok(()) }
     }
 
     // ===== Completions (MCP 2025-11-25) =====

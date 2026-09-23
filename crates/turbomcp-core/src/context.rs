@@ -827,20 +827,64 @@ impl RequestContext {
         Ok(parsed.roots)
     }
 
-    /// Tell subscribers that a resource's contents changed.
+    /// Tell this request's client that a resource's contents changed.
     ///
-    /// Sends `notifications/resources/updated`. This is the obligation a server
-    /// takes on by declaring `resources.subscribe` (via `#[subscribe]`): having
-    /// accepted a subscription, it must emit this when the resource changes.
+    /// Sends `notifications/resources/updated` to the client of **this
+    /// request's session** — the SDK keeps no subscription registry, so it
+    /// reaches neither other sessions nor only subscribers. The spec says this
+    /// should only be sent to a client that subscribed to the resource
+    /// (declaring `resources.subscribe` via `#[subscribe]` is the obligation to
+    /// send it then); tracking which sessions subscribed to what is the
+    /// handler's job, typically in `#[subscribe]` / `#[unsubscribe]`.
     ///
     /// The URI may name a sub-resource of the one the client actually
-    /// subscribed to.
+    /// subscribed to. When the handler is mounted inside a composite, the URI
+    /// is rewritten into the composite's namespace — the one the client
+    /// subscribed in — so pass the handler's own URI.
     pub async fn notify_resource_updated(&self, uri: impl Into<String>) -> McpResult<()> {
+        let uri = self.scoped_resource_uri(uri.into());
         self.notify_client(
             "notifications/resources/updated",
-            serde_json::json!({ "uri": uri.into() }),
+            serde_json::json!({ "uri": uri }),
         )
         .await
+    }
+
+    /// Place this context inside a mount's resource namespace.
+    ///
+    /// A composite server presents a mounted handler's URIs as
+    /// `{prefix}://{uri}`. Resource URIs the handler sends to the client on
+    /// its own initiative — `notifications/resources/updated` — have to be
+    /// rewritten the same way, or the client receives a URI that matches
+    /// nothing it listed or subscribed to. Scopes nest: an outer composite's
+    /// prefix ends up outermost.
+    #[must_use]
+    pub fn with_resource_uri_scope(mut self, prefix: &str) -> Self {
+        let scope = match self
+            .metadata
+            .get(RESOURCE_URI_SCOPE)
+            .and_then(Value::as_str)
+        {
+            Some(outer) => alloc::format!("{outer}://{prefix}"),
+            None => prefix.into(),
+        };
+        self.metadata
+            .insert(RESOURCE_URI_SCOPE.into(), Value::String(scope));
+        self
+    }
+
+    /// `uri` as the client sees it, given any composite scopes this context
+    /// was placed in.
+    #[must_use]
+    pub fn scoped_resource_uri(&self, uri: String) -> String {
+        match self
+            .metadata
+            .get(RESOURCE_URI_SCOPE)
+            .and_then(Value::as_str)
+        {
+            Some(scope) => alloc::format!("{scope}://{uri}"),
+            None => uri,
+        }
     }
 
     /// Tell the client the tool list changed, so it should re-list.
@@ -1122,6 +1166,10 @@ impl RequestContext {
 // ====================================================================
 // Tests
 // ====================================================================
+
+/// `metadata` key holding the composite resource-URI scope; see
+/// [`RequestContext::with_resource_uri_scope`].
+const RESOURCE_URI_SCOPE: &str = "io.turbomcp/resourceUriScope";
 
 #[cfg(test)]
 mod tests {

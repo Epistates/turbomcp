@@ -1044,6 +1044,46 @@ impl<H: McpHandler> VisibilityLayer<H> {
         self.prompt_rules.is_enabled(name)
     }
 
+    fn listed_tools(&self, tools: Vec<Tool>, session_id: Option<&str>) -> Vec<Tool> {
+        self.register_tools(tools.clone());
+        tools
+            .into_iter()
+            .filter(|tool| self.is_tool_listed(tool, session_id))
+            .collect()
+    }
+
+    fn listed_resources(
+        &self,
+        resources: Vec<Resource>,
+        session_id: Option<&str>,
+    ) -> Vec<Resource> {
+        self.register_resources(resources.clone());
+        resources
+            .into_iter()
+            .filter(|resource| self.is_resource_listed(resource, session_id))
+            .collect()
+    }
+
+    fn listed_resource_templates(
+        &self,
+        templates: Vec<ResourceTemplate>,
+        session_id: Option<&str>,
+    ) -> Vec<ResourceTemplate> {
+        self.register_resource_templates(templates.clone());
+        templates
+            .into_iter()
+            .filter(|template| self.is_resource_template_listed(template, session_id))
+            .collect()
+    }
+
+    fn listed_prompts(&self, prompts: Vec<Prompt>, session_id: Option<&str>) -> Vec<Prompt> {
+        self.register_prompts(prompts.clone());
+        prompts
+            .into_iter()
+            .filter(|prompt| self.is_prompt_listed(prompt, session_id))
+            .collect()
+    }
+
     /// Enable components with the given tags for a specific session.
     ///
     /// # This changes the catalogue, so tell the client
@@ -1059,8 +1099,10 @@ impl<H: McpHandler> VisibilityLayer<H> {
     /// caller does, via the request context that prompted the change:
     ///
     /// ```rust,ignore
-    /// layer.enable_for_session(ctx.session_id().unwrap(), &["admin".into()]);
-    /// ctx.notify_tools_list_changed().await?;
+    /// if let Some(session_id) = ctx.session_id() {
+    ///     layer.enable_for_session(session_id, &["admin".into()]);
+    ///     ctx.notify_tools_list_changed().await?;
+    /// }
     /// ```
     ///
     /// Send only the notifications for kinds whose visible set actually moved.
@@ -1172,43 +1214,88 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     }
 
     fn list_tools(&self) -> Vec<Tool> {
-        let tools = self.inner.list_tools();
-        self.register_tools(tools.clone());
-
-        tools
-            .into_iter()
-            .filter(|tool| self.is_tool_listed(tool, None))
-            .collect()
+        self.listed_tools(self.inner.list_tools(), None)
     }
 
     fn list_resources(&self) -> Vec<Resource> {
-        let resources = self.inner.list_resources();
-        self.register_resources(resources.clone());
-
-        resources
-            .into_iter()
-            .filter(|resource| self.is_resource_listed(resource, None))
-            .collect()
+        self.listed_resources(self.inner.list_resources(), None)
     }
 
     fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
-        let templates = self.inner.list_resource_templates();
-        self.register_resource_templates(templates.clone());
-
-        templates
-            .into_iter()
-            .filter(|template| self.is_resource_template_listed(template, None))
-            .collect()
+        self.listed_resource_templates(self.inner.list_resource_templates(), None)
     }
 
     fn list_prompts(&self) -> Vec<Prompt> {
-        let prompts = self.inner.list_prompts();
-        self.register_prompts(prompts.clone());
+        self.listed_prompts(self.inner.list_prompts(), None)
+    }
 
-        prompts
-            .into_iter()
-            .filter(|prompt| self.is_prompt_listed(prompt, None))
-            .collect()
+    // The router lists through these, so per-session overrides apply to what
+    // a client is shown as well as to what it may call.
+
+    fn list_tools_for(&self, ctx: &RequestContext) -> Vec<Tool> {
+        self.listed_tools(self.inner.list_tools_for(ctx), ctx.session_id())
+    }
+
+    fn list_resources_for(&self, ctx: &RequestContext) -> Vec<Resource> {
+        self.listed_resources(self.inner.list_resources_for(ctx), ctx.session_id())
+    }
+
+    fn list_resource_templates_for(&self, ctx: &RequestContext) -> Vec<ResourceTemplate> {
+        self.listed_resource_templates(
+            self.inner.list_resource_templates_for(ctx),
+            ctx.session_id(),
+        )
+    }
+
+    fn list_prompts_for(&self, ctx: &RequestContext) -> Vec<Prompt> {
+        self.listed_prompts(self.inner.list_prompts_for(ctx), ctx.session_id())
+    }
+
+    fn page_size(&self) -> Option<usize> {
+        self.inner.page_size()
+    }
+
+    // Tasks are not components this layer governs; they pass through.
+
+    fn list_tasks<'a>(
+        &'a self,
+        cursor: Option<&'a str>,
+        limit: Option<usize>,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<turbomcp_types::ListTasksResult>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        self.inner.list_tasks(cursor, limit, ctx)
+    }
+
+    fn get_task<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<turbomcp_types::Task>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        self.inner.get_task(task_id, ctx)
+    }
+
+    fn cancel_task<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<turbomcp_types::Task>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        self.inner.cancel_task(task_id, ctx)
+    }
+
+    fn get_task_result<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl std::future::Future<Output = McpResult<serde_json::Value>>
+    + turbomcp_core::marker::MaybeSend
+    + 'a {
+        self.inner.get_task_result(task_id, ctx)
     }
 
     fn call_tool<'a>(
