@@ -25,6 +25,7 @@
 
 use std::fmt;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -83,12 +84,25 @@ pub trait BearerTokenValidator: Send + Sync + 'static {
 ///     ))
 ///     .build();
 /// ```
-#[derive(Clone)]
 pub struct HttpAuthorization {
     resource: String,
     authorization_servers: Vec<String>,
     scopes_supported: Vec<String>,
-    validator: Arc<dyn BearerTokenValidator>,
+    // Asserted unwind-safe so that `ServerConfig`, which holds this, stays
+    // `UnwindSafe`: a trait object is not, whatever its implementation. The
+    // validator is only ever called, never left half-updated by the server.
+    validator: AssertUnwindSafe<Arc<dyn BearerTokenValidator>>,
+}
+
+impl Clone for HttpAuthorization {
+    fn clone(&self) -> Self {
+        Self {
+            resource: self.resource.clone(),
+            authorization_servers: self.authorization_servers.clone(),
+            scopes_supported: self.scopes_supported.clone(),
+            validator: AssertUnwindSafe(Arc::clone(&self.validator)),
+        }
+    }
 }
 
 impl fmt::Debug for HttpAuthorization {
@@ -114,7 +128,7 @@ impl HttpAuthorization {
             resource: resource.into(),
             authorization_servers: vec![authorization_server.into()],
             scopes_supported: Vec::new(),
-            validator: Arc::new(validator),
+            validator: AssertUnwindSafe(Arc::new(validator)),
         }
     }
 
@@ -270,6 +284,14 @@ mod tests {
             "https://auth.example.com",
             Fixed(Ok(Principal::new("u"))),
         )
+    }
+
+    /// Holding a validator must not cost `ServerConfig` its unwind safety.
+    #[test]
+    fn server_config_stays_unwind_safe() {
+        fn unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+        unwind_safe::<HttpAuthorization>();
+        unwind_safe::<crate::ServerConfig>();
     }
 
     #[test]
