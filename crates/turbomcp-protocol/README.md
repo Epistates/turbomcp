@@ -386,19 +386,24 @@ let code = err.jsonrpc_error_code();     // -32012
 
 #### Integration with Application Layer
 
-If you're using the main `turbomcp` crate, you typically use `McpError` in your tool handlers. The server layer automatically converts to `Box<Error>`:
+If you're using the main `turbomcp` crate, you use the same `McpError` in your
+handlers. A tool's error is sent to the client as a tool execution error
+(`isError: true`, with the error kind in `_meta`) so the model can see it; a
+resource's or prompt's error becomes a JSON-RPC error:
 
 ```rust
-// In your tool handler (turbomcp crate)
-use turbomcp::{McpError, McpResult};
+use turbomcp::prelude::*;
 
-#[tool("My tool")]
-async fn my_tool(&self) -> McpResult<String> {
-    Err(McpError::tool("Something failed".into()))  // Simple error
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    #[tool("My tool")]
+    async fn my_tool(&self) -> McpResult<String> {
+        Err(McpError::internal("Something failed"))
+    }
 }
-
-// Server layer converts to:
-// ServerError::Protocol(Error::tool_execution_failed("my_tool", "Something failed"))
 ```
 
 See the [turbomcp crate error handling docs](../turbomcp/README.md#error-handling) for the complete error architecture.
@@ -677,6 +682,9 @@ Protocol handling is automatic when using the main framework:
 
 ```rust
 use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
 
 #[server]
 impl MyServer {
