@@ -62,7 +62,7 @@ impl fmt::Display for DpopAlgorithm {
 ///
 /// Contains the cryptographic key material and associated metadata for DPoP operations.
 /// The private key is zeroized on drop to prevent memory disclosure attacks.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DpopKeyPair {
     /// Unique identifier for this key pair
     pub id: String,
@@ -87,6 +87,25 @@ pub struct DpopKeyPair {
 
     /// Key usage metadata
     pub metadata: DpopKeyMetadata,
+}
+
+// Manual Debug impl: the derived one printed `private_key` (and thus the raw
+// SEC1 key bytes) verbatim, which meant any `{:?}` on a `DpopKeyPair` — logs,
+// panics, test assertion failures — leaked the private key. Only the public
+// parts and the thumbprint (already a public identifier) are safe to print.
+impl fmt::Debug for DpopKeyPair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DpopKeyPair")
+            .field("id", &self.id)
+            .field("private_key", &self.private_key)
+            .field("public_key", &self.public_key)
+            .field("thumbprint", &self.thumbprint)
+            .field("algorithm", &self.algorithm)
+            .field("created_at", &self.created_at)
+            .field("expires_at", &self.expires_at)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
 }
 
 impl DpopKeyPair {
@@ -183,13 +202,27 @@ impl DpopKeyPair {
 ///
 /// This implementation only supports ECDSA P-256 keys for maximum security.
 /// RSA support has been removed due to timing attack vulnerabilities (RUSTSEC-2023-0071).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum DpopPrivateKey {
     /// ECDSA P-256 private key
     EcdsaP256 {
         /// P-256 private key in SEC1 format
         key_bytes: [u8; 32],
     },
+}
+
+// Manual Debug impl: the derived one printed `key_bytes` — the raw private
+// key material — verbatim. Redact it the same way secrecy/zeroize-wrapped
+// types do elsewhere in the auth stack (e.g. `TokenInfo`, `RegistrationResponse`).
+impl fmt::Debug for DpopPrivateKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EcdsaP256 { .. } => f
+                .debug_struct("DpopPrivateKey::EcdsaP256")
+                .field("key_bytes", &"[REDACTED]")
+                .finish(),
+        }
+    }
 }
 
 impl Zeroize for DpopPrivateKey {
@@ -632,10 +665,21 @@ impl DpopProof {
     }
 
     /// Check if proof has expired based on timestamp
+    ///
+    /// `iat` is a claim from the (not-necessarily-verified-yet) proof payload, so
+    /// it can be negative or arbitrarily large. A value that doesn't fit a real
+    /// `SystemTime` is treated as already expired (fail closed) rather than
+    /// risking the panic that `UNIX_EPOCH + Duration::from_secs(iat as u64)`
+    /// raises when a negative `iat` wraps to a huge `u64`.
     #[must_use]
     pub fn is_expired(&self, max_age: Duration) -> bool {
-        let issued_at = SystemTime::UNIX_EPOCH + Duration::from_secs(self.payload.iat as u64);
-        SystemTime::now() > issued_at + max_age
+        match checked_unix_time(self.payload.iat) {
+            Some(issued_at) => match issued_at.checked_add(max_age) {
+                Some(expiry) => SystemTime::now() > expiry,
+                None => false,
+            },
+            None => true,
+        }
     }
 
     /// Create a builder for DPoP proof generation
@@ -711,6 +755,20 @@ fn is_valid_http_method(method: &str) -> bool {
 /// Validate HTTP URI format (basic validation)
 fn is_valid_http_uri(uri: &str) -> bool {
     uri.starts_with("https://") || uri.starts_with("http://")
+}
+
+/// Convert a Unix-seconds timestamp to `SystemTime` without the panic that
+/// `UNIX_EPOCH + Duration::from_secs(secs)` raises when `secs` overflows the
+/// platform's representable range.
+///
+/// DPoP `iat` claims are `i64` and, at the point this is called, may not yet
+/// have been cryptographically verified — a crafted proof can set `iat` to
+/// any value, including negative ones (which would otherwise wrap to a huge
+/// `u64` and overflow). Returning `None` lets callers reject the timestamp
+/// instead of aborting the process.
+pub(crate) fn checked_unix_time(secs: i64) -> Option<SystemTime> {
+    let secs = u64::try_from(secs).ok()?;
+    SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(secs))
 }
 
 /// Create jsonwebtoken DecodingKey from DPoP JWK
@@ -917,5 +975,81 @@ mod tests {
         assert_ne!(id1, id2);
         assert!(Uuid::parse_str(&id1).is_ok());
         assert!(Uuid::parse_str(&id2).is_ok());
+    }
+
+    /// AU-18: `{:?}` on a key pair must never print the raw private key bytes.
+    #[test]
+    fn test_key_pair_debug_redacts_private_key() {
+        let key_pair = DpopKeyPair::generate_p256().unwrap();
+        let debug_output = format!("{:?}", key_pair);
+
+        assert!(debug_output.contains("[REDACTED]"));
+        // None of the raw SEC1 bytes should be individually visible either.
+        let DpopPrivateKey::EcdsaP256 { key_bytes } = &key_pair.private_key;
+        let byte_repr = format!("{:?}", key_bytes);
+        assert!(!debug_output.contains(byte_repr.trim_start_matches('[').trim_end_matches(']')));
+    }
+
+    #[test]
+    fn test_private_key_debug_redacts_key_bytes() {
+        let key = DpopPrivateKey::EcdsaP256 {
+            key_bytes: [0x42; 32],
+        };
+        let debug_output = format!("{:?}", key);
+
+        assert!(debug_output.contains("[REDACTED]"));
+        assert!(!debug_output.contains("66")); // 0x42 == 66 decimal
+    }
+
+    /// PX-P: a crafted (pre-signature-verification) `iat` claim must not panic
+    /// `SystemTime` arithmetic. Negative and maximal `i64` values previously
+    /// overflowed `UNIX_EPOCH + Duration::from_secs(iat as u64)`.
+    #[test]
+    fn test_checked_unix_time_rejects_out_of_range_iat() {
+        // Negative `i64` can't be a Unix timestamp at all — the old code cast
+        // it straight to `u64`, wrapping a small negative into an enormous
+        // positive that then overflowed `SystemTime` arithmetic.
+        assert!(checked_unix_time(-1).is_none());
+        assert!(checked_unix_time(i64::MIN).is_none());
+        assert!(checked_unix_time(1_700_000_000).is_some());
+    }
+
+    #[test]
+    fn test_proof_is_expired_does_not_panic_on_adversarial_iat() {
+        let make_proof = |iat: i64| {
+            DpopProof::new(
+                DpopHeader {
+                    typ: crate::DPOP_JWT_TYPE.to_string(),
+                    algorithm: DpopAlgorithm::ES256,
+                    jwk: DpopJwk::Ec {
+                        use_: "sig".to_string(),
+                        crv: "P-256".to_string(),
+                        x: "abc".to_string(),
+                        y: "def".to_string(),
+                    },
+                },
+                DpopPayload {
+                    jti: "jti".to_string(),
+                    htm: "POST".to_string(),
+                    htu: "https://api.example.com/token".to_string(),
+                    iat,
+                    ath: None,
+                    nonce: None,
+                },
+                "signature".to_string(),
+            )
+        };
+
+        // Previously: `UNIX_EPOCH + Duration::from_secs(iat as u64)` panicked
+        // outright for a negative `iat`, since the cast wraps it to a huge
+        // `u64`. A negative `iat` is unrepresentable and must fail closed
+        // (treated as expired) rather than crash the process.
+        assert!(make_proof(-1).is_expired(Duration::from_secs(60)));
+        assert!(make_proof(i64::MIN).is_expired(Duration::from_secs(60)));
+        // `i64::MAX` seconds from the epoch is still representable on this
+        // platform, so `is_expired` doesn't panic — it just never reads as
+        // expired (the (bogus) issue time is astronomically far in the
+        // future). The point of this assertion is the absence of a panic.
+        let _ = make_proof(i64::MAX).is_expired(Duration::from_secs(60));
     }
 }
