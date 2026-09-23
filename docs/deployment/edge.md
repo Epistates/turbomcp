@@ -129,6 +129,7 @@ crate-type = ["cdylib"]
 turbomcp-wasm = { version = "3.5.0", default-features = false, features = ["wasm-server"] }
 worker = "0.8"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 schemars = "1.2"
 getrandom = { version = "0.4", features = ["wasm_js"] }
 ```
@@ -136,7 +137,7 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 **src/lib.rs:**
 
 ```rust
-use turbomcp_wasm::wasm_server::{McpServer, ToolResult, ResourceResult, PromptResult};
+use turbomcp_wasm::wasm_server::{McpServer, ResourceResult};
 use worker::*;
 use serde::Deserialize;
 
@@ -159,10 +160,10 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
 
         // Register tools with automatic schema generation
         .tool("hello", "Say hello to someone", |args: HelloArgs| async move {
-            Ok(ToolResult::text(format!("Hello, {}!", args.name)))
+            format!("Hello, {}!", args.name)
         })
         .tool("add", "Add two numbers", |args: AddArgs| async move {
-            Ok(ToolResult::text(format!("{}", args.a + args.b)))
+            format!("{}", args.a + args.b)
         })
 
         // Static resource
@@ -170,11 +171,11 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
             "config://settings",
             "Server Settings",
             "Current server configuration",
-            |_uri| async move {
-                Ok(ResourceResult::json("config://settings", &serde_json::json!({
+            |uri: String| async move {
+                ResourceResult::json(uri, &serde_json::json!({
                     "version": "1.0.0",
                     "environment": "edge"
-                }))?)
+                }))
             },
         )
 

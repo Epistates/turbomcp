@@ -542,40 +542,51 @@ ENTRYPOINT ["/server"]
 
 ### Application Health Endpoint
 
-Implement comprehensive health checks:
+Serve health endpoints next to the MCP routes by merging the server's Axum
+router (the `http` feature) into your own:
 
 ```rust
-use axum::{Router, Json};
+use axum::{Json, Router, routing::get};
 use serde_json::json;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self) -> String {
+        "hello".to_string()
+    }
+}
 
 async fn health_check() -> Json<serde_json::Value> {
     Json(json!({
         "status": "healthy",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
         "version": env!("CARGO_PKG_VERSION"),
     }))
 }
 
-async fn readiness_check(db: Pool<Postgres>, redis: RedisClient) -> Json<serde_json::Value> {
-    let db_healthy = db.acquire().await.is_ok();
-    let redis_healthy = redis.ping().await.is_ok();
-
-    let status = if db_healthy && redis_healthy { "ready" } else { "not_ready" };
-
-    Json(json!({
-        "status": status,
-        "checks": {
-            "database": db_healthy,
-            "redis": redis_healthy,
-        }
-    }))
+async fn readiness_check() -> Json<serde_json::Value> {
+    // Check the dependencies your handlers need (database, cache, ...) here
+    Json(json!({ "status": "ready" }))
 }
 
 fn app() -> Router {
     Router::new()
         .route("/health", get(health_check))
         .route("/ready", get(readiness_check))
-        // ... other routes
+        // MCP is served at / and /mcp
+        .merge(MyServer.builder().into_axum_router())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    axum::serve(listener, app()).await?;
+    Ok(())
 }
 ```
 

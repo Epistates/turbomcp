@@ -12,6 +12,18 @@ TurboMCP follows a **layered modular architecture** with clear separation of con
 - **Type Safety** - Rust's type system prevents entire classes of bugs
 - **Composability** - Mix and match transports, middleware, and features
 
+!!! note "Sketches, not source"
+    Blocks describing crate internals on this page are simplified sketches,
+    marked `rust,ignore`; their type names do not all match the source. In
+    particular: `McpError` is a struct with an `ErrorKind` (in `turbomcp-core`),
+    not an enum; there is no `HandlerRegistry`, `ContextFactory`, or
+    `inventory` registration, because `#[server]` generates one `McpHandler`
+    implementation per server type; middleware is the typed
+    `turbomcp_server::McpMiddleware` trait; and the only value injected into
+    handlers is `&RequestContext`. Blocks that show the public API (the macros,
+    the server builder, errors, testing) are real code that compiles against
+    the current release.
+
 ## Architecture Layers
 
 TurboMCP consists of four distinct architectural layers, each with specific responsibilities:
@@ -60,7 +72,7 @@ TurboMCP consists of four distinct architectural layers, each with specific resp
 
 **Key Types:**
 
-```rust
+```rust,ignore
 // Core message types
 pub struct JsonRpcRequest { /* ... */ }
 pub struct JsonRpcResponse { /* ... */ }
@@ -109,7 +121,7 @@ pub struct ComponentRegistry {
 
 **Transport Architecture:**
 
-```rust
+```rust,ignore
 // Transport trait abstraction
 #[async_trait]
 pub trait Transport: Send + Sync {
@@ -141,7 +153,7 @@ unix = ["tokio"]
 
 **Security Layers:**
 
-```rust
+```rust,ignore
 // Transport wrapper with security
 pub struct SecureTransport<T: Transport> {
     inner: T,
@@ -167,7 +179,7 @@ pub enum AuthMode {
 
 **Handler Registry:**
 
-```rust
+```rust,ignore
 pub struct HandlerRegistry {
     tools: HashMap<String, Box<dyn ToolHandler>>,
     resources: HashMap<String, Box<dyn ResourceHandler>>,
@@ -183,7 +195,7 @@ pub trait ToolHandler: Send + Sync {
 
 **Request Router:**
 
-```rust
+```rust,ignore
 pub struct RequestRouter {
     registry: Arc<HandlerRegistry>,
     middleware: Vec<Box<dyn Middleware>>,
@@ -209,7 +221,7 @@ impl RequestRouter {
 
 **Middleware Stack:**
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait Middleware: Send + Sync {
     async fn process(
@@ -232,7 +244,7 @@ pub struct CompressionMiddleware { /* ... */ }
 
 **Connection Management:**
 
-```rust
+```rust,ignore
 pub struct Client {
     transport: Arc<dyn Transport>,
     pending_requests: Arc<RwLock<HashMap<RequestId, Sender<JsonRpcResponse>>>>,
@@ -271,7 +283,7 @@ impl Client {
 
 **Auto-Retry Logic:**
 
-```rust
+```rust,ignore
 pub struct RetryConfig {
     max_attempts: u32,
     initial_backoff: Duration,
@@ -311,81 +323,69 @@ impl Client {
 
 **`#[server]` Macro:**
 
+The macro goes on the server's `impl` block, not on the struct. It generates an
+`McpHandler` implementation for the type: server info, the tool, resource, and
+prompt catalogues, and a `match`-based dispatcher for each method.
+
 ```rust
-// User writes this:
-#[server]
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
 pub struct MyServer;
 
-// Macro generates:
+#[server(name = "my-server", version = "1.0.0")]
 impl MyServer {
-    pub fn new() -> McpServer<Self> {
-        McpServer::new()
-            .with_info(/* ... */)
-            .with_capabilities(/* ... */)
-    }
-}
-
-impl Default for MyServer {
-    fn default() -> Self {
-        Self
+    /// Add two numbers
+    #[tool]
+    async fn calculate(
+        &self,
+        #[description("First number")] a: i32,
+        #[description("Second number")] b: i32,
+    ) -> McpResult<i32> {
+        Ok(a + b)
     }
 }
 ```
 
-**`#[tool]` Macro:**
+What it generates, in outline:
 
-```rust
-// User writes this:
-#[tool]
-pub async fn calculate(
-    #[description("First number")] a: i32,
-    #[description("Second number")] b: i32,
-) -> McpResult<i32> {
-    Ok(a + b)
-}
-
-// Macro generates:
-pub struct CalculateTool;
-
-#[async_trait]
-impl ToolHandler for CalculateTool {
-    async fn invoke(&self, params: Value, ctx: RequestContext) -> McpResult<Value> {
-        // 1. Deserialize parameters
-        let a: i32 = params.get("a").ok_or(...)?.as_i64()? as i32;
-        let b: i32 = params.get("b").ok_or(...)?.as_i64()? as i32;
-
-        // 2. Call function
-        let result = calculate(a, b).await?;
-
-        // 3. Serialize result
-        Ok(serde_json::to_value(result)?)
+```rust,ignore
+impl McpHandler for MyServer {
+    fn server_info(&self) -> ServerInfo {
+        ServerInfo::new("my-server", "1.0.0")
     }
 
-    fn schema(&self) -> ToolSchema {
-        ToolSchema {
-            name: "calculate".to_string(),
-            description: None,
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "a": {
-                        "type": "integer",
-                        "description": "First number"
-                    },
-                    "b": {
-                        "type": "integer",
-                        "description": "Second number"
-                    }
-                },
-                "required": ["a", "b"]
-            }),
+    fn server_capabilities(&self) -> ServerCapabilities {
+        // tools (listChanged), logging; resources/prompts/completions only
+        // when the impl block serves them
+    }
+
+    fn list_tools(&self) -> Vec<Tool> {
+        vec![Tool {
+            name: "calculate".into(),
+            description: Some("Add two numbers".into()),
+            input_schema: /* from schemars: a, b integers, required,
+                             additionalProperties: false */,
+            ..
+        }]
+    }
+
+    fn call_tool<'a>(&'a self, name: &'a str, args: Value, ctx: &'a RequestContext)
+        -> impl Future<Output = McpResult<ToolResult>> + MaybeSend + 'a
+    {
+        async move {
+            match name {
+                "calculate" => {
+                    // reject unknown arguments, deserialize a and b,
+                    // call self.calculate(a, b), convert with IntoToolResult
+                }
+                _ => Err(McpError::tool_not_found(name)),
+            }
         }
     }
-}
 
-// Register in inventory
-inventory::submit! {
-    ToolRegistration::new("calculate", Box::new(CalculateTool))
+    // list_resources, read_resource, list_prompts, get_prompt, and the
+    // optional handlers (complete, subscribe, ...) follow the same pattern
 }
 ```
 
@@ -393,86 +393,82 @@ inventory::submit! {
 
 **Fluent Builder Pattern:**
 
+Every `McpHandler` gets `run_*` methods and a `builder()` from blanket
+extension traits:
+
 ```rust
-let server = McpServer::new()
-    .with_info(ServerInfo {
-        name: "my-server".to_string(),
-        version: "1.0.0".to_string(),
-    })
-    .with_capabilities(|caps| {
-        caps.with_tools()
-            .with_resources()
-            .with_prompts()
-            .tool_list_changed(true)  // Only available when tools enabled
-            .resource_list_changed(true)  // Only available when resources enabled
-    })
-    .with_logging(LogConfig::default())
-    .with_metrics(MetricsConfig::default())
-    .stdio()  // Choose transport
-    .run()
-    .await?;
+use std::time::Duration;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+pub struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self) -> String {
+        "hello".to_string()
+    }
+}
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MyServer
+        .builder()
+        .transport(Transport::http("0.0.0.0:8080")) // or stdio/websocket/tcp/unix
+        .with_rate_limit(100, Duration::from_secs(1))
+        .with_connection_limit(1000)
+        .with_protocol(ProtocolConfig::default())
+        .serve()
+        .await
+}
 ```
 
 **Type-State Builder:**
 
+Capabilities for a hand-written `McpHandler` (or protocol-level code) come from
+`turbomcp-protocol`'s type-state builder, where a sub-capability method only
+exists once its parent is enabled:
+
 ```rust
-// Capability builder uses type-state pattern
-pub struct CapabilityBuilder<Tools, Resources, Prompts> {
-    _tools: PhantomData<Tools>,
-    _resources: PhantomData<Resources>,
-    _prompts: PhantomData<Prompts>,
-    // ...
-}
+use turbomcp_protocol::capabilities::builders::ServerCapabilitiesBuilder;
 
-// These methods only exist when specific capabilities are enabled
-impl<T, R, P> CapabilityBuilder<T, R, P> {
-    pub fn with_tools(self) -> CapabilityBuilder<Enabled, R, P> { /* ... */ }
-    pub fn with_resources(self) -> CapabilityBuilder<T, Enabled, P> { /* ... */ }
-    pub fn with_prompts(self) -> CapabilityBuilder<T, R, Enabled> { /* ... */ }
-}
-
-impl<R, P> CapabilityBuilder<Enabled, R, P> {
-    // Only available when tools are enabled
-    pub fn tool_list_changed(self, value: bool) -> Self { /* ... */ }
-}
+let capabilities = ServerCapabilitiesBuilder::new()
+    .enable_tools()
+    .enable_tool_list_changed()   // only available after enable_tools()
+    .enable_resources()
+    .enable_resources_list_changed()
+    .build();
 ```
 
 ## Cross-Cutting Concerns
 
 ### Dependency Injection
 
-TurboMCP provides compile-time dependency injection for handlers:
+TurboMCP has no dependency-injection container. Request parameters come from
+the call's arguments, `&RequestContext` is the one injected parameter, and
+shared services live on the server struct:
 
 ```rust
-#[tool]
-pub async fn my_tool(
-    // Request parameters
-    name: String,
+use std::sync::Arc;
+use turbomcp::prelude::*;
 
-    // Injected dependencies
-    ctx: Context,
-    logger: Logger,
-    cache: Cache,
-    db: Database,
-    client: HttpClient,
-) -> McpResult<String> {
-    // Implementation
-}
-```
-
-**Injection Resolution:**
-
-```rust
-pub struct ContextFactory {
-    providers: HashMap<TypeId, Box<dyn Provider>>,
+pub struct Settings {
+    greeting: String,
 }
 
-impl ContextFactory {
-    pub fn resolve<T: 'static>(&self) -> Option<T> {
-        self.providers
-            .get(&TypeId::of::<T>())
-            .and_then(|p| p.downcast_ref::<T>())
-            .cloned()
+#[derive(Clone)]
+pub struct MyServer {
+    settings: Arc<Settings>,
+}
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Greet someone
+    #[tool]
+    async fn my_tool(&self, name: String, ctx: &RequestContext) -> McpResult<String> {
+        Ok(format!("{}, {name} (request {})", self.settings.greeting, ctx.request_id()))
     }
 }
 ```
@@ -494,7 +490,7 @@ Every request flows through a well-defined lifecycle:
    ↓
 5. Route to handler
    ↓
-6. Inject dependencies
+6. Extract arguments, pass &RequestContext
    ↓
 7. Execute handler
    ↓
@@ -509,65 +505,54 @@ See [Context Lifecycle](./context-lifecycle.md) for details.
 
 ### Error Handling
 
-**Error Type Hierarchy:**
+**Error Type:**
+
+`McpError` (from `turbomcp-core`, re-exported everywhere) is a struct carrying an
+`ErrorKind`, a message, and optional data and context. Constructors pick the
+kind, and the kind picks the JSON-RPC code:
 
 ```rust
-#[derive(Debug, thiserror::Error)]
-pub enum McpError {
-    #[error("Invalid request: {0}")]
-    InvalidRequest(String),
+use turbomcp::prelude::*;
 
-    #[error("Method not found: {0}")]
-    MethodNotFound(String),
+fn main() {
+    let err = McpError::invalid_params("Name must not be empty");
+    assert_eq!(err.jsonrpc_code(), -32602);
 
-    #[error("Invalid parameters: {0}")]
-    InvalidParams(String),
+    let err = McpError::internal("Database connection failed")
+        .with_operation("user_lookup")
+        .with_component("auth_service");
+    assert_eq!(err.jsonrpc_code(), -32603);
 
-    #[error("Internal error: {0}")]
-    InternalError(String),
-
-    #[error("Transport error: {0}")]
-    TransportError(#[from] TransportError),
-}
-
-// JSON-RPC error codes
-impl McpError {
-    pub fn code(&self) -> i32 {
-        match self {
-            McpError::InvalidRequest(_) => -32600,
-            McpError::MethodNotFound(_) => -32601,
-            McpError::InvalidParams(_) => -32602,
-            McpError::InternalError(_) => -32603,
-            McpError::TransportError(_) => -32000,
-        }
-    }
+    let err = McpError::resource_not_found("file:///missing.txt");
+    assert_eq!(err.jsonrpc_code(), -32002);
 }
 ```
 
 **Error Propagation:**
 
-```rust
-pub type McpResult<T> = Result<T, McpError>;
+`McpResult<T>` is `Result<T, McpError>`. Convert other errors at the boundary
+with `map_err`, choosing the kind that describes the failure:
 
-// Automatic conversion from common error types
-impl From<serde_json::Error> for McpError {
-    fn from(e: serde_json::Error) -> Self {
-        McpError::InvalidParams(e.to_string())
-    }
+```rust
+use turbomcp::prelude::*;
+
+fn parse_config(text: &str) -> McpResult<serde_json::Value> {
+    serde_json::from_str(text).map_err(|e| McpError::invalid_params(e.to_string()))
 }
 
-impl From<std::io::Error> for McpError {
-    fn from(e: std::io::Error) -> Self {
-        McpError::InternalError(e.to_string())
-    }
+fn read_config(path: &str) -> McpResult<String> {
+    std::fs::read_to_string(path).map_err(|e| McpError::internal(e.to_string()))
 }
 ```
+
+A tool's error reaches the client as a tool execution error (`isError: true`,
+the kind in `_meta`); a resource's or prompt's error is a JSON-RPC error.
 
 ### Observability
 
 **Structured Logging:**
 
-```rust
+```rust,ignore
 pub struct Logger {
     level: LogLevel,
     fields: HashMap<String, Value>,
@@ -588,7 +573,7 @@ impl Logger {
 
 **Metrics Collection:**
 
-```rust
+```rust,ignore
 pub struct Metrics {
     request_counter: Counter,
     request_duration: Histogram,
@@ -609,7 +594,7 @@ impl Metrics {
 
 **Distributed Tracing:**
 
-```rust
+```rust,ignore
 pub struct Tracer {
     provider: Arc<dyn TracerProvider>,
 }
@@ -638,7 +623,7 @@ impl Tracer {
 
 When the `simd` feature is enabled:
 
-```rust
+```rust,ignore
 #[cfg(feature = "simd")]
 use simd_json::{from_slice, to_vec};
 
@@ -662,7 +647,7 @@ Benchmark: Deserialize 1KB JSON message (1M iterations)
 
 ### Zero-Copy Message Processing
 
-```rust
+```rust,ignore
 use bytes::Bytes;
 
 pub struct Message {
@@ -687,7 +672,7 @@ impl Message {
 
 ### Connection Pooling
 
-```rust
+```rust,ignore
 pub struct ConnectionPool {
     connections: Vec<Arc<Connection>>,
     available: Arc<Mutex<VecDeque<usize>>>,
@@ -717,35 +702,44 @@ impl ConnectionPool {
 
 ### Arc-Cloning Pattern
 
-Following Axum/Tower conventions:
+Following Axum/Tower conventions, `McpHandler` requires `Clone`, and each
+transport clones the handler per connection or request. Keep that cheap by
+holding state behind an `Arc`:
 
 ```rust
-#[derive(Clone)]
-pub struct McpServer<S> {
-    inner: Arc<ServerInner<S>>,
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use turbomcp::prelude::*;
+
+#[derive(Clone, Default)]
+pub struct Counter {
+    // Cloning the server only increments this refcount
+    count: Arc<RwLock<u64>>,
 }
 
-impl<S> McpServer<S> {
-    pub fn clone(&self) -> Self {
-        // Cheap: just Arc increment
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
+#[server(name = "counter", version = "1.0.0")]
+impl Counter {
+    /// Increment and return the counter
+    #[tool]
+    async fn increment(&self) -> u64 {
+        let mut count = self.count.write().await;
+        *count += 1;
+        *count
     }
 }
 
-// Can be passed to multiple tasks
-let server = McpServer::new();
-let server1 = server.clone();
-let server2 = server.clone();
+#[tokio::main]
+async fn main() {
+    let server = Counter::default();
+    let server1 = server.clone();
+    let server2 = server.clone();
 
-tokio::spawn(async move {
-    server1.handle_request(req1).await;
-});
-
-tokio::spawn(async move {
-    server2.handle_request(req2).await;
-});
+    // Both clones share the same counter
+    let a = tokio::spawn(async move { server1.increment().await });
+    let b = tokio::spawn(async move { server2.increment().await });
+    let _ = tokio::join!(a, b);
+    assert_eq!(server.increment().await, 3);
+}
 ```
 
 ## Design Patterns
@@ -754,7 +748,7 @@ tokio::spawn(async move {
 
 Enforce correctness at compile time:
 
-```rust
+```rust,ignore
 pub struct ServerBuilder<State> {
     _state: PhantomData<State>,
     info: Option<ServerInfo>,
@@ -792,27 +786,15 @@ impl ServerBuilder<WithCapabilities> {
 
 ### Builder Pattern
 
-Fluent API for configuration:
-
-```rust
-let server = McpServer::new()
-    .with_info(/* ... */)
-    .with_capabilities(|caps| {
-        caps.with_tools()
-            .with_resources()
-    })
-    .with_middleware(LoggingMiddleware::new())
-    .with_middleware(MetricsMiddleware::new())
-    .stdio()
-    .run()
-    .await?;
-```
+Fluent API for configuration, shown in [High-Level API](#high-level-api-turbomcp)
+above: `ServerConfig::builder()` for the configuration and
+`handler.builder()` for the transport and limits.
 
 ### Newtype Pattern
 
 Type safety for primitive values:
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RequestId(String);
 
@@ -827,26 +809,47 @@ fn process(request_id: RequestId, correlation_id: CorrelationId) {
 
 ### Trait Objects for Extensibility
 
-```rust
-#[async_trait]
-pub trait Middleware: Send + Sync {
-    async fn process(
-        &self,
-        request: JsonRpcRequest,
-        ctx: &RequestContext,
-        next: Next<'_>,
-    ) -> Result<JsonRpcResponse>;
-}
+Middleware implements the typed `McpMiddleware` trait, overriding only the hooks
+it needs (each has a pass-through default), and `MiddlewareStack` composes it
+around any handler:
 
-// Users can implement custom middleware
+```rust
+use std::future::Future;
+use std::pin::Pin;
+use turbomcp::prelude::*;
+use turbomcp_server::{McpMiddleware, MiddlewareStack, Next};
+
 pub struct CustomMiddleware;
 
-#[async_trait]
-impl Middleware for CustomMiddleware {
-    async fn process(&self, req: JsonRpcRequest, ctx: &RequestContext, next: Next<'_>) -> Result<JsonRpcResponse> {
-        // Custom logic
-        next.run(req, ctx).await
+impl McpMiddleware for CustomMiddleware {
+    fn on_call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: serde_json::Value,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Custom logic
+            next.call_tool(name, args, ctx).await
+        })
     }
+}
+
+#[derive(Clone)]
+pub struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self) -> String {
+        "hello".to_string()
+    }
+}
+
+fn stack() -> MiddlewareStack<MyServer> {
+    MiddlewareStack::new(MyServer).with_middleware(CustomMiddleware)
 }
 ```
 
@@ -856,7 +859,7 @@ impl Middleware for CustomMiddleware {
 
 **Identifier Validation:**
 
-```rust
+```rust,ignore
 use syn::Ident;
 
 pub fn validate_identifier(name: &str) -> Result<()> {
@@ -869,7 +872,7 @@ pub fn validate_identifier(name: &str) -> Result<()> {
 
 **Path Traversal Prevention:**
 
-```rust
+```rust,ignore
 use std::path::{Path, PathBuf};
 
 pub fn validate_path(base: &Path, requested: &Path) -> Result<PathBuf> {
@@ -885,7 +888,7 @@ pub fn validate_path(base: &Path, requested: &Path) -> Result<PathBuf> {
 
 **SSRF Prevention:**
 
-```rust
+```rust,ignore
 use ipnetwork::IpNetwork;
 
 pub fn validate_url(url: &str) -> Result<()> {
@@ -914,96 +917,107 @@ pub fn validate_url(url: &str) -> Result<()> {
 
 ### Rate Limiting
 
-```rust
-use governor::{Quota, RateLimiter as GovernorRateLimiter};
-
-pub struct RateLimiter {
-    limiter: GovernorRateLimiter<String, DefaultHasher>,
-}
-
-impl RateLimiter {
-    pub fn new(requests_per_second: u32) -> Self {
-        let quota = Quota::per_second(requests_per_second);
-        Self {
-            limiter: GovernorRateLimiter::keyed(quota),
-        }
-    }
-
-    pub async fn check(&self, key: &str) -> Result<()> {
-        self.limiter
-            .check_key(key)
-            .map(|_| ())
-            .map_err(|_| McpError::RateLimitExceeded)
-    }
-}
-```
+The HTTP transport has a built-in per-client token-bucket limiter, configured
+with `builder().with_rate_limit(max_requests, window)` or
+`ServerConfig::builder().rate_limit(RateLimitConfig::new(...))`. The per-client
+key is the client IP; `X-Forwarded-For` and similar headers are honoured only
+from `OriginValidationConfig::trusted_proxies`.
 
 ### Authentication
 
-```rust
-pub enum AuthProvider {
-    ApiKey(ApiKeyAuth),
-    Jwt(JwtAuth),
-    OAuth(OAuthProvider),
-}
-
-impl AuthProvider {
-    pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Claims> {
-        match self {
-            AuthProvider::ApiKey(auth) => auth.validate(headers),
-            AuthProvider::Jwt(auth) => auth.validate(headers),
-            AuthProvider::OAuth(auth) => auth.validate(headers).await,
-        }
-    }
-}
-```
+The Streamable HTTP transport implements MCP authorization:
+`ServerConfig::builder().authorization(HttpAuthorization::new(resource, auth_server, validator))`
+publishes RFC 9728 Protected Resource Metadata, answers requests without a valid
+bearer token `401` with a `WWW-Authenticate` challenge, and puts the validated
+`Principal` on the request context. `turbomcp_auth::server::JwtBearerValidator`
+is the JWT validator. See [Authentication](../guide/authentication.md).
 
 ## Testing Architecture
 
 ### Unit Tests
 
+Handler methods stay ordinary methods, and `McpTestClient` runs calls through
+MCP dispatch without a transport:
+
 ```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+pub struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Echo the argument
+    #[tool]
+    async fn echo(&self, arg: String) -> String {
+        arg
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn test_handler_invocation() {
-        let handler = MyToolHandler;
-        let params = json!({"arg": "value"});
-        let ctx = RequestContext::test();
+        // Directly
+        assert_eq!(MyServer.echo("value".into()).await, "value");
 
-        let result = handler.invoke(params, ctx).await;
-        assert!(result.is_ok());
+        // Through dispatch, argument validation included
+        let client = McpTestClient::new(MyServer);
+        let result = client
+            .call_tool("echo", serde_json::json!({"arg": "value"}))
+            .await
+            .unwrap();
+        assert_eq!(result.first_text(), Some("value"));
     }
 }
 ```
 
 ### Integration Tests
 
+`handle_request` runs a raw JSON-RPC request through the router the
+transports use:
+
 ```rust
+use serde_json::json;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+pub struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// A test tool
+    #[tool]
+    async fn test(&self) -> String {
+        "ok".to_string()
+    }
+}
+
 #[tokio::test]
 async fn test_full_request_flow() {
-    let server = McpServer::new()
-        .with_test_config()
-        .stdio()
-        .build();
+    let request = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": { "name": "test", "arguments": {} },
+        "id": 1
+    });
 
-    let request = JsonRpcRequest {
-        jsonrpc: "2.0".to_string(),
-        method: "tools/call".to_string(),
-        params: json!({"name": "test", "arguments": {}}),
-        id: Some(json!(1)),
-    };
-
-    let response = server.handle_request(request).await.unwrap();
-    assert_eq!(response.id, Some(json!(1)));
+    let response = MyServer
+        .handle_request(request, RequestContext::new())
+        .await
+        .unwrap();
+    assert_eq!(response["id"], 1);
+    assert_eq!(response["result"]["content"][0]["text"], "ok");
 }
 ```
 
 ### Property-Based Testing
 
-```rust
+Sketch (needs `proptest`, and `validate_identifier` stands for your own code):
+
+```rust,ignore
 use proptest::prelude::*;
 
 proptest! {
@@ -1020,17 +1034,14 @@ proptest! {
 
 ### Fuzzing
 
-```rust
-#[cfg(fuzzing)]
-pub fn fuzz_json_rpc_parsing(data: &[u8]) {
-    let _ = serde_json::from_slice::<JsonRpcRequest>(data);
-}
-```
+`crates/turbomcp-protocol/fuzz` has `cargo-fuzz` targets for JSON-RPC parsing,
+message validation, capability parsing, and tool deserialization; run them with
+`cargo fuzz run <target>` from that directory.
 
 ## Related Documentation
 
 - [Context Lifecycle](./context-lifecycle.md) - Request flow and context management
-- [Dependency Injection](./dependency-injection.md) - DI system implementation
+- [Dependency Injection](./dependency-injection.md) - Handler parameters and shared state
 - [Protocol Compliance](./protocol-compliance.md) - MCP protocol compliance
 - [ARCHITECTURE.md](../../ARCHITECTURE.md) - High-level architecture overview
 - [Advanced Patterns](../guide/advanced-patterns.md) - Implementation patterns

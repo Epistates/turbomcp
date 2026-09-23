@@ -18,9 +18,9 @@ tokio = { version = "1", features = ["full"] }
 
 ### 2. Update Server Definition
 
-**Before (v2.x):**
+**Before (v2.x, no longer compiles):**
 
-```rust
+```rust,ignore
 // v2 required manual handler registration and schema definition
 struct MyServer;
 
@@ -62,7 +62,7 @@ impl MyServer {
 
 **Before (v2.x):**
 
-```rust
+```rust,ignore
 let server = MyServer;
 let transport = StdioTransport::new(server);
 transport.run().await?;
@@ -71,7 +71,12 @@ transport.run().await?;
 **After (v3.x):**
 
 ```rust
-MyServer.run_stdio().await?;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MyServer.run_stdio().await
+}
 ```
 
 ## Key Changes
@@ -86,10 +91,11 @@ The core trait is now `McpHandler`, defined in `turbomcp-core`. You typically do
 - `#[tool]`: Marks a method as a tool. Schema is generated from function signature.
 - `#[resource]`: Marks a method as a resource handler.
 - `#[prompt]`: Marks a method as a prompt handler.
+- `#[completion]`, `#[subscribe]`/`#[unsubscribe]`, `#[set_level]`, `#[roots_changed]`: opt into the optional MCP methods (3.5).
 
 ### 3. Return Types
 
-Handlers can now return any type that implements `Serialize` (via `IntoToolResult`, etc.), or `McpResult<T>`. You don't need to wrap everything in `Result` or `Value` manually.
+Tools return any type that implements `IntoToolResult`: `String`, numbers, `bool`, `serde_json::Value`, `Vec<T: Serialize>`, `Json<T>` (structured content), `ToolResult`, or `McpResult<T>` of those. Resources return `McpResult<T>` of a `String` or `ResourceResult`, and prompts a `String`, `PromptResult`, or `Vec<Message>` (optionally in a `Result`). You don't need to wrap everything in `Value` manually.
 
 ### 4. Transports
 
@@ -98,6 +104,10 @@ Transports are now accessed via extension traits (`McpHandlerExt`):
 - `run_http(addr)`
 - `run_websocket(addr)`
 - `run_tcp(addr)`
+- `run_unix(path)`
+
+Each needs its transport's feature. For rate limits, connection limits, or a
+transport chosen at runtime, use `builder().transport(...).serve()`.
 
 ### 5. `no_std` Support
 
@@ -108,27 +118,46 @@ The core types are now `no_std` compatible, enabling usage in WASM environments 
 ### Error Handling
 
 **v2:**
-```rust
+```rust,ignore
 return Err(ServerError::internal("error"));
 ```
 
 **v3:**
 ```rust
-return Err(McpError::internal("error"));
+use turbomcp::prelude::*;
+
+fn load(path: &str) -> McpResult<String> {
+    if path.is_empty() {
+        return Err(McpError::invalid_params("path must not be empty"));
+    }
+    std::fs::read_to_string(path).map_err(|e| McpError::internal(e.to_string()))
+}
 ```
 (Or just return `Result<T, McpError>` and use `?`)
 
 ### Context
 
 **v2:**
-```rust
+```rust,ignore
 async fn my_tool(&self, ctx: Context, ...)
 ```
 
 **v3:**
 ```rust
-// RequestContext is injected if you add it as an argument named `ctx`
-async fn my_tool(&self, ctx: RequestContext, ...)
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    /// A parameter of type `&RequestContext` (any name, any position) is the
+    /// request context; it is not part of the tool's input schema.
+    #[tool]
+    async fn my_tool(&self, input: String, ctx: &RequestContext) -> String {
+        format!("{input} (request {})", ctx.request_id())
+    }
+}
 ```
 
 ## Need Help?

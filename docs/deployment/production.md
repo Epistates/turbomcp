@@ -2,6 +2,14 @@
 
 Complete guide to deploying TurboMCP servers in production environments, including configuration management, graceful shutdown, error handling, scaling, and operational best practices.
 
+!!! note "About the code in this guide"
+    Most samples here are general operational patterns built on third-party crates
+    (`config`, `sqlx`, `redis`, `vaultrs`, `aws-sdk-secretsmanager`) and on application
+    types they do not define (`Secrets`, `AppState`, `User`, …). They are sketches to
+    adapt, marked `rust,ignore`, and are not compiled. The TurboMCP-specific samples
+    (graceful shutdown, built-in rate and connection limits) are complete and compile
+    against the current release.
+
 ## Production Checklist
 
 ### Pre-Deployment
@@ -47,7 +55,7 @@ Complete guide to deploying TurboMCP servers in production environments, includi
 
 Production-grade environment configuration:
 
-```rust
+```rust,ignore
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
 
@@ -179,7 +187,7 @@ export JWT_SECRET="your-secret-key"
 
 **Using HashiCorp Vault (production):**
 
-```rust
+```rust,ignore
 use vaultrs::client::{VaultClient, VaultClientSettingsBuilder};
 
 pub async fn load_secrets() -> Result<Secrets, Box<dyn std::error::Error>> {
@@ -201,7 +209,7 @@ pub async fn load_secrets() -> Result<Secrets, Box<dyn std::error::Error>> {
 
 **Using AWS Secrets Manager:**
 
-```rust
+```rust,ignore
 use aws_sdk_secretsmanager::Client;
 
 pub async fn load_aws_secrets() -> Result<Secrets, Box<dyn std::error::Error>> {
@@ -225,23 +233,72 @@ pub async fn load_aws_secrets() -> Result<Secrets, Box<dyn std::error::Error>> {
 
 ### Signal Handling
 
-Implement graceful shutdown to avoid dropping in-flight requests:
+The Streamable HTTP transport handles shutdown itself: it listens for Ctrl+C
+and, on Unix, SIGTERM, then shuts axum down gracefully. `with_graceful_shutdown`
+sets how long to wait after the signal (capped at 60 seconds) before axum stops
+accepting connections and finishes the requests in flight:
 
 ```rust
-use tokio::signal;
-use std::sync::Arc;
-use tokio::sync::Notify;
+use std::time::Duration;
+use turbomcp::prelude::*;
 
-pub async fn shutdown_signal(notify: Arc<Notify>) {
+#[derive(Clone)]
+struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self) -> String {
+        "hello".to_string()
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    MyServer
+        .builder()
+        .transport(Transport::http("0.0.0.0:8080"))
+        .with_graceful_shutdown(Duration::from_secs(30))
+        .with_connection_limit(1000)
+        .with_rate_limit(100, Duration::from_secs(1))
+        .serve()
+        .await?;
+    Ok(())
+}
+```
+
+A STDIO server exits when its client closes stdin.
+
+When you run the MCP routes inside your own Axum application
+(`builder().into_axum_router()`), shutdown is yours to wire with
+`axum::serve(...).with_graceful_shutdown(...)`:
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self) -> String {
+        "hello".to_string()
+    }
+}
+
+async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c()
+        tokio::signal::ctrl_c()
             .await
             .expect("Failed to install Ctrl+C handler");
     };
 
     #[cfg(unix)]
     let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("Failed to install SIGTERM handler")
             .recv()
             .await;
@@ -251,38 +308,21 @@ pub async fn shutdown_signal(notify: Arc<Notify>) {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => {
-            tracing::info!("Received Ctrl+C, initiating graceful shutdown");
-        },
-        _ = terminate => {
-            tracing::info!("Received SIGTERM, initiating graceful shutdown");
-        },
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
-
-    notify.notify_waiters();
 }
 
-pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let notify = Arc::new(Notify::new());
-    let notify_clone = notify.clone();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = axum::Router::new()
+        .route("/health", axum::routing::get(|| async { "OK" }))
+        .merge(MyServer.builder().into_axum_router());
 
-    // Spawn shutdown signal handler
-    tokio::spawn(async move {
-        shutdown_signal(notify_clone).await;
-    });
-
-    let server = axum::Server::bind(&config.server.addr())
-        .serve(app.into_make_service())
-        .with_graceful_shutdown(async move {
-            notify.notified().await;
-        });
-
-    tracing::info!("Server listening on {}", config.server.addr());
-
-    server.await?;
-
-    tracing::info!("Server shutdown complete");
-
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
 }
 ```
@@ -291,7 +331,7 @@ pub async fn run_server(config: ServerConfig) -> Result<(), Box<dyn std::error::
 
 Drain active connections before shutdown:
 
-```rust
+```rust,ignore
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -356,7 +396,7 @@ async fn handle_request(
 
 Properly close database connections:
 
-```rust
+```rust,ignore
 pub async fn graceful_shutdown(
     db: Pool<Postgres>,
     redis: redis::Client,
@@ -393,7 +433,7 @@ pub async fn graceful_shutdown(
 
 Structured error handling with context:
 
-```rust
+```rust,ignore
 use thiserror::Error;
 use serde::Serialize;
 
@@ -480,7 +520,7 @@ impl AppError {
 
 Structured error logging with context:
 
-```rust
+```rust,ignore
 use tracing::{error, warn, info, instrument};
 
 #[instrument(skip(db), fields(user_id = %user_id))]
@@ -510,7 +550,7 @@ pub async fn get_user(
 
 Recover from panics without crashing:
 
-```rust
+```rust,ignore
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 pub async fn safe_execute<F, T>(
@@ -714,7 +754,7 @@ spec:
 
 **Read replicas:**
 
-```rust
+```rust,ignore
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
 
@@ -780,9 +820,15 @@ pub async fn create_user(pools: &DatabasePools, user: NewUser) -> Result<User, A
 
 ## Rate Limiting
 
+TurboMCP's HTTP transport has a built-in per-client token-bucket limiter:
+`builder().with_rate_limit(max_requests, window)`, or
+`ServerConfig::builder().rate_limit(RateLimitConfig::new(...))`, as in the
+graceful-shutdown example above. The samples below are for limits the
+built-in one does not cover.
+
 ### Token Bucket Implementation
 
-```rust
+```rust,ignore
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -842,7 +888,7 @@ pub async fn rate_limit_middleware(
 
 ### Redis-Based Rate Limiting
 
-```rust
+```rust,ignore
 use redis::AsyncCommands;
 
 pub async fn check_rate_limit(
@@ -888,7 +934,7 @@ pub async fn rate_limited_handler(
 
 Prevent cascading failures:
 
-```rust
+```rust,ignore
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::{Duration, Instant};
@@ -977,7 +1023,7 @@ impl CircuitBreaker {
 
 Comprehensive health check implementation:
 
-```rust
+```rust,ignore
 use axum::{Router, Json};
 use serde::Serialize;
 

@@ -4,12 +4,13 @@ Comprehensive guide to TurboMCP's implementation of the Model Context Protocol s
 
 ## Overview
 
-TurboMCP implements the **Model Context Protocol (MCP) specification version 2025-11-25** with full compliance across all defined capabilities. The implementation:
+TurboMCP implements the **Model Context Protocol (MCP)** specification, serving
+versions **2025-11-25** (preferred) and **2025-06-18**. The implementation:
 
-- **Spec Compliant** - 100% adherence to MCP 2025-11-25 specification
+- **Spec Compliant** - Tracks the MCP 2025-11-25 specification, with per-version response adapters for 2025-06-18
 - **JSON-RPC 2.0** - Complete JSON-RPC 2.0 protocol implementation
-- **Capability Negotiation** - Automatic feature detection and negotiation
-- **Version Management** - Exact version negotiation with migration support
+- **Capability Negotiation** - Capabilities derived from what the server actually implements
+- **Version Management** - Multi-version negotiation; an unsupported request is answered with the preferred version, as the lifecycle spec requires
 - **Validation** - Runtime schema validation and type checking
 - **Extensibility** - Support for custom extensions within the current protocol surface
 
@@ -32,7 +33,7 @@ The Model Context Protocol defines how Large Language Models (LLMs) interact wit
 
 MCP is built on JSON-RPC 2.0, which TurboMCP implements fully:
 
-```rust
+```jsonc
 // JSON-RPC 2.0 Request
 {
   "jsonrpc": "2.0",
@@ -87,7 +88,7 @@ MCP is built on JSON-RPC 2.0, which TurboMCP implements fully:
 
 Every MCP session begins with an `initialize` request:
 
-```rust
+```jsonc
 // Client sends initialize request
 {
   "jsonrpc": "2.0",
@@ -124,8 +125,8 @@ Every MCP session begins with an `initialize` request:
       "logging": {}
     },
     "serverInfo": {
-      "name": "TurboMCP Server",
-      "version": "2.1.1"
+      "name": "my-server",
+      "version": "1.0.0"
     }
   },
   "id": 1
@@ -134,68 +135,53 @@ Every MCP session begins with an `initialize` request:
 
 ### TurboMCP Implementation
 
+`#[server]` answers `initialize` for you. It sends the name and version from the
+attribute and advertises exactly the capabilities the impl block serves:
+`tools`, `resources`, and `prompts` (each with `listChanged: true`) when it has
+handlers of that kind, `resources.subscribe` for a `#[subscribe]` handler,
+`completions` for `#[completion]`, and `logging` always.
+
 ```rust
 use turbomcp::prelude::*;
 
-#[server]
+#[derive(Clone)]
 pub struct MyServer;
 
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self) -> String {
+        "hello".to_string()
+    }
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
-    MyServer::new()
-        .with_info(ServerInfo {
-            name: "MyServer".to_string(),
-            version: "1.0.0".to_string(),
-        })
-        .with_capabilities(|caps| {
-            caps
-                .with_tools()
-                .tool_list_changed(true)  // Support notifications
-                .with_resources()
-                .resource_subscribe(true)  // Support subscriptions
-                .resource_list_changed(true)
-                .with_prompts()
-                .with_logging()
-        })
-        .stdio()
-        .run()
-        .await
+async fn main() -> McpResult<()> {
+    MyServer.run_stdio().await
 }
 ```
 
+Protocol version negotiation is configured with `ProtocolConfig`: the default
+serves `2025-06-18` and `2025-11-25` and prefers the latter.
+
 ### Capability Builder
 
-Type-state pattern ensures compile-time correctness:
+For a hand-written `McpHandler` or protocol-level code, `turbomcp-protocol` has
+type-state builders where a sub-capability is only available once its parent is
+enabled:
 
 ```rust
-pub struct CapabilityBuilder<Tools, Resources, Prompts, Logging> {
-    _tools: PhantomData<Tools>,
-    _resources: PhantomData<Resources>,
-    _prompts: PhantomData<Prompts>,
-    _logging: PhantomData<Logging>,
-    capabilities: ServerCapabilities,
-}
+use turbomcp_protocol::capabilities::builders::ServerCapabilitiesBuilder;
 
-// Only available when tools are enabled
-impl<R, P, L> CapabilityBuilder<Enabled, R, P, L> {
-    pub fn tool_list_changed(mut self, enabled: bool) -> Self {
-        self.capabilities.tools.as_mut().unwrap().list_changed = Some(enabled);
-        self
-    }
-}
-
-// Only available when resources are enabled
-impl<T, P, L> CapabilityBuilder<T, Enabled, P, L> {
-    pub fn resource_subscribe(mut self, enabled: bool) -> Self {
-        self.capabilities.resources.as_mut().unwrap().subscribe = Some(enabled);
-        self
-    }
-
-    pub fn resource_list_changed(mut self, enabled: bool) -> Self {
-        self.capabilities.resources.as_mut().unwrap().list_changed = Some(enabled);
-        self
-    }
-}
+let capabilities = ServerCapabilitiesBuilder::new()
+    .enable_tools()
+    .enable_tool_list_changed()    // only compiles after enable_tools()
+    .enable_resources()
+    .enable_resources_subscribe()  // only compiles after enable_resources()
+    .enable_prompts()
+    .enable_logging()
+    .build();
 ```
 
 ## Tools Capability
@@ -209,7 +195,7 @@ Tools are executable functions exposed by the server:
 
 ### List Tools
 
-```rust
+```jsonc
 // Request
 {
   "jsonrpc": "2.0",
@@ -245,7 +231,7 @@ Tools are executable functions exposed by the server:
 
 ### Call Tool
 
-```rust
+```jsonc
 // Request
 {
   "jsonrpc": "2.0",
@@ -278,15 +264,23 @@ Tools are executable functions exposed by the server:
 ### TurboMCP Implementation
 
 ```rust
-#[tool]
-#[description("Calculate the sum of an array of numbers")]
-pub async fn calculate_sum(
-    #[description("Array of numbers to sum")]
-    numbers: Vec<f64>,
-) -> McpResult<ToolResponse> {
-    let sum: f64 = numbers.iter().sum();
+use turbomcp::prelude::*;
 
-    Ok(ToolResponse::text(format!("Sum is: {}", sum)))
+#[derive(Clone)]
+pub struct MathServer;
+
+#[server(name = "math", version = "1.0.0")]
+impl MathServer {
+    /// Calculate the sum of an array of numbers
+    #[tool]
+    async fn calculate_sum(
+        &self,
+        #[description("Array of numbers to sum")]
+        numbers: Vec<f64>,
+    ) -> McpResult<String> {
+        let sum: f64 = numbers.iter().sum();
+        Ok(format!("Sum is: {}", sum))
+    }
 }
 ```
 
@@ -294,7 +288,7 @@ pub async fn calculate_sum(
 
 The `#[tool]` macro automatically generates JSON Schema from Rust types:
 
-```rust
+```jsonc
 // Generated schema
 {
   "type": "object",
@@ -305,15 +299,16 @@ The `#[tool]` macro automatically generates JSON Schema from Rust types:
       "description": "Array of numbers to sum"
     }
   },
-  "required": ["numbers"]
+  "required": ["numbers"],
+  "additionalProperties": false
 }
 ```
 
 ### Tool List Changed Notification
 
-When `tool_list_changed: true` is enabled:
+Every `#[server]` with tools advertises `tools.listChanged`:
 
-```rust
+```jsonc
 // Server sends notification
 {
   "jsonrpc": "2.0",
@@ -321,23 +316,31 @@ When `tool_list_changed: true` is enabled:
 }
 ```
 
-Implementation:
+A `#[server]` type's tool list is fixed at compile time, but what a client sees
+can change: a `VisibilityLayer` session override, or a hand-written
+`McpHandler` with a dynamic catalogue. Send the notification from any handler
+with the request context:
 
 ```rust
-use turbomcp::notifications::send_tool_list_changed;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use turbomcp::prelude::*;
 
-#[tool]
-pub async fn register_new_tool(
-    name: String,
-    server: &McpServer,
-) -> McpResult<()> {
-    // Register new tool dynamically
-    server.register_tool(name, /* ... */);
+#[derive(Clone, Default)]
+pub struct Toggle {
+    advanced: Arc<AtomicBool>,
+}
 
-    // Notify clients
-    send_tool_list_changed(&server).await?;
-
-    Ok(())
+#[server(name = "toggle", version = "1.0.0")]
+impl Toggle {
+    /// Show the advanced tools (a filtering layer reads the flag)
+    #[tool]
+    async fn enable_advanced(&self, ctx: &RequestContext) -> McpResult<String> {
+        self.advanced.store(true, Ordering::Relaxed);
+        // Tell this client to re-list
+        ctx.notify_tools_list_changed().await?;
+        Ok("advanced tools enabled".to_string())
+    }
 }
 ```
 
@@ -354,7 +357,7 @@ Resources provide access to data sources:
 
 ### List Resources
 
-```rust
+```jsonc
 // Request
 {
   "jsonrpc": "2.0",
@@ -381,7 +384,7 @@ Resources provide access to data sources:
 
 ### Read Resource
 
-```rust
+```jsonc
 // Request
 {
   "jsonrpc": "2.0",
@@ -410,25 +413,34 @@ Resources provide access to data sources:
 
 ### TurboMCP Implementation
 
-```rust
-#[resource]
-#[uri("file:///documents/{path}")]
-#[description("Read files from documents directory")]
-#[mime_type("text/plain")]
-pub async fn read_file(
-    #[description("Relative file path")]
-    path: String,
-) -> McpResult<ResourceContents> {
-    let full_path = format!("/documents/{}", path);
-    let contents = tokio::fs::read_to_string(&full_path).await?;
+The URI (or RFC 6570 template) is the attribute's first argument. The handler
+receives the full requested URI and the request context:
 
-    Ok(ResourceContents::text(contents))
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+pub struct Documents;
+
+#[server(name = "documents", version = "1.0.0")]
+impl Documents {
+    /// Read files from the documents directory
+    #[resource("file:///documents/{path}", mime_type = "text/plain")]
+    async fn read_file(&self, uri: String, ctx: &RequestContext) -> McpResult<String> {
+        let path = uri.trim_start_matches("file:///documents/");
+        if path.split('/').any(|segment| segment == "..") {
+            return Err(McpError::invalid_params("path escapes the documents directory"));
+        }
+        tokio::fs::read_to_string(format!("/documents/{path}"))
+            .await
+            .map_err(|_| McpError::resource_not_found(&uri))
+    }
 }
 ```
 
 ### Resource Subscriptions
 
-```rust
+```jsonc
 // Subscribe request
 {
   "jsonrpc": "2.0",
@@ -449,27 +461,51 @@ pub async fn read_file(
 }
 ```
 
-Implementation:
+Implementation: declare `#[subscribe]` and `#[unsubscribe]` (together; one
+without the other is a compile error), which advertises
+`resources.subscribe`, and send updates with `ctx.notify_resource_updated`:
 
 ```rust
-use tokio::sync::broadcast;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+use turbomcp::prelude::*;
 
-#[derive(Clone)]
-pub struct ResourceWatcher {
-    updates: broadcast::Sender<String>,
+#[derive(Clone, Default)]
+pub struct Logs {
+    subscribed: Arc<Mutex<HashSet<String>>>,
+    lines: Arc<Mutex<Vec<String>>>,
 }
 
-impl ResourceWatcher {
-    pub async fn watch_file(&self, uri: String) {
-        // Watch file for changes
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+#[server(name = "logs", version = "1.0.0")]
+impl Logs {
+    /// The log file
+    #[resource("file:///documents/log.txt", mime_type = "text/plain")]
+    async fn log(&self, uri: String, ctx: &RequestContext) -> McpResult<String> {
+        Ok(self.lines.lock().unwrap().join("\n"))
+    }
 
-            if file_changed(&uri).await? {
-                // Notify subscribers
-                self.updates.send(uri.clone()).ok();
-            }
+    #[subscribe]
+    async fn subscribe(&self, uri: String) -> McpResult<()> {
+        self.subscribed.lock().unwrap().insert(uri);
+        Ok(())
+    }
+
+    #[unsubscribe]
+    async fn unsubscribe(&self, uri: String) -> McpResult<()> {
+        self.subscribed.lock().unwrap().remove(&uri);
+        Ok(())
+    }
+
+    /// Append a line, and tell a subscribed client the resource changed
+    #[tool]
+    async fn append(&self, line: String, ctx: &RequestContext) -> McpResult<String> {
+        self.lines.lock().unwrap().push(line);
+        let uri = "file:///documents/log.txt";
+        let is_subscribed = self.subscribed.lock().unwrap().contains(uri);
+        if is_subscribed {
+            ctx.notify_resource_updated(uri).await?;
         }
+        Ok("appended".to_string())
     }
 }
 ```
@@ -485,7 +521,7 @@ Prompts are reusable templates:
 
 ### List Prompts
 
-```rust
+```jsonc
 // Request
 {
   "jsonrpc": "2.0",
@@ -522,7 +558,7 @@ Prompts are reusable templates:
 
 ### Get Prompt
 
-```rust
+```jsonc
 // Request
 {
   "jsonrpc": "2.0",
@@ -558,24 +594,31 @@ Prompts are reusable templates:
 
 ### TurboMCP Implementation
 
+Prompt arguments are `String` (required) or `Option<String>` (optional); the
+handler takes the request context last:
+
 ```rust
-#[prompt]
-#[description("Review code for best practices")]
-pub async fn code_review(
-    #[description("Programming language")]
-    language: String,
-    #[description("Code to review")]
-    code: String,
-) -> McpResult<PromptResult> {
-    Ok(PromptResult {
-        description: Some(format!("Code review for {} code", language)),
-        messages: vec![
-            PromptMessage::user(format!(
-                "Please review this {} code:\n\n{}",
-                language, code
-            )),
-        ],
-    })
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+pub struct Reviews;
+
+#[server(name = "reviews", version = "1.0.0")]
+impl Reviews {
+    /// Review code for best practices
+    #[prompt]
+    async fn code_review(
+        &self,
+        #[description("Programming language")] language: String,
+        #[description("Code to review")] code: String,
+        ctx: &RequestContext,
+    ) -> McpResult<PromptResult> {
+        Ok(PromptResult::user(format!(
+            "Please review this {} code:\n\n{}",
+            language, code
+        ))
+        .with_description(format!("Code review for {} code", language)))
+    }
 }
 ```
 
@@ -589,7 +632,7 @@ Sampling allows servers to request LLM completions from clients:
 
 ### Create Message
 
-```rust
+```jsonc
 // Server -> Client request
 {
   "jsonrpc": "2.0",
@@ -627,67 +670,71 @@ Sampling allows servers to request LLM completions from clients:
 
 ### TurboMCP Implementation
 
+A handler asks the client for a completion with `ctx.sample`. The client must
+have declared the `sampling` capability. The request types come from
+`turbomcp-types`:
+
 ```rust
-use turbomcp::sampling::{SamplingClient, CreateMessageRequest};
+use turbomcp::prelude::*;
+use turbomcp_types::{CreateMessageRequest, SamplingMessage};
 
-#[tool]
-pub async fn translate_with_llm(
-    text: String,
-    target_lang: String,
-    sampling: SamplingClient,
-) -> McpResult<String> {
-    let request = CreateMessageRequest {
-        messages: vec![
-            Message::user(format!("Translate '{}' to {}", text, target_lang))
-        ],
-        max_tokens: 100,
-        ..Default::default()
-    };
+#[derive(Clone)]
+pub struct Translator;
 
-    let response = sampling.create_message(request).await?;
+#[server(name = "translator", version = "1.0.0")]
+impl Translator {
+    /// Translate text with the client's model
+    #[tool]
+    async fn translate_with_llm(
+        &self,
+        text: String,
+        target_lang: String,
+        ctx: &RequestContext,
+    ) -> McpResult<String> {
+        let request = CreateMessageRequest {
+            messages: vec![SamplingMessage::user(format!(
+                "Translate '{}' to {}",
+                text, target_lang
+            ))],
+            max_tokens: 100,
+            ..Default::default()
+        };
 
-    Ok(response.content.text)
+        let response = ctx.sample(request).await?;
+        Ok(response.content.as_text().unwrap_or_default().to_string())
+    }
 }
 ```
 
 ## Error Codes
 
-TurboMCP implements all JSON-RPC 2.0 standard error codes plus MCP-specific codes:
+`turbomcp_core::error_codes` defines the codes TurboMCP puts on the wire, and
+each `McpError` constructor picks the right one:
 
 ```rust
-pub enum ErrorCode {
-    // JSON-RPC 2.0 standard errors
-    ParseError = -32700,          // Invalid JSON
-    InvalidRequest = -32600,      // Invalid Request object
-    MethodNotFound = -32601,      // Method not found
-    InvalidParams = -32602,       // Invalid parameters
-    InternalError = -32603,       // Internal error
+use turbomcp_core::error_codes;
 
-    // MCP-specific errors
-    ResourceNotFound = -32001,    // Resource URI not found
-    ToolNotFound = -32002,        // Tool name not found
-    PromptNotFound = -32003,      // Prompt name not found
-    Unauthorized = -32004,        // Authentication required
-    RateLimitExceeded = -32005,   // Rate limit exceeded
-}
+fn main() {
+// JSON-RPC 2.0 standard errors
+assert_eq!(error_codes::PARSE_ERROR, -32700);      // Invalid JSON
+assert_eq!(error_codes::INVALID_REQUEST, -32600);  // Invalid Request object
+assert_eq!(error_codes::METHOD_NOT_FOUND, -32601); // Method not found
+assert_eq!(error_codes::INVALID_PARAMS, -32602);   // Invalid parameters
+assert_eq!(error_codes::INTERNAL_ERROR, -32603);   // Internal error
 
-impl McpError {
-    pub fn code(&self) -> i32 {
-        match self {
-            McpError::ParseError(_) => -32700,
-            McpError::InvalidRequest(_) => -32600,
-            McpError::MethodNotFound(_) => -32601,
-            McpError::InvalidParams(_) => -32602,
-            McpError::InternalError(_) => -32603,
-            McpError::ResourceNotFound(_) => -32001,
-            McpError::ToolNotFound(_) => -32002,
-            McpError::PromptNotFound(_) => -32003,
-            McpError::Unauthorized(_) => -32004,
-            McpError::RateLimitExceeded(_) => -32005,
-        }
-    }
+// Codes the MCP specification assigns
+assert_eq!(error_codes::RESOURCE_NOT_FOUND, -32002);
+assert_eq!(error_codes::URL_ELICITATION_REQUIRED, -32042);
+
+// Spelled out by the MCP spec in terms of the standard codes
+assert_eq!(error_codes::TOOL_NOT_FOUND, -32602);           // "Unknown tool"
+assert_eq!(error_codes::PROMPT_NOT_FOUND, -32602);         // "Invalid prompt name"
+assert_eq!(error_codes::CAPABILITY_NOT_SUPPORTED, -32601); // unsupported optional method
 }
 ```
+
+A tool that runs and fails is not a protocol error: it is a successful
+`tools/call` response with `isError: true`, with the error kind in `_meta`.
 
 ## Schema Validation
 
@@ -697,191 +744,135 @@ TurboMCP uses the `schemars` crate for automatic schema generation:
 
 ```rust
 use schemars::{JsonSchema, schema_for};
+use serde::Deserialize;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct CalculateParams {
-    #[schemars(description = "First number")]
+    /// First number
     a: f64,
-    #[schemars(description = "Second number")]
+    /// Second number
     b: f64,
 }
 
-// Generate schema at compile time
-let schema = schema_for!(CalculateParams);
+fn main() {
+    // The same generator the macros use for a parameter of this type
+    let schema = schema_for!(CalculateParams);
+    println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+}
 ```
 
 ### Runtime Validation
 
-```rust
-use jsonschema::JSONSchema;
-
-pub fn validate_params(
-    params: &Value,
-    schema: &Value,
-) -> McpResult<()> {
-    let compiled = JSONSchema::compile(schema)
-        .map_err(|e| McpError::InternalError(e.to_string()))?;
-
-    if let Err(errors) = compiled.validate(params) {
-        let error_messages: Vec<String> = errors
-            .map(|e| e.to_string())
-            .collect();
-
-        return Err(McpError::InvalidParams(
-            error_messages.join(", ")
-        ));
-    }
-
-    Ok(())
-}
-```
+The dispatcher generated by `#[server]` validates `tools/call` arguments
+against the tool's parameters: an argument the tool does not declare, a
+missing required one, or one of the wrong type is reported as a tool execution
+error classified `invalid_params`. No separate JSON Schema validator runs.
 
 ## Version Management
 
-### Protocol Version Detection
+### Protocol Version Negotiation
+
+MCP versions are dates, compared as whole strings. `ProtocolConfig` controls
+what the server speaks:
 
 ```rust
-pub struct ProtocolVersion {
-    major: u32,
-    minor: u32,
-    patch: u32,
-}
+use turbomcp::prelude::*;
+use turbomcp_server::ProtocolVersion;
 
-impl ProtocolVersion {
-    pub fn from_string(s: &str) -> Result<Self> {
-        // Parse "2025-11-25" format
-        let parts: Vec<&str> = s.split('-').collect();
-        Ok(Self {
-            major: parts[0].parse()?,
-            minor: parts[1].parse()?,
-            patch: parts[2].parse()?,
-        })
-    }
+fn main() {
+    // Default: supports 2025-06-18 and 2025-11-25, prefers 2025-11-25
+    let config = ProtocolConfig::default();
+    assert_eq!(config.negotiate(Some("2025-06-18")), Some(ProtocolVersion::V2025_06_18));
 
-    pub fn is_compatible(&self, other: &Self) -> bool {
-        // Same major version = compatible
-        self.major == other.major
-    }
+    // A version the server does not support is answered with the preferred one,
+    // as the lifecycle spec requires; the client decides whether to continue
+    assert_eq!(config.negotiate(Some("2024-11-05")), Some(ProtocolVersion::LATEST));
+
+    // Speak only one version (still offered to clients that asked for another)
+    let strict = ProtocolConfig::strict(ProtocolVersion::LATEST);
+    assert_eq!(strict.negotiate(Some("2025-06-18")), Some(ProtocolVersion::LATEST));
 }
 ```
+
+Pass it with `builder().with_protocol(config)`.
 
 ### Backward Compatibility
 
-```rust
-pub struct SessionState {
-    protocol_version: ProtocolVersion,
-}
-
-impl SessionState {
-    pub fn supports_feature(&self, feature: &str) -> bool {
-        match feature {
-            "tool_list_changed" => self.protocol_version.minor >= 6,
-            "resource_subscriptions" => self.protocol_version.minor >= 6,
-            "sampling" => self.protocol_version.minor >= 6,
-            _ => false,
-        }
-    }
-}
-```
-
-### Migration Guide
-
-When upgrading protocol versions:
-
-```rust
-// v2025-11-25 -> future-version migration example
-pub fn migrate_tool_schema(
-    old_schema: Value,
-    from_version: ProtocolVersion,
-) -> Value {
-    if from_version.minor < 12 {
-        // Add new required fields
-        let mut schema = old_schema;
-        schema["properties"]["metadata"] = json!({
-            "type": "object",
-            "description": "Tool metadata (added in 2025-12-18)"
-        });
-        schema
-    } else {
-        old_schema
-    }
-}
-```
+A client that negotiated `2025-06-18` gets responses through that version's
+adapter: fields added in `2025-11-25` (icons, tool `execution`, and the like)
+are left off the wire rather than sent to a client that does not know them.
 
 ## Compliance Testing
 
 ### Protocol Test Suite
 
+`McpHandlerExt::handle_request` runs one JSON-RPC request through the same
+router the transports use, which makes wire-level tests short:
+
 ```rust
+use serde_json::json;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+pub struct TestServer;
+
+#[server(name = "test-server", version = "1.0.0")]
+impl TestServer {
+    /// A tool for the tests
+    #[tool]
+    async fn test_tool(&self) -> String {
+        "ok".to_string()
+    }
+}
+
 #[cfg(test)]
 mod compliance_tests {
     use super::*;
 
+    async fn request(body: serde_json::Value) -> serde_json::Value {
+        TestServer.handle_request(body, RequestContext::new()).await.unwrap()
+    }
+
     #[tokio::test]
     async fn test_initialize_handshake() {
-        let server = TestServer::new();
-
-        let request = json!({
+        let response = request(json!({
             "jsonrpc": "2.0",
             "method": "initialize",
             "params": {
                 "protocolVersion": "2025-11-25",
                 "capabilities": {},
-                "clientInfo": {
-                    "name": "TestClient",
-                    "version": "1.0.0"
-                }
+                "clientInfo": { "name": "TestClient", "version": "1.0.0" }
             },
             "id": 1
-        });
-
-        let response = server.handle_request(request).await.unwrap();
+        }))
+        .await;
 
         assert_eq!(response["jsonrpc"], "2.0");
-        assert!(response["result"]["protocolVersion"] == "2025-11-25");
-        assert!(response["id"] == 1);
+        assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
+        assert_eq!(response["id"], 1);
     }
 
     #[tokio::test]
     async fn test_tools_list() {
-        let server = TestServer::with_tool("test_tool");
-
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "id": 2
-        });
-
-        let response = server.handle_request(request).await.unwrap();
-
-        let tools = &response["result"]["tools"];
-        assert!(tools.is_array());
-        assert_eq!(tools[0]["name"], "test_tool");
+        let response = request(json!({ "jsonrpc": "2.0", "method": "tools/list", "id": 2 })).await;
+        assert_eq!(response["result"]["tools"][0]["name"], "test_tool");
     }
 
     #[tokio::test]
     async fn test_error_codes() {
-        let server = TestServer::new();
-
         // Method not found
-        let request = json!({
-            "jsonrpc": "2.0",
-            "method": "nonexistent/method",
-            "id": 3
-        });
-
-        let response = server.handle_request(request).await.unwrap();
+        let response =
+            request(json!({ "jsonrpc": "2.0", "method": "nonexistent/method", "id": 3 })).await;
         assert_eq!(response["error"]["code"], -32601);
 
-        // Invalid params
-        let request = json!({
+        // Unknown tool
+        let response = request(json!({
             "jsonrpc": "2.0",
             "method": "tools/call",
-            "params": {},  // Missing required fields
+            "params": { "name": "no_such_tool" },
             "id": 4
-        });
-
-        let response = server.handle_request(request).await.unwrap();
+        }))
+        .await;
         assert_eq!(response["error"]["code"], -32602);
     }
 }
@@ -889,102 +880,51 @@ mod compliance_tests {
 
 ### Fuzzing
 
-```rust
-#[cfg(fuzzing)]
-pub fn fuzz_protocol_parsing(data: &[u8]) {
-    if let Ok(json) = serde_json::from_slice::<Value>(data) {
-        let _ = parse_json_rpc_request(&json);
+`crates/turbomcp-protocol/fuzz` has `cargo-fuzz` targets for JSON-RPC parsing,
+message validation, capability parsing, and tool deserialization. A target
+looks like this (not compiled here: it needs the `cargo fuzz` harness):
+
+```rust,ignore
+#![no_main]
+use libfuzzer_sys::fuzz_target;
+
+fuzz_target!(|data: &[u8]| {
+    if let Ok(input) = std::str::from_utf8(data) {
+        let _ = turbomcp_server::parse_request(input);
     }
-}
+});
 ```
 
 ## Best Practices
 
-### 1. Always Validate Protocol Version
+### 1. Leave Version Negotiation to the Framework
 
-```rust
-pub async fn handle_initialize(
-    request: InitializeRequest,
-) -> McpResult<InitializeResponse> {
-    let version = ProtocolVersion::from_string(&request.protocol_version)?;
+The default `ProtocolConfig` already implements the lifecycle rules: answer a
+supported version with itself and anything else with the preferred version.
+Setting `allow_fallback = false` makes the server refuse the handshake with
+`-32602` instead, which the spec does not permit.
 
-    if !SUPPORTED_VERSION.is_compatible(&version) {
-        return Err(McpError::UnsupportedProtocol(
-            format!("Unsupported protocol version: {}", request.protocol_version)
-        ));
-    }
+### 2. Check Client Capabilities Before Server-to-Client Requests
 
-    // Proceed with initialization
-    Ok(/* ... */)
-}
-```
-
-### 2. Implement Graceful Degradation
-
-```rust
-pub fn negotiate_capabilities(
-    client_caps: ClientCapabilities,
-    server_caps: ServerCapabilities,
-) -> NegotiatedCapabilities {
-    NegotiatedCapabilities {
-        tools: client_caps.tools.is_some() && server_caps.tools.is_some(),
-        resources: client_caps.resources.is_some() && server_caps.resources.is_some(),
-        sampling: client_caps.sampling.is_some() && server_caps.sampling.is_some(),
-        // ...
-    }
-}
-```
+`ctx.sample`, `ctx.elicit_form`, and `ctx.list_roots` fail with
+`capability_not_supported` when the client did not declare the capability.
+Handle that error and degrade, rather than failing the whole tool call.
 
 ### 3. Document Protocol Extensions
 
-```rust
-/// Custom extension for analytics tracking.
-///
-/// **Protocol Extension:** `x-analytics`
-/// **Supported Since:** TurboMCP v2.1.0
-/// **MCP Spec Version:** 2025-11-25
-///
-/// This extension adds analytics metadata to tool responses.
-#[tool]
-pub async fn tracked_tool(
-    input: String,
-) -> McpResult<ToolResponseWithAnalytics> {
-    Ok(ToolResponseWithAnalytics {
-        content: vec![/* ... */],
-        analytics: AnalyticsMetadata {
-            tracked: true,
-            session_id: "session-123",
-        },
-    })
-}
-```
+Put non-standard metadata in `_meta` under a reverse-DNS key, as TurboMCP does
+with `io.turbomcp/tags` and `io.turbomcp/errorKind`, so clients that do not
+know it can ignore it.
 
 ### 4. Test Against Multiple Protocol Versions
 
-```rust
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_protocol_2025_06_18() {
-        test_with_version("2025-11-25");
-    }
-
-    #[test]
-    fn test_protocol_2025_12_18() {
-        test_with_version("2025-12-18");
-    }
-
-    fn test_with_version(version: &str) {
-        let server = TestServer::with_version(version);
-        // Run compliance tests
-    }
-}
-```
+Run the handshake test above with `"protocolVersion": "2025-06-18"` as well,
+and assert on the fields that version's clients must not receive.
 
 ## Related Documentation
 
 - [System Design](./system-design.md) - Architecture overview
 - [Context Lifecycle](./context-lifecycle.md) - Request flow
-- [Dependency Injection](./dependency-injection.md) - DI system
+- [Dependency Injection](./dependency-injection.md) - Handler parameters and shared state
 - [MCP Specification](https://spec.modelcontextprotocol.io/2025-11-25/) - Official spec
 - [JSON-RPC 2.0](https://www.jsonrpc.org/specification) - JSON-RPC spec

@@ -1,5 +1,21 @@
 # TurboMCP v3 Authentication Architecture
 
+!!! note "Design document"
+    This is the design proposal for portable authentication. Its code blocks
+    are design sketches (`rust,ignore`), not the shipped API. What shipped:
+
+    - **Core traits** in `turbomcp_core::auth`: `Credential`, `Principal`,
+      `Authenticator`, `CredentialExtractor`, `HeaderExtractor`, `JwtConfig`,
+      `StandardClaims`.
+    - **Native HTTP servers**: MCP authorization in `turbomcp-server`
+      (`ServerConfig::builder().authorization(HttpAuthorization::new(...))`),
+      with `turbomcp_auth::server::JwtBearerValidator` validating JWTs. There is
+      no `with_auth` wrapper for native servers.
+    - **WASM**: `turbomcp_wasm::auth::{WasmJwtAuthenticator, CloudflareAccessAuthenticator}`
+      (Web Crypto) and the `WithAuth` / `AuthExt::with_auth` wrapper in
+      `turbomcp_wasm::wasm_server`.
+    - Handlers read the identity with `ctx.principal()` / `ctx.subject()`.
+
 ## Design Principles
 
 1. **Portable by Default** - Same auth code works on native and WASM
@@ -25,7 +41,7 @@ turbomcp-auth (native only)
 
 Platform-adaptive traits using existing `MaybeSend`/`MaybeSync` pattern:
 
-```rust
+```rust,ignore
 // turbomcp-core/src/auth.rs
 
 use crate::{MaybeSend, MaybeSync, RequestContext};
@@ -91,7 +107,7 @@ impl CredentialExtractor for HeaderExtractor {
 
 ### Layer 2: JWT Validation (shared logic)
 
-```rust
+```rust,ignore
 // turbomcp-core/src/auth/jwt.rs
 
 /// JWT validation configuration (platform-agnostic)
@@ -152,7 +168,7 @@ pub enum Algorithm {
 
 #### Native (turbomcp-auth)
 
-```rust
+```rust,ignore
 // turbomcp-auth/src/jwt.rs
 
 use turbomcp_core::auth::{Authenticator, Credential, Principal, JwtConfig};
@@ -192,7 +208,7 @@ impl Authenticator for JwtAuthenticator {
 
 #### WASM (turbomcp-wasm)
 
-```rust
+```rust,ignore
 // turbomcp-wasm/src/auth/jwt.rs
 
 use turbomcp_core::auth::{Authenticator, Credential, Principal, JwtConfig};
@@ -255,7 +271,7 @@ impl Authenticator for WasmJwtAuthenticator {
 
 ### Layer 4: Server Integration
 
-```rust
+```rust,ignore
 // turbomcp-core/src/auth/middleware.rs
 
 /// Auth configuration for MCP servers
@@ -275,7 +291,7 @@ pub trait AuthenticatedHandler: McpHandler {
 
 ### Layer 5: Macro Integration
 
-```rust
+```rust,ignore
 // User code - works on both native and WASM!
 
 #[derive(Clone)]
@@ -339,7 +355,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
 Special-case for CF Access which validates at the edge:
 
-```rust
+```rust,ignore
 // turbomcp-wasm/src/auth/cloudflare.rs
 
 /// Cloudflare Access authenticator
