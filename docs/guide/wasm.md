@@ -40,7 +40,7 @@ TurboMCP v3 enables true cross-platform MCP servers through the unified `McpHand
 │  • .run_tcp()           │     │  • WasmHandlerExt       │
 │  • .run_http()          │     │  • .handle_worker_      │
 │  • .run_websocket()     │     │      request()          │
-│  • .serve() (stdio)     │     │  • Cloudflare Workers   │
+│  • .run_stdio()         │     │  • Cloudflare Workers   │
 └─────────────────────────┘     └─────────────────────────┘
 ```
 
@@ -141,9 +141,11 @@ impl McpHandler for MyServer {
 
 ### Native Deployment
 
-Use standard TurboMCP transport methods:
+Use standard TurboMCP transport methods. This `main.rs` sits next to a
+`handler.rs` holding the `MyServer` implementation above, so it is shown as a
+fragment of that project:
 
-```rust
+```rust,ignore
 // main.rs (native binary)
 use turbomcp::prelude::*;
 
@@ -159,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server.run_tcp("0.0.0.0:3000").await?;
     // Or: server.run_http("0.0.0.0:8080").await?;
     // Or: server.run_websocket("0.0.0.0:9000").await?;
-    // Or: server.serve().await?; // stdio
+    // Or: server.run_stdio().await?;
 
     Ok(())
 }
@@ -167,9 +169,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### WASM Deployment
 
-Use `WasmHandlerExt` to run the same handler in WASM:
+Use `WasmHandlerExt` to run the same handler in WASM (again a file in the
+same project):
 
-```rust
+```rust,ignore
 // worker.rs (Cloudflare Worker)
 use turbomcp_wasm::wasm_server::WasmHandlerExt;
 use worker::*;
@@ -208,35 +211,41 @@ my-mcp-server/
         └── lib.rs      # Worker entry point
 ```
 
+The three entry files below each belong to one crate of that layout, and name
+the shared `my_mcp_server` crate, so they are fragments rather than standalone
+programs.
+
 **Shared library (`src/lib.rs`):**
 
-```rust
+```rust,ignore
 pub mod handler;
 pub use handler::MyServer;
 ```
 
 **Native entry (`native/src/main.rs`):**
 
-```rust
+```rust,ignore
 use my_mcp_server::MyServer;
 use turbomcp::prelude::*;
 
 #[tokio::main]
 async fn main() {
-    MyServer::default().run_tcp("0.0.0.0:3000").await.unwrap();
+    let server = MyServer { greeting: "Hello".into() };
+    server.run_tcp("0.0.0.0:3000").await.unwrap();
 }
 ```
 
 **Worker entry (`worker/src/lib.rs`):**
 
-```rust
+```rust,ignore
 use my_mcp_server::MyServer;
 use turbomcp_wasm::wasm_server::WasmHandlerExt;
 use worker::*;
 
 #[event(fetch)]
 async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
-    MyServer::default().handle_worker_request(req).await
+    let server = MyServer { greeting: "Hello".into() };
+    server.handle_worker_request(req).await
 }
 ```
 
@@ -256,8 +265,8 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
 |----------|----------|
 | **McpHandler + WasmHandlerExt** | Portable servers, shared business logic |
 | **McpServer Builder** | WASM-only servers, quick prototypes |
-| **#[server] macro** | Native-focused with macro convenience |
-| **#[wasm_server] macro** | WASM-focused with macro convenience |
+| **`turbomcp::server` macro** | Native-focused with macro convenience |
+| **`turbomcp_wasm::server` macro** (`macros` feature) | WASM-focused with macro convenience |
 
 ## Installation
 
@@ -459,22 +468,25 @@ cargo build --target wasm32-wasip2 -p turbomcp-wasm --features wasi
 
 ### WASI Transports
 
+The WASI client is synchronous: each call blocks until the response arrives.
+
 **StdioTransport** - MCP over STDIO using `wasi:cli/stdin` and `wasi:cli/stdout`:
 
 ```rust
-use turbomcp_wasm::wasi::StdioTransport;
+use turbomcp_wasm::wasi::{McpClient, StdioTransport};
 
-let transport = StdioTransport::new();
-let client = McpClient::new(transport);
+let mut client = McpClient::with_stdio(StdioTransport::new());
+client.initialize()?;
+let tools = client.list_tools()?;
 ```
 
 **HttpTransport** - HTTP-based MCP using `wasi:http/outgoing-handler`:
 
 ```rust
-use turbomcp_wasm::wasi::HttpTransport;
+use turbomcp_wasm::wasi::{HttpTransport, McpClient};
 
-let transport = HttpTransport::new("https://api.example.com/mcp");
-let client = McpClient::new(transport);
+let mut client = McpClient::with_http(HttpTransport::new("https://api.example.com/mcp"));
+client.initialize()?;
 ```
 
 ## no_std Core
@@ -655,8 +667,9 @@ schemars = "1.2"
 ```
 
 ```rust
-use turbomcp_wasm::prelude::*;
 use serde::Deserialize;
+use turbomcp_wasm::prelude::*;
+use worker::event;
 
 #[derive(Clone)]
 struct MyServer {
@@ -703,7 +716,7 @@ impl MyServer {
 }
 
 #[event(fetch)]
-async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> worker::Result<Response> {
     let server = MyServer { greeting: "Hello".into() };
     server.into_mcp_server().handle(req).await
 }
@@ -727,53 +740,69 @@ use turbomcp_wasm::prelude::*;
 
 ### Ergonomic Handler System (IntoToolResponse)
 
-The new `IntoToolResponse` trait provides axum-inspired ergonomics for tool handlers. Return any type that implements the trait:
+The `IntoToolResponse` trait provides axum-inspired ergonomics for tool handlers. Return any type that implements the trait:
 
 ```rust
-// String - automatically converted to text content
-.tool("greet", "Say hello", |args: GreetArgs| async move {
-    format!("Hello, {}!", args.name)
-})
+use serde::Deserialize;
+use turbomcp_wasm::Content;
+use turbomcp_wasm::prelude::*;
 
-// Numbers - converted to text
-.tool("add", "Add numbers", |args: AddArgs| async move {
-    args.a + args.b
-})
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GreetArgs {
+    name: String,
+}
 
-// Explicit text wrapper
-.tool("text_example", "Return text", |_: NoArgs| async move {
-    Text("Explicit text content".to_string())
-})
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AddArgs {
+    a: i64,
+    b: i64,
+}
 
-// JSON serialization
-.tool("json_example", "Return JSON", |_: NoArgs| async move {
-    Json(serde_json::json!({"key": "value"}))
-})
+#[derive(Deserialize, schemars::JsonSchema)]
+struct ValueArgs {
+    value: i64,
+}
 
-// Image response
-.tool("image", "Return image", |_: NoArgs| async move {
-    Image {
-        data: base64_data,
-        mime_type: "image/png".to_string(),
-    }
-})
-
-// Result types for error handling
-.tool("fallible", "Might fail", |args: Args| async move {
-    if args.value < 0 {
-        Err(ToolError::new("Value must be positive"))
-    } else {
-        Ok(format!("Value: {}", args.value))
-    }
-})
-
-// ToolResult for full control
-.tool("full_control", "Multiple content items", |_: NoArgs| async move {
-    ToolResult::contents(vec![
-        Content::text("First item"),
-        Content::text("Second item"),
-    ])
-})
+fn build() -> McpServer {
+    McpServer::builder("demo", "1.0.0")
+        // String - automatically converted to text content
+        .tool("greet", "Say hello", |args: GreetArgs| async move {
+            format!("Hello, {}!", args.name)
+        })
+        // Numbers - converted to text
+        .tool("add", "Add numbers", |args: AddArgs| async move { args.a + args.b })
+        // Explicit text wrapper
+        .tool_no_args("text_example", "Return text", || async move {
+            Text("Explicit text content".to_string())
+        })
+        // JSON serialization
+        .tool_no_args("json_example", "Return JSON", || async move {
+            Json(serde_json::json!({"key": "value"}))
+        })
+        // Image response (base64 data)
+        .tool_no_args("image", "Return image", || async move {
+            Image {
+                data: "iVBORw0KGgo=".to_string(),
+                mime_type: "image/png".to_string(),
+            }
+        })
+        // Result types for error handling
+        .tool("fallible", "Might fail", |args: ValueArgs| async move {
+            if args.value < 0 {
+                Err(ToolError::new("Value must be positive"))
+            } else {
+                Ok(format!("Value: {}", args.value))
+            }
+        })
+        // ToolResult for full control
+        .tool_no_args("full_control", "Multiple content items", || async move {
+            ToolResult::contents(vec![
+                Content::text("First item"),
+                Content::text("Second item"),
+            ])
+        })
+        .build()
+}
 ```
 
 ### Tools Without Arguments
@@ -781,77 +810,101 @@ The new `IntoToolResponse` trait provides axum-inspired ergonomics for tool hand
 Use `tool_no_args` for tools that don't need input:
 
 ```rust
-.tool_no_args("status", "Get server status", || async move {
-    "Server is running"
-})
+use turbomcp_wasm::prelude::*;
+
+let server = McpServer::builder("demo", "1.0.0")
+    .tool_no_args("status", "Get server status", || async move {
+        "Server is running"
+    })
+    .build();
 ```
 
 ### Tool Results
 
 ```rust
-// Text result
-ToolResult::text("Hello, World!")
+use turbomcp_wasm::Content;
+use turbomcp_wasm::prelude::*;
 
-// JSON result
-ToolResult::json(&my_struct)?
+#[derive(serde::Serialize)]
+struct Report {
+    ok: bool,
+}
 
-// Error result
-ToolResult::error("Something went wrong")
-
-// Image result (base64)
-ToolResult::image(base64_data, "image/png")
-
-// Multiple content items
-ToolResult::contents(vec![
-    Content::Text { text: "Text".into(), annotations: None },
-    Content::Image { data: b64, mime_type: "image/png".into(), annotations: None },
-])
+fn results() -> Result<Vec<ToolResult>, serde_json::Error> {
+    let base64_data = "iVBORw0KGgo=";
+    Ok(vec![
+        // Text result
+        ToolResult::text("Hello, World!"),
+        // JSON result
+        ToolResult::json(&Report { ok: true })?,
+        // Error result
+        ToolResult::error("Something went wrong"),
+        // Image result (base64)
+        ToolResult::image(base64_data, "image/png"),
+        // Multiple content items
+        ToolResult::contents(vec![
+            Content::text("Text"),
+            Content::image(base64_data, "image/png"),
+        ]),
+    ])
+}
 ```
 
 ### Resources
 
 ```rust
-// Static resource
-.resource(
-    "config://settings",
-    "Settings",
-    "Application settings",
-    |uri: String| async move {
-        ResourceResult::json(&uri, &settings)
-    },
-)
+use turbomcp_wasm::prelude::*;
 
-// Dynamic resource template
-.resource_template(
-    "user://{id}",
-    "User Profile",
-    "Get user by ID",
-    |uri: String| async move {
-        let id = uri.split('/').last().unwrap_or("0");
-        ResourceResult::text(&uri, format!("User {}", id))
-    },
-)
+let server = McpServer::builder("demo", "1.0.0")
+    // Static resource
+    .resource(
+        "config://settings",
+        "Settings",
+        "Application settings",
+        |uri: String| async move {
+            ResourceResult::json(&uri, &serde_json::json!({ "theme": "dark" }))
+                .map_err(|e| ToolError::new(e.to_string()))
+        },
+    )
+    // Dynamic resource template
+    .resource_template(
+        "user://{id}",
+        "User Profile",
+        "Get user by ID",
+        |uri: String| async move {
+            let id = uri.split('/').last().unwrap_or("0");
+            ResourceResult::text(&uri, format!("User {}", id))
+        },
+    )
+    .build();
 ```
 
 ### Prompts
 
 ```rust
-use turbomcp_types::PromptArgument;
+use serde::Deserialize;
+use turbomcp_wasm::prelude::*;
 
-// Prompt with arguments
-.prompt(
-    "greeting",
-    "Generate a greeting",
-    |args: Option<GreetingArgs>| async move {
-        let name = args.map(|a| a.name).unwrap_or_else(|| "World".into());
-        PromptResult::user(format!("Hello, {}!", name))
-    },
-)
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GreetingArgs {
+    name: String,
+}
 
-// Simple prompt (no arguments)
-.prompt_no_args("help", "Get help", || async move {
-    PromptResult::user("How can I help you today?")
-})
+let server = McpServer::builder("demo", "1.0.0")
+    // Prompt with arguments
+    .prompt(
+        "greeting",
+        "Generate a greeting",
+        |args: Option<GreetingArgs>| async move {
+            let name = args.map(|a| a.name).unwrap_or_else(|| "World".into());
+            PromptResult::user(format!("Hello, {}!", name))
+        },
+    )
+    // Simple prompt (no arguments)
+    .prompt_no_args("help", "Get help", || async move {
+        PromptResult::user("How can I help you today?")
+    })
+    .build();
 ```
 
 ### Building and Deploying

@@ -2,6 +2,16 @@
 
 Practical patterns and best practices for building production-ready MCP servers with TurboMCP.
 
+Each example is a complete `#[server]`. `#[server]` only turns the methods marked
+`#[tool]`, `#[resource]`, or `#[prompt]` into handlers; constructors and helper
+methods in the same `impl` block are left as ordinary methods. Examples that use a
+third-party crate (`sqlx`, `moka`, `redis`, `validator`, `reqwest`, `rand`) need it
+in your `Cargo.toml`.
+
+A tool's error reaches the client as a tool execution error (`isError: true`) that
+the model can read and act on. Use `McpError::invalid_params` for bad input and
+`McpError::internal` for failures on the server's side.
+
 ## State Management
 
 ### Shared Mutable State
@@ -12,7 +22,6 @@ Use `Arc<RwLock<T>>` for thread-safe shared state across requests:
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use turbomcp::prelude::*;
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
@@ -59,23 +68,30 @@ impl CounterServer {
 
 ### Session-Scoped State
 
-Store per-session data using request context:
+Store per-session data keyed by the session ID from the request context. The
+request ID changes on every call, so it cannot key session state. Over Streamable
+HTTP each client has its own `Mcp-Session-Id`; a transport without sessions
+(STDIO serves one client per process) reports none:
 
 ```rust
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use turbomcp::prelude::*;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct SessionServer {
     sessions: Arc<RwLock<HashMap<String, SessionData>>>,
 }
 
 #[derive(Clone, Debug)]
 struct SessionData {
-    user_id: String,
     preferences: HashMap<String, String>,
     last_activity: std::time::Instant,
+}
+
+fn session_key(ctx: &RequestContext) -> String {
+    ctx.session_id().unwrap_or("default").to_string()
 }
 
 #[server]
@@ -87,12 +103,8 @@ impl SessionServer {
         key: String,
         value: String,
     ) -> McpResult<String> {
-        // Extract session ID from context
-        let session_id = ctx.request_id().to_string();
-
         let mut sessions = self.sessions.write().await;
-        let session = sessions.entry(session_id).or_insert_with(|| SessionData {
-            user_id: String::new(),
+        let session = sessions.entry(session_key(ctx)).or_insert_with(|| SessionData {
             preferences: HashMap::new(),
             last_activity: std::time::Instant::now(),
         });
@@ -105,74 +117,68 @@ impl SessionServer {
 
     #[tool("Get preference from session")]
     async fn get_preference(&self, ctx: &RequestContext, key: String) -> McpResult<String> {
-        let session_id = ctx.request_id().to_string();
         let sessions = self.sessions.read().await;
 
-        if let Some(session) = sessions.get(&session_id) {
-            if let Some(value) = session.preferences.get(&key) {
-                return Ok(value.clone());
-            }
-        }
-
-        Err(McpError::invalid_request("Preference not found"))
+        sessions
+            .get(&session_key(ctx))
+            .and_then(|session| session.preferences.get(&key))
+            .cloned()
+            .ok_or_else(|| McpError::invalid_params(format!("No preference named {key}")))
     }
 }
 ```
 
+Evict idle sessions yourself (for example from a periodic task checking
+`last_activity`): the server does not tell a handler when a session ends.
+
 ### Database-Backed State
 
-Integrate with databases for persistent state:
+Integrate with databases for persistent state. This uses `sqlx` with the
+`postgres` and `runtime-tokio` features; the `query!` macros would also work, but
+need a database at compile time:
 
 ```rust
-use sqlx::{Pool, Postgres};
-use std::sync::Arc;
+use sqlx::PgPool;
+use turbomcp::prelude::*;
 
 #[derive(Clone)]
 struct DatabaseServer {
-    db: Arc<Pool<Postgres>>,
+    db: PgPool, // already reference-counted
 }
 
 #[server]
 impl DatabaseServer {
     async fn new(database_url: &str) -> McpResult<Self> {
-        let db = Pool::connect(database_url).await
-            .map_err(|e| McpError::internal_error(format!("DB connection failed: {}", e)))?;
-
-        Ok(Self {
-            db: Arc::new(db),
-        })
+        let db = PgPool::connect(database_url)
+            .await
+            .map_err(|e| McpError::internal(format!("DB connection failed: {}", e)))?;
+        Ok(Self { db })
     }
 
     #[tool("Store user data")]
     async fn create_user(&self, name: String, email: String) -> McpResult<i64> {
-        let result = sqlx::query!(
+        sqlx::query_scalar::<_, i64>(
             "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id",
-            name,
-            email
         )
-        .fetch_one(&*self.db)
+        .bind(name)
+        .bind(email)
+        .fetch_one(&self.db)
         .await
-        .map_err(|e| McpError::internal_error(format!("DB error: {}", e)))?;
-
-        Ok(result.id)
+        .map_err(|e| McpError::internal(format!("DB error: {}", e)))
     }
 
     #[tool("Get user by ID")]
     async fn get_user(&self, user_id: i64) -> McpResult<serde_json::Value> {
-        let user = sqlx::query!(
+        let (id, name, email) = sqlx::query_as::<_, (i64, String, String)>(
             "SELECT id, name, email FROM users WHERE id = $1",
-            user_id
         )
-        .fetch_optional(&*self.db)
+        .bind(user_id)
+        .fetch_optional(&self.db)
         .await
-        .map_err(|e| McpError::internal_error(format!("DB error: {}", e)))?
-        .ok_or_else(|| McpError::invalid_request("User not found"))?;
+        .map_err(|e| McpError::internal(format!("DB error: {}", e)))?
+        .ok_or_else(|| McpError::invalid_params(format!("User {user_id} not found")))?;
 
-        Ok(serde_json::json!({
-            "id": user.id,
-            "name": user.name,
-            "email": user.email
-        }))
+        Ok(serde_json::json!({ "id": id, "name": name, "email": email }))
     }
 }
 ```
@@ -181,16 +187,16 @@ impl DatabaseServer {
 
 ### In-Memory Caching
 
-Use `moka` or `cached` crate for efficient caching:
+Use `moka` (with its `future` feature) or the `cached` crate for efficient caching:
 
 ```rust
 use moka::future::Cache;
-use std::sync::Arc;
 use std::time::Duration;
+use turbomcp::prelude::*;
 
 #[derive(Clone)]
 struct CachedServer {
-    cache: Arc<Cache<String, String>>,
+    cache: Cache<String, String>, // cheap to clone: shares one cache
 }
 
 #[server]
@@ -202,9 +208,7 @@ impl CachedServer {
             .time_to_idle(Duration::from_secs(60))  // 1 minute idle
             .build();
 
-        Self {
-            cache: Arc::new(cache),
-        }
+        Self { cache }
     }
 
     #[tool("Fetch with caching")]
@@ -244,17 +248,18 @@ impl CachedServer {
 
 ### Multi-Level Cache
 
-Implement cache layering with fallback:
+Implement cache layering with fallback (`redis` with its `tokio-comp` feature):
 
 ```rust
 use moka::future::Cache;
 use redis::AsyncCommands;
-use std::sync::Arc;
+use std::time::Duration;
+use turbomcp::prelude::*;
 
 #[derive(Clone)]
 struct MultiLevelCache {
-    l1_cache: Arc<Cache<String, String>>, // Local memory
-    redis: Arc<redis::Client>,             // Shared cache
+    l1_cache: Cache<String, String>, // Local memory
+    redis: redis::Client,            // Shared cache
 }
 
 #[server]
@@ -267,8 +272,11 @@ impl MultiLevelCache {
         }
 
         // L2: Check Redis
-        let mut conn = self.redis.get_multiplexed_async_connection().await
-            .map_err(|e| McpError::internal_error(format!("Redis error: {}", e)))?;
+        let mut conn = self
+            .redis
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| McpError::internal(format!("Redis error: {}", e)))?;
 
         if let Ok(Some(value)) = conn.get::<_, Option<String>>(&key).await {
             // Store in L1 for next time
@@ -281,8 +289,10 @@ impl MultiLevelCache {
 
         // Store in both caches
         self.l1_cache.insert(key.clone(), value.clone()).await;
-        let _: () = conn.set_ex(&key, &value, 300).await
-            .map_err(|e| McpError::internal_error(format!("Redis error: {}", e)))?;
+        let _: () = conn
+            .set_ex(&key, &value, 300)
+            .await
+            .map_err(|e| McpError::internal(format!("Redis error: {}", e)))?;
 
         Ok(format!("[SOURCE] {}", value))
     }
@@ -300,9 +310,13 @@ impl MultiLevelCache {
 Pre-populate cache on startup:
 
 ```rust
+use moka::future::Cache;
+use std::time::Duration;
+use turbomcp::prelude::*;
+
 #[derive(Clone)]
 struct WarmCacheServer {
-    cache: Arc<Cache<String, String>>,
+    cache: Cache<String, String>,
 }
 
 #[server]
@@ -313,9 +327,7 @@ impl WarmCacheServer {
             .time_to_live(Duration::from_secs(3600))
             .build();
 
-        let server = Self {
-            cache: Arc::new(cache),
-        };
+        let server = Self { cache };
 
         // Warm the cache on startup
         server.warm_cache().await?;
@@ -324,19 +336,24 @@ impl WarmCacheServer {
     }
 
     async fn warm_cache(&self) -> McpResult<()> {
-        let popular_keys = vec!["homepage", "pricing", "docs", "api"];
-
-        for key in popular_keys {
-            let data = self.fetch_data(key).await?;
+        for key in ["homepage", "pricing", "docs", "api"] {
+            let data = self.load(key).await?;
             self.cache.insert(key.to_string(), data).await;
         }
-
         Ok(())
     }
 
-    async fn fetch_data(&self, key: &str) -> McpResult<String> {
+    async fn load(&self, key: &str) -> McpResult<String> {
         // Simulate fetching
         Ok(format!("Content for {}", key))
+    }
+
+    #[tool("Read a page")]
+    async fn page(&self, key: String) -> McpResult<String> {
+        match self.cache.get(&key).await {
+            Some(page) => Ok(page),
+            None => self.load(&key).await,
+        }
     }
 }
 ```
@@ -348,6 +365,11 @@ impl WarmCacheServer {
 Validate inputs early and provide clear error messages:
 
 ```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct ValidationServer;
+
 #[server]
 impl ValidationServer {
     #[tool("Create user with comprehensive validation")]
@@ -365,10 +387,10 @@ impl ValidationServer {
 
         // Validate age
         if age < 18 {
-            return Err(McpError::invalid_request("Must be 18 or older"));
+            return Err(McpError::invalid_params("Must be 18 or older"));
         }
         if age > 120 {
-            return Err(McpError::invalid_request("Invalid age"));
+            return Err(McpError::invalid_params("Invalid age"));
         }
 
         Ok(format!("User created: {} ({})", username, email))
@@ -376,20 +398,20 @@ impl ValidationServer {
 
     fn validate_username(&self, username: &str) -> McpResult<()> {
         if username.len() < 3 {
-            return Err(McpError::invalid_request(
-                "Username must be at least 3 characters"
+            return Err(McpError::invalid_params(
+                "Username must be at least 3 characters",
             ));
         }
 
         if username.len() > 20 {
-            return Err(McpError::invalid_request(
-                "Username must be 20 characters or less"
+            return Err(McpError::invalid_params(
+                "Username must be 20 characters or less",
             ));
         }
 
         if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            return Err(McpError::invalid_request(
-                "Username can only contain letters, numbers, and underscores"
+            return Err(McpError::invalid_params(
+                "Username can only contain letters, numbers, and underscores",
             ));
         }
 
@@ -397,13 +419,9 @@ impl ValidationServer {
     }
 
     fn validate_email(&self, email: &str) -> McpResult<()> {
-        if !email.contains('@') || !email.contains('.') {
-            return Err(McpError::invalid_request("Invalid email format"));
-        }
-
         let parts: Vec<&str> = email.split('@').collect();
-        if parts.len() != 2 {
-            return Err(McpError::invalid_request("Invalid email format"));
+        if parts.len() != 2 || !parts[1].contains('.') {
+            return Err(McpError::invalid_params("Invalid email format"));
         }
 
         Ok(())
@@ -413,13 +431,16 @@ impl ValidationServer {
 
 ### Type-Safe Validation with Serde
 
-Use serde and validator crate for complex validation:
+Use a struct parameter for structured input. It needs `Deserialize` and
+`schemars::JsonSchema` (for the tool's input schema); the `validator` crate adds
+declarative rules:
 
 ```rust
-use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
+use turbomcp::prelude::*;
 use validator::Validate;
 
-#[derive(Debug, Deserialize, Serialize, Validate)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Validate)]
 struct UserRegistration {
     #[validate(length(min = 3, max = 20))]
     username: String,
@@ -434,27 +455,40 @@ struct UserRegistration {
     password: String,
 }
 
+#[derive(Clone)]
+struct ValidatedServer;
+
 #[server]
 impl ValidatedServer {
     #[tool("Register with type-safe validation")]
     async fn register(&self, data: UserRegistration) -> McpResult<String> {
         // Validate using validator crate
         data.validate()
-            .map_err(|e| McpError::invalid_request(format!("Validation failed: {}", e)))?;
+            .map_err(|e| McpError::invalid_params(format!("Validation failed: {}", e)))?;
 
         Ok(format!("User {} registered successfully", data.username))
     }
 }
 ```
 
+The tool's single argument is named `data`, so a client sends
+`{"data": {"username": …, "email": …, "age": …, "password": …}}`.
+
 ### Business Logic Validation
 
 Implement custom business rules:
 
 ```rust
+use sqlx::PgPool;
+use turbomcp::prelude::*;
+
 #[derive(Clone)]
 struct BusinessValidator {
-    db: Arc<Pool<Postgres>>,
+    db: PgPool,
+}
+
+fn db_error(e: sqlx::Error) -> McpError {
+    McpError::internal(format!("DB error: {}", e))
 }
 
 #[server]
@@ -468,27 +502,26 @@ impl BusinessValidator {
     ) -> McpResult<String> {
         // Validate quantity
         if quantity <= 0 {
-            return Err(McpError::invalid_request("Quantity must be positive"));
+            return Err(McpError::invalid_params("Quantity must be positive"));
         }
 
         // Check user exists
-        let user_exists = self.check_user_exists(user_id).await?;
-        if !user_exists {
-            return Err(McpError::invalid_request("User not found"));
+        if !self.check_user_exists(user_id).await? {
+            return Err(McpError::invalid_params("User not found"));
         }
 
         // Check product availability
         let available = self.check_product_stock(product_id).await?;
         if available < quantity {
-            return Err(McpError::invalid_request(
-                format!("Only {} units available", available)
-            ));
+            return Err(McpError::invalid_params(format!(
+                "Only {} units available",
+                available
+            )));
         }
 
         // Check user credit limit
-        let credit_ok = self.check_credit_limit(user_id, product_id, quantity).await?;
-        if !credit_ok {
-            return Err(McpError::invalid_request("Credit limit exceeded"));
+        if !self.check_credit_limit(user_id, product_id, quantity).await? {
+            return Err(McpError::invalid_params("Credit limit exceeded"));
         }
 
         // Create order
@@ -498,24 +531,21 @@ impl BusinessValidator {
     }
 
     async fn check_user_exists(&self, user_id: i64) -> McpResult<bool> {
-        let result = sqlx::query!("SELECT id FROM users WHERE id = $1", user_id)
-            .fetch_optional(&*self.db)
+        let found = sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.db)
             .await
-            .map_err(|e| McpError::internal_error(format!("DB error: {}", e)))?;
-        Ok(result.is_some())
+            .map_err(db_error)?;
+        Ok(found.is_some())
     }
 
     async fn check_product_stock(&self, product_id: i64) -> McpResult<i32> {
-        let result = sqlx::query!(
-            "SELECT stock FROM products WHERE id = $1",
-            product_id
-        )
-        .fetch_optional(&*self.db)
-        .await
-        .map_err(|e| McpError::internal_error(format!("DB error: {}", e)))?
-        .ok_or_else(|| McpError::invalid_request("Product not found"))?;
-
-        Ok(result.stock)
+        sqlx::query_scalar::<_, i32>("SELECT stock FROM products WHERE id = $1")
+            .bind(product_id)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| McpError::invalid_params("Product not found"))
     }
 
     async fn check_credit_limit(
@@ -534,17 +564,15 @@ impl BusinessValidator {
         product_id: i64,
         quantity: i32,
     ) -> McpResult<i64> {
-        let result = sqlx::query!(
+        sqlx::query_scalar::<_, i64>(
             "INSERT INTO orders (user_id, product_id, quantity) VALUES ($1, $2, $3) RETURNING id",
-            user_id,
-            product_id,
-            quantity
         )
-        .fetch_one(&*self.db)
+        .bind(user_id)
+        .bind(product_id)
+        .bind(quantity)
+        .fetch_one(&self.db)
         .await
-        .map_err(|e| McpError::internal_error(format!("DB error: {}", e)))?;
-
-        Ok(result.id)
+        .map_err(db_error)
     }
 }
 ```
@@ -553,9 +581,12 @@ impl BusinessValidator {
 
 ### Sequential Tool Chaining
 
-Chain tools together with intermediate results:
+Chain steps together with intermediate results:
 
 ```rust
+use std::time::Duration;
+use turbomcp::prelude::*;
+
 #[derive(Clone)]
 struct WorkflowServer {
     http_client: reqwest::Client,
@@ -606,14 +637,18 @@ impl WorkflowServer {
 Execute independent operations concurrently:
 
 ```rust
-use tokio::try_join;
+use std::time::Duration;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct ParallelServer;
 
 #[server]
 impl ParallelServer {
     #[tool("Fetch multiple data sources")]
     async fn fetch_all(&self, query: String) -> McpResult<serde_json::Value> {
         // Execute all fetches in parallel
-        let (weather, news, stocks) = try_join!(
+        let (weather, news, stocks) = tokio::try_join!(
             self.fetch_weather(&query),
             self.fetch_news(&query),
             self.fetch_stocks(&query)
@@ -648,6 +683,12 @@ impl ParallelServer {
 Implement branching logic based on conditions:
 
 ```rust
+use std::time::Duration;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct ConditionalServer;
+
 #[server]
 impl ConditionalServer {
     #[tool("Smart search with fallback")]
@@ -676,7 +717,7 @@ impl ConditionalServer {
 
     async fn search_cache(&self, query: &str) -> McpResult<String> {
         // Simulate cache lookup
-        Err(McpError::internal_error("Not in cache"))
+        Err(McpError::internal("Not in cache"))
     }
 
     async fn search_database(&self, query: &str) -> McpResult<String> {
@@ -702,10 +743,21 @@ impl ConditionalServer {
 
 ### Transaction Patterns
 
-Implement rollback on failure:
+Roll back on failure. A `sqlx` transaction that is dropped without `commit()`
+rolls back, so every early return below undoes the debit:
 
 ```rust
-use sqlx::{Postgres, Transaction};
+use sqlx::PgPool;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct TransactionServer {
+    db: PgPool,
+}
+
+fn db_error(e: sqlx::Error) -> McpError {
+    McpError::internal(format!("DB error: {}", e))
+}
 
 #[server]
 impl TransactionServer {
@@ -717,50 +769,46 @@ impl TransactionServer {
         amount: f64,
     ) -> McpResult<String> {
         if amount <= 0.0 {
-            return Err(McpError::invalid_request("Amount must be positive"));
+            return Err(McpError::invalid_params("Amount must be positive"));
         }
 
-        let mut tx = self.db.begin().await
-            .map_err(|e| McpError::internal_error(format!("Transaction error: {}", e)))?;
+        let mut tx = self.db.begin().await.map_err(db_error)?;
 
         // Debit from source account
-        let updated = sqlx::query!(
+        let updated = sqlx::query(
             "UPDATE accounts SET balance = balance - $1 WHERE id = $2 AND balance >= $1",
-            amount,
-            from_account
         )
+        .bind(amount)
+        .bind(from_account)
         .execute(&mut *tx)
         .await
-        .map_err(|e| McpError::internal_error(format!("DB error: {}", e)))?;
+        .map_err(db_error)?;
 
         if updated.rows_affected() == 0 {
-            return Err(McpError::invalid_request("Insufficient funds"));
+            return Err(McpError::invalid_params("Insufficient funds"));
         }
 
         // Credit to destination account
-        sqlx::query!(
-            "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
-            amount,
-            to_account
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| McpError::internal_error(format!("DB error: {}", e)))?;
+        sqlx::query("UPDATE accounts SET balance = balance + $1 WHERE id = $2")
+            .bind(amount)
+            .bind(to_account)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
 
         // Record transaction
-        sqlx::query!(
+        sqlx::query(
             "INSERT INTO transactions (from_account, to_account, amount) VALUES ($1, $2, $3)",
-            from_account,
-            to_account,
-            amount
         )
+        .bind(from_account)
+        .bind(to_account)
+        .bind(amount)
         .execute(&mut *tx)
         .await
-        .map_err(|e| McpError::internal_error(format!("DB error: {}", e)))?;
+        .map_err(db_error)?;
 
         // Commit transaction
-        tx.commit().await
-            .map_err(|e| McpError::internal_error(format!("Commit error: {}", e)))?;
+        tx.commit().await.map_err(db_error)?;
 
         Ok(format!("Transferred ${:.2} from {} to {}", amount, from_account, to_account))
     }
@@ -774,6 +822,11 @@ impl TransactionServer {
 Handle errors without failing the entire operation:
 
 ```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct ResilientServer;
+
 #[server]
 impl ResilientServer {
     #[tool("Fetch with graceful degradation")]
@@ -799,44 +852,51 @@ impl ResilientServer {
     }
 
     async fn fetch_secondary(&self, query: &str) -> McpResult<String> {
-        Err(McpError::internal_error("Secondary source unavailable"))
+        Err(McpError::unavailable("Secondary source unavailable"))
     }
 }
 ```
 
 ### Retry with Exponential Backoff
 
-Implement resilient retry logic:
+Implement resilient retry logic. `McpError::is_retryable()` tells a transient
+failure (timeouts, rate limits, unavailable services) from a permanent one:
 
 ```rust
 use std::time::Duration;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct RetryServer;
 
 #[server]
 impl RetryServer {
+    #[tool("Fetch a URL, retrying transient failures")]
+    async fn fetch_url(&self, url: String) -> McpResult<String> {
+        self.fetch_with_retry(&url, 3).await
+    }
+
     async fn fetch_with_retry(&self, url: &str, max_retries: u32) -> McpResult<String> {
         let mut delay = Duration::from_millis(100);
 
         for attempt in 0..max_retries {
             match self.fetch(url).await {
                 Ok(data) => return Ok(data),
-                Err(e) => {
-                    if attempt == max_retries - 1 {
-                        return Err(e);
-                    }
-
+                Err(e) if !e.is_retryable() || attempt == max_retries - 1 => return Err(e),
+                Err(_) => {
                     tokio::time::sleep(delay).await;
                     delay *= 2; // Exponential backoff
                 }
             }
         }
 
-        Err(McpError::internal_error("Max retries exceeded"))
+        Err(McpError::internal("Max retries exceeded"))
     }
 
     async fn fetch(&self, url: &str) -> McpResult<String> {
         // Simulate flaky operation
         if rand::random::<f32>() < 0.7 {
-            Err(McpError::internal_error("Temporary failure"))
+            Err(McpError::unavailable("Temporary failure"))
         } else {
             Ok(format!("Data from {}", url))
         }
@@ -851,8 +911,9 @@ impl RetryServer {
 Batch multiple requests for efficiency:
 
 ```rust
-use std::collections::HashMap;
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+use turbomcp::prelude::*;
 
 type BatchRequest = (String, oneshot::Sender<McpResult<String>>);
 
@@ -863,7 +924,7 @@ struct BatchServer {
 
 #[server]
 impl BatchServer {
-    async fn new() -> Self {
+    fn new() -> Self {
         let (tx, mut rx) = mpsc::channel::<BatchRequest>(100);
 
         // Spawn batch processor
@@ -902,44 +963,58 @@ impl BatchServer {
     #[tool("Fetch with batching")]
     async fn fetch(&self, query: String) -> McpResult<String> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send((query, tx)).await
-            .map_err(|e| McpError::internal_error("Batch queue full"))?;
+        self.tx
+            .send((query, tx))
+            .await
+            .map_err(|_| McpError::unavailable("Batch processor stopped"))?;
 
         rx.await
-            .map_err(|e| McpError::internal_error("Batch processor error"))?
+            .map_err(|_| McpError::internal("Batch processor dropped the request"))?
     }
 }
 ```
+
+`BatchServer::new()` spawns a task, so call it inside the Tokio runtime (in
+`#[tokio::main]`, before `run_stdio()`).
 
 ### Connection Pooling
 
 Reuse expensive resources:
 
 ```rust
-use sqlx::{Pool, Postgres};
+use sqlx::PgPool;
+use std::time::Duration;
+use turbomcp::prelude::*;
 
 #[derive(Clone)]
 struct PooledServer {
-    db: Arc<Pool<Postgres>>,
+    db: PgPool,                   // pooled, cheap to clone
     http_client: reqwest::Client, // Already pooled internally
 }
 
 #[server]
 impl PooledServer {
     async fn new(database_url: &str) -> McpResult<Self> {
-        let db = Pool::connect(database_url).await
-            .map_err(|e| McpError::internal_error(format!("Pool error: {}", e)))?;
+        let db = PgPool::connect(database_url)
+            .await
+            .map_err(|e| McpError::internal(format!("Pool error: {}", e)))?;
 
         let http_client = reqwest::Client::builder()
             .pool_max_idle_per_host(10)
             .timeout(Duration::from_secs(30))
             .build()
-            .map_err(|e| McpError::internal_error(format!("Client error: {}", e)))?;
+            .map_err(|e| McpError::internal(format!("Client error: {}", e)))?;
 
-        Ok(Self {
-            db: Arc::new(db),
-            http_client,
-        })
+        Ok(Self { db, http_client })
+    }
+
+    #[tool("Check the database")]
+    async fn db_ping(&self) -> McpResult<String> {
+        sqlx::query("SELECT 1")
+            .execute(&self.db)
+            .await
+            .map_err(|e| McpError::unavailable(format!("Database unreachable: {}", e)))?;
+        Ok("ok".to_string())
     }
 }
 ```

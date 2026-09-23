@@ -1,515 +1,451 @@
-# Context & Dependency Injection
+# Context & Shared State
 
-Learn how to use TurboMCP's powerful dependency injection system to access resources and configuration in your handlers.
+How a handler gets at what it needs: the per-request `RequestContext`, and the
+shared state that lives on your server struct.
 
 ## Overview
 
-TurboMCP provides automatic dependency injection (DI) for handlers. Instead of passing everything through parameters, handlers can request dependencies and they're automatically provided.
+TurboMCP has no dependency-injection container. A handler has two sources of
+everything it uses:
+
+- **`&self`** — your server struct. `#[server]` requires it to be `Clone`, and
+  every transport clones it, so shared services (configuration, caches,
+  database pools, HTTP clients) live in it behind an `Arc`.
+- **`ctx: &RequestContext`** — the one parameter the macro fills in for you. It
+  carries per-request metadata and the operations that talk back to the client.
 
 ```rust
-#[tool]
-async fn my_handler(
-    logger: Logger,      // Automatically injected
-    cache: Cache,        // Automatically injected
-    config: Config,      // Automatically injected
-) -> McpResult<String> {
-    logger.info("Working with cache").await?;
-    Ok("Done".to_string())
-}
-```
-
-## Available Injectables
-
-### Built-in Injectables
-
-TurboMCP provides these out of the box:
-
-#### InjectContext
-Full request context with all metadata.
-
-```rust
-#[tool]
-async fn handler(ctx: InjectContext) -> McpResult<String> {
-    // Access anything you need
-    let config = ctx.config();
-    let logger = ctx.logger();
-    let cache = ctx.cache();
-    Ok("Done".to_string())
-}
-```
-
-#### RequestInfo
-Metadata about the current request.
-
-```rust
-#[tool]
-async fn handler(info: RequestInfo) -> McpResult<String> {
-    println!("Request ID: {}", info.request_id);
-    println!("Handler: {}", info.handler_name);
-    println!("Correlation: {}", info.correlation_id);
-    Ok("Done".to_string())
-}
-```
-
-#### Logger
-Structured logging.
-
-```rust
-#[tool]
-async fn handler(logger: Logger) -> McpResult<String> {
-    logger.info("Starting operation").await?;
-    logger.warn("Unexpected value").await?;
-    logger.error("Failed to connect").await?;
-    Ok("Done".to_string())
-}
-```
-
-#### Config
-Application configuration.
-
-```rust
-#[tool]
-async fn handler(config: Config) -> McpResult<String> {
-    let db_url: Option<String> = config.get("database_url")?;
-    let cache_ttl: Option<u32> = config.get("cache_ttl")?;
-    Ok("Done".to_string())
-}
-```
-
-#### Cache
-In-memory caching (typed).
-
-```rust
-#[tool]
-async fn handler(cache: Cache) -> McpResult<String> {
-    // Store
-    cache.set("key", "value").await?;
-
-    // Retrieve
-    if let Some(cached) = cache.get::<String>("key")? {
-        println!("Found: {}", cached);
-    }
-
-    // Delete
-    cache.delete("key").await?;
-
-    Ok("Done".to_string())
-}
-```
-
-#### Database
-Type-safe database access.
-
-```rust
-#[tool]
-async fn handler(db: Database) -> McpResult<String> {
-    let result = db.query("SELECT * FROM users").await?;
-    Ok(format!("Found {} users", result.len()))
-}
-```
-
-#### HttpClient
-Async HTTP requests.
-
-```rust
-#[tool]
-async fn handler(http: HttpClient) -> McpResult<String> {
-    let response = http
-        .get("https://api.example.com/data")
-        .send()
-        .await?;
-
-    let text = response.text().await?;
-    Ok(text)
-}
-```
-
-## Injection Patterns
-
-### Pattern 1: Selective Injection
-
-Only request what you need:
-
-```rust
-#[tool]
-async fn simple_handler(logger: Logger) -> McpResult<String> {
-    // Just logging, no config or cache needed
-    logger.info("Simple operation").await?;
-    Ok("Done".to_string())
-}
-
-#[tool]
-async fn complex_handler(
-    logger: Logger,
-    config: Config,
-    cache: Cache,
-    db: Database,
-) -> McpResult<String> {
-    // Complex operation needs everything
-    Ok("Done".to_string())
-}
-```
-
-### Pattern 2: Context Wrapping
-
-Use `InjectContext` for maximum flexibility:
-
-```rust
-#[tool]
-async fn handler(ctx: InjectContext) -> McpResult<String> {
-    // Access any injectable through context
-    let logger = ctx.logger();
-    let config = ctx.config();
-    let cache = ctx.cache();
-
-    logger.info("Starting").await?;
-
-    // Do work...
-
-    Ok("Done".to_string())
-}
-```
-
-### Pattern 3: Feature-Specific Injection
-
-Different handlers request different features:
-
-```rust
-#[tool]
-async fn logging_handler(logger: Logger) -> McpResult<String> {
-    logger.info("Hello").await?;
-    Ok("Logged".to_string())
-}
-
-#[tool]
-async fn caching_handler(cache: Cache) -> McpResult<String> {
-    cache.set("key", "value").await?;
-    Ok("Cached".to_string())
-}
-
-#[tool]
-async fn database_handler(db: Database) -> McpResult<String> {
-    let count = db.query("SELECT COUNT(*) FROM users").await?;
-    Ok(format!("Users: {}", count))
-}
-```
-
-### Pattern 4: Custom Injectables
-
-Register your own services:
-
-```rust
-use turbomcp::injection::{Injectable, InjectionRegistry};
+use std::sync::Arc;
+use turbomcp::prelude::*;
 
 #[derive(Clone)]
-struct MyService {
-    data: String,
+struct Config {
+    api_base: String,
 }
 
-impl Injectable for MyService {
-    fn inject() -> Self {
-        Self {
-            data: "initialized".to_string(),
+#[derive(Clone)]
+struct MyServer {
+    config: Arc<Config>,
+}
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Describe where this request is going.
+    #[tool]
+    async fn my_handler(&self, path: String, ctx: &RequestContext) -> McpResult<String> {
+        Ok(format!(
+            "{}{} (request {})",
+            self.config.api_base,
+            path,
+            ctx.request_id()
+        ))
+    }
+}
+```
+
+On a tool, `ctx` may appear anywhere in the parameter list and is left out of
+the input schema. Resource handlers take `(uri: String, ctx: &RequestContext)`,
+and prompt handlers take `ctx` after their arguments.
+
+## The Request Context
+
+### Request Metadata
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Inspector;
+
+#[server]
+impl Inspector {
+    /// Report what the server knows about this request.
+    #[tool]
+    async fn inspect(&self, ctx: &RequestContext) -> McpResult<String> {
+        let request_id = ctx.request_id();         // JSON-RPC request ID
+        let transport = ctx.transport();           // Stdio, Http, WebSocket, ...
+        let session = ctx.session_id();            // Some(..) over Streamable HTTP
+        let user_agent = ctx.header("user-agent"); // HTTP transports only
+        let elapsed = ctx.elapsed();               // time since the request arrived
+
+        Ok(format!(
+            "{request_id} via {} (session {session:?}, agent {user_agent:?}, {elapsed:?})",
+            transport.as_str()
+        ))
+    }
+}
+```
+
+### Authentication
+
+When the HTTP transport is configured with `HttpAuthorization` (see
+[Authentication](authentication.md)), the validated principal is on the
+context:
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Admin;
+
+#[server]
+impl Admin {
+    /// Only administrators may call this.
+    #[tool]
+    async fn purge(&self, ctx: &RequestContext) -> McpResult<String> {
+        if !ctx.is_authenticated() {
+            return Err(McpError::authentication("Sign in first"));
         }
+        if !ctx.has_any_role(&["admin"]) {
+            return Err(McpError::permission_denied("Requires the admin role"));
+        }
+        let who = ctx.subject().unwrap_or("unknown");
+        Ok(format!("purged by {who}"))
+    }
+}
+```
+
+`ctx.principal()` returns the whole `Principal` (subject, issuer, audience,
+expiry, email, roles).
+
+### Cancellation and Progress
+
+A client may cancel a request. Cancellation is cooperative: check
+`ctx.is_cancelled()` at natural break points. Progress is sent only when the
+client asked for it with a progress token; otherwise `report_progress` does
+nothing:
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Worker;
+
+#[server]
+impl Worker {
+    /// Process `count` items.
+    #[tool]
+    async fn process(&self, count: u32, ctx: &RequestContext) -> McpResult<String> {
+        for i in 0..count {
+            if ctx.is_cancelled() {
+                return Err(McpError::cancelled("Cancelled by client"));
+            }
+            // Do one unit of work, then report it
+            if ctx.wants_progress() {
+                ctx.report_progress(f64::from(i + 1), Some(f64::from(count)), None)
+                    .await?;
+            }
+        }
+        Ok(format!("processed {count} items"))
+    }
+}
+```
+
+### Talking Back to the Client
+
+Over a transport with a session (STDIO, WebSocket, Streamable HTTP), the
+context can send requests and notifications to the client:
+
+| Method | Sends |
+|---|---|
+| `ctx.sample(request)` | `sampling/createMessage`: ask the client's LLM |
+| `ctx.elicit_form(message, schema)` | `elicitation/create` (form mode) |
+| `ctx.elicit_url(message, url, elicitation_id)` | `elicitation/create` (URL mode) |
+| `ctx.list_roots()` | `roots/list` |
+| `ctx.notify_resource_updated(uri)` | `notifications/resources/updated` |
+| `ctx.notify_tools_list_changed()` (and resources/prompts) | `notifications/*/list_changed` |
+
+Each fails when the client's declared capabilities show it does not support
+the feature.
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Onboarding;
+
+#[server]
+impl Onboarding {
+    /// Ask the user for their name.
+    #[tool]
+    async fn ask_name(&self, ctx: &RequestContext) -> McpResult<String> {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } },
+            "required": ["name"]
+        });
+        let answer = ctx.elicit_form("What is your name?", schema).await?;
+        let name = answer
+            .content
+            .as_ref()
+            .and_then(|content| content["name"].as_str())
+            .unwrap_or("stranger");
+        Ok(format!("Hello, {name}!"))
+    }
+}
+```
+
+Sampling takes a `turbomcp_types::CreateMessageRequest`, so it needs
+`turbomcp-types` as a direct dependency:
+
+```rust
+use turbomcp::prelude::*;
+use turbomcp_types::{CreateMessageRequest, SamplingMessage};
+
+#[derive(Clone)]
+struct Summarizer;
+
+#[server]
+impl Summarizer {
+    /// Summarize text with the client's model.
+    #[tool]
+    async fn summarize(&self, text: String, ctx: &RequestContext) -> McpResult<String> {
+        let request = CreateMessageRequest {
+            messages: vec![SamplingMessage::user(format!("Summarize:\n{text}"))],
+            max_tokens: 200,
+            ..Default::default()
+        };
+        let result = ctx.sample(request).await?;
+        Ok(format!("{:?}", result.content))
+    }
+}
+```
+
+## Logging to the Client
+
+`notifications/message` log messages come from the `RichContextExt` extension
+trait in `turbomcp-protocol` (add it as a direct dependency). They are filtered
+by the level the client chose with `logging/setLevel`, and rate limited per
+session:
+
+```rust
+use turbomcp::prelude::*;
+use turbomcp_protocol::RichContextExt;
+
+#[derive(Clone)]
+struct Chatty;
+
+#[server]
+impl Chatty {
+    /// Log as it works.
+    #[tool]
+    async fn work(&self, ctx: &RequestContext) -> McpResult<String> {
+        ctx.info("Starting operation").await?;
+        ctx.warning("Unexpected value, continuing").await?;
+        Ok("Done".to_string())
+    }
+}
+```
+
+For logs that stay on the server, use `tracing` (writing to stderr for STDIO
+servers).
+
+## Shared Services
+
+Anything that outlives a request belongs on the server struct. Cloning the
+struct clones the `Arc`s, not the services:
+
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Services {
+    http: reqwest::Client, // already Arc-backed
+    cache: Arc<RwLock<HashMap<String, (String, Instant)>>>,
+    ttl: Duration,
+}
+
+#[server]
+impl Services {
+    fn new() -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            cache: Arc::default(),
+            ttl: Duration::from_secs(300),
+        }
+    }
+
+    /// Fetch a URL, caching the body for five minutes.
+    #[tool]
+    async fn fetch(&self, url: String) -> McpResult<String> {
+        if let Some((body, fetched)) = self.cache.read().await.get(&url) {
+            if fetched.elapsed() < self.ttl {
+                return Ok(body.clone());
+            }
+        }
+
+        let body = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .and_then(|response| response.error_for_status())
+            .map_err(|e| McpError::external_service(e.to_string()))?
+            .text()
+            .await
+            .map_err(|e| McpError::external_service(e.to_string()))?;
+
+        self.cache
+            .write()
+            .await
+            .insert(url, (body.clone(), Instant::now()));
+        Ok(body)
+    }
+}
+```
+
+This uses `reqwest`; add it to your dependencies. To pick an implementation at
+startup, store an `Arc<dyn Trait>`:
+
+```rust
+use std::sync::Arc;
+use turbomcp::prelude::*;
+
+trait Storage: Send + Sync {
+    fn name(&self) -> &'static str;
+}
+
+struct InMemory;
+impl Storage for InMemory {
+    fn name(&self) -> &'static str {
+        "memory"
     }
 }
 
-#[tool]
-async fn handler(service: MyService) -> McpResult<String> {
-    Ok(service.data)
+struct OnDisk;
+impl Storage for OnDisk {
+    fn name(&self) -> &'static str {
+        "disk"
+    }
+}
+
+#[derive(Clone)]
+struct StorageServer {
+    storage: Arc<dyn Storage>,
+}
+
+#[server]
+impl StorageServer {
+    fn from_env() -> Self {
+        let storage: Arc<dyn Storage> = match std::env::var("STORAGE").as_deref() {
+            Ok("disk") => Arc::new(OnDisk),
+            _ => Arc::new(InMemory),
+        };
+        Self { storage }
+    }
+
+    /// Which storage backend is active?
+    #[tool]
+    async fn backend(&self) -> String {
+        self.storage.name().to_string()
+    }
 }
 ```
 
-## Configuration Management
+## Session State
 
-### Setting Configuration
-
-```rust
-let server = McpServer::new()
-    .with_config({
-        let mut config = Config::new();
-        config.set("api_key", "secret")?;
-        config.set("max_retries", 3)?;
-        config.set("timeout_seconds", 30)?;
-        config
-    })
-    .stdio()
-    .run()
-    .await?;
-```
-
-### Using Configuration
+For state that belongs to one client session rather than the whole server,
+either key your own map by `ctx.session_id()` (see
+[Session-Scoped State](../examples/patterns.md#session-scoped-state)) or use
+`RichContextExt`'s session store:
 
 ```rust
-#[tool]
-async fn handler(config: Config) -> McpResult<String> {
-    // Get with default
-    let api_key: String = config.get("api_key")
-        .unwrap_or("default-key".to_string());
+use turbomcp::prelude::*;
+use turbomcp_protocol::RichContextExt;
 
-    // Get with Option
-    let max_retries: Option<u32> = config.get("max_retries")?;
+#[derive(Clone)]
+struct Counter;
 
-    // Get with error handling
-    let timeout: u32 = config.get("timeout_seconds")?
-        .ok_or(McpError::InvalidInput("timeout required".into()))?;
-
-    Ok("Done".to_string())
+#[server]
+impl Counter {
+    /// Count calls in this session.
+    #[tool]
+    async fn bump(&self, ctx: &RequestContext) -> McpResult<i64> {
+        let count = ctx.get_state::<i64>("count").unwrap_or(0) + 1;
+        if !ctx.set_state("count", &count) {
+            return Err(McpError::invalid_request("This transport has no session"));
+        }
+        Ok(count)
+    }
 }
 ```
+
+`get_state`/`set_state` need a session ID, and the store is a process-wide map
+that is only cleared by `turbomcp_protocol::cleanup_session_state(id)` or a
+`SessionStateGuard` being dropped. A long-running multi-client server must
+arrange that cleanup itself.
 
 ## Request Correlation
 
-Track requests across async boundaries:
+Every request has an ID; put it on your `tracing` spans and errors so a
+failure can be traced back to the request that caused it:
 
 ```rust
-#[tool]
-async fn handler(info: RequestInfo, logger: Logger) -> McpResult<String> {
-    // Every request has a unique ID
-    let request_id = &info.request_id;
+use turbomcp::prelude::*;
 
-    // And a correlation ID (same across retries)
-    let correlation_id = &info.correlation_id;
+#[derive(Clone)]
+struct Traced;
 
-    // Log with IDs for tracing
-    logger.info(&format!(
-        "Request {} (correlation {})",
-        request_id, correlation_id
-    )).await?;
+#[server]
+impl Traced {
+    /// Fail with the request ID attached.
+    #[tool]
+    async fn fragile(&self, ctx: &RequestContext) -> McpResult<String> {
+        let span = tracing::info_span!("fragile", request_id = %ctx.request_id());
+        let _enter = span.enter();
+        tracing::info!("starting");
 
-    Ok("Done".to_string())
-}
-```
-
-## Caching Patterns
-
-### Simple Caching
-
-```rust
-#[tool]
-async fn get_data(cache: Cache) -> McpResult<String> {
-    // Try cache first
-    if let Some(cached) = cache.get::<String>("my_data")? {
-        return Ok(cached);
+        Err(McpError::internal("Operation failed")
+            .with_request_id(ctx.request_id())
+            .with_operation("fragile"))
     }
-
-    // Compute if not cached
-    let data = "expensive computation".to_string();
-
-    // Store for next time
-    cache.set("my_data", &data).await?;
-
-    Ok(data)
 }
 ```
 
-### Cache with TTL
+## Testing
+
+Call tool methods directly — they are ordinary methods — passing a context you
+build, or go through `McpTestClient` to exercise dispatch and argument
+validation:
 
 ```rust
-#[tool]
-async fn get_fresh_data(cache: Cache) -> McpResult<String> {
-    // Check if cached AND still fresh
-    if let Some(cached) = cache.get::<(String, Instant)>("fresh_data")? {
-        let (data, created) = cached;
+use turbomcp::prelude::*;
 
-        if created.elapsed() < Duration::from_secs(300) {
-            return Ok(data);  // Still fresh
-        }
-        // Otherwise, recompute
+#[derive(Clone)]
+struct Echo;
+
+#[server]
+impl Echo {
+    /// Echo with the request ID.
+    #[tool]
+    async fn echo(&self, text: String, ctx: &RequestContext) -> String {
+        format!("{text} ({})", ctx.request_id())
     }
-
-    let data = "fresh data".to_string();
-    let created = Instant::now();
-    cache.set("fresh_data", &(data.clone(), created)).await?;
-
-    Ok(data)
 }
-```
 
-## Error Context
-
-Access error context for better error messages:
-
-```rust
-#[tool]
-async fn handler(info: RequestInfo) -> McpResult<String> {
-    // Request ID helps track errors in logs
-    let request_id = &info.request_id;
-
-    // If operation fails, log includes request_id
-    // Makes it easy to correlate errors
-
-    Err(McpError::InternalError(
-        format!("Operation failed for request {}", request_id)
-    ))
-}
-```
-
-## Performance Considerations
-
-### Efficient Injection
-
-Injection is cheap:
-- Built-in injectables are pre-allocated
-- No allocations for each request
-- Cloning is `O(1)` via Arc
-
-```rust
-#[tool]
-// No performance penalty for injecting multiple services
-async fn handler(
-    logger: Logger,
-    config: Config,
-    cache: Cache,
-    db: Database,
-) -> McpResult<String> {
-    // All clones are cheap Arc increments
-    Ok("Done".to_string())
-}
-```
-
-### Context Pooling
-
-RequestContext objects are pooled for efficiency:
-
-```rust
-#[tool]
-// Context is created from pool, reused after handler
-async fn handler(ctx: InjectContext) -> McpResult<String> {
-    // Use context freely, no overhead
-    Ok("Done".to_string())
-}
-// Context returns to pool after this
-```
-
-## Testing with Injection
-
-### Mock Injectables
-
-```rust
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_with_mocks() {
-        // Create test instances
-        let logger = Logger::test();
-        let cache = Cache::test();
-
-        // Call handler with test doubles
-        // (requires handlers to accept trait objects)
-    }
-}
-```
-
-## Troubleshooting
-
-### Compilation Error: "cannot find injectable"
-
-Make sure the type is in scope and implements `Injectable`:
-
-```rust
-// ❌ Wrong
-#[tool]
-async fn handler(unknown: UnknownType) -> McpResult<String> {
-    Ok("No".to_string())
-}
-
-// ✅ Right
-#[tool]
-async fn handler(logger: Logger) -> McpResult<String> {
-    Ok("Yes".to_string())
-}
-```
-
-### Cannot Inject Custom Type
-
-Register it first:
-
-```rust
-use turbomcp::injection::{Injectable, InjectionRegistry, global_injection_registry};
-
-impl Injectable for MyType {
-    fn inject() -> Self {
-        // Your initialization logic
-        Self { /* ... */ }
-    }
-}
-
-// Then use in handlers
-#[tool]
-async fn handler(my_type: MyType) -> McpResult<String> {
-    Ok("Works".to_string())
-}
-```
-
-## Advanced Topics
-
-### Conditional Injection
-
-Inject different implementations based on configuration:
-
-```rust
-#[tool]
-async fn handler(config: Config) -> McpResult<String> {
-    let storage_type: Option<String> = config.get("storage")?;
-
-    match storage_type.as_deref() {
-        Some("cache") => {
-            // Use in-memory cache
-            Ok("Using cache".to_string())
-        }
-        Some("database") => {
-            // Use database
-            Ok("Using database".to_string())
-        }
-        _ => {
-            // Fallback
-            Ok("Using default".to_string())
-        }
-    }
-}
-```
-
-### Chaining Operations
-
-Build complex workflows using injected services:
-
-```rust
-#[tool]
-async fn complex_workflow(
-    logger: Logger,
-    cache: Cache,
-    db: Database,
-    http: HttpClient,
-) -> McpResult<String> {
-    // 1. Log start
-    logger.info("Starting workflow").await?;
-
-    // 2. Check cache
-    if let Some(cached) = cache.get::<String>("workflow_result")? {
-        return Ok(cached);
+    async fn echo_directly() {
+        let ctx = RequestContext::with_id("req-1");
+        assert_eq!(Echo.echo("hi".into(), &ctx).await, "hi (req-1)");
     }
 
-    // 3. Fetch from database
-    let data = db.query("SELECT * FROM data").await?;
-
-    // 4. Enrich with external API
-    let enriched = http
-        .post("https://api.example.com/enrich")
-        .json(&data)
-        .send()
-        .await?;
-
-    // 5. Cache result
-    let result = enriched.text().await?;
-    cache.set("workflow_result", &result).await?;
-
-    // 6. Log completion
-    logger.info("Workflow complete").await?;
-
-    Ok(result)
+    #[tokio::test]
+    async fn echo_through_dispatch() {
+        let client = McpTestClient::new(Echo).with_session("session-1");
+        let result = client
+            .call_tool("echo", serde_json::json!({ "text": "hi" }))
+            .await
+            .unwrap();
+        assert!(result.first_text().unwrap().starts_with("hi"));
+    }
 }
 ```
 
@@ -519,4 +455,3 @@ async fn complex_workflow(
 - **[Authentication](authentication.md)** - Add OAuth and security
 - **[Observability](observability.md)** - Logging and monitoring
 - **[Examples](../examples/basic.md)** - Real-world usage patterns
-

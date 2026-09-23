@@ -1,136 +1,189 @@
 # Observability, Logging & Monitoring
 
-Implement comprehensive logging, tracing, and monitoring for production MCP servers. TurboMCP v3 introduces first-class OpenTelemetry integration via `turbomcp-telemetry`.
+Implement logging, tracing, and monitoring for production MCP servers. TurboMCP v3 introduces OpenTelemetry integration via `turbomcp-telemetry`.
 
 ## Overview
 
-TurboMCP provides first-class observability support:
+TurboMCP's observability is built on the `tracing` ecosystem:
 
-- **Structured Logging** - JSON logs with correlation IDs
-- **Distributed Tracing** - OpenTelemetry traces with MCP-specific attributes (v3)
-- **Metrics** - Prometheus-compatible metrics with OTLP export (v3)
-- **Tower Middleware** - Automatic instrumentation via Tower layers (v3)
-- **Health Checks** - Liveness and readiness probes
-- **Error Tracking** - Automatic error categorization and reporting
+- **Structured Logging** - `tracing` events, as JSON or text, on stderr
+- **Distributed Tracing** - OpenTelemetry export over OTLP/HTTP (v3)
+- **Metrics** - Prometheus metrics with MCP-specific names (v3)
+- **Tower Middleware** - `TelemetryLayer` spans with MCP attributes (v3)
+- **Client Logging** - `notifications/message` log messages to the connected client
+
+Enable it with the `telemetry` feature, which turns on every
+`turbomcp-telemetry` feature (`opentelemetry`, `prometheus`, `tower`) and
+re-exports the crate as `turbomcp::telemetry`:
+
+```toml
+[dependencies]
+turbomcp = { version = "3.5.0", features = ["telemetry"] }
+# Or use the crate directly, choosing features
+turbomcp-telemetry = { version = "3.5.0", features = ["opentelemetry", "prometheus", "tower"] }
+```
 
 ## Quick Start (v3)
 
 ```rust
-use turbomcp_telemetry::{TelemetryConfig, TelemetryGuard};
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[server(name = "my-mcp-server", version = "1.0.0")]
+impl MyServer {
+    /// Say hello.
+    #[tool]
+    async fn hello(&self, name: String) -> String {
+        tracing::info!(%name, "saying hello");
+        format!("Hello, {name}!")
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize OpenTelemetry
-    let config = TelemetryConfig::builder()
+    // Logs to stderr (required for STDIO), traces over OTLP/HTTP,
+    // Prometheus metrics on 127.0.0.1:9090/metrics
+    let _guard = TelemetryConfig::builder()
         .service_name("my-mcp-server")
         .service_version("1.0.0")
-        .otlp_endpoint("http://jaeger:4317")
-        .prometheus_port(9090)
         .log_level("info,turbomcp=debug")
-        .build();
+        .otlp_endpoint("http://localhost:4318/v1/traces")
+        .prometheus_port(9090)
+        .build()
+        .init()?;
 
-    let _guard = config.init()?;
-
-    // Your MCP server runs with full observability
-    let server = McpServer::new()
-        .stdio()
-        .run()
-        .await?;
-
+    MyServer.run_stdio().await?;
     Ok(())
 }
 ```
 
+Keep the guard alive for the life of the program: dropping it flushes and shuts
+down the exporters. The OTLP exporter speaks HTTP/protobuf, so point it at the
+collector's HTTP port (4318) and full path; it does not append `/v1/traces`.
+
 ## Structured Logging
 
-### Basic Logging
+### Server-Side Logging
 
-Inject the `Logger` into your handlers:
+Log with `tracing`. `TelemetryConfig` installs the subscriber; without it,
+install one yourself, writing to stderr for a STDIO server:
 
 ```rust
-#[tool]
-async fn my_tool(logger: Logger) -> McpResult<String> {
-    logger.info("Tool starting").await?;
-    logger.warn("Cache miss for key").await?;
-    logger.error("Database connection failed").await?;
-    Ok("Done".to_string())
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Worker;
+
+#[server]
+impl Worker {
+    /// Do some work.
+    #[tool]
+    async fn my_tool(&self, key: String) -> McpResult<String> {
+        tracing::info!("Tool starting");
+        tracing::warn!(%key, "Cache miss for key");
+        tracing::debug!(key_len = key.len(), "Detailed debugging info");
+        Ok("Done".to_string())
+    }
+}
+
+fn init_logging() {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .json()
+        .init();
 }
 ```
 
-### Log Levels
+### Logging to the Client
 
-TurboMCP supports standard log levels:
-
-```rust
-logger.debug("Detailed debugging info").await?;
-logger.info("General information").await?;
-logger.warn("Warning condition").await?;
-logger.error("Error occurred").await?;
-```
-
-### Structured Fields
-
-Add context to logs:
+MCP clients can receive log messages (`notifications/message`) and choose a
+minimum level with `logging/setLevel`. Every TurboMCP server advertises the
+`logging` capability. Send them through `RichContextExt` from
+`turbomcp-protocol`:
 
 ```rust
-#[tool]
-async fn handler(logger: Logger) -> McpResult<String> {
-    logger.with_field("user_id", "123")
-        .with_field("action", "create_resource")
-        .info("User action logged")
-        .await?;
-    Ok("Done".to_string())
+use turbomcp::prelude::*;
+use turbomcp_protocol::RichContextExt;
+
+#[derive(Clone)]
+struct Chatty;
+
+#[server]
+impl Chatty {
+    /// Report progress through log messages.
+    #[tool]
+    async fn import(&self, ctx: &RequestContext) -> McpResult<String> {
+        ctx.debug("Detailed debugging info").await?;
+        ctx.info("General information").await?;
+        ctx.warning("Warning condition").await?;
+        ctx.error("Error occurred").await?;
+        Ok("Done".to_string())
+    }
 }
 ```
+
+Messages below the client's level are dropped, and a session's messages are
+rate limited, so a chatty handler cannot flood the client.
 
 ### Configuration
 
 ```rust
-use turbomcp::logging::LogConfig;
+use turbomcp::prelude::*;
 
-let server = McpServer::new()
-    .with_logging(LogConfig {
-        level: LogLevel::Info,
-        format: LogFormat::Json,  // or Text
-        output: LogOutput::Stdout,
-        include_timestamps: true,
-        include_source: true,
-    })
-    .stdio()
-    .run()
-    .await?;
+fn telemetry() -> Result<TelemetryGuard, Box<dyn std::error::Error>> {
+    let guard = TelemetryConfig::builder()
+        .service_name("my-server")
+        .log_level("debug")   // an EnvFilter directive; RUST_LOG overrides it
+        .json_logs(true)      // JSON instead of human-readable text
+        .stderr_output(true)  // the default; keep it for STDIO servers
+        .environment("production")
+        .build()
+        .init()?;
+    Ok(guard)
+}
 ```
 
 ## Request Correlation
 
-Track requests across your system:
+Every request has an ID. Put it on a span so every event inside carries it:
 
 ```rust
-#[tool]
-async fn handler(info: RequestInfo, logger: Logger) -> McpResult<String> {
-    // Every request gets a unique ID
-    let request_id = &info.request_id;
+use tracing::Instrument;
+use turbomcp::prelude::*;
 
-    // And a correlation ID (same for retries)
-    let correlation_id = &info.correlation_id;
+#[derive(Clone)]
+struct Correlated;
 
-    logger.with_field("request_id", request_id)
-        .with_field("correlation_id", correlation_id)
-        .info("Processing request")
-        .await?;
-
-    Ok("Done".to_string())
+#[server]
+impl Correlated {
+    /// Process a request.
+    #[tool]
+    async fn handler(&self, ctx: &RequestContext) -> McpResult<String> {
+        let span = tracing::info_span!(
+            "handler",
+            request_id = %ctx.request_id(),
+            session_id = ctx.session_id().unwrap_or("-"),
+        );
+        async {
+            tracing::info!("Processing request");
+            Ok("Done".to_string())
+        }
+        .instrument(span)
+        .await
+    }
 }
 ```
 
-**Log output:**
+**Log output** (with `json_logs(true)`):
 ```json
 {
   "timestamp": "2025-12-10T10:30:45Z",
   "level": "INFO",
-  "message": "Processing request",
-  "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "correlation_id": "550e8400-e29b-41d4-a716-446655440001"
+  "fields": { "message": "Processing request" },
+  "span": { "name": "handler", "request_id": "7", "session_id": "550e8400-e29b-41d4-a716-446655440000" }
 }
 ```
 
@@ -138,49 +191,72 @@ async fn handler(info: RequestInfo, logger: Logger) -> McpResult<String> {
 
 ### OpenTelemetry Integration (v3)
 
-TurboMCP v3 provides first-class OpenTelemetry support via `turbomcp-telemetry`:
-
-```toml
-[dependencies]
-turbomcp = { version = "3.5.0", features = ["telemetry"] }
-# Or use the crate directly
-turbomcp-telemetry = "3.5.0"
-```
-
-### Configuration
-
 ```rust
-use turbomcp_telemetry::TelemetryConfig;
+use turbomcp::prelude::*;
 
-let config = TelemetryConfig::builder()
-    .service_name("my-server")
-    .otlp_endpoint("http://jaeger:4317")
-    .sampling_ratio(1.0)  // Sample all requests
-    .build();
-
-let _guard = config.init()?;
+fn tracing_only() -> Result<TelemetryGuard, Box<dyn std::error::Error>> {
+    let guard = TelemetryConfig::builder()
+        .service_name("my-server")
+        .otlp_endpoint("http://jaeger:4318/v1/traces")
+        .sampling_ratio(1.0) // Sample all requests
+        .build()
+        .init()?;
+    Ok(guard)
+}
 ```
 
 ### Tower Middleware (v3)
 
-Use Tower layers for automatic request instrumentation:
+`TelemetryLayer` creates a span per request with MCP attributes. It wraps a
+`tower::Service<serde_json::Value>` that answers JSON-RPC requests, such as one
+built on `McpHandlerExt::handle_request`:
 
 ```rust
-use turbomcp_telemetry::tower::{TelemetryLayer, TelemetryLayerConfig};
-use tower::ServiceBuilder;
+use std::convert::Infallible;
+use tower::{ServiceBuilder, ServiceExt};
+use turbomcp::prelude::*;
+use turbomcp::telemetry::tower::{TelemetryLayer, TelemetryLayerConfig};
 
-let config = TelemetryLayerConfig::new()
-    .service_name("my-mcp-server")
-    .exclude_method("ping");  // Don't trace pings
+#[derive(Clone)]
+struct MyServer;
 
-let service = ServiceBuilder::new()
-    .layer(TelemetryLayer::new(config))
-    .service(my_handler);
+#[server]
+impl MyServer {
+    /// Say hello.
+    #[tool]
+    async fn hello(&self) -> String {
+        "hello".to_string()
+    }
+}
+
+async fn handle(request: serde_json::Value) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let config = TelemetryLayerConfig::new()
+        .service_name("my-mcp-server")
+        .exclude_method("ping"); // Don't trace pings
+
+    let service = ServiceBuilder::new()
+        .layer(TelemetryLayer::new(config))
+        .service(tower::service_fn(|request: serde_json::Value| async move {
+            let response = MyServer
+                .handle_request(request, RequestContext::new())
+                .await
+                .unwrap_or_else(|error| serde_json::json!({ "error": error.to_string() }));
+            Ok::<_, Infallible>(response)
+        }));
+
+    Ok(service.oneshot(request).await?)
+}
 ```
+
+The layer also implements `Service<http::Request<B>>`, so it can wrap the HTTP
+transport's Axum router (`MyServer.builder().into_axum_router().layer(...)`).
+There it sees HTTP requests, not JSON-RPC methods: the span's method is the
+request path.
 
 ### MCP Span Attributes (v3)
 
-The telemetry layer records MCP-specific attributes:
+The JSON-RPC layer records MCP-specific attributes (names in
+`turbomcp_telemetry::span_attributes`):
 
 | Attribute | Description |
 |-----------|-------------|
@@ -194,103 +270,160 @@ The telemetry layer records MCP-specific attributes:
 | `mcp.duration_ms` | Request duration |
 | `mcp.status` | success/error |
 
+`TelemetryLayerConfig::redact_request_id` and `redact_resource_uri` keep those
+values out of exported spans.
+
 ### Span Creation
 
-Spans are automatically created for requests, but you can add custom spans:
+Add spans for sub-operations inside a handler with `tracing`:
 
 ```rust
-#[tool]
-async fn complex_operation(logger: Logger) -> McpResult<String> {
-    // Automatic span for this tool
-    // Traces show: tool_call → database_query → cache_write
+use turbomcp::prelude::*;
 
-    // Custom spans for sub-operations
-    let _span = tracing::info_span!("fetch_data").entered();
+#[derive(Clone)]
+struct Pipeline;
 
-    // ... operation code ...
-
-    Ok("Done".to_string())
+#[server]
+impl Pipeline {
+    /// Fetch and store data.
+    #[tool]
+    async fn complex_operation(&self) -> McpResult<String> {
+        {
+            let _span = tracing::info_span!("fetch_data").entered();
+            // ... synchronous work ...
+        }
+        Ok("Done".to_string())
+    }
 }
 ```
 
+Across an `.await`, attach the span with `.instrument(span)` instead of holding
+an entered guard.
+
 ## Metrics
 
-### Built-in Metrics
+### Available Metrics
 
-TurboMCP automatically tracks:
-
-- **Request metrics**: Count, latency, errors
-- **Handler metrics**: Per-tool success rate and latency
-- **Transport metrics**: Connection count, messages/sec
-- **System metrics**: Memory, CPU, goroutine count
-
-### Accessing Metrics
+With the `prometheus` feature, `turbomcp_telemetry::metrics` defines MCP
+metrics (`mcp_requests_total`, `mcp_request_duration_seconds`,
+`mcp_tool_calls_total`, `mcp_errors_total`, connection gauges, and more).
+Nothing records them automatically: call the recorders where the events happen.
+A server middleware sees every tool call:
 
 ```rust
-let metrics = server.get_metrics().await?;
+use serde_json::Value;
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Instant;
+use turbomcp::prelude::*;
+use turbomcp::telemetry::metrics::McpMetrics;
+use turbomcp_server::{McpMiddleware, MiddlewareStack, Next};
 
-println!("Total requests: {}", metrics.request_count);
-println!("Error rate: {:.2}%", metrics.error_rate);
-println!("P99 latency: {:.1}ms", metrics.latency_p99);
+struct ToolMetrics;
 
-// Per-tool metrics
-for (tool_name, tool_metrics) in &metrics.by_tool {
-    println!("{}: {} calls, {} errors",
-        tool_name,
-        tool_metrics.call_count,
-        tool_metrics.error_count
-    );
+impl McpMiddleware for ToolMetrics {
+    fn on_call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            let started = Instant::now();
+            let result = next.call_tool(name, args, ctx).await;
+            let success = matches!(&result, Ok(r) if !r.is_error());
+            McpMetrics::tool_call(name, success, started.elapsed().as_secs_f64());
+            result
+        })
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _guard = TelemetryConfig::builder()
+        .service_name("my-server")
+        .prometheus_port(9090)
+        .build()
+        .init()?;
+    McpMetrics::init();
+
+    MiddlewareStack::new(MyServer)
+        .with_middleware(ToolMetrics)
+        .run_stdio()
+        .await?;
+    Ok(())
 }
 ```
 
 ### Custom Metrics
 
+Record your own with the `metrics` crate's macros; the Prometheus exporter
+picks them up:
+
 ```rust
-#[tool]
-async fn handler(metrics: Metrics) -> McpResult<String> {
-    // Increment a counter
-    metrics.increment("custom_counter", 1)?;
+use turbomcp::prelude::*;
 
-    // Record a value
-    metrics.record("processing_time_ms", 150)?;
+#[derive(Clone)]
+struct Queue;
 
-    // Set a gauge
-    metrics.set_gauge("queue_size", 42)?;
-
-    Ok("Done".to_string())
+#[server]
+impl Queue {
+    /// Enqueue a job.
+    #[tool]
+    async fn enqueue(&self, job: String) -> McpResult<String> {
+        metrics::counter!("jobs_enqueued_total").increment(1);
+        metrics::histogram!("job_name_length").record(job.len() as f64);
+        metrics::gauge!("queue_size").set(42.0);
+        Ok("queued".to_string())
+    }
 }
 ```
 
+This needs the `metrics` crate (0.24) as a direct dependency.
+
 ### Exporting Metrics
 
-```rust
-let server = McpServer::new()
-    .with_metrics_export(MetricsExportConfig {
-        enabled: true,
-        interval: Duration::from_secs(60),
-        format: MetricsFormat::Prometheus,  // Or JSON
-        endpoint: Some("http://prometheus:9090".to_string()),
-    })
-    .stdio()
-    .run()
-    .await?;
+`prometheus_port(port)` starts a scrape endpoint at
+`http://127.0.0.1:{port}/metrics`. It binds to loopback by default; use
+`prometheus_bind_addr` to expose it beyond the host, and `prometheus_path` to
+change the path.
+
+```yaml
+scrape_configs:
+  - job_name: 'turbomcp'
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: '/metrics'
 ```
 
 ## Health Checks
 
 ### Liveness & Readiness
 
+TurboMCP does not add health endpoints. For an HTTP server, merge them into the
+MCP router:
+
 ```rust
-let server = McpServer::new()
-    .with_health_check(HealthCheckConfig {
-        enabled: true,
-        liveness_path: "/health/live",
-        readiness_path: "/health/ready",
-        detailed: true,
-    })
-    .http(8080)
-    .run()
-    .await?;
+use axum::{Router, http::StatusCode, routing::get};
+use turbomcp::prelude::*;
+
+async fn ready() -> StatusCode {
+    // Check dependencies (database, cache) here
+    StatusCode::OK
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = Router::new()
+        .route("/health/live", get(|| async { "OK" }))
+        .route("/health/ready", get(ready))
+        .merge(MyServer.builder().into_axum_router());
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
 ```
 
 **Checking health:**
@@ -303,197 +436,109 @@ curl http://localhost:8080/health/live
 curl http://localhost:8080/health/ready
 ```
 
-### Custom Health Checks
-
-```rust
-let server = McpServer::new()
-    .with_custom_health_check(|ctx| async move {
-        // Check database connectivity
-        let db_ok = ctx.database().ping().await.is_ok();
-
-        // Check cache connectivity
-        let cache_ok = ctx.cache().ping().await.is_ok();
-
-        Ok(HealthStatus {
-            overall: if db_ok && cache_ok { Healthy } else { Unhealthy },
-            components: vec![
-                ("database", if db_ok { Healthy } else { Unhealthy }),
-                ("cache", if cache_ok { Healthy } else { Unhealthy }),
-            ],
-        })
-    })
-    .http(8080)
-    .run()
-    .await?;
-```
+MCP's own `ping` method is also always available for a client to check a
+connection.
 
 ## Error Tracking & Reporting
 
-### Automatic Error Categorization
+### Error Categorization
+
+Every `McpError` has an `ErrorKind`. A tool error carries it to the client in
+`_meta` (`io.turbomcp/errorKind`); record it server-side yourself:
 
 ```rust
-#[tool]
-async fn handler() -> McpResult<String> {
-    // Errors are automatically categorized
-    Err(McpError::InvalidInput("Bad parameter".into()))
-    // Tracked as: error_type=invalid_input, handler=handler
+use turbomcp::prelude::*;
+
+async fn some_operation() -> Result<String, std::io::Error> {
+    Err(std::io::Error::other("connection reset"))
 }
-```
 
-### Error Context
+#[derive(Clone)]
+struct Tracked;
 
-```rust
-#[tool]
-async fn handler(logger: Logger) -> McpResult<String> {
-    match some_operation().await {
-        Ok(result) => Ok(result),
-        Err(e) => {
-            logger.with_field("error_type", "operation_failed")
-                .with_field("error_message", e.to_string())
-                .error("Operation failed")
-                .await?;
-
-            Err(McpError::InternalError(e.to_string()))
+#[server]
+impl Tracked {
+    /// Run the operation.
+    #[tool]
+    async fn handler(&self) -> McpResult<String> {
+        match some_operation().await {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                let error = McpError::from(e);
+                tracing::error!(kind = ?error.kind, error = %error, "operation failed");
+                Err(error)
+            }
         }
     }
 }
 ```
 
-### Error Reporting Service
+### Error Reporting Services
 
-Integrate with error tracking services:
-
-```rust
-let server = McpServer::new()
-    .with_error_reporting(ErrorReportingConfig {
-        enabled: true,
-        service: ErrorReportingService::Sentry {
-            dsn: "https://...@sentry.io/...".to_string(),
-            release: Some("1.0.0".to_string()),
-        },
-        breadcrumb_limit: 50,
-        attach_logs: true,
-    })
-    .stdio()
-    .run()
-    .await?;
-```
-
-## Monitoring Dashboard
-
-### Prometheus Integration
-
-```rust
-let server = McpServer::new()
-    .http(8080)
-    .with_prometheus_endpoint("/metrics")  // Expose metrics at /metrics
-    .run()
-    .await?;
-```
-
-Scrape with Prometheus:
-
-```yaml
-scrape_configs:
-  - job_name: 'turbomcp'
-    static_configs:
-      - targets: ['localhost:8080']
-    metrics_path: '/metrics'
-```
-
-### Grafana Dashboards
-
-Pre-built dashboards available:
-- Request rate and latency
-- Error rate by handler
-- Handler-specific performance
-- System resource usage
-- Transport-level metrics
+Error trackers such as Sentry integrate through `tracing` (for example the
+`sentry-tracing` layer), so `tracing::error!` events are reported without
+TurboMCP-specific configuration.
 
 ## Logging Best Practices
 
 ### 1. Use Structured Logging
 
 ```rust
+let user_id = "123";
+
 // ✅ Good
-logger.with_field("user_id", user_id)
-    .with_field("action", "delete_resource")
-    .info("Resource deleted")
-    .await?;
+tracing::info!(user_id, action = "delete_resource", "Resource deleted");
 
 // ❌ Avoid
-logger.info(format!("User {} deleted resource", user_id)).await?;
+tracing::info!("User {} deleted resource", user_id);
 ```
 
 ### 2. Include Context IDs
 
-```rust
-// ✅ Always include correlation IDs
-logger.with_field("request_id", info.request_id)
-    .with_field("correlation_id", info.correlation_id)
-    .info("Request processed")
-    .await?;
-```
+Wrap handler work in a span carrying `ctx.request_id()` (see
+[Request Correlation](#request-correlation)).
 
 ### 3. Don't Log Sensitive Data
 
 ```rust
+let token = "secret";
+
 // ❌ Never log passwords, tokens, or API keys
-logger.info(format!("Token: {}", token)).await?;
+tracing::info!("Token: {}", token);
 
 // ✅ Log safely
-logger.info("User authenticated").await?;
+tracing::info!("User authenticated");
 ```
 
 ### 4. Use Appropriate Log Levels
 
 ```rust
-logger.debug("Cache hit for key").await?;           // Debug details
-logger.info("Request received").await?;              // Normal flow
-logger.warn("Slow query detected: 500ms").await?;   // Warnings
-logger.error("Database connection failed").await?;   // Errors
+tracing::debug!("Cache hit for key");           // Debug details
+tracing::info!("Request received");             // Normal flow
+tracing::warn!("Slow query detected: 500ms");   // Warnings
+tracing::error!("Database connection failed");  // Errors
 ```
 
 ## Troubleshooting
 
 ### "Logs not appearing"
 
-Check configuration:
+- Check the filter: `log_level("debug")`, or `RUST_LOG=debug`, which overrides it.
+- A STDIO server's logs are on stderr; the client that launched it decides where
+  stderr goes.
+- Only one global subscriber can be installed: don't call both
+  `TelemetryConfig::init` and `tracing_subscriber::fmt().init()`.
 
-```rust
-let server = McpServer::new()
-    .with_logging(LogConfig {
-        level: LogLevel::Debug,  // Lower log level
-        format: LogFormat::Json,
-        output: LogOutput::Stdout,
-        ..Default::default()
-    })
-    .run()
-    .await?;
-```
+### Client never sees log messages
 
-### High memory usage from logging
-
-Reduce log verbosity or buffer size:
-
-```rust
-let server = McpServer::new()
-    .with_logging(LogConfig {
-        level: LogLevel::Info,  // Not Debug
-        buffer_size: 1000,      // Reduce buffer
-        ..Default::default()
-    })
-    .run()
-    .await?;
-```
+The client has to set a level with `logging/setLevel` at or below the message's
+level, and the transport must be able to send notifications.
 
 ## Performance Impact
 
-Logging and tracing have minimal performance impact:
-
-- Structured logging: <1ms per log line
-- Tracing: <5% overhead for fully sampled requests
-- Metrics: Negligible impact (<0.1%)
+Disabled `tracing` events cost a filter check. Exporting traces costs in
+proportion to the sampling ratio; lower `sampling_ratio` for high-traffic
+servers.
 
 ## Next Steps
 
