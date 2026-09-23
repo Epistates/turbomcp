@@ -6,6 +6,12 @@
 use serde::{Deserialize, Serialize};
 #[cfg(target_arch = "wasm32")]
 use turbomcp_transport_streamable::SessionId;
+
+use super::DoReplyError;
+#[cfg(target_arch = "wasm32")]
+use super::{Ack, decode_reply};
+#[cfg(target_arch = "wasm32")]
+use crate::wasm_server::context::current_timestamp_ms;
 #[cfg(target_arch = "wasm32")]
 use turbomcp_transport_streamable::SessionStore;
 use turbomcp_transport_streamable::{Session, StoredEvent};
@@ -112,8 +118,18 @@ impl DurableObjectSessionStore {
         let request = worker::Request::new_with_init(&url, &init)?;
         let mut response = stub.fetch_with_request(request).await?;
 
+        let status = response.status_code();
         let text = response.text().await?;
-        serde_json::from_str(&text).map_err(DoSessionError::Deserialization)
+        Ok(decode_reply(status, &text)?)
+    }
+}
+
+impl From<DoReplyError> for DoSessionError {
+    fn from(error: DoReplyError) -> Self {
+        match error {
+            DoReplyError::Status(error) => Self::Worker(error),
+            DoReplyError::Body(error) => Self::Deserialization(error),
+        }
     }
 }
 
@@ -168,10 +184,11 @@ impl SessionStore for DurableObjectSessionStore {
 
     async fn create(&self) -> Result<SessionId, Self::Error> {
         let id = SessionId::new();
-        let session = Session::new(id.clone());
+        // `Session::new` reads `SystemTime`, which panics on wasm32.
+        let session = Session::new_with_timestamp(id.clone(), current_timestamp_ms());
 
         // Store the new session
-        self.do_request::<()>(id.as_str(), "/session/create", Some(&session))
+        self.do_request::<Ack>(id.as_str(), "/session/create", Some(&session))
             .await?;
 
         Ok(id)
@@ -191,13 +208,15 @@ impl SessionStore for DurableObjectSessionStore {
     }
 
     async fn update(&self, session: &Session) -> Result<(), Self::Error> {
-        self.do_request::<()>(session.id.as_str(), "/session/update", Some(session))
+        self.do_request::<Ack>(session.id.as_str(), "/session/update", Some(session))
             .await
+            .map(|Ack| ())
     }
 
     async fn store_event(&self, id: &SessionId, event: StoredEvent) -> Result<(), Self::Error> {
-        self.do_request::<()>(id.as_str(), "/event/store", Some(&event))
+        self.do_request::<Ack>(id.as_str(), "/event/store", Some(&event))
             .await
+            .map(|Ack| ())
     }
 
     async fn replay_from(
@@ -224,8 +243,9 @@ impl SessionStore for DurableObjectSessionStore {
     }
 
     async fn destroy(&self, id: &SessionId) -> Result<(), Self::Error> {
-        self.do_request::<()>(id.as_str(), "/session/destroy", None::<&()>)
+        self.do_request::<Ack>(id.as_str(), "/session/destroy", None::<&()>)
             .await
+            .map(|Ack| ())
     }
 
     async fn cleanup_expired(&self, timeout_ms: u64) -> Result<u64, Self::Error> {

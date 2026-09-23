@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use worker::Env;
 
+use super::{Ack, DoReplyError, decode_reply};
+
 /// Rate limiter backed by Cloudflare Durable Objects.
 ///
 /// Uses a sliding window algorithm for smooth rate limiting that doesn't
@@ -213,8 +215,9 @@ impl DurableObjectRateLimiter {
     ///
     /// Useful for administrative purposes.
     pub async fn reset(&self, client_id: &str) -> Result<(), RateLimitError> {
-        self.do_request::<()>(client_id, "/rate-limit/reset", None::<&()>)
+        self.do_request::<Ack>(client_id, "/rate-limit/reset", None::<&()>)
             .await
+            .map(|Ack| ())
     }
 
     /// Send a request to the Durable Object.
@@ -248,8 +251,18 @@ impl DurableObjectRateLimiter {
             .await
             .map_err(RateLimitError::Worker)?;
 
+        let status = response.status_code();
         let text = response.text().await.map_err(RateLimitError::Worker)?;
-        serde_json::from_str(&text).map_err(RateLimitError::Deserialization)
+        Ok(decode_reply(status, &text)?)
+    }
+}
+
+impl From<DoReplyError> for RateLimitError {
+    fn from(error: DoReplyError) -> Self {
+        match error {
+            DoReplyError::Status(error) => Self::Worker(error),
+            DoReplyError::Body(error) => Self::Deserialization(error),
+        }
     }
 }
 

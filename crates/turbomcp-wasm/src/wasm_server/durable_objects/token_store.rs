@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use worker::Env;
 
+use super::{Ack, DoReplyError, decode_reply};
+
 /// OAuth token store backed by Cloudflare Durable Objects.
 ///
 /// Stores tokens securely with:
@@ -255,8 +257,9 @@ impl DurableObjectTokenStore {
         };
 
         // Use client_id as the DO instance key for locality
-        self.do_request::<()>(&data.client_id, "/tokens/store", Some(&request))
+        self.do_request::<Ack>(&data.client_id, "/tokens/store", Some(&request))
             .await
+            .map(|Ack| ())
     }
 
     /// Internal: Get a token.
@@ -381,8 +384,18 @@ impl DurableObjectTokenStore {
             .await
             .map_err(TokenStoreError::Worker)?;
 
+        let status = response.status_code();
         let text = response.text().await.map_err(TokenStoreError::Worker)?;
-        serde_json::from_str(&text).map_err(TokenStoreError::Deserialization)
+        Ok(decode_reply(status, &text)?)
+    }
+}
+
+impl From<DoReplyError> for TokenStoreError {
+    fn from(error: DoReplyError) -> Self {
+        match error {
+            DoReplyError::Status(error) => Self::Worker(error),
+            DoReplyError::Body(error) => Self::Deserialization(error),
+        }
     }
 }
 

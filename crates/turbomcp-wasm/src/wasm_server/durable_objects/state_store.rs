@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use worker::Env;
 
+use super::{Ack, DoReplyError, decode_reply};
+
 /// State store backed by Cloudflare Durable Objects.
 ///
 /// Each namespace (user, conversation, etc.) gets its own Durable Object
@@ -137,8 +139,9 @@ impl DurableObjectStateStore {
         }
 
         let request = SetRequest { key, value };
-        self.do_request::<()>(namespace_id, "/state/set", Some(&request))
+        self.do_request::<Ack>(namespace_id, "/state/set", Some(&request))
             .await
+            .map(|Ack| ())
     }
 
     /// Delete a value from the state store.
@@ -209,8 +212,9 @@ impl DurableObjectStateStore {
     ///
     /// **Warning**: This deletes ALL data for the given namespace.
     pub async fn clear(&self, namespace_id: &str) -> Result<(), StateStoreError> {
-        self.do_request::<()>(namespace_id, "/state/clear", None::<&()>)
+        self.do_request::<Ack>(namespace_id, "/state/clear", None::<&()>)
             .await
+            .map(|Ack| ())
     }
 
     /// Send a request to the Durable Object.
@@ -246,8 +250,18 @@ impl DurableObjectStateStore {
             .await
             .map_err(StateStoreError::Worker)?;
 
+        let status = response.status_code();
         let text = response.text().await.map_err(StateStoreError::Worker)?;
-        serde_json::from_str(&text).map_err(StateStoreError::Deserialization)
+        Ok(decode_reply(status, &text)?)
+    }
+}
+
+impl From<DoReplyError> for StateStoreError {
+    fn from(error: DoReplyError) -> Self {
+        match error {
+            DoReplyError::Status(error) => Self::Worker(error),
+            DoReplyError::Body(error) => Self::Deserialization(error),
+        }
     }
 }
 
