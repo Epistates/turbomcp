@@ -16,10 +16,122 @@
 
 mod common;
 
-use common::current_timestamp;
+use common::{MockOAuth2Server, current_timestamp};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use turbomcp_auth::jwt::JwtValidator;
+
+/// ES256 test key pair, taken from jsonwebtoken's own test fixtures
+/// (tests/ecdsa/{private,public}_ecdsa_key.pem). `TEST_EC_JWK_X`/`_Y` are
+/// that public key's coordinates, base64url-encoded — extracted once with
+/// `openssl ec -pubin -text -noout` — so a mock JWKS response can carry the
+/// matching public key for `DecodingKey::from_jwk` to consume.
+const TEST_EC_PRIVATE_KEY_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgWTFfCGljY6aw3Hrt\n\
+kHmPRiazukxPLb6ilpRAewjW8nihRANCAATDskChT+Altkm9X7MI69T3IUmrQU0L\n\
+950IxEzvw/x5BMEINRMrXLBJhqzO9Bm+d6JbqA21YQmd1Kt4RzLJR1W+\n\
+-----END PRIVATE KEY-----\n";
+const TEST_EC_KID: &str = "test-es256-key-1";
+const TEST_EC_JWK_X: &str = "w7JAoU_gJbZJvV-zCOvU9yFJq0FNC_edCMRM78P8eQQ";
+const TEST_EC_JWK_Y: &str = "wQg1EytcsEmGrM70Gb53oluoDbVhCZ3Uq3hHMslHVb4";
+
+/// Sign `claims` as an ES256 JWT with `kid` set — `JwtValidator::validate`
+/// requires a `kid` header to look up the key in the JWKS response.
+fn sign_es256_with_kid(claims: &serde_json::Value) -> String {
+    let key = EncodingKey::from_ec_pem(TEST_EC_PRIVATE_KEY_PEM).expect("valid EC PEM");
+    let mut header = Header::new(Algorithm::ES256);
+    header.kid = Some(TEST_EC_KID.to_string());
+    encode(&header, claims, &key).expect("Failed to sign test JWT")
+}
+
+async fn mock_es256_jwks(server: &MockOAuth2Server) {
+    server
+        .mock_jwks(json!({
+            "kty": "EC",
+            "crv": "P-256",
+            "kid": TEST_EC_KID,
+            "use": "sig",
+            "alg": "ES256",
+            "x": TEST_EC_JWK_X,
+            "y": TEST_EC_JWK_Y,
+        }))
+        .await;
+}
+
+/// AU-13 regression: `JwtValidator::validate` must actually enforce `nbf`,
+/// not just leave jsonwebtoken's default (`validate_nbf: false`) in place.
+/// Every other test in this file hand-configures a raw `jsonwebtoken::Validation`
+/// to prove the *library* can enforce nbf when asked — none of them exercise
+/// `turbomcp_auth::jwt::JwtValidator` itself, which is the code that was
+/// actually buggy (it never asked).
+#[tokio::test]
+async fn test_jwt_validator_enforces_nbf() {
+    let mock_server = MockOAuth2Server::start().await;
+    mock_es256_jwks(&mock_server).await;
+
+    let issuer = "https://auth.example.com";
+    let audience = "https://mcp.example.com";
+    let now = current_timestamp();
+
+    let claims = json!({
+        "sub": "user123",
+        "iss": issuer,
+        "aud": audience,
+        "iat": now,
+        "exp": now + 3600,
+        "nbf": now + 300, // not valid for another 5 minutes
+    });
+    let token = sign_es256_with_kid(&claims);
+
+    let validator = JwtValidator::with_jwks_uri(
+        issuer.to_string(),
+        audience.to_string(),
+        mock_server.jwks_endpoint.clone(),
+    );
+
+    let result = validator.validate(&token).await;
+    assert!(
+        result.is_err(),
+        "token with nbf 5 minutes in the future must be rejected"
+    );
+}
+
+/// Sanity check alongside the regression above: a token that's already
+/// past its nbf must still validate — the fix must not reject legitimately
+/// valid tokens.
+#[tokio::test]
+async fn test_jwt_validator_accepts_token_after_nbf() {
+    let mock_server = MockOAuth2Server::start().await;
+    mock_es256_jwks(&mock_server).await;
+
+    let issuer = "https://auth.example.com";
+    let audience = "https://mcp.example.com";
+    let now = current_timestamp();
+
+    let claims = json!({
+        "sub": "user123",
+        "iss": issuer,
+        "aud": audience,
+        "iat": now,
+        "exp": now + 3600,
+        "nbf": now - 60,
+    });
+    let token = sign_es256_with_kid(&claims);
+
+    let validator = JwtValidator::with_jwks_uri(
+        issuer.to_string(),
+        audience.to_string(),
+        mock_server.jwks_endpoint.clone(),
+    );
+
+    let result = validator.validate(&token).await;
+    assert!(
+        result.is_ok(),
+        "token past its nbf should validate: {:?}",
+        result.err()
+    );
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TestClaims {
@@ -537,4 +649,100 @@ async fn test_algorithm_mismatch() {
     // Note: This will fail during decode with wrong key type
     // In production, header algorithm should be checked against whitelist
     // before attempting validation
+}
+
+/// `server::validate_bearer_token` (the HTTP-transport entry point): a
+/// structurally valid, in-scope token produces an `AuthContext`.
+#[tokio::test]
+async fn test_validate_bearer_token_accepts_valid_token_with_scope() {
+    use turbomcp_auth::server::validate_bearer_token;
+
+    let mock_server = MockOAuth2Server::start().await;
+    mock_es256_jwks(&mock_server).await;
+
+    let issuer = "https://auth.example.com";
+    let audience = "https://mcp.example.com";
+    let now = current_timestamp();
+
+    let claims = json!({
+        "sub": "user123",
+        "iss": issuer,
+        "aud": audience,
+        "iat": now,
+        "exp": now + 3600,
+        "scope": "mcp:tools:read mcp:tools:write",
+    });
+    let token = sign_es256_with_kid(&claims);
+
+    let validator = JwtValidator::with_jwks_uri(
+        issuer.to_string(),
+        audience.to_string(),
+        mock_server.jwks_endpoint.clone(),
+    );
+
+    let ctx = validate_bearer_token(&validator, &token, &["mcp:tools:read"])
+        .await
+        .expect("token with the required scope should validate");
+    assert_eq!(ctx.sub, "user123");
+    assert!(ctx.has_scope("mcp:tools:write"));
+}
+
+/// Missing/invalid signature -> `TokenValidationError::InvalidToken` (maps to 401).
+#[tokio::test]
+async fn test_validate_bearer_token_rejects_invalid_token() {
+    use turbomcp_auth::server::{TokenValidationError, validate_bearer_token};
+
+    let mock_server = MockOAuth2Server::start().await;
+    mock_es256_jwks(&mock_server).await;
+
+    let issuer = "https://auth.example.com";
+    let audience = "https://mcp.example.com";
+
+    let validator = JwtValidator::with_jwks_uri(
+        issuer.to_string(),
+        audience.to_string(),
+        mock_server.jwks_endpoint.clone(),
+    );
+
+    let result = validate_bearer_token(&validator, "not-a-jwt", &[]).await;
+    assert!(matches!(result, Err(TokenValidationError::InvalidToken(_))));
+}
+
+/// A valid token missing a required scope -> `InsufficientScope` (maps to 403),
+/// not `InvalidToken` — that distinction is the whole point of this entry point.
+#[tokio::test]
+async fn test_validate_bearer_token_distinguishes_insufficient_scope_from_invalid_token() {
+    use turbomcp_auth::server::{TokenValidationError, validate_bearer_token};
+
+    let mock_server = MockOAuth2Server::start().await;
+    mock_es256_jwks(&mock_server).await;
+
+    let issuer = "https://auth.example.com";
+    let audience = "https://mcp.example.com";
+    let now = current_timestamp();
+
+    let claims = json!({
+        "sub": "user123",
+        "iss": issuer,
+        "aud": audience,
+        "iat": now,
+        "exp": now + 3600,
+        "scope": "mcp:tools:read",
+    });
+    let token = sign_es256_with_kid(&claims);
+
+    let validator = JwtValidator::with_jwks_uri(
+        issuer.to_string(),
+        audience.to_string(),
+        mock_server.jwks_endpoint.clone(),
+    );
+
+    let result = validate_bearer_token(&validator, &token, &["mcp:tools:write"]).await;
+    match result {
+        Err(TokenValidationError::InsufficientScope { required, granted }) => {
+            assert_eq!(required, vec!["mcp:tools:write".to_string()]);
+            assert_eq!(granted, vec!["mcp:tools:read".to_string()]);
+        }
+        other => panic!("expected InsufficientScope, got {other:?}"),
+    }
 }
