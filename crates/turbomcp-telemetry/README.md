@@ -34,12 +34,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `tracing-json` | yes | JSON-formatted log output (enabled by default) |
-| `tracing-pretty` | no | Human-readable pretty log output |
-| `opentelemetry` | no | Full OpenTelemetry integration with OTLP export (gRPC or HTTP/protobuf) |
+| `opentelemetry` | no | OpenTelemetry tracing with OTLP export over HTTP/protobuf, plus W3C trace-context propagation in the tower middleware |
 | `prometheus` | no | Standalone Prometheus metrics via `metrics` + `metrics-exporter-prometheus` |
 | `tower` | no | Tower middleware for automatic request instrumentation |
 | `full` | no | Enables `opentelemetry`, `prometheus`, and `tower` |
+
+Log format is a runtime setting, not a feature: `.json_logs(true)` (the
+default) emits JSON, `.json_logs(false)` emits human-readable output.
 
 ## OpenTelemetry Integration
 

@@ -57,13 +57,12 @@ tower = { version = "0.5", features = ["util"] }
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 [features]
-default = ["tracing-json"]
+default = []
 
-# Tracing output formats
-tracing-json = []
-tracing-pretty = []
+# JSON vs. pretty log output is a runtime choice (`TelemetryConfig::json_logs`),
+# not a cargo feature: both formatters are always compiled in.
 
-# OpenTelemetry integration (full OTLP export)
+# OpenTelemetry integration (OTLP export over HTTP/protobuf)
 opentelemetry = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
