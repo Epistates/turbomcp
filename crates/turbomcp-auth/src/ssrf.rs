@@ -493,6 +493,22 @@ impl SsrfValidator {
 
     /// Validate an IPv6 address
     fn validate_ipv6(&self, ip: &Ipv6Addr) -> Result<(), SsrfError> {
+        // An IPv4-mapped address (::ffff:0:0/96, RFC 4291 §2.5.5.2) encodes an
+        // IPv4 address inside an IPv6 literal, e.g. `::ffff:169.254.169.254`.
+        // Without this check it skips `validate_ipv4` entirely and falls
+        // through to the IPv6-only checks below, which know nothing about RFC
+        // 1918 ranges or the cloud metadata address — an attacker reaches a
+        // blocked IPv4 target just by writing it in its IPv6-mapped form.
+        if let Some(mapped) = ip.to_ipv4_mapped() {
+            // Re-enter through `validate_ip_address`, not `validate_ipv4`
+            // directly: the cloud-metadata and denylist checks live in
+            // `validate_ip_address`, one level up, so calling `validate_ipv4`
+            // here would skip them and only apply the RFC 1918/loopback/
+            // link-local checks (169.254.169.254 would still get blocked, as
+            // link-local, but with the wrong — less specific — error).
+            return self.validate_ip_address(&IpAddr::V4(mapped));
+        }
+
         // Check for localhost
         if !self.policy.allow_localhost && ip.is_loopback() {
             debug!("Localhost access blocked: {}", ip);
@@ -850,6 +866,41 @@ mod tests {
         // fd00::1 is unique local (private)
         let ipv6 = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
         assert!(validator.validate_ip_address(&IpAddr::V6(ipv6)).is_err());
+    }
+
+    /// AU-12: `::ffff:169.254.169.254` (the cloud metadata endpoint written as
+    /// an IPv4-mapped IPv6 literal) must be blocked exactly like its plain
+    /// IPv4 form, not waved through by the IPv6-only checks.
+    #[test]
+    fn test_ipv4_mapped_ipv6_cloud_metadata_blocked() {
+        let validator = SsrfValidator::default();
+
+        let mapped = IpAddr::V6("::ffff:169.254.169.254".parse().unwrap());
+        assert!(matches!(
+            validator.validate_ip_address(&mapped),
+            Err(SsrfError::CloudMetadataBlocked(_))
+        ));
+    }
+
+    #[test]
+    fn test_ipv4_mapped_ipv6_private_network_blocked() {
+        let validator = SsrfValidator::default();
+
+        // ::ffff:10.0.0.1 — RFC 1918 private range, mapped into IPv6.
+        let mapped = IpAddr::V6("::ffff:10.0.0.1".parse().unwrap());
+        assert!(
+            validator.validate_ip_address(&mapped).is_err(),
+            "IPv4-mapped private address must be blocked, not treated as a bare IPv6 address"
+        );
+    }
+
+    #[test]
+    fn test_ipv4_mapped_ipv6_public_address_allowed() {
+        let validator = SsrfValidator::default();
+
+        // ::ffff:8.8.8.8 — public, should pass exactly like 8.8.8.8 does.
+        let mapped = IpAddr::V6("::ffff:8.8.8.8".parse().unwrap());
+        assert!(validator.validate_ip_address(&mapped).is_ok());
     }
 
     #[test]
