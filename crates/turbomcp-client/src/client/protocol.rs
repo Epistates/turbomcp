@@ -27,6 +27,8 @@
 //! This ensures there's only ONE consumer of transport.receive(),
 //! eliminating the race condition.
 
+use parking_lot::Mutex;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -58,6 +60,17 @@ pub(super) struct ProtocolClient<T: Transport> {
     next_id: AtomicU64,
     /// Transport configuration for timeout enforcement (v2.2.0+)
     config: TransportConfig,
+    /// Elicitation ids this client has been told about and not yet seen
+    /// completed — from URL-mode `elicitation/create` requests, and from the
+    /// `data.elicitations` of a -32042 error answering one of our requests.
+    ///
+    /// The spec requires a client to ignore
+    /// `notifications/elicitation/complete` for an unknown or
+    /// already-completed id — otherwise a server (or anything able to inject a
+    /// notification) can drive a client's retry logic with an id it invented.
+    /// It lives here rather than on the client because this is the layer
+    /// that sees error responses.
+    url_elicitations: Mutex<HashSet<String>>,
 }
 
 impl<T: Transport + 'static> ProtocolClient<T> {
@@ -73,7 +86,37 @@ impl<T: Transport + 'static> ProtocolClient<T> {
             dispatcher,
             next_id: AtomicU64::new(1),
             config,
+            url_elicitations: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Remember a URL-mode elicitation id so its completion is honoured.
+    pub(super) fn track_url_elicitation(&self, elicitation_id: String) {
+        self.url_elicitations.lock().insert(elicitation_id);
+    }
+
+    /// Track every elicitation id in a -32042 error's `data`.
+    ///
+    /// A client retries the failed request once these complete, so their
+    /// completions have to be honoured just like those of an
+    /// `elicitation/create` it received directly.
+    fn track_elicitations_in(&self, data: &serde_json::Value) {
+        let ids = data
+            .get("elicitations")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.get("elicitationId").and_then(serde_json::Value::as_str));
+        let mut tracked = self.url_elicitations.lock();
+        for id in ids {
+            tracked.insert(id.to_owned());
+        }
+    }
+
+    /// Consume a URL-mode elicitation id. `false` means the id is unknown or
+    /// already completed, and the completion must be ignored.
+    pub(super) fn complete_url_elicitation(&self, elicitation_id: &str) -> bool {
+        self.url_elicitations.lock().remove(elicitation_id)
     }
 
     /// Get the message dispatcher for handler registration
@@ -222,9 +265,17 @@ impl<T: Transport + 'static> ProtocolClient<T> {
         // Response arrived — disarm the guard so it doesn't double-remove.
         waiter_guard.disarm();
 
-        // Handle JSON-RPC errors
+        // Handle JSON-RPC errors. `data` is kept: for some errors it is the
+        // payload — a -32042 carries the URLs the user has to visit.
         if let Some(error) = response.error() {
-            return Err(Error::from_rpc_code(error.code, &error.message));
+            let mut err = Error::from_rpc_code(error.code, &error.message);
+            if let Some(data) = &error.data {
+                if error.code == turbomcp_protocol::types::URLElicitationRequiredError::ERROR_CODE {
+                    self.track_elicitations_in(data);
+                }
+                err = err.with_data(data.clone());
+            }
+            return Err(err);
         }
 
         // Deserialize result
@@ -269,11 +320,17 @@ impl<T: Transport + 'static> ProtocolClient<T> {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<()> {
-        let request = serde_json::json!({
+        // `params` is omitted rather than sent as `null`: JSON-RPC requires it
+        // to be a structured value when present, and the TypeScript SDK's
+        // schema rejects `"params": null` outright — which, for
+        // `notifications/initialized`, fails the whole handshake.
+        let mut request = serde_json::json!({
             "jsonrpc": "2.0",
             "method": method,
-            "params": params
         });
+        if let Some(params) = params {
+            request["params"] = params;
+        }
 
         let payload = serde_json::to_vec(&request)
             .map_err(|e| Error::internal(format!("Failed to serialize notification: {e}")))?;

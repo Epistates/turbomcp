@@ -4,10 +4,12 @@
 //! that process server-initiated operations and notifications.
 
 use crate::handlers::{
-    CancellationHandler, ElicitationHandler, LogHandler, ProgressHandler, PromptListChangedHandler,
-    ResourceListChangedHandler, ResourceUpdateHandler, RootsHandler, ToolListChangedHandler,
+    CancellationHandler, ElicitationCompleteHandler, ElicitationHandler, LogHandler,
+    ProgressHandler, PromptListChangedHandler, ResourceListChangedHandler, ResourceUpdateHandler,
+    RootsHandler, ToolListChangedHandler,
 };
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Register a roots handler for responding to server filesystem root requests
@@ -101,6 +103,36 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```
     pub fn set_elicitation_handler(&self, handler: Arc<dyn ElicitationHandler>) {
         self.inner.handlers.lock().set_elicitation_handler(handler);
+    }
+
+    /// Declare that this client can handle URL mode elicitation.
+    ///
+    /// Advertises `elicitation: {"form": {}, "url": {}}` at initialization
+    /// instead of `{}` (form only). Servers **MUST NOT** send a URL mode
+    /// `elicitation/create` to a client that did not declare it. New in MCP
+    /// 2025-11-25.
+    ///
+    /// Only call this if the elicitation handler shows the URL to the user —
+    /// with their consent, and never by opening it automatically — and returns
+    /// `accept` once they have been shown it. Register an
+    /// [`ElicitationCompleteHandler`] to learn when the out-of-band
+    /// interaction has finished.
+    pub fn enable_elicitation_url(&self) {
+        self.inner.elicitation_url.store(true, Ordering::Relaxed);
+    }
+
+    /// Register a handler for `notifications/elicitation/complete`.
+    ///
+    /// The server sends this when an out-of-band URL mode interaction has
+    /// finished, which is typically the cue to retry a request that failed
+    /// with -32042. Completions for ids this client never received — neither
+    /// in a URL mode `elicitation/create` nor in a -32042 error — and repeated
+    /// completions for the same id are ignored, as the spec requires.
+    pub fn set_elicitation_complete_handler(&self, handler: Arc<dyn ElicitationCompleteHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .set_elicitation_complete_handler(handler);
     }
 
     /// Register a log handler for processing server log messages

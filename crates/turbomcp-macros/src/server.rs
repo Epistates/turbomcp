@@ -1259,16 +1259,21 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         // would flatten every failure to a message, leaving a client unable to
         // tell bad input from an internal fault. Other return types keep the
         // blanket `Display` conversion, which has no kind to preserve.
+        //
+        // The one exception is -32042. The spec defines URL elicitation
+        // required as a JSON-RPC error whose `data.elicitations` the client
+        // acts on; folded into an `isError` result, the client never sees it.
         let ok_conversion = if returns_mcp_error(&tool.sig) {
             quote! {
                 match result {
-                    Ok(value) => #turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(value),
-                    Err(e) => e.to_tool_result(),
+                    Ok(value) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(value)),
+                    Err(e) if e.kind == #turbomcp::__macro_support::turbomcp_core::error::ErrorKind::UrlElicitationRequired => Err(e),
+                    Err(e) => Ok(e.to_tool_result()),
                 }
             }
         } else {
             quote! {
-                #turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(result)
+                Ok(#turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(result))
             }
         };
 
@@ -1284,7 +1289,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 }).await;
 
                 match outcome {
-                    Ok(result) => Ok(#ok_conversion),
+                    Ok(result) => #ok_conversion,
                     Err(e) if e.kind == #turbomcp::__macro_support::turbomcp_core::error::ErrorKind::InvalidParams => {
                         // SEP-1303: validation failure → tool execution error.
                         Ok(e.to_tool_result())

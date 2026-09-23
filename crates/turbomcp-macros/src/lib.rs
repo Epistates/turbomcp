@@ -133,7 +133,9 @@ mod tool;
 ///   per SEP-1303, so the model can self-correct) and preserve the
 ///   classification in `_meta` under `io.turbomcp/errorKind` and
 ///   `io.turbomcp/errorCode`, plus `io.turbomcp/errorData` when the error
-///   carries [`McpError::with_data`](turbomcp_core::error::McpError::with_data).
+///   carries data (`McpError::with_data`). The exception is
+///   `ErrorKind::UrlElicitationRequired`, which the spec defines as a JSON-RPC
+///   error (-32042) and so propagates as one.
 /// - **Prompts and resources** propagate the error as a JSON-RPC error. A
 ///   failed render is not a successful one whose text begins "Error:".
 ///

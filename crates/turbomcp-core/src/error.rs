@@ -545,7 +545,9 @@ impl McpError {
             meta.insert(crate::meta_keys::ERROR_DATA.to_string(), data.clone());
         }
 
-        turbomcp_types::ToolResult::error(self.to_string()).with_meta(meta)
+        // `message`, not `Display`: the operation/component labels `Display`
+        // appends are server-side diagnostics, and this text goes to the model.
+        turbomcp_types::ToolResult::error(self.message.clone()).with_meta(meta)
     }
 
     /// Set the source location (typically file:line)

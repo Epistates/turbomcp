@@ -496,13 +496,34 @@ pub enum EnumSchema {
 ///     meta: None,
 /// });
 /// let json = serde_json::to_value(&payload).unwrap();
-/// assert!(json["elicitations"].is_array());
+/// assert_eq!(json["elicitations"][0]["mode"], "url");
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct URLElicitationRequiredError {
     /// The elicitations that must complete before the original request can be
     /// retried. Required, and every entry is a URL mode elicitation.
+    ///
+    /// Each entry is written with `"mode": "url"`: the schema types these as
+    /// `ElicitRequestURLParams`, where `mode` is required, and the bare struct
+    /// has no field for it — only [`crate::protocol::ElicitRequestParams`]
+    /// adds it.
+    #[serde(serialize_with = "serialize_url_elicitations")]
     pub elicitations: Vec<crate::protocol::ElicitRequestURLParams>,
+}
+
+fn serialize_url_elicitations<S: serde::Serializer>(
+    elicitations: &[crate::protocol::ElicitRequestURLParams],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeSeq;
+
+    let mut seq = serializer.serialize_seq(Some(elicitations.len()))?;
+    for elicitation in elicitations {
+        seq.serialize_element(&crate::protocol::ElicitRequestParams::Url(
+            elicitation.clone(),
+        ))?;
+    }
+    seq.end()
 }
 
 impl URLElicitationRequiredError {
@@ -647,6 +668,9 @@ mod tests {
         assert_eq!(entries[0]["elicitationId"], "e-123");
         assert_eq!(entries[0]["url"], "https://example.com/oauth");
         assert_eq!(entries[0]["message"], "Please sign in");
+        // Required by the schema's `ElicitRequestURLParams`; a client
+        // validating against it rejects the whole error without it.
+        assert_eq!(entries[0]["mode"], "url");
 
         let back: URLElicitationRequiredError = serde_json::from_value(json).unwrap();
         assert_eq!(err, back);

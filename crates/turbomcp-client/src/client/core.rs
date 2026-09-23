@@ -79,21 +79,24 @@ pub(super) struct ClientInner<T: Transport + 'static> {
     /// `enable_sampling_context` opt into the rest.
     pub(super) sampling_capabilities: Arc<Mutex<SamplingCapabilities>>,
 
+    /// Whether `elicitation.url` is declared alongside form support when an
+    /// elicitation handler is set. Opt-in via `enable_elicitation_url`.
+    pub(super) elicitation_url: AtomicBool,
+
+    /// Capabilities this client actually sent in `initialize`.
+    ///
+    /// Incoming server requests are checked against these, not against what
+    /// the registered handlers would imply: a caller of
+    /// `initialize_with_request` may declare more (or less) than the handlers
+    /// suggest, and the server is bound by the declaration it received.
+    pub(super) declared_capabilities: Arc<Mutex<Option<ProtocolClientCapabilities>>>,
+
     /// Handler registry for bidirectional communication (mutex for registration)
     pub(super) handlers: Arc<Mutex<HandlerRegistry>>,
 
     /// ✅ Semaphore for bounded concurrency of request/notification handlers
     /// Limits concurrent server-initiated request handlers to prevent resource exhaustion
     pub(super) handler_semaphore: Arc<Semaphore>,
-
-    /// Elicitation ids from URL-mode requests this client has accepted and
-    /// not yet seen completed.
-    ///
-    /// The spec requires a client to ignore
-    /// `notifications/elicitation/complete` for an unknown or
-    /// already-completed id — otherwise a server (or anything able to inject a
-    /// notification) can drive a client's retry logic with an id it invented.
-    pub(super) pending_url_elicitations: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 /// The core MCP client implementation
@@ -227,11 +230,12 @@ impl<T: Transport + 'static> Client<T> {
                 shutdown_requested: AtomicBool::new(false),
                 sampling_handler: Arc::new(Mutex::new(None)),
                 sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
+                elicitation_url: AtomicBool::new(false),
+                declared_capabilities: Arc::new(Mutex::new(None)),
                 negotiated_version: Arc::new(Mutex::new(None)),
                 server_capabilities: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
-                pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
             }),
         };
 
@@ -283,11 +287,12 @@ impl<T: Transport + 'static> Client<T> {
                 shutdown_requested: AtomicBool::new(false),
                 sampling_handler: Arc::new(Mutex::new(None)),
                 sampling_capabilities: Arc::new(Mutex::new(SamplingCapabilities::default())),
+                elicitation_url: AtomicBool::new(false),
+                declared_capabilities: Arc::new(Mutex::new(None)),
                 negotiated_version: Arc::new(Mutex::new(None)),
                 server_capabilities: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
-                pending_url_elicitations: Arc::new(Mutex::new(std::collections::HashSet::new())),
             }),
         };
 
@@ -732,7 +737,7 @@ impl<T: Transport + 'static> Client<T> {
                     // sampling a request it will silently ignore the tools in.
                     if (params.tools.is_some() || params.tool_choice.is_some())
                         && self
-                            .get_sampling_capabilities()
+                            .declared_sampling_capabilities()
                             .and_then(|caps| caps.tools)
                             .is_none()
                     {
@@ -941,7 +946,7 @@ impl<T: Transport + 'static> Client<T> {
                     // than hand a URL-mode request to a form handler — which
                     // sees `requested_schema: None` and typically accepts with
                     // empty content, reading to the server as consent.
-                    let declared = self.get_elicitation_capabilities();
+                    let declared = self.declared_elicitation_capabilities();
                     let mode_supported = match &proto_params {
                         turbomcp_protocol::types::ElicitRequestParams::Form(_) => {
                             declared.as_ref().is_some_and(|c| c.supports_form())
@@ -977,9 +982,8 @@ impl<T: Transport + 'static> Client<T> {
                         &proto_params
                     {
                         self.inner
-                            .pending_url_elicitations
-                            .lock()
-                            .insert(url_params.elicitation_id.clone());
+                            .protocol
+                            .track_url_elicitation(url_params.elicitation_id.clone());
                     }
 
                     // Wrap protocol params with ID for handler (preserves type safety!)
@@ -1203,6 +1207,21 @@ impl<T: Transport + 'static> Client<T> {
                     return Ok(());
                 };
 
+                // The spec: clients MUST ignore completions referencing unknown
+                // or already-completed ids. Taking the id out of the set is
+                // what makes a replayed completion "already completed".
+                if !self
+                    .inner
+                    .protocol
+                    .complete_url_elicitation(&elicitation_id)
+                {
+                    tracing::debug!(
+                        elicitation_id = %elicitation_id,
+                        "Ignoring completion for an unknown or already-completed elicitation"
+                    );
+                    return Ok(());
+                }
+
                 let handler_opt = self
                     .inner
                     .handlers
@@ -1352,7 +1371,9 @@ impl<T: Transport + 'static> Client<T> {
     /// Initialize the MCP session with an explicit initialize request.
     ///
     /// This is the opt-in path for draft protocol versions and capability
-    /// fields such as official MCP `extensions`.
+    /// fields such as official MCP `extensions`. A server that answers with
+    /// the version this request asked for is accepted even when that version
+    /// is not one this SDK supports by default — asking for it is the opt-in.
     pub async fn initialize_with_request(
         &self,
         request: InitializeRequest,
@@ -1376,6 +1397,8 @@ impl<T: Transport + 'static> Client<T> {
             tracing::info!("Transport connected successfully");
         }
 
+        let requested = request.protocol_version.to_string();
+        let declared = request.capabilities.clone();
         let protocol_response: ProtocolInitializeResult = self
             .inner
             .protocol
@@ -1389,29 +1412,30 @@ impl<T: Transport + 'static> Client<T> {
         // instead of surfacing later as a string of confusing per-request
         // failures against a server that cannot honour the requests.
         let negotiated = protocol_response.protocol_version.to_string();
-        if !turbomcp_protocol::SUPPORTED_VERSIONS.contains(&negotiated.as_str()) {
+        if negotiated != requested
+            && !turbomcp_protocol::SUPPORTED_VERSIONS.contains(&negotiated.as_str())
+        {
             tracing::warn!(
                 negotiated = %negotiated,
                 supported = ?turbomcp_protocol::SUPPORTED_VERSIONS,
                 "Server negotiated an unsupported protocol version; disconnecting"
             );
             let _ = transport.disconnect().await;
-            return Err(Error::protocol_version_mismatch(
-                PROTOCOL_VERSION,
-                negotiated,
-            ));
+            return Err(Error::protocol_version_mismatch(requested, negotiated));
         }
         *self.inner.negotiated_version.lock() = Some(negotiated.clone());
+        *self.inner.declared_capabilities.lock() = Some(declared);
         *self.inner.server_capabilities.lock() = Some(protocol_response.capabilities.clone());
 
-        // AtomicBool: lock-free store with Ordering::Relaxed
-        self.inner.initialized.store(true, Ordering::Relaxed);
-
-        // Send initialized notification
+        // The handshake is not complete until `notifications/initialized` has
+        // gone out, so the client does not claim to be initialized before then.
         self.inner
             .protocol
             .notify("notifications/initialized", None)
             .await?;
+
+        // AtomicBool: lock-free store with Ordering::Relaxed
+        self.inner.initialized.store(true, Ordering::Relaxed);
 
         // Convert protocol response to client response type
         Ok(InitializeResult {
@@ -1748,13 +1772,35 @@ impl<T: Transport + 'static> Client<T> {
     fn get_elicitation_capabilities(
         &self,
     ) -> Option<turbomcp_protocol::types::ElicitationCapabilities> {
-        if self.has_elicitation_handler() {
-            // Currently returns default capabilities. In the future, schema_validation support
-            // could be detected from handler traits by adding a HasSchemaValidation marker trait
-            // that handlers could implement. For now, handlers validate schemas themselves.
-            Some(turbomcp_protocol::types::ElicitationCapabilities::default())
+        if !self.has_elicitation_handler() {
+            return None;
+        }
+        // `{}` means form only. Declaring `url` as well means spelling `form`
+        // out, or the server reads the client as URL-only.
+        if self.inner.elicitation_url.load(Ordering::Relaxed) {
+            Some(turbomcp_protocol::types::ElicitationCapabilities::full())
         } else {
-            None
+            Some(turbomcp_protocol::types::ElicitationCapabilities::default())
+        }
+    }
+
+    /// The `sampling` capability as declared in `initialize`, or as the
+    /// handlers imply if the handshake has not run.
+    fn declared_sampling_capabilities(&self) -> Option<SamplingCapabilities> {
+        match self.inner.declared_capabilities.lock().as_ref() {
+            Some(declared) => declared.sampling.clone(),
+            None => self.get_sampling_capabilities(),
+        }
+    }
+
+    /// The `elicitation` capability as declared in `initialize`, or as the
+    /// handlers imply if the handshake has not run.
+    fn declared_elicitation_capabilities(
+        &self,
+    ) -> Option<turbomcp_protocol::types::ElicitationCapabilities> {
+        match self.inner.declared_capabilities.lock().as_ref() {
+            Some(declared) => declared.elicitation.clone(),
+            None => self.get_elicitation_capabilities(),
         }
     }
 
