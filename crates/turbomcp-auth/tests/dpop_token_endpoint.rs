@@ -34,6 +34,7 @@ fn config_for(token_url: &str, auth_url: &str) -> OAuth2Config {
         dpop_config: None,
         mcp_resource_uri: None,
         auto_resource_indicators: false,
+        allow_custom_scheme_redirect: false,
     }
 }
 

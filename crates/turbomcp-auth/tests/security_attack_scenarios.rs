@@ -118,7 +118,8 @@ fn test_reject_jwk_injection_in_access_token() {
 #[tokio::test]
 #[ignore = "Requires DPoP APIs not yet implemented"]
 async fn test_dpop_prevents_token_substitution() {
-    use turbomcp_dpop::{DpopKeyPair, DpopProof, DpopValidator};
+    use turbomcp_dpop::proof::{DpopProofGenerator, ProofContext};
+    use turbomcp_dpop::{DpopKeyPair, DpopProof};
 
     // GIVEN: Legitimate user has DPoP-bound token
     let legitimate_key = DpopKeyPair::generate_p256().expect("Failed to generate legitimate key");
@@ -146,13 +147,22 @@ async fn test_dpop_prevents_token_substitution() {
         .await
         .expect("Failed to build attacker proof");
 
-    // THEN: Server validates both proofs
-    let validator = DpopValidator::new();
+    // THEN: Server validates both proofs (structure, HTTP binding, timestamp,
+    // replay, ath, and signature — see DpopProofGenerator::validate_proof)
+    let validator = DpopProofGenerator::new_simple()
+        .await
+        .expect("Failed to create validator");
 
     // Legitimate user succeeds
     assert!(
         validator
-            .validate(&legitimate_proof, Some(stolen_token))
+            .validate_proof(
+                &legitimate_proof,
+                "GET",
+                "https://api.example.com/data",
+                Some(stolen_token),
+                ProofContext::ResourceServer,
+            )
             .await
             .is_ok(),
         "Legitimate user with correct key should succeed"
@@ -162,7 +172,13 @@ async fn test_dpop_prevents_token_substitution() {
     // The ath claim validates, but the cnf claim in token wouldn't match attacker's key
     // Note: Full validation requires checking token's cnf claim against proof's JWK
     let attacker_result = validator
-        .validate(&attacker_proof, Some(stolen_token))
+        .validate_proof(
+            &attacker_proof,
+            "GET",
+            "https://api.example.com/data",
+            Some(stolen_token),
+            ProofContext::ResourceServer,
+        )
         .await;
     assert!(
         attacker_result.is_ok(), // Proof itself is valid

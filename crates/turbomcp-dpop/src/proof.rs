@@ -342,14 +342,33 @@ impl DpopProofGenerator {
 
         let thumbprint = proof.thumbprint()?;
 
+        // `validate_timestamp` above already proved `iat` is within
+        // `proof_lifetime`/`clock_skew_tolerance` of `now`, so this conversion
+        // can't realistically fail — but use the checked helper rather than
+        // `UNIX_EPOCH + Duration::from_secs(iat as u64)` (which panics on
+        // overflow) so a future change to the ordering of these checks can't
+        // reopen the DoS.
+        let issued_at = crate::types::checked_unix_time(proof.payload.iat).ok_or_else(|| {
+            DpopError::InternalError {
+                reason: format!(
+                    "iat claim out of range after validation: {}",
+                    proof.payload.iat
+                ),
+            }
+        })?;
+        let expires_at =
+            issued_at
+                .checked_add(self.proof_lifetime)
+                .ok_or_else(|| DpopError::InternalError {
+                    reason: "proof expiry overflowed SystemTime range".to_string(),
+                })?;
+
         Ok(DpopValidationResult {
             valid: true,
             thumbprint,
             key_algorithm: proof.header.algorithm,
-            issued_at: UNIX_EPOCH + Duration::from_secs(proof.payload.iat as u64),
-            expires_at: UNIX_EPOCH
-                + Duration::from_secs(proof.payload.iat as u64)
-                + self.proof_lifetime,
+            issued_at,
+            expires_at,
         })
     }
 
@@ -410,6 +429,14 @@ impl DpopProofGenerator {
     }
 
     /// Validate proof timestamp and expiration
+    ///
+    /// `iat` is an unverified claim at this point (signature verification happens
+    /// later, in `validate_signature`) — a crafted proof can set it to any `i64`,
+    /// including values that would overflow plain `now - iat` / `now + skew`
+    /// arithmetic. Every comparison below goes through `checked_*` so an
+    /// out-of-range `iat` is rejected outright instead of risking a wrapped
+    /// result that could bypass the freshness check (in a build without
+    /// overflow checks, wrapping — not panicking — is the actual risk).
     fn validate_timestamp(&self, proof: &DpopProof) -> Result<()> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -421,28 +448,35 @@ impl DpopProofGenerator {
         let issued_at = proof.payload.iat;
         let clock_skew_secs = self.clock_skew_tolerance.as_secs() as i64;
 
-        // Check if timestamp is too far in the future (prevents long-lived proofs)
-        if issued_at > now + clock_skew_secs {
-            return Err(DpopError::ClockSkewTooLarge {
-                skew_seconds: issued_at - now,
-                max_skew_seconds: clock_skew_secs,
-            });
-        }
+        // Positive `age` = issued in the past; negative = issued in the future.
+        let age = now
+            .checked_sub(issued_at)
+            .ok_or_else(|| DpopError::InvalidProofStructure {
+                reason: format!("iat claim out of range: {issued_at}"),
+            })?;
 
-        // Check if proof has expired (too old)
-        let proof_age = now - issued_at;
-        if proof_age > self.proof_lifetime.as_secs() as i64 {
+        if age < 0 {
+            // `age` can only be `i64::MIN` if `issued_at` were outside the i64
+            // range, which `checked_sub` above already rejected — negation here
+            // can't overflow.
+            let future_skew = -age;
+            if future_skew > clock_skew_secs {
+                return Err(DpopError::ClockSkewTooLarge {
+                    skew_seconds: future_skew,
+                    max_skew_seconds: clock_skew_secs,
+                });
+            }
+        } else if age > self.proof_lifetime.as_secs() as i64 {
             return Err(DpopError::ProofExpired {
                 issued_at,
                 max_age_seconds: self.proof_lifetime.as_secs(),
             });
-        }
-
-        // Check clock skew (now redundant with the future check above, but kept for completeness)
-        let time_diff = (now - issued_at).abs();
-        if time_diff > clock_skew_secs {
+        } else if age > clock_skew_secs {
+            // Past the skew tolerance but still within the proof lifetime —
+            // matches the pre-existing (redundant-with-the-future-check)
+            // absolute-skew behavior for the "in the past" direction.
             return Err(DpopError::ClockSkewTooLarge {
-                skew_seconds: time_diff,
+                skew_seconds: age,
                 max_skew_seconds: clock_skew_secs,
             });
         }
@@ -1248,6 +1282,48 @@ mod tests {
             )
             .await;
         assert!(wrong_uri.is_err());
+    }
+
+    /// PX-P: `iat` is an unverified claim when `validate_timestamp` runs (the
+    /// signature check happens later). A crafted extreme value must be
+    /// rejected via a normal error, not a panic from overflowing
+    /// `now - iat` / `now + skew` arithmetic.
+    #[tokio::test]
+    async fn test_validate_timestamp_rejects_adversarial_iat_without_panicking() {
+        let key_manager = Arc::new(DpopKeyManager::new_memory().await.unwrap());
+        let proof_gen = DpopProofGenerator::new(key_manager);
+
+        let make_proof = |iat: i64| {
+            DpopProof::new(
+                DpopHeader {
+                    typ: DPOP_JWT_TYPE.to_string(),
+                    algorithm: DpopAlgorithm::ES256,
+                    jwk: DpopJwk::Ec {
+                        use_: "sig".to_string(),
+                        crv: "P-256".to_string(),
+                        x: "abc".to_string(),
+                        y: "def".to_string(),
+                    },
+                },
+                DpopPayload {
+                    jti: "jti".to_string(),
+                    htm: "POST".to_string(),
+                    htu: "https://api.example.com/token".to_string(),
+                    iat,
+                    ath: None,
+                    nonce: None,
+                },
+                "signature".to_string(),
+            )
+        };
+
+        for iat in [i64::MIN, i64::MAX, -1] {
+            let result = proof_gen.validate_timestamp(&make_proof(iat));
+            assert!(
+                result.is_err(),
+                "iat={iat} should be rejected, not accepted"
+            );
+        }
     }
 
     #[test]

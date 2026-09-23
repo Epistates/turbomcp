@@ -246,176 +246,19 @@ impl DpopProofParams {
     }
 }
 
-/// Validator for DPoP proofs
-///
-/// Validates DPoP proofs according to RFC 9449 including:
-/// - JWT structure validation
-/// - Timestamp validation with clock skew tolerance
-/// - Access token binding (ath claim)
-/// - Required claim presence
-#[derive(Debug, Clone)]
-pub struct DpopValidator {
-    /// Clock skew tolerance in seconds
-    clock_tolerance_secs: i64,
-}
-
-impl DpopValidator {
-    /// Create a new validator with default settings
-    ///
-    /// Default clock tolerance: 60 seconds
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            clock_tolerance_secs: 60,
-        }
-    }
-
-    /// Create a validator with custom clock tolerance
-    #[must_use]
-    pub fn with_clock_tolerance(mut self, seconds: i64) -> Self {
-        self.clock_tolerance_secs = seconds;
-        self
-    }
-
-    /// Validate a DPoP proof
-    ///
-    /// Performs comprehensive validation including:
-    /// - JWT header type is "dpop+jwt"
-    /// - JWK is present in header
-    /// - Timestamp is recent (within clock tolerance)
-    /// - Access token binding if token provided
-    ///
-    /// # Errors
-    /// Returns error if validation fails
-    pub async fn validate(
-        &self,
-        proof: &crate::types::DpopProof,
-        access_token: Option<&str>,
-    ) -> crate::Result<ValidatedDpopClaims> {
-        // Validate header
-        self.validate_header(&proof.header)?;
-
-        // Validate timestamp
-        self.validate_timestamp(&proof.payload)?;
-
-        // Validate required claims
-        self.validate_required_claims(&proof.payload)?;
-
-        // Validate access token binding if provided
-        if let Some(token) = access_token {
-            self.validate_access_token_binding(proof, token)?;
-        }
-
-        Ok(ValidatedDpopClaims {
-            htm: proof.payload.htm.clone(),
-            htu: proof.payload.htu.clone(),
-            ath: proof.payload.ath.clone(),
-            jti: proof.payload.jti.clone(),
-            iat: proof.payload.iat,
-        })
-    }
-
-    fn validate_header(&self, header: &crate::types::DpopHeader) -> crate::Result<()> {
-        // Check typ is "dpop+jwt"
-        if header.typ != crate::DPOP_JWT_TYPE {
-            return Err(crate::errors::DpopError::ProofValidationFailed {
-                reason: format!(
-                    "Invalid typ header: expected '{}', got '{}'",
-                    crate::DPOP_JWT_TYPE,
-                    header.typ
-                ),
-            });
-        }
-        Ok(())
-    }
-
-    fn validate_timestamp(&self, payload: &crate::types::DpopPayload) -> crate::Result<()> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| crate::errors::DpopError::InternalError {
-                reason: format!("System time error: {}", e),
-            })?
-            .as_secs() as i64;
-
-        // Check iat is not too far in the past or future
-        let age = now - payload.iat;
-        if age.abs() > self.clock_tolerance_secs {
-            return Err(crate::errors::DpopError::ClockSkewTooLarge {
-                skew_seconds: age,
-                max_skew_seconds: self.clock_tolerance_secs,
-            });
-        }
-
-        Ok(())
-    }
-
-    fn validate_required_claims(&self, payload: &crate::types::DpopPayload) -> crate::Result<()> {
-        if payload.jti.is_empty() {
-            return Err(crate::errors::DpopError::InvalidProofStructure {
-                reason: "Missing jti claim".to_string(),
-            });
-        }
-        if payload.htm.is_empty() {
-            return Err(crate::errors::DpopError::InvalidProofStructure {
-                reason: "Missing htm claim".to_string(),
-            });
-        }
-        if payload.htu.is_empty() {
-            return Err(crate::errors::DpopError::InvalidProofStructure {
-                reason: "Missing htu claim".to_string(),
-            });
-        }
-        Ok(())
-    }
-
-    fn validate_access_token_binding(
-        &self,
-        proof: &crate::types::DpopProof,
-        token: &str,
-    ) -> crate::Result<()> {
-        use sha2::{Digest, Sha256};
-        use subtle::ConstantTimeEq;
-
-        // Compute expected ath claim
-        let mut hasher = Sha256::new();
-        hasher.update(token.as_bytes());
-        let hash = hasher.finalize();
-        let expected_ath = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
-
-        // Check ath claim matches using constant-time comparison to prevent timing attacks
-        match &proof.payload.ath {
-            Some(ath) if ath.as_bytes().ct_eq(expected_ath.as_bytes()).into() => Ok(()),
-            Some(_) => Err(crate::errors::DpopError::AccessTokenHashFailed {
-                reason: "Access token hash mismatch".to_string(),
-            }),
-            None => Err(crate::errors::DpopError::AccessTokenHashFailed {
-                reason: "Missing ath claim for access token binding".to_string(),
-            }),
-        }
-    }
-}
-
-impl Default for DpopValidator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Validated DPoP proof claims
-///
-/// Contains the validated claims from a DPoP proof after successful validation.
-#[derive(Debug, Clone)]
-pub struct ValidatedDpopClaims {
-    /// HTTP method
-    pub htm: String,
-    /// HTTP URI
-    pub htu: String,
-    /// Access token hash (optional)
-    pub ath: Option<String>,
-    /// JWT ID (nonce)
-    pub jti: String,
-    /// Issued at timestamp
-    pub iat: i64,
-}
+// `DpopValidator` / `ValidatedDpopClaims` used to live here as a second,
+// lighter-weight validator. It never verified the JWT signature or bound
+// `htm`/`htu` to the actual request — it only checked header shape, that
+// `iat` was recent, and (optionally) the `ath` claim. That made it an unsafe
+// public API: calling code that reached for "the DPoP validator" by name
+// would get something that accepts a forged proof with an unrelated method
+// and URI, signed by nobody. `DpopProofGenerator::validate_proof` (in
+// `proof.rs`) is the real, spec-complete validator — it checks structure,
+// HTTP binding, timestamps, replay (nonce tracking), `ath` binding per
+// `ProofContext`, and the cryptographic signature. Nothing in this workspace
+// called `DpopValidator` outside its own tests, so it was removed rather than
+// turned into a wrapper: a thin shim over `validate_proof` would still need a
+// key manager and nonce tracker to construct, making it no lighter-weight
+// than calling `DpopProofGenerator` directly, just a second name for the same
+// thing. Use `DpopProofGenerator::validate_proof` (or `parse_and_validate_jwt`
+// for a raw JWT string) instead.

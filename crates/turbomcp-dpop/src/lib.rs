@@ -63,8 +63,10 @@ pub use keys::*;
 pub use proof::*;
 pub use types::*;
 
-// Re-export builder and validator from helpers
-pub use helpers::{DpopProofParams, DpopProofParamsBuilder, DpopValidator, ValidatedDpopClaims};
+// Re-export builder from helpers. (`DpopValidator`/`ValidatedDpopClaims` were
+// removed — they verified neither the signature nor the HTTP binding; use
+// `proof::DpopProofGenerator::validate_proof` instead.)
+pub use helpers::{DpopProofParams, DpopProofParamsBuilder};
 
 /// DPoP result type
 pub type Result<T> = std::result::Result<T, DpopError>;

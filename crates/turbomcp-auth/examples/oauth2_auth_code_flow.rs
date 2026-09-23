@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         dpop_config: None,
         mcp_resource_uri: None,
         auto_resource_indicators: true,
+        allow_custom_scheme_redirect: false,
     };
 
     // Step 2: Create OAuth2 client

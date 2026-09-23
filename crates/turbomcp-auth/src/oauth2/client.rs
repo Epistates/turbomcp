@@ -47,6 +47,14 @@ pub struct OAuth2Client {
     /// Stateful HTTP client for oauth2 5.0 (reuses connections)
     /// Uses custom adapter to bridge reqwest 0.13+ with oauth2's AsyncHttpClient trait
     http_client: OAuth2HttpClient,
+    /// Canonical MCP server resource URI (RFC 8707 Resource Indicators),
+    /// canonicalized via [`super::resource::validate_resource_uri`] from
+    /// `OAuth2Config::mcp_resource_uri`. Sent as the `resource` parameter in
+    /// authorization, token, and refresh requests — see `resource_for_request`.
+    resource_uri: Option<String>,
+    /// Mirrors `OAuth2Config::auto_resource_indicators`: whether
+    /// `resource_uri` is actually attached to requests.
+    auto_resource_indicators: bool,
 }
 
 // Manual Debug implementation because reqwest::Client doesn't implement Debug
@@ -58,6 +66,8 @@ impl std::fmt::Debug for OAuth2Client {
             .field("device_code_client", &self.device_code_client)
             .field("provider_config", &self.provider_config)
             .field("http_client", &"<reqwest::Client>")
+            .field("resource_uri", &self.resource_uri)
+            .field("auto_resource_indicators", &self.auto_resource_indicators)
             .finish()
     }
 }
@@ -73,7 +83,8 @@ impl OAuth2Client {
             .map_err(|_| McpError::invalid_params("Invalid token URL".to_string()))?;
 
         // Redirect URI validation with security checks
-        let redirect_url = Self::validate_redirect_uri(&config.redirect_uri)?;
+        let redirect_url =
+            Self::validate_redirect_uri(&config.redirect_uri, config.allow_custom_scheme_redirect)?;
 
         // Create authorization code flow client (primary)
         // oauth2 5.0: Use typestate pattern for endpoint configuration
@@ -143,13 +154,34 @@ impl OAuth2Client {
         let http_client = OAuth2HttpClient::new()
             .map_err(|e| McpError::internal(format!("Failed to create HTTP client: {e}")))?;
 
+        // RFC 8707: canonicalize the configured resource URI up front so every
+        // request sends the same normalized value, rather than re-deriving it
+        // (and re-validating it) on each call.
+        let resource_uri = config
+            .mcp_resource_uri
+            .as_deref()
+            .map(super::resource::validate_resource_uri)
+            .transpose()?;
+
         Ok(Self {
             auth_code_client,
             client_credentials_client,
             device_code_client,
             provider_config,
             http_client,
+            resource_uri,
+            auto_resource_indicators: config.auto_resource_indicators,
         })
+    }
+
+    /// The `resource` parameter value for the next request, if RFC 8707
+    /// Resource Indicators are configured and enabled.
+    fn resource_for_request(&self) -> Option<&str> {
+        if self.auto_resource_indicators {
+            self.resource_uri.as_deref()
+        } else {
+            None
+        }
     }
 
     /// Attach a DPoP binding so token-endpoint requests are signed with a
@@ -276,7 +308,18 @@ impl OAuth2Client {
     /// - Prevents open redirect attacks
     /// - Validates URL format and structure
     /// - Environment-aware validation (localhost for development)
-    fn validate_redirect_uri(uri: &str) -> McpResult<RedirectUrl> {
+    ///
+    /// Per the MCP spec ("Communication Security"), every redirect URI MUST
+    /// be either `localhost`/loopback or HTTPS. Custom schemes for
+    /// native/mobile apps (RFC 8252 §7.1) are *not* an MCP requirement, so
+    /// they're only accepted when `allow_custom_scheme_redirect` is `true` —
+    /// an explicit opt-in the caller sets via
+    /// `OAuth2Config::allow_custom_scheme_redirect`, documented there as an
+    /// RFC 8252 deviation from the MCP spec's stricter default.
+    fn validate_redirect_uri(
+        uri: &str,
+        allow_custom_scheme_redirect: bool,
+    ) -> McpResult<RedirectUrl> {
         use url::Url;
 
         // Parse and validate URL structure
@@ -313,15 +356,16 @@ impl OAuth2Client {
             "https" => {
                 // HTTPS is always allowed
             }
-            "com.example.app" | "msauth" => {
-                // Allow custom schemes for mobile apps (common patterns)
-            }
-            scheme if scheme.starts_with("app.") || scheme.ends_with(".app") => {
-                // Allow app-specific custom schemes
+            scheme if allow_custom_scheme_redirect && scheme != "http" && scheme != "https" => {
+                // Opted in via OAuth2Config::allow_custom_scheme_redirect —
+                // accept any non-http(s) scheme (e.g. `com.example.app`,
+                // `msauth`). Without the opt-in this arm doesn't match and
+                // falls through to the rejection below.
             }
             _ => {
                 return Err(McpError::invalid_params(format!(
-                    "Unsupported redirect URI scheme: {}. Use https, http (localhost only), or app-specific schemes",
+                    "Unsupported redirect URI scheme: {}. MCP requires https or loopback http; set \
+                     OAuth2Config::allow_custom_scheme_redirect to accept a custom app scheme (RFC 8252 deviation)",
                     parsed.scheme()
                 )));
             }
@@ -457,12 +501,20 @@ impl OAuth2Client {
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
         // Build authorization URL with PKCE
-        let (auth_url, _state) = self
+        let mut request = self
             .auth_code_client
             .authorize_url(|| oauth2::CsrfToken::new(state))
             .add_scopes(scopes.into_iter().map(Scope::new))
-            .set_pkce_challenge(pkce_challenge)
-            .url();
+            .set_pkce_challenge(pkce_challenge);
+
+        // RFC 8707 / MCP: the resource parameter MUST be sent in the
+        // authorization request, identifying the MCP server the token is
+        // being requested for.
+        if let Some(resource) = self.resource_for_request() {
+            request = request.add_extra_param("resource", resource);
+        }
+
+        let (auth_url, _state) = request.url();
 
         (
             auth_url.to_string(),
@@ -487,10 +539,18 @@ impl OAuth2Client {
         code_verifier: String,
     ) -> McpResult<TokenInfo> {
         // oauth2 5.0: Pass HTTP client directly (stateful, reuses connections)
-        let token_response = self
+        let mut request = self
             .auth_code_client
             .exchange_code(oauth2::AuthorizationCode::new(code))
-            .set_pkce_verifier(PkceCodeVerifier::new(code_verifier))
+            .set_pkce_verifier(PkceCodeVerifier::new(code_verifier));
+
+        // RFC 8707 / MCP: the resource parameter MUST also be sent in the
+        // token request, matching the one sent at authorization.
+        if let Some(resource) = self.resource_for_request() {
+            request = request.add_extra_param("resource", resource);
+        }
+
+        let token_response = request
             .request_async(&self.http_client)
             .await
             .map_err(|e| McpError::internal(format!("Token exchange failed: {e}")))?;
@@ -541,9 +601,16 @@ impl OAuth2Client {
     /// ```
     pub async fn refresh_access_token(&self, refresh_token: &str) -> McpResult<TokenInfo> {
         // oauth2 5.0: Pass HTTP client directly
-        let token_response = self
-            .auth_code_client
-            .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
+        let refresh_token = RefreshToken::new(refresh_token.to_string());
+        let mut request = self.auth_code_client.exchange_refresh_token(&refresh_token);
+
+        // RFC 8707: resource indicators apply to refresh requests too — the
+        // refreshed token must still be scoped to this MCP server.
+        if let Some(resource) = self.resource_for_request() {
+            request = request.add_extra_param("resource", resource);
+        }
+
+        let token_response = request
             .request_async(&self.http_client)
             .await
             .map_err(|e| McpError::internal(format!("Token refresh failed: {e}")))?;
@@ -670,3 +737,94 @@ impl OAuth2Client {
 // oauth2 5.0: execute_oauth_request function removed
 // The library now has built-in reqwest support via request_async(&client)
 // No custom HTTP adapter needed!
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::OAuth2FlowType;
+
+    fn base_config(redirect_uri: &str) -> OAuth2Config {
+        OAuth2Config {
+            client_id: "test-client".to_string(),
+            client_secret: String::new().into(),
+            auth_url: "https://provider.example.com/oauth/authorize".to_string(),
+            token_url: "https://provider.example.com/oauth/token".to_string(),
+            revocation_url: None,
+            redirect_uri: redirect_uri.to_string(),
+            scopes: vec!["openid".to_string()],
+            flow_type: OAuth2FlowType::AuthorizationCode,
+            additional_params: HashMap::new(),
+            security_level: Default::default(),
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
+            mcp_resource_uri: Some("https://mcp.example.com".to_string()),
+            auto_resource_indicators: true,
+            allow_custom_scheme_redirect: false,
+        }
+    }
+
+    /// AU-11: MCP requires every redirect URI to be https or loopback http.
+    #[test]
+    fn test_redirect_uri_rejects_custom_scheme_by_default() {
+        let config = base_config("com.example.app://callback");
+        let result = OAuth2Client::new(&config, ProviderType::Generic);
+        assert!(result.is_err(), "custom scheme must be rejected by default");
+    }
+
+    #[test]
+    fn test_redirect_uri_accepts_custom_scheme_when_opted_in() {
+        let mut config = base_config("com.example.app://callback");
+        config.allow_custom_scheme_redirect = true;
+        let result = OAuth2Client::new(&config, ProviderType::Generic);
+        assert!(
+            result.is_ok(),
+            "custom scheme must be accepted once opted in"
+        );
+    }
+
+    #[test]
+    fn test_redirect_uri_accepts_https() {
+        let config = base_config("https://app.example.com/callback");
+        assert!(OAuth2Client::new(&config, ProviderType::Generic).is_ok());
+    }
+
+    #[test]
+    fn test_redirect_uri_accepts_loopback_http() {
+        let config = base_config("http://127.0.0.1:8080/callback");
+        assert!(OAuth2Client::new(&config, ProviderType::Generic).is_ok());
+    }
+
+    #[test]
+    fn test_redirect_uri_rejects_non_loopback_http() {
+        let config = base_config("http://app.example.com/callback");
+        assert!(OAuth2Client::new(&config, ProviderType::Generic).is_err());
+    }
+
+    /// AU-6: the authorization URL must carry the RFC 8707 `resource` parameter.
+    #[test]
+    fn test_authorization_code_flow_sends_resource_parameter() {
+        let config = base_config("https://app.example.com/callback");
+        let client = OAuth2Client::new(&config, ProviderType::Generic).unwrap();
+
+        let (auth_url, _verifier) =
+            client.authorization_code_flow(vec!["openid".to_string()], "state123".to_string());
+
+        assert!(
+            auth_url.contains("resource=https%3A%2F%2Fmcp.example.com")
+                || auth_url.contains("resource=https://mcp.example.com"),
+            "authorization URL must carry the resource parameter: {auth_url}"
+        );
+    }
+
+    #[test]
+    fn test_authorization_code_flow_omits_resource_when_disabled() {
+        let mut config = base_config("https://app.example.com/callback");
+        config.auto_resource_indicators = false;
+        let client = OAuth2Client::new(&config, ProviderType::Generic).unwrap();
+
+        let (auth_url, _verifier) =
+            client.authorization_code_flow(vec!["openid".to_string()], "state123".to_string());
+
+        assert!(!auth_url.contains("resource="));
+    }
+}

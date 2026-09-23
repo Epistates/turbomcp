@@ -147,13 +147,11 @@ fn build_canonical_uri(url: &Url, host: &str) -> McpResult<String> {
         None => String::new(),
     };
 
-    // Get path, removing trailing slash unless it's just "/"
-    let path = url.path();
-    let normalized_path = if path == "/" {
-        path.to_string()
-    } else {
-        path.trim_end_matches('/').to_string()
-    };
+    // Trim the trailing slash unconditionally, including for the root path.
+    // The MCP spec's canonical-URI guidance is explicit: `https://mcp.example.com`
+    // (no trailing slash), not `https://mcp.example.com/`, is the form to use
+    // unless the slash is semantically significant for that resource.
+    let normalized_path = url.path().trim_end_matches('/').to_string();
 
     // Assemble canonical URI (scheme + host + port + path, no query or fragment)
     Ok(format!(
@@ -186,10 +184,12 @@ mod tests {
         let result = validate_resource_uri(uri).unwrap();
         assert_eq!(result, "https://api.example.com/mcp");
 
-        // Root path preserves slash
+        // AU-17: root path also drops the trailing slash, matching the MCP
+        // spec's canonical-URI example (`https://mcp.example.com`, not
+        // `https://mcp.example.com/`).
         let uri2 = "https://api.example.com/";
         let result2 = validate_resource_uri(uri2).unwrap();
-        assert_eq!(result2, "https://api.example.com/");
+        assert_eq!(result2, "https://api.example.com");
     }
 
     #[test]
@@ -276,10 +276,10 @@ mod tests {
         // Examples from MCP specification
         let examples = vec![
             ("https://mcp.example.com/mcp", "https://mcp.example.com/mcp"),
-            ("https://mcp.example.com", "https://mcp.example.com/"),
+            ("https://mcp.example.com", "https://mcp.example.com"),
             (
                 "https://mcp.example.com:8443",
-                "https://mcp.example.com:8443/",
+                "https://mcp.example.com:8443",
             ),
             (
                 "https://mcp.example.com/server/mcp",

@@ -186,6 +186,18 @@ pub struct OAuth2Config {
     /// is automatically included in all OAuth flows for MCP compliance
     #[serde(default = "default_auto_resource_indicators")]
     pub auto_resource_indicators: bool,
+    /// Allow custom-scheme redirect URIs (e.g. `com.example.app://callback`).
+    ///
+    /// The MCP spec requires every redirect URI to be either `localhost`/loopback
+    /// or HTTPS (`Communication Security`); custom schemes for native/mobile
+    /// apps are an RFC 8252 pattern the MCP spec doesn't itself endorse. This
+    /// defaults to `false` — set it explicitly to opt into custom schemes,
+    /// understanding that's a deviation from the MCP redirect-URI requirement
+    /// (RFC 8252 §7.1 covers the native-app mitigations you'd want alongside it:
+    /// PKCE, exact redirect URI matching, and — ideally — app-claimed HTTPS
+    /// redirects instead of a custom scheme where the platform supports them).
+    #[serde(default)]
+    pub allow_custom_scheme_redirect: bool,
 }
 
 // Custom serialization for SecretString
@@ -254,8 +266,12 @@ pub struct OAuth2AuthResult {
 pub struct ProtectedResourceMetadata {
     /// Resource server identifier (REQUIRED)
     pub resource: String,
-    /// Authorization server endpoint (REQUIRED)
-    pub authorization_server: String,
+    /// Authorization servers that can issue tokens for this resource
+    /// (RECOMMENDED). RFC 9728 §2 defines this as a JSON array —
+    /// `authorization_servers`, plural — even for the common single-AS case;
+    /// a bare `authorization_server: String` field serializes the wrong
+    /// shape and MCP clients parsing per the RFC would reject it.
+    pub authorization_servers: Vec<String>,
     /// Available scopes for this resource (OPTIONAL)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scopes_supported: Option<Vec<String>>,
@@ -320,7 +336,7 @@ impl McpResourceRegistry {
 
         let metadata = ProtectedResourceMetadata {
             resource: resource_uri.clone(),
-            authorization_server: self.default_auth_server.clone(),
+            authorization_servers: vec![self.default_auth_server.clone()],
             scopes_supported: Some(scopes),
             bearer_methods_supported: Some(vec![
                 BearerTokenMethod::Header, // Primary method
@@ -374,264 +390,6 @@ impl McpResourceRegistry {
                 "Unknown resource: {}",
                 resource_uri
             )))
-        }
-    }
-}
-
-/// Dynamic Client Registration Request (RFC 7591)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientRegistrationRequest {
-    /// Client metadata - redirect URIs (REQUIRED for authorization code flow)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redirect_uris: Option<Vec<String>>,
-    /// Client metadata - response types
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_types: Option<Vec<String>>,
-    /// Client metadata - grant types
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub grant_types: Option<Vec<String>>,
-    /// Application type (web, native)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_type: Option<ApplicationType>,
-    /// Human-readable client name
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_name: Option<String>,
-    /// Client URI for information
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_uri: Option<String>,
-    /// Logo URI
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub logo_uri: Option<String>,
-    /// Scope string with space-delimited scopes
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-    /// Contacts (email addresses)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contacts: Option<Vec<String>>,
-    /// Terms of service URI
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tos_uri: Option<String>,
-    /// Privacy policy URI
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub policy_uri: Option<String>,
-    /// Software ID for client
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_id: Option<String>,
-    /// Software version
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_version: Option<String>,
-}
-
-/// Dynamic Client Registration Response (RFC 7591)
-///
-/// **Security note**: `client_secret` and `registration_access_token` are bearer
-/// credentials. The `Debug` implementation redacts them to prevent accidental
-/// exposure in logs.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ClientRegistrationResponse {
-    /// Unique client identifier (REQUIRED)
-    pub client_id: String,
-    /// Client secret (OPTIONAL - not provided for public clients)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_secret: Option<String>,
-    /// Registration access token for client configuration endpoint
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub registration_access_token: Option<String>,
-    /// Client configuration endpoint
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub registration_client_uri: Option<String>,
-    /// Client ID issued at timestamp
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id_issued_at: Option<i64>,
-    /// Client secret expires at timestamp (REQUIRED if client_secret provided)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_secret_expires_at: Option<i64>,
-    /// Confirmed client metadata - redirect URIs
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redirect_uris: Option<Vec<String>>,
-    /// Confirmed response types
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_types: Option<Vec<String>>,
-    /// Confirmed grant types
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub grant_types: Option<Vec<String>>,
-    /// Confirmed application type
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_type: Option<ApplicationType>,
-    /// Confirmed client name
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_name: Option<String>,
-    /// Confirmed scope
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-}
-
-// Manual Debug impl: `client_secret` and `registration_access_token` are bearer
-// credentials — verbatim logging exposes them to any tracing/log sink.
-impl std::fmt::Debug for ClientRegistrationResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClientRegistrationResponse")
-            .field("client_id", &self.client_id)
-            .field(
-                "client_secret",
-                &self.client_secret.as_ref().map(|_| "[REDACTED]"),
-            )
-            .field(
-                "registration_access_token",
-                &self
-                    .registration_access_token
-                    .as_ref()
-                    .map(|_| "[REDACTED]"),
-            )
-            .field("registration_client_uri", &self.registration_client_uri)
-            .field("client_id_issued_at", &self.client_id_issued_at)
-            .field("client_secret_expires_at", &self.client_secret_expires_at)
-            .field("redirect_uris", &self.redirect_uris)
-            .field("response_types", &self.response_types)
-            .field("grant_types", &self.grant_types)
-            .field("application_type", &self.application_type)
-            .field("client_name", &self.client_name)
-            .field("scope", &self.scope)
-            .finish()
-    }
-}
-
-/// Application type for OAuth client (RFC 7591)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum ApplicationType {
-    /// Web application - runs on web server, can keep secrets
-    #[default]
-    Web,
-    /// Native application - mobile/desktop app, cannot keep secrets
-    Native,
-}
-
-/// Client Registration Error Response (RFC 7591)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientRegistrationError {
-    /// Error code
-    pub error: ClientRegistrationErrorCode,
-    /// Human-readable error description
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_description: Option<String>,
-}
-
-/// Client Registration Error Codes (RFC 7591)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ClientRegistrationErrorCode {
-    /// The value of one or more redirect_uris is invalid
-    InvalidRedirectUri,
-    /// The value of one of the client metadata fields is invalid
-    InvalidClientMetadata,
-    /// The software statement presented is invalid
-    InvalidSoftwareStatement,
-    /// The software statement cannot be checked
-    UnapprovedSoftwareStatement,
-}
-
-/// Dynamic Client Registration Manager for RFC 7591 compliance
-#[derive(Debug, Clone)]
-pub struct DynamicClientRegistration {
-    /// Registration endpoint URL
-    registration_endpoint: String,
-    /// Default application type for new registrations
-    default_application_type: ApplicationType,
-    /// Default grant types
-    default_grant_types: Vec<String>,
-    /// Default response types
-    default_response_types: Vec<String>,
-    /// HTTP client for registration requests
-    client: reqwest::Client,
-}
-
-impl DynamicClientRegistration {
-    /// Create a new dynamic client registration manager
-    #[must_use]
-    pub fn new(registration_endpoint: String) -> Self {
-        Self {
-            registration_endpoint,
-            default_application_type: ApplicationType::Web,
-            default_grant_types: vec!["authorization_code".to_string()],
-            default_response_types: vec!["code".to_string()],
-            client: reqwest::Client::new(),
-        }
-    }
-
-    /// Register a new OAuth client dynamically (RFC 7591)
-    pub async fn register_client(
-        &self,
-        request: ClientRegistrationRequest,
-    ) -> McpResult<ClientRegistrationResponse> {
-        // Prepare registration request with defaults
-        let mut registration_request = request;
-
-        // Apply defaults if not specified
-        if registration_request.application_type.is_none() {
-            registration_request.application_type = Some(self.default_application_type.clone());
-        }
-        if registration_request.grant_types.is_none() {
-            registration_request.grant_types = Some(self.default_grant_types.clone());
-        }
-        if registration_request.response_types.is_none() {
-            registration_request.response_types = Some(self.default_response_types.clone());
-        }
-
-        // Send registration request
-        let response = self
-            .client
-            .post(&self.registration_endpoint)
-            .header("Content-Type", "application/json")
-            .json(&registration_request)
-            .send()
-            .await
-            .map_err(|e| McpError::invalid_params(format!("Registration request failed: {}", e)))?;
-
-        // Handle response
-        if response.status().is_success() {
-            let registration_response: ClientRegistrationResponse =
-                response.json().await.map_err(|e| {
-                    McpError::invalid_params(format!("Invalid registration response: {}", e))
-                })?;
-            Ok(registration_response)
-        } else {
-            // Parse error response
-            let error_response: ClientRegistrationError = response
-                .json()
-                .await
-                .map_err(|e| McpError::invalid_params(format!("Invalid error response: {}", e)))?;
-            Err(McpError::invalid_params(format!(
-                "Client registration failed: {} - {}",
-                error_response.error as u32,
-                error_response.error_description.unwrap_or_default()
-            )))
-        }
-    }
-
-    /// Create a default MCP client registration request
-    #[must_use]
-    pub fn create_mcp_client_request(
-        client_name: &str,
-        redirect_uris: Vec<String>,
-        mcp_server_uri: &str,
-    ) -> ClientRegistrationRequest {
-        ClientRegistrationRequest {
-            redirect_uris: Some(redirect_uris),
-            response_types: Some(vec!["code".to_string()]),
-            grant_types: Some(vec!["authorization_code".to_string()]),
-            application_type: Some(ApplicationType::Web),
-            client_name: Some(format!("MCP Client: {}", client_name)),
-            client_uri: Some(mcp_server_uri.to_string()),
-            scope: Some(
-                "mcp:tools:read mcp:tools:execute mcp:resources:read mcp:prompts:read".to_string(),
-            ),
-            software_id: Some("turbomcp".to_string()),
-            software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            logo_uri: None,
-            contacts: None,
-            tos_uri: None,
-            policy_uri: None,
         }
     }
 }

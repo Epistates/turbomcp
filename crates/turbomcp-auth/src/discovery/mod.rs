@@ -78,9 +78,11 @@
 //! - [`crate::cimd`]: Client ID Metadata Documents (complementary feature)
 //! - [`crate::oauth2`]: OAuth 2.1 client (uses discovery metadata)
 
+mod client;
 mod fetcher;
 mod types;
 
+pub use client::{ClientDiscovery, ClientDiscoveryError, DiscoveredAuthorizationServer};
 pub use fetcher::{CacheStats, DiscoveryFetcher, FetcherConfig, FetcherError};
 pub use types::{
     AuthorizationServerMetadata, DiscoveryError, DiscoveryMetadata, OIDCProviderMetadata,
