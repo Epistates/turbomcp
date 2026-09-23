@@ -17,6 +17,8 @@
 //! ```
 
 mod layer;
+#[cfg(feature = "opentelemetry")]
+mod propagation;
 mod service;
 
 pub use layer::TelemetryLayer;
@@ -54,7 +56,21 @@ pub struct TelemetryLayerConfig {
     pub record_timing: bool,
     /// Methods to exclude from instrumentation
     pub excluded_methods: Vec<String>,
-    /// Whether to propagate trace context from incoming requests
+    /// Whether to continue the caller's trace. Default `true`.
+    ///
+    /// When set, W3C trace context (`traceparent` / `tracestate`) found in a
+    /// JSON-RPC request's `params._meta`, or in an HTTP request's headers,
+    /// becomes the parent of the `mcp.request` span. Requests without valid
+    /// trace context keep their local parent. Takes effect only when the
+    /// subscriber includes a `tracing-opentelemetry` layer, such as the one
+    /// [`TelemetryConfig::init`](crate::TelemetryConfig::init) installs when
+    /// an OTLP endpoint is configured.
+    ///
+    /// Trace context is caller-supplied, so a client can choose which trace
+    /// its requests land in. Turn this off at a trust boundary where that
+    /// matters.
+    #[cfg(feature = "opentelemetry")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "opentelemetry")))]
     pub propagate_context: bool,
     /// Maximum length (in bytes) at which `mcp.error.message` is truncated
     /// before being recorded on a span. Default `512`. Set to `0` to drop
@@ -76,6 +92,7 @@ impl Default for TelemetryLayerConfig {
             record_sizes: true,
             record_timing: true,
             excluded_methods: Vec::new(),
+            #[cfg(feature = "opentelemetry")]
             propagate_context: true,
             error_message_max_len: 512,
             redact_request_id: false,
@@ -128,7 +145,10 @@ impl TelemetryLayerConfig {
         self
     }
 
-    /// Enable or disable trace context propagation
+    /// Enable or disable continuing the caller's trace from incoming W3C trace
+    /// context. See the `propagate_context` field for what gets extracted.
+    #[cfg(feature = "opentelemetry")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "opentelemetry")))]
     #[must_use]
     pub fn propagate_context(mut self, enabled: bool) -> Self {
         self.propagate_context = enabled;
@@ -195,6 +215,7 @@ mod tests {
         assert!(config.record_sizes);
         assert!(config.record_timing);
         assert!(config.excluded_methods.is_empty());
+        #[cfg(feature = "opentelemetry")]
         assert!(config.propagate_context);
         assert!(!config.redact_request_id);
         assert!(config.redact_resource_uri);

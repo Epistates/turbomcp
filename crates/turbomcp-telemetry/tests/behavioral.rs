@@ -320,3 +320,139 @@ async fn resource_uri_is_recorded_when_opted_in() {
         Some("file:///srv/public/readme.md")
     );
 }
+
+/// W3C trace-context extraction needs a tracing-opentelemetry layer to attach
+/// the remote parent to, so these run only with the `opentelemetry` feature.
+#[cfg(feature = "opentelemetry")]
+mod propagation {
+    use super::*;
+
+    use opentelemetry::trace::{TraceContextExt, TraceId, TracerProvider as _};
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing::Instrument;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+    const TRACE_ID: &str = "0af7651916cd43dd8448eb211c80319c";
+    const TRACEPARENT: &str = "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01";
+
+    /// Trace ID of whatever span is current when the inner service runs.
+    type Seen = Arc<Mutex<Option<TraceId>>>;
+
+    fn current_trace_id() -> TraceId {
+        tracing::Span::current()
+            .context()
+            .span()
+            .span_context()
+            .trace_id()
+    }
+
+    fn otel_subscriber() -> impl Subscriber + Send + Sync {
+        let tracer = SdkTracerProvider::builder().build().tracer("test");
+        Registry::default().with(tracing_opentelemetry::layer().with_tracer(tracer))
+    }
+
+    fn recording_json_service(
+        seen: Seen,
+    ) -> impl Service<
+        serde_json::Value,
+        Response = serde_json::Value,
+        Error = Infallible,
+        Future: Send,
+    > + Clone {
+        tower::service_fn(move |_req: serde_json::Value| {
+            *seen.lock().unwrap() = Some(current_trace_id());
+            async { Ok::<_, Infallible>(serde_json::json!({ "jsonrpc": "2.0", "result": {} })) }
+        })
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn json_rpc_request_joins_trace_from_meta_traceparent() {
+        let _guard = tracing::subscriber::set_default(otel_subscriber());
+        let seen = Seen::default();
+
+        let svc = tower::ServiceBuilder::new()
+            .layer(TelemetryLayer::new(TelemetryLayerConfig::default()))
+            .service(recording_json_service(seen.clone()));
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": "x", "_meta": { "traceparent": TRACEPARENT } }
+        });
+        let _ = svc.oneshot(req).await.unwrap();
+
+        assert_eq!(
+            seen.lock().unwrap().unwrap(),
+            TraceId::from_hex(TRACE_ID).unwrap()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn http_request_joins_trace_from_traceparent_header() {
+        let _guard = tracing::subscriber::set_default(otel_subscriber());
+        let seen = Seen::default();
+
+        let inner = {
+            let seen = seen.clone();
+            tower::service_fn(move |_req: http::Request<()>| {
+                *seen.lock().unwrap() = Some(current_trace_id());
+                async { Ok::<_, Infallible>(http::Response::new(())) }
+            })
+        };
+        let svc = tower::ServiceBuilder::new()
+            .layer(TelemetryLayer::new(TelemetryLayerConfig::default()))
+            .service(inner);
+        let req = http::Request::builder()
+            .uri("/mcp")
+            .header("traceparent", TRACEPARENT)
+            .body(())
+            .unwrap();
+        let _ = svc.oneshot(req).await.unwrap();
+
+        assert_eq!(
+            seen.lock().unwrap().unwrap(),
+            TraceId::from_hex(TRACE_ID).unwrap()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_without_traceparent_keeps_its_local_parent() {
+        let _guard = tracing::subscriber::set_default(otel_subscriber());
+        let seen = Seen::default();
+
+        let outer = tracing::info_span!("outer");
+        let outer_trace = outer.context().span().span_context().trace_id();
+
+        let svc = tower::ServiceBuilder::new()
+            .layer(TelemetryLayer::new(TelemetryLayerConfig::default()))
+            .service(recording_json_service(seen.clone()));
+        let req = serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+        let _ = svc.oneshot(req).instrument(outer).await.unwrap();
+
+        assert_eq!(seen.lock().unwrap().unwrap(), outer_trace);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn propagation_can_be_disabled() {
+        let _guard = tracing::subscriber::set_default(otel_subscriber());
+        let seen = Seen::default();
+
+        let svc = tower::ServiceBuilder::new()
+            .layer(TelemetryLayer::new(
+                TelemetryLayerConfig::default().propagate_context(false),
+            ))
+            .service(recording_json_service(seen.clone()));
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": { "_meta": { "traceparent": TRACEPARENT } }
+        });
+        let _ = svc.oneshot(req).await.unwrap();
+
+        assert_ne!(
+            seen.lock().unwrap().unwrap(),
+            TraceId::from_hex(TRACE_ID).unwrap()
+        );
+    }
+}

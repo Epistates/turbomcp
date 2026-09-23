@@ -90,6 +90,11 @@ let service = ServiceBuilder::new()
     .service(my_mcp_handler);
 ```
 
+With the `opentelemetry` feature also enabled, the middleware continues the
+caller's trace: W3C `traceparent`/`tracestate` from a JSON-RPC request's
+`params._meta`, or from HTTP request headers, becomes the parent of the
+`mcp.request` span. Turn it off with `.propagate_context(false)`.
+
 ## MCP Span Attributes
 
 The telemetry system records MCP-specific attributes on spans:

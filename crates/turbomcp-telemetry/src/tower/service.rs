@@ -137,6 +137,14 @@ where
 
         let span = span_ctx.into_span();
 
+        #[cfg(feature = "opentelemetry")]
+        if config.propagate_context {
+            super::propagation::adopt_remote_parent(
+                &span,
+                &super::propagation::MetaExtractor::new(&req),
+            );
+        }
+
         // Calculate request size if configured
         let request_size = if config.record_sizes {
             Some(req.to_string().len())
@@ -235,6 +243,14 @@ where
             .transport("http")
             .server(&config.service_name, &config.service_version)
             .into_span();
+
+        #[cfg(feature = "opentelemetry")]
+        if config.propagate_context {
+            super::propagation::adopt_remote_parent(
+                &span,
+                &super::propagation::HeaderExtractor(req.headers()),
+            );
+        }
 
         let inner = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, inner);
