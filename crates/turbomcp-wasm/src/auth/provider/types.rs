@@ -241,7 +241,7 @@ impl ClientConfig {
 /// OAuth provider configuration.
 #[derive(Debug, Clone)]
 pub struct OAuthProviderConfig {
-    /// Issuer identifier (e.g., "https://my-server.workers.dev")
+    /// Issuer identifier (e.g., `https://my-server.workers.dev`)
     pub issuer: String,
 
     /// Authorization endpoint path (default: "/oauth/authorize")
