@@ -1,5 +1,6 @@
 //! OpenAPI provider for generating MCP components from OpenAPI specs.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use std::sync::Arc;
 use openapiv3::{
     OpenAPI, Operation, Parameter, ParameterSchemaOrContent, ReferenceOr, Schema, SecurityScheme,
 };
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Value, json};
 use url::Url;
 
@@ -616,36 +618,27 @@ impl OpenApiProvider {
     ) -> Result<Url> {
         let base = self.base_url.as_ref().ok_or(OpenApiError::NoBaseUrl)?;
 
-        // Replace path parameters
-        let mut path = operation.path.clone();
-        for param in &operation.parameters {
-            if param.location == "path" {
-                if let Some(value) = args.get(&param.name) {
-                    let value_str = match value {
-                        Value::String(s) => s.clone(),
-                        _ => value.to_string(),
-                    };
-                    path = path.replace(&format!("{{{}}}", param.name), &value_str);
-                } else if param.required {
-                    return Err(OpenApiError::MissingParameter(param.name.clone()));
-                }
-            }
+        // Append to the base path rather than `Url::join`ing onto it: join
+        // resolves the operation path as an absolute reference, which drops
+        // the base's own path (`https://api.x/v1` + `/pets` gave
+        // `https://api.x/pets`), and a value beginning with `/` turned the
+        // path into a network-path reference that swapped the host.
+        let mut path = base.path().trim_end_matches('/').to_string();
+        for segment in operation.path.trim_start_matches('/').split('/') {
+            path.push('/');
+            path.push_str(&expand_path_segment(segment, args)?);
         }
 
-        let mut url = base.join(&path)?;
+        let mut url = base.clone();
+        url.set_path(&path);
+        url.set_fragment(None);
 
         // Collect query parameters first
         let mut query_params: Vec<(String, String)> = Vec::new();
         for param in &operation.parameters {
             if param.location == "query" {
                 if let Some(value) = args.get(&param.name) {
-                    let value_str = match value {
-                        Value::String(s) => s.clone(),
-                        Value::Bool(b) => b.to_string(),
-                        Value::Number(n) => n.to_string(),
-                        _ => value.to_string(),
-                    };
-                    query_params.push((param.name.clone(), value_str));
+                    query_params.push((param.name.clone(), param_value(value).into_owned()));
                 } else if param.required {
                     return Err(OpenApiError::MissingParameter(param.name.clone()));
                 }
@@ -667,6 +660,73 @@ impl OpenApiProvider {
     pub(crate) fn client(&self) -> &reqwest::Client {
         &self.client
     }
+}
+
+/// Characters a path parameter value keeps verbatim: RFC 3986 `unreserved`.
+///
+/// Everything else is percent-encoded, so a value can never contribute a `/`,
+/// `?` or `#` and with them leave its own segment, the query, or the host.
+const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// Render an argument the way it goes on the wire: strings bare, everything
+/// else as its JSON text.
+pub(crate) fn param_value(value: &Value) -> Cow<'_, str> {
+    match value {
+        Value::String(s) => Cow::Borrowed(s),
+        other => Cow::Owned(other.to_string()),
+    }
+}
+
+/// Substitute the `{name}` placeholders in one segment of a path template.
+///
+/// Each value is encoded as data within the segment. Two values would still
+/// escape it after encoding, because `.` is unreserved: a segment that comes
+/// out as exactly `.` or `..` is a dot-segment, which URL normalisation
+/// resolves against the path before it and so walks out of the operation's
+/// route. Those, and empty values (which silently address the parent
+/// collection), are refused.
+fn expand_path_segment(segment: &str, args: &HashMap<String, Value>) -> Result<String> {
+    let mut expanded = String::with_capacity(segment.len());
+    let mut last_param = None;
+    let mut rest = segment;
+
+    while let Some(open) = rest.find('{') {
+        let Some(len) = rest[open..].find('}') else {
+            break;
+        };
+        let name = &rest[open + 1..open + len];
+        let value = args
+            .get(name)
+            .ok_or_else(|| OpenApiError::MissingParameter(name.to_string()))?;
+        let value = param_value(value);
+        if value.is_empty() {
+            return Err(OpenApiError::InvalidParameter(
+                name.to_string(),
+                "path parameters must not be empty".to_string(),
+            ));
+        }
+
+        expanded.push_str(&rest[..open]);
+        expanded.extend(utf8_percent_encode(&value, PATH_SEGMENT));
+        last_param = Some(name);
+        rest = &rest[open + len + 1..];
+    }
+    expanded.push_str(rest);
+
+    if let Some(name) = last_param
+        && (expanded == "." || expanded == "..")
+    {
+        return Err(OpenApiError::InvalidParameter(
+            name.to_string(),
+            format!("`{expanded}` is not a valid path segment"),
+        ));
+    }
+
+    Ok(expanded)
 }
 
 #[cfg(test)]
@@ -787,6 +847,94 @@ mod tests {
 
         let url = provider.build_url(get_user, &args).unwrap();
         assert_eq!(url.as_str(), "https://api.example.com/users/123");
+    }
+
+    /// A single-operation spec at `path`, for exercising `build_url`.
+    fn provider_for_path(path: &str, base_url: &str) -> OpenApiProvider {
+        let spec = json!({
+            "openapi": "3.0.0",
+            "info": { "title": "T", "version": "1.0.0" },
+            "paths": { path: { "post": { "responses": { "200": { "description": "ok" } } } } }
+        });
+        OpenApiProvider::from_string(&spec.to_string())
+            .unwrap()
+            .with_base_url(base_url)
+            .unwrap()
+    }
+
+    fn url_for(path: &str, base_url: &str, args: Value) -> Result<Url> {
+        let provider = provider_for_path(path, base_url);
+        let args: HashMap<String, Value> = serde_json::from_value(args).unwrap();
+        provider.build_url(&provider.operations()[0], &args)
+    }
+
+    #[test]
+    fn test_build_url_keeps_base_path_prefix() {
+        for base in ["https://api.example.com/v1", "https://api.example.com/v1/"] {
+            let url = url_for("/pets/{id}", base, json!({ "id": 7 })).unwrap();
+            assert_eq!(
+                url.as_str(),
+                "https://api.example.com/v1/pets/7",
+                "base {base}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_url_keeps_base_query() {
+        let url = url_for("/pets", "https://api.example.com/v1?key=abc", json!({})).unwrap();
+        assert_eq!(url.as_str(), "https://api.example.com/v1/pets?key=abc");
+    }
+
+    #[test]
+    fn test_build_url_encodes_path_params_as_one_segment() {
+        let url = url_for(
+            "/users/{id}/posts",
+            "https://api.example.com/v1",
+            json!({ "id": "../../admin?x=1#frag" }),
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://api.example.com/v1/users/..%2F..%2Fadmin%3Fx%3D1%23frag/posts"
+        );
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_build_url_path_param_cannot_swap_host() {
+        let url = url_for(
+            "/{tenant}/items",
+            "https://api.example.com",
+            json!({ "tenant": "/evil.example" }),
+        )
+        .unwrap();
+        assert_eq!(url.host_str(), Some("api.example.com"));
+        assert_eq!(url.path(), "/%2Fevil.example/items");
+    }
+
+    #[test]
+    fn test_build_url_rejects_dot_segments_and_empty_values() {
+        for id in [".", "..", ""] {
+            let result = url_for(
+                "/users/{id}",
+                "https://api.example.com/v1",
+                json!({ "id": id }),
+            );
+            assert!(
+                matches!(result, Err(OpenApiError::InvalidParameter(ref name, _)) if name == "id"),
+                "{id:?} gave {result:?}"
+            );
+        }
+        // A dot within a larger segment is just data.
+        let url = url_for(
+            "/files/{name}.json",
+            "https://api.example.com",
+            json!({ "name": ".." }),
+        )
+        .unwrap();
+        assert_eq!(url.path(), "/files/...json");
     }
 
     #[test]

@@ -36,6 +36,7 @@ thiserror = { workspace = true }
 
 # URL handling
 url = "2.5"
+percent-encoding = { workspace = true }
 
 # Regex for route pattern matching
 regex = "1.13"

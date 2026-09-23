@@ -6143,6 +6143,7 @@ version = "3.5.0"
 dependencies = [
  "ipnetwork",
  "openapiv3",
+ "percent-encoding",
  "regex",
  "reqwest",
  "serde",

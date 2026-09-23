@@ -12,7 +12,7 @@ use turbomcp_types::{
     ToolOutputSchema, ToolResult,
 };
 
-use crate::provider::{ExtractedOperation, OpenApiProvider};
+use crate::provider::{ExtractedOperation, OpenApiProvider, param_value};
 use crate::security::validate_url_for_ssrf;
 
 /// MCP handler that exposes OpenAPI operations as tools and resources.
@@ -197,11 +197,7 @@ impl OpenApiHandler {
             if param.location == "header"
                 && let Some(value) = args.get(&param.name)
             {
-                let value_str = match value {
-                    Value::String(s) => s.clone(),
-                    _ => value.to_string(),
-                };
-                request = request.header(&param.name, value_str);
+                request = request.header(&param.name, param_value(value).as_ref());
             }
         }
 
