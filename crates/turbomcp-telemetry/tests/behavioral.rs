@@ -279,3 +279,44 @@ async fn http_request_records_duration_and_status() {
         Some("success")
     );
 }
+
+fn resources_read(uri: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "resources/read",
+        "params": { "uri": uri }
+    })
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn resource_uri_is_not_recorded_by_default() {
+    let layer = capture_json(
+        TelemetryLayerConfig::default(),
+        EchoService,
+        resources_read("https://files.example/alice/report.pdf?token=s3cr3t"),
+    )
+    .await;
+
+    let span = layer.request_span();
+    assert!(
+        !span.fields.contains_key("mcp.resource.uri"),
+        "resource URI leaked into telemetry by default: {span:#?}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn resource_uri_is_recorded_when_opted_in() {
+    let layer = capture_json(
+        TelemetryLayerConfig::default().redact_resource_uri(false),
+        EchoService,
+        resources_read("file:///srv/public/readme.md"),
+    )
+    .await;
+
+    let span = layer.request_span();
+    assert_eq!(
+        span.fields.get("mcp.resource.uri").map(String::as_str),
+        Some("file:///srv/public/readme.md")
+    );
+}

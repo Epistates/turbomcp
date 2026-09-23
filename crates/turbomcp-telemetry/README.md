@@ -98,7 +98,7 @@ The telemetry system records MCP-specific attributes on spans:
 |-----------|-------------|
 | `mcp.method` | MCP method name (e.g., "tools/call") |
 | `mcp.tool.name` | Tool name for tools/call requests |
-| `mcp.resource.uri` | Resource URI for resources/read |
+| `mcp.resource.uri` | Resource URI for resources/read. Off by default in the tower middleware, since URIs can carry credentials or personal data; opt in with `.redact_resource_uri(false)` |
 | `mcp.prompt.name` | Prompt name for prompts/get |
 | `mcp.request.id` | JSON-RPC request ID |
 | `mcp.session.id` | MCP session ID |

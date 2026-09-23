@@ -31,14 +31,17 @@ use std::time::Duration;
 /// Several recorded fields can be expensive in OTel backends or expose user data:
 /// - `mcp.request.id` is unique per request (highest possible cardinality).
 /// - `mcp.session.id` / `mcp.user.id` / `mcp.tenant.id` track real principals.
-/// - `mcp.resource.uri` is client-controlled; a hostile client can inflate
-///   cardinality with synthetic URIs.
+/// - `mcp.resource.uri` is client-controlled and routinely carries user data
+///   or credentials (home-directory paths, account IDs, signed-URL tokens),
+///   and a hostile client can inflate cardinality with synthetic URIs. It is
+///   therefore **not recorded unless you opt in** with
+///   [`Self::redact_resource_uri`]`(false)`.
 ///
 /// `mcp.error.message` echoes JSON-RPC error strings verbatim, which routinely
 /// contain user input, file paths, SQL fragments, and backend stack traces. The
 /// layer truncates error messages to [`Self::error_message_max_len`] before
 /// recording; set to `0` to drop entirely. Toggle [`Self::redact_request_id`]
-/// or [`Self::redact_resource_uri`] to omit those high-cardinality fields.
+/// to omit the request ID.
 #[derive(Debug, Clone)]
 pub struct TelemetryLayerConfig {
     /// Service name for span attribution
@@ -60,7 +63,8 @@ pub struct TelemetryLayerConfig {
     /// Skip recording `mcp.request.id` to avoid the per-request cardinality
     /// explosion in cardinality-sensitive backends.
     pub redact_request_id: bool,
-    /// Skip recording `mcp.resource.uri` (client-controlled, unbounded).
+    /// Skip recording `mcp.resource.uri` (client-controlled, unbounded, and
+    /// often sensitive). Default `true`; set to `false` to record it.
     pub redact_resource_uri: bool,
 }
 
@@ -75,7 +79,9 @@ impl Default for TelemetryLayerConfig {
             propagate_context: true,
             error_message_max_len: 512,
             redact_request_id: false,
-            redact_resource_uri: false,
+            // Resource URIs can carry secrets and PII, so exporting them has
+            // to be a deliberate choice rather than the default.
+            redact_resource_uri: true,
         }
     }
 }
@@ -144,7 +150,8 @@ impl TelemetryLayerConfig {
         self
     }
 
-    /// Skip recording `mcp.resource.uri` (client-controlled, unbounded).
+    /// Skip recording `mcp.resource.uri` (client-controlled, unbounded, and
+    /// often sensitive). On by default; pass `false` to record resource URIs.
     #[must_use]
     pub fn redact_resource_uri(mut self, enabled: bool) -> Self {
         self.redact_resource_uri = enabled;
@@ -189,6 +196,8 @@ mod tests {
         assert!(config.record_timing);
         assert!(config.excluded_methods.is_empty());
         assert!(config.propagate_context);
+        assert!(!config.redact_request_id);
+        assert!(config.redact_resource_uri);
     }
 
     #[test]
