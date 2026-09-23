@@ -6104,6 +6104,7 @@ dependencies = [
 name = "turbomcp-http"
 version = "3.5.0"
 dependencies = [
+ "axum",
  "bytes",
  "criterion",
  "fastrand",

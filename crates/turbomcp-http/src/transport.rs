@@ -3,12 +3,16 @@
 //! This client provides **strict MCP 2025-11-25 specification compliance** with:
 //! - Single MCP endpoint for all communication
 //! - Accept header negotiation (application/json, text/event-stream)
-//! - Handles SSE responses from POST requests
-//! - Backward-compatible handling for legacy SSE "endpoint" events
-//! - Auto-reconnect with exponential backoff
-//! - Last-Event-ID resumability
-//! - Session management with Mcp-Session-Id
-//! - Protocol version headers
+//! - Handles SSE responses from POST requests, resuming them if the connection
+//!   drops before the response arrives
+//! - Auto-reconnect with exponential backoff, honouring the server's `retry`
+//! - Per-stream Last-Event-ID resumability
+//! - Session management with Mcp-Session-Id, including the 404 that ends one
+//! - Protocol version headers carrying the negotiated version
+//!
+//! This is the Streamable HTTP transport only; it does not fall back to the
+//! 2024-11-05 HTTP+SSE transport. An `endpoint` event arriving on a stream is
+//! honoured only when it names the MCP endpoint's own origin.
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -21,6 +25,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
+use url::Url;
 
 use turbomcp_protocol::MessageId;
 use turbomcp_transport_traits::{
@@ -48,6 +53,120 @@ fn normalize_sse_line_endings(chunk: &str) -> std::borrow::Cow<'_, str> {
     } else {
         std::borrow::Cow::Borrowed(chunk)
     }
+}
+
+/// The fields of one SSE event that MCP uses.
+#[derive(Debug, Default, PartialEq)]
+struct SseEvent {
+    event: Option<String>,
+    /// `data` lines joined with `\n`; `None` when the event had none.
+    data: Option<String>,
+    /// The event's id. `Some("")` is an explicit reset of the stream's cursor.
+    id: Option<String>,
+    /// The server's reconnection delay.
+    retry: Option<Duration>,
+}
+
+/// Parse one SSE event, already split off its blank-line boundary.
+///
+/// Field handling follows the WHATWG event-stream rules: comment lines are
+/// skipped, one space after the colon is dropped, an `id` containing NUL is
+/// ignored, and `retry` counts only when it is all ASCII digits.
+fn parse_sse_event(event_str: &str) -> SseEvent {
+    let mut event = SseEvent::default();
+    let mut data: Vec<&str> = Vec::new();
+
+    for line in event_str.lines() {
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        let (field, value) = match line.split_once(':') {
+            Some((field, value)) => (field, value.strip_prefix(' ').unwrap_or(value)),
+            None => (line, ""),
+        };
+        match field {
+            "event" => event.event = Some(value.to_string()),
+            "data" => data.push(value),
+            "id" if !value.contains('\0') => event.id = Some(value.to_string()),
+            "retry" if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
+                if let Ok(millis) = value.parse() {
+                    event.retry = Some(Duration::from_millis(millis));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !data.is_empty() {
+        event.data = Some(data.join("\n"));
+    }
+    event
+}
+
+/// Record an event's `id` as its stream's resumption cursor.
+fn advance_cursor(cursor: &mut Option<String>, event: &SseEvent) {
+    if let Some(id) = &event.id {
+        *cursor = (!id.is_empty()).then(|| id.clone());
+    }
+}
+
+/// How long to wait before reconnecting a stream, if at all.
+///
+/// §Sending Messages item 6: "The client MUST respect the `retry` field,
+/// waiting the given number of milliseconds before attempting to reconnect."
+/// The server's figure is a floor rather than a replacement for backoff, so a
+/// server that keeps failing still earns growing delays.
+fn reconnect_delay(backoff: Option<Duration>, server_retry: Option<Duration>) -> Option<Duration> {
+    match (backoff, server_retry) {
+        (Some(backoff), Some(retry)) => Some(backoff.max(retry)),
+        (backoff, retry) => backoff.or(retry),
+    }
+}
+
+/// Resolve a legacy `endpoint` event against the MCP endpoint.
+///
+/// The event redirects every later POST, `Authorization` header and all, so
+/// one naming another origin is refused: honouring it would hand the client's
+/// credentials to whoever could put an event on the stream. The data may be a
+/// bare URI or `{"uri": "..."}`, and a relative URI resolves against the MCP
+/// endpoint.
+fn resolve_endpoint_event(endpoint_url: &str, data: &str) -> TransportResult<String> {
+    let uri = if data.trim_start().starts_with('{') {
+        let value: serde_json::Value = serde_json::from_str(data).map_err(|e| {
+            TransportError::SerializationFailed(format!("Invalid endpoint JSON: {e}"))
+        })?;
+        value["uri"]
+            .as_str()
+            .ok_or_else(|| {
+                TransportError::SerializationFailed(
+                    "Endpoint event missing 'uri' field".to_string(),
+                )
+            })?
+            .to_string()
+    } else {
+        data.trim().to_string()
+    };
+
+    let base = Url::parse(endpoint_url)
+        .map_err(|e| TransportError::ConfigurationError(format!("Invalid MCP endpoint: {e}")))?;
+    let resolved = base
+        .join(&uri)
+        .map_err(|e| TransportError::ProtocolError(format!("Invalid endpoint URI {uri:?}: {e}")))?;
+    if resolved.origin() != base.origin() {
+        return Err(TransportError::ProtocolError(format!(
+            "Refusing endpoint event naming another origin: {resolved}"
+        )));
+    }
+    Ok(resolved.to_string())
+}
+
+/// Why a POST's SSE stream stopped being read.
+#[derive(Debug, PartialEq)]
+enum PostStreamEnd {
+    /// The response to the POST arrived.
+    Answered,
+    /// The connection ended first.
+    Interrupted,
 }
 
 /// Retry policy for auto-reconnect
@@ -181,7 +300,12 @@ pub struct StreamableHttpClientConfig {
     /// MCP endpoint path (e.g., "/mcp")
     pub endpoint_path: String,
 
-    /// Request timeout
+    /// Request timeout.
+    ///
+    /// Bounds connecting, a request up to its response headers, and a JSON
+    /// response body. It does not bound an SSE stream, which can rightly stay
+    /// open far longer — a POST streaming a slow tool call, or the standalone
+    /// GET stream — and is guarded by [`Self::sse_read_timeout`] instead.
     pub timeout: Duration,
 
     /// Auto-reconnect policy
@@ -252,24 +376,15 @@ impl Default for StreamableHttpClientConfig {
     }
 }
 
-/// Streamable HTTP client transport
-pub struct StreamableHttpClientTransport {
-    config: StreamableHttpClientConfig,
-    http_client: HttpClient,
-    state: Arc<RwLock<TransportState>>,
-    capabilities: TransportCapabilities,
-    /// Lock-free metrics counters — updated on every message send/receive,
-    /// so this must not sit behind a lock (see `turbomcp-stdio` for the
-    /// same pattern).
-    metrics: Arc<AtomicMetrics>,
-    _event_emitter: TransportEventEmitter,
-
-    /// Legacy SSE message endpoint if a server sends an `endpoint` event.
-    ///
-    /// MCP 2025-11-25 Streamable HTTP uses a single MCP endpoint for POST and GET.
-    /// The `endpoint` SSE event belongs to the older HTTP+SSE transport, but keeping
-    /// this optional override lets the client interoperate with legacy servers.
-    message_endpoint: Arc<RwLock<Option<String>>>,
+/// What every request to the MCP endpoint carries for the current session.
+///
+/// POST, GET and DELETE all build their headers here, so none can drift from
+/// the others. They used to assemble their own: the GET sent the configured
+/// protocol version rather than the negotiated one, and DELETE sent no
+/// version, no credentials and no custom headers at all.
+#[derive(Clone)]
+struct SessionState {
+    config: Arc<StreamableHttpClientConfig>,
 
     /// Session ID from server
     session_id: Arc<RwLock<Option<String>>>,
@@ -281,9 +396,122 @@ pub struct StreamableHttpClientTransport {
     /// `None` until the `initialize` response is seen, at which point the
     /// configured default stops being used.
     negotiated_version: Arc<RwLock<Option<String>>>,
+}
 
-    /// Last event ID for resumability
-    last_event_id: Arc<RwLock<Option<String>>>,
+impl SessionState {
+    fn new(config: Arc<StreamableHttpClientConfig>) -> Self {
+        Self {
+            config,
+            session_id: Arc::new(RwLock::new(None)),
+            negotiated_version: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Headers for a request to the MCP endpoint.
+    ///
+    /// Never `Last-Event-ID`: that names one stream's position, so only the
+    /// GET resuming that stream may send it.
+    async fn headers(&self, accept: Option<&str>) -> header::HeaderMap {
+        let mut headers = header::HeaderMap::new();
+
+        // Use safe header value construction - skip invalid headers rather than panic
+        if let Some(accept) = accept
+            && let Ok(accept_value) = header::HeaderValue::from_str(accept)
+        {
+            headers.insert(header::ACCEPT, accept_value);
+        }
+
+        // Prefer what was actually negotiated; the configured value is only a
+        // pre-handshake default. Sending a version the server never agreed to
+        // invites a 400 from any server that validates the header.
+        let protocol_version = self
+            .negotiated_version
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| self.config.protocol_version.clone());
+        if let Ok(protocol_value) = header::HeaderValue::from_str(&protocol_version) {
+            headers.insert("MCP-Protocol-Version", protocol_value);
+        }
+
+        if let Some(session_id) = self.session_id.read().await.as_ref()
+            && let Ok(session_value) = header::HeaderValue::from_str(session_id)
+        {
+            headers.insert("Mcp-Session-Id", session_value);
+        }
+
+        if let Some(token) = &self.config.auth_token
+            && let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token))
+        {
+            headers.insert(header::AUTHORIZATION, auth_value);
+        }
+
+        for (key, value) in &self.config.headers {
+            if let (Ok(k), Ok(v)) = (
+                header::HeaderName::from_bytes(key.as_bytes()),
+                header::HeaderValue::from_str(value),
+            ) {
+                headers.insert(k, v);
+            }
+        }
+
+        headers
+    }
+
+    /// Record the protocol version from an `initialize` response.
+    ///
+    /// The server may answer with a version other than the one requested —
+    /// that is the negotiation the lifecycle spec prescribes — and every later
+    /// request has to carry *that* version in `MCP-Protocol-Version`. Anything
+    /// that is not an initialize result is ignored, so this is safe to call on
+    /// every response body.
+    async fn capture_negotiated_version(&self, body: &[u8]) {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+            return;
+        };
+        if let Some(version) = value
+            .get("result")
+            .and_then(|r| r.get("protocolVersion"))
+            .and_then(|v| v.as_str())
+        {
+            let mut negotiated = self.negotiated_version.write().await;
+            if negotiated.as_deref() != Some(version) {
+                debug!("Negotiated MCP protocol version: {version}");
+                *negotiated = Some(version.to_string());
+            }
+        }
+    }
+
+    /// Forget the session, and what was negotiated for it.
+    async fn reset(&self) {
+        *self.session_id.write().await = None;
+        *self.negotiated_version.write().await = None;
+    }
+}
+
+/// Streamable HTTP client transport
+pub struct StreamableHttpClientTransport {
+    config: Arc<StreamableHttpClientConfig>,
+    http_client: HttpClient,
+    state: Arc<RwLock<TransportState>>,
+    capabilities: TransportCapabilities,
+    /// Lock-free metrics counters — updated on every message send/receive,
+    /// so this must not sit behind a lock (see `turbomcp-stdio` for the
+    /// same pattern).
+    metrics: Arc<AtomicMetrics>,
+    _event_emitter: TransportEventEmitter,
+
+    /// Message endpoint named by a same-origin `endpoint` event, if a server
+    /// sent one.
+    ///
+    /// MCP 2025-11-25 Streamable HTTP uses a single MCP endpoint for POST and
+    /// GET; the `endpoint` event belongs to the older HTTP+SSE transport. See
+    /// [`resolve_endpoint_event`] for why only the endpoint's own origin is
+    /// accepted.
+    message_endpoint: Arc<RwLock<Option<String>>>,
+
+    /// Session id, negotiated version, and the headers built from them.
+    session: SessionState,
 
     /// Channel for incoming SSE messages
     sse_receiver: Arc<Mutex<mpsc::Receiver<TransportMessage>>>,
@@ -331,9 +559,13 @@ impl StreamableHttpClientTransport {
         // IMPORTANT: Must explicitly call use_rustls_tls() because cargo features are additive
         // and other dependencies may bring in native-tls. Without this, TLS 1.3 minimum fails.
         // See: https://github.com/seanmonstar/reqwest/issues/1314
+        //
+        // No client-wide `timeout`: reqwest applies it until the body is fully read, which cut
+        // every SSE stream off after `config.timeout` — a slow tool call's POST stream included,
+        // so its response never arrived. Each request bounds its own non-streaming phases.
         let mut client_builder = HttpClient::builder()
             .use_rustls_tls()
-            .timeout(config.timeout);
+            .connect_timeout(config.timeout);
 
         // Redirect policy: when carrying a bearer token, only follow same-origin redirects
         // so the `Authorization: Bearer …` header (preserved by reqwest across redirects)
@@ -429,7 +661,9 @@ impl StreamableHttpClientTransport {
             ))
         })?;
 
+        let config = Arc::new(config);
         Ok(Self {
+            session: SessionState::new(Arc::clone(&config)),
             config,
             http_client,
             state: Arc::new(RwLock::new(TransportState::Disconnected)),
@@ -445,9 +679,6 @@ impl StreamableHttpClientTransport {
             metrics: Arc::new(AtomicMetrics::default()),
             _event_emitter: event_emitter,
             message_endpoint: Arc::new(RwLock::new(None)),
-            session_id: Arc::new(RwLock::new(None)),
-            negotiated_version: Arc::new(RwLock::new(None)),
-            last_event_id: Arc::new(RwLock::new(None)),
             sse_receiver: Arc::new(Mutex::new(sse_rx)),
             sse_sender: sse_tx,
             response_receiver: Arc::new(Mutex::new(response_rx)),
@@ -511,99 +742,38 @@ impl StreamableHttpClientTransport {
 
     /// Get message endpoint URL (discovered or default)
     async fn get_message_endpoint_url(&self) -> String {
-        let discovered = self.message_endpoint.read().await;
-        if let Some(endpoint) = discovered.as_ref() {
-            if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
-                endpoint.clone()
-            } else if endpoint.starts_with('/') {
-                format!("{}{}", self.config.base_url, endpoint)
-            } else {
-                format!("{}/{}", self.config.base_url, endpoint)
-            }
-        } else {
-            self.get_endpoint_url()
-        }
-    }
-
-    /// Build request headers
-    /// Record the protocol version from an `initialize` response.
-    ///
-    /// The server may answer with a version other than the one requested —
-    /// that is the negotiation the lifecycle spec prescribes — and every later
-    /// request has to carry *that* version in `MCP-Protocol-Version`. Anything
-    /// that is not an initialize result is ignored, so this is safe to call on
-    /// every response body.
-    async fn capture_negotiated_version(&self, body: &[u8]) {
-        let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
-            return;
-        };
-        if let Some(version) = value
-            .get("result")
-            .and_then(|r| r.get("protocolVersion"))
-            .and_then(|v| v.as_str())
-        {
-            let mut negotiated = self.negotiated_version.write().await;
-            if negotiated.as_deref() != Some(version) {
-                debug!("Negotiated MCP protocol version: {version}");
-                *negotiated = Some(version.to_string());
-            }
-        }
-    }
-
-    async fn build_headers(&self, accept: &str) -> header::HeaderMap {
-        let mut headers = header::HeaderMap::new();
-
-        // Use safe header value construction - skip invalid headers rather than panic
-        if let Ok(accept_value) = header::HeaderValue::from_str(accept) {
-            headers.insert(header::ACCEPT, accept_value);
-        }
-
-        // Prefer what was actually negotiated; the configured value is only a
-        // pre-handshake default. Sending a version the server never agreed to
-        // invites a 400 from any server that validates the header.
-        let protocol_version = self
-            .negotiated_version
+        self.message_endpoint
             .read()
             .await
             .clone()
-            .unwrap_or_else(|| self.config.protocol_version.clone());
-        if let Ok(protocol_value) = header::HeaderValue::from_str(&protocol_version) {
-            headers.insert("MCP-Protocol-Version", protocol_value);
-        }
+            .unwrap_or_else(|| self.get_endpoint_url())
+    }
 
-        if let Some(session_id) = self.session_id.read().await.as_ref()
-            && let Ok(session_value) = header::HeaderValue::from_str(session_id)
-        {
-            headers.insert("Mcp-Session-Id", session_value);
+    /// Forget a session the server has terminated, and say so.
+    ///
+    /// §Session Management: a client that gets 404 for a request carrying
+    /// `Mcp-Session-Id` "MUST start a new session by sending a new
+    /// `InitializeRequest` without a session ID attached". Everything tied to
+    /// the old session goes: its id, the version negotiated for it, and the
+    /// standalone stream still polling it — left running, that stream would
+    /// go on reconnecting with the dead id. Keeping the id would wedge the
+    /// transport outright: every later POST would resend it and get another
+    /// 404.
+    async fn expire_session(&self) -> TransportError {
+        self.session.reset().await;
+        *self.message_endpoint.write().await = None;
+        if let Some(handle) = self.sse_task_handle.lock().await.take() {
+            handle.abort();
         }
-
-        if let Some(last_event_id) = self.last_event_id.read().await.as_ref()
-            && let Ok(event_value) = header::HeaderValue::from_str(last_event_id)
-        {
-            headers.insert("Last-Event-ID", event_value);
-        }
-
-        if let Some(token) = &self.config.auth_token
-            && let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token))
-        {
-            headers.insert(header::AUTHORIZATION, auth_value);
-        }
-
-        for (key, value) in &self.config.headers {
-            if let (Ok(k), Ok(v)) = (
-                header::HeaderName::from_bytes(key.as_bytes()),
-                header::HeaderValue::from_str(value),
-            ) {
-                headers.insert(k, v);
-            }
-        }
-
-        headers
+        TransportError::SessionExpired(
+            "the server no longer knows this session (HTTP 404); initialize again to start a new one"
+                .to_string(),
+        )
     }
 
     /// Start SSE connection task
     async fn start_sse_connection(&self) -> TransportResult<()> {
-        if self.session_id.read().await.is_none() {
+        if self.session.session_id.read().await.is_none() {
             debug!("Deferring SSE connection until server provides a session ID");
             return Ok(());
         }
@@ -618,28 +788,14 @@ impl StreamableHttpClientTransport {
 
         info!("Starting SSE connection to {}", self.get_endpoint_url());
 
-        let endpoint_url = self.get_endpoint_url();
-        let config = self.config.clone();
-        let http_client = self.http_client.clone();
-        let state = Arc::clone(&self.state);
-        let sse_sender = self.sse_sender.clone();
-        let session_id = Arc::clone(&self.session_id);
-        let last_event_id = Arc::clone(&self.last_event_id);
-        let message_endpoint = Arc::clone(&self.message_endpoint);
-
-        let task = tokio::spawn(async move {
-            Self::sse_connection_task(
-                endpoint_url,
-                config,
-                http_client,
-                state,
-                sse_sender,
-                session_id,
-                last_event_id,
-                message_endpoint,
-            )
-            .await;
-        });
+        let task = tokio::spawn(Self::sse_connection_task(
+            self.get_endpoint_url(),
+            self.http_client.clone(),
+            Arc::clone(&self.state),
+            self.sse_sender.clone(),
+            self.session.clone(),
+            Arc::clone(&self.message_endpoint),
+        ));
 
         *task_handle = Some(task);
 
@@ -647,282 +803,217 @@ impl StreamableHttpClientTransport {
     }
 
     /// SSE connection task with auto-reconnect
-    #[allow(clippy::too_many_arguments)]
     async fn sse_connection_task(
         endpoint_url: String,
-        config: StreamableHttpClientConfig,
         http_client: HttpClient,
         state: Arc<RwLock<TransportState>>,
         sse_sender: mpsc::Sender<TransportMessage>,
-        session_id: Arc<RwLock<Option<String>>>,
-        last_event_id: Arc<RwLock<Option<String>>>,
+        session: SessionState,
         message_endpoint: Arc<RwLock<Option<String>>>,
     ) {
+        let config = Arc::clone(&session.config);
         let mut attempt = 0u32;
+        // This stream's own resumption cursor. A POST's stream keeps its own:
+        // one cursor shared between them resumed each stream from the other's
+        // position, which §Resumability forbids ("MUST NOT replay messages that
+        // would have been delivered on a different stream").
+        let mut last_event_id: Option<String> = None;
+        let mut server_retry: Option<Duration> = None;
 
         loop {
             // Check if we should retry
-            if let Some(delay) = config.retry_policy.delay(attempt) {
-                if attempt > 0 {
-                    warn!("Reconnecting in {:?} (attempt {})", delay, attempt + 1);
-                    tokio::time::sleep(delay).await;
-                }
-            } else {
+            let Some(backoff) = config.retry_policy.delay(attempt) else {
                 error!("Max retry attempts reached, giving up");
                 *state.write().await = TransportState::Disconnected;
                 break;
+            };
+            if let Some(delay) = reconnect_delay((attempt > 0).then_some(backoff), server_retry) {
+                if attempt > 0 {
+                    warn!("Reconnecting in {:?} (attempt {})", delay, attempt + 1);
+                } else {
+                    debug!("Reconnecting in {:?}, as the server asked", delay);
+                }
+                tokio::time::sleep(delay).await;
             }
 
-            // Build request with proper headers
-            let mut headers = header::HeaderMap::new();
-            headers.insert(
-                header::ACCEPT,
-                header::HeaderValue::from_static("text/event-stream"),
-            );
-
-            if let Ok(protocol_value) = header::HeaderValue::from_str(&config.protocol_version) {
-                headers.insert("MCP-Protocol-Version", protocol_value);
-            }
-
-            if let Some(sid) = session_id.read().await.as_ref()
-                && let Ok(session_value) = header::HeaderValue::from_str(sid)
-            {
-                headers.insert("Mcp-Session-Id", session_value);
-            }
-
-            if let Some(last_id) = last_event_id.read().await.as_ref()
+            let mut headers = session.headers(Some("text/event-stream")).await;
+            if let Some(last_id) = last_event_id.as_deref()
                 && let Ok(event_value) = header::HeaderValue::from_str(last_id)
             {
                 headers.insert("Last-Event-ID", event_value);
             }
 
-            if let Some(token) = &config.auth_token
-                && let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token))
-            {
-                headers.insert(header::AUTHORIZATION, auth_value);
+            // Connect to SSE endpoint. Only the wait for headers is bounded
+            // here; the body is an open-ended stream, guarded per chunk below.
+            let request = http_client.get(&endpoint_url).headers(headers).send();
+            let response = match tokio::time::timeout(config.timeout, request).await {
+                Ok(Ok(response)) => response,
+                Ok(Err(e)) => {
+                    error!("Failed to connect: {}", e);
+                    attempt += 1;
+                    continue;
+                }
+                Err(_) => {
+                    error!("SSE connection timed out after {:?}", config.timeout);
+                    attempt += 1;
+                    continue;
+                }
+            };
+
+            if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+                info!(
+                    "Server returned HTTP 405 for GET {}. Continuing without standalone SSE polling.",
+                    endpoint_url
+                );
+                break;
             }
 
-            // Connect to SSE endpoint
-            match http_client.get(&endpoint_url).headers(headers).send().await {
-                Ok(response) => {
-                    if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
-                        info!(
-                            "Server returned HTTP 405 for GET {}. Continuing without standalone SSE polling.",
-                            endpoint_url
+            // The session is gone. Reconnecting with its id can only earn more
+            // 404s; the next POST surfaces the expiry to the caller.
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                info!("Session no longer exists; stopping standalone SSE stream");
+                break;
+            }
+
+            if !response.status().is_success() {
+                error!("SSE connection failed: {}", response.status());
+                attempt += 1;
+                continue;
+            }
+
+            info!("SSE connection established");
+            *state.write().await = TransportState::Connected;
+            // Deliberately *not* resetting `attempt` here: accepting the GET is not
+            // evidence the stream works. That is decided below, from how long it lasted.
+            let connected_at = Instant::now();
+
+            // Process SSE stream
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+            let read_timeout = config.sse_read_timeout;
+            // Cap a single SSE event's accumulated buffer at the response-size limit so
+            // a server that streams indefinitely without ever emitting `\n\n` cannot
+            // OOM the client. `None` keeps the historical "no cap" behaviour.
+            let buffer_cap = config
+                .limits
+                .enforce_on_streams
+                .then_some(config.limits.max_response_size)
+                .flatten();
+
+            'sse_loop: loop {
+                let chunk_result = match tokio::time::timeout(read_timeout, stream.next()).await {
+                    Ok(Some(r)) => r,
+                    Ok(None) => break,
+                    Err(_) => {
+                        warn!(
+                            "SSE read idle for {:?}; closing stream to reconnect",
+                            read_timeout
                         );
                         break;
                     }
+                };
+                match chunk_result {
+                    Ok(chunk) => {
+                        let chunk_str = String::from_utf8_lossy(&chunk);
+                        // The SSE spec (and MCP servers built on frameworks that default
+                        // to it) permits `\r\n` or a lone `\r` as a line terminator, not
+                        // just `\n` — normalize per chunk so the `\n\n` event-boundary
+                        // search below works regardless of which convention the server
+                        // uses. (A chunk boundary landing exactly inside a `\r\n` pair
+                        // yields one extra blank line in the rare worst case, which the
+                        // per-field parser below already treats as a no-op — not worth
+                        // the complexity of carrying a pending-CR byte across chunks.)
+                        buffer.push_str(&normalize_sse_line_endings(&chunk_str));
 
-                    if !response.status().is_success() {
-                        error!("SSE connection failed: {}", response.status());
-                        attempt += 1;
-                        continue;
-                    }
+                        // Process complete events
+                        while let Some(pos) = buffer.find("\n\n") {
+                            let event = parse_sse_event(&buffer[..pos]);
+                            buffer.drain(..pos + 2);
 
-                    // Extract session ID from response headers
-                    if let Some(sid) = response
-                        .headers()
-                        .get("Mcp-Session-Id")
-                        .and_then(|v| v.to_str().ok())
-                    {
-                        *session_id.write().await = Some(sid.to_string());
-                        info!("Received session ID: {}", sid);
-                    }
-
-                    info!("SSE connection established");
-                    *state.write().await = TransportState::Connected;
-                    // Deliberately *not* resetting `attempt` here: accepting the GET is not
-                    // evidence the stream works. That is decided below, from how long it lasted.
-                    let connected_at = Instant::now();
-
-                    // Process SSE stream
-                    let mut stream = response.bytes_stream();
-                    let mut buffer = String::new();
-                    let read_timeout = config.sse_read_timeout;
-                    // Cap a single SSE event's accumulated buffer at the response-size limit so
-                    // a server that streams indefinitely without ever emitting `\n\n` cannot
-                    // OOM the client. `None` keeps the historical "no cap" behaviour.
-                    let buffer_cap = config
-                        .limits
-                        .enforce_on_streams
-                        .then_some(config.limits.max_response_size)
-                        .flatten();
-
-                    'sse_loop: loop {
-                        let chunk_result =
-                            match tokio::time::timeout(read_timeout, stream.next()).await {
-                                Ok(Some(r)) => r,
-                                Ok(None) => break,
-                                Err(_) => {
-                                    warn!(
-                                        "SSE read idle for {:?}; closing stream to reconnect",
-                                        read_timeout
-                                    );
-                                    break;
-                                }
-                            };
-                        match chunk_result {
-                            Ok(chunk) => {
-                                let chunk_str = String::from_utf8_lossy(&chunk);
-                                // The SSE spec (and MCP servers built on frameworks that default
-                                // to it) permits `\r\n` or a lone `\r` as a line terminator, not
-                                // just `\n` — normalize per chunk so the `\n\n` event-boundary
-                                // search below works regardless of which convention the server
-                                // uses. (A chunk boundary landing exactly inside a `\r\n` pair
-                                // yields one extra blank line in the rare worst case, which the
-                                // per-field parser below already treats as a no-op — not worth
-                                // the complexity of carrying a pending-CR byte across chunks.)
-                                buffer.push_str(&normalize_sse_line_endings(&chunk_str));
-
-                                // Process complete events
-                                while let Some(pos) = buffer.find("\n\n") {
-                                    let event_str = buffer[..pos].to_string();
-                                    buffer = buffer[pos + 2..].to_string();
-
-                                    if let Err(e) = Self::process_sse_event(
-                                        &event_str,
-                                        &sse_sender,
-                                        &last_event_id,
-                                        &message_endpoint,
-                                    )
-                                    .await
-                                    {
-                                        warn!("Failed to process SSE event: {}", e);
-                                    }
-                                }
-
-                                if let Some(cap) = buffer_cap
-                                    && buffer.len() > cap
-                                {
-                                    error!(
-                                        "SSE event buffer exceeded {} bytes without an event \
-                                         boundary; closing stream to avoid OOM",
-                                        cap
-                                    );
-                                    break 'sse_loop;
-                                }
+                            advance_cursor(&mut last_event_id, &event);
+                            if event.retry.is_some() {
+                                server_retry = event.retry;
                             }
-                            Err(e) => {
-                                // Not necessarily a fault: a server closing an idle stream
-                                // surfaces here as a decode error. Whether that mattered is
-                                // decided below, from how long the stream lasted — logging it as
-                                // an error unconditionally reports normal operation as a failure.
-                                if stream_was_healthy(
-                                    connected_at.elapsed(),
-                                    config.sse_healthy_stream_threshold,
-                                ) {
-                                    debug!("SSE stream closed by server: {}", e);
-                                } else {
-                                    error!("Error reading SSE stream: {}", e);
-                                }
-                                break;
+                            if let Err(e) = Self::process_sse_event(
+                                event,
+                                &sse_sender,
+                                &message_endpoint,
+                                &endpoint_url,
+                            )
+                            .await
+                            {
+                                warn!("Failed to process SSE event: {}", e);
                             }
                         }
-                    }
 
-                    let uptime = connected_at.elapsed();
-                    let healthy = stream_was_healthy(uptime, config.sse_healthy_stream_threshold);
-                    attempt = next_attempt_after_stream_end(
-                        attempt,
-                        uptime,
-                        config.sse_healthy_stream_threshold,
-                    );
-                    if healthy {
-                        // A server that closes idle streams on a timer is behaving normally, and
-                        // this is the client doing its job. Reporting it at warn/error once per
-                        // cycle per peer is what buried real diagnostics under log rotation.
-                        debug!("SSE stream ended after {:?}; reconnecting", uptime);
-                    } else {
-                        warn!(
-                            "SSE stream ended after only {:?} (attempt {}); backing off",
-                            uptime, attempt
-                        );
+                        if let Some(cap) = buffer_cap
+                            && buffer.len() > cap
+                        {
+                            error!(
+                                "SSE event buffer exceeded {} bytes without an event \
+                                 boundary; closing stream to avoid OOM",
+                                cap
+                            );
+                            break 'sse_loop;
+                        }
                     }
-                    *state.write().await = TransportState::Disconnected;
-                }
-                Err(e) => {
-                    error!("Failed to connect: {}", e);
-                    attempt += 1;
+                    Err(e) => {
+                        // Not necessarily a fault: a server closing an idle stream
+                        // surfaces here as a decode error. Whether that mattered is
+                        // decided below, from how long the stream lasted — logging it as
+                        // an error unconditionally reports normal operation as a failure.
+                        if stream_was_healthy(
+                            connected_at.elapsed(),
+                            config.sse_healthy_stream_threshold,
+                        ) {
+                            debug!("SSE stream closed by server: {}", e);
+                        } else {
+                            error!("Error reading SSE stream: {}", e);
+                        }
+                        break;
+                    }
                 }
             }
+
+            let uptime = connected_at.elapsed();
+            let healthy = stream_was_healthy(uptime, config.sse_healthy_stream_threshold);
+            attempt =
+                next_attempt_after_stream_end(attempt, uptime, config.sse_healthy_stream_threshold);
+            if healthy {
+                // A server that closes idle streams on a timer is behaving normally, and
+                // this is the client doing its job. Reporting it at warn/error once per
+                // cycle per peer is what buried real diagnostics under log rotation.
+                debug!("SSE stream ended after {:?}; reconnecting", uptime);
+            } else {
+                warn!(
+                    "SSE stream ended after only {:?} (attempt {}); backing off",
+                    uptime, attempt
+                );
+            }
+            *state.write().await = TransportState::Disconnected;
         }
     }
 
     /// Process an SSE event from the standalone GET stream.
     async fn process_sse_event(
-        event_str: &str,
+        event: SseEvent,
         sse_sender: &mpsc::Sender<TransportMessage>,
-        last_event_id: &Arc<RwLock<Option<String>>>,
         message_endpoint: &Arc<RwLock<Option<String>>>,
+        endpoint_url: &str,
     ) -> TransportResult<()> {
-        let lines: Vec<&str> = event_str.lines().collect();
-        let mut event_type: Option<String> = None;
-        let mut event_data: Vec<String> = Vec::new();
-        let mut event_id: Option<String> = None;
-
-        for line in lines {
-            if line.is_empty() {
-                continue;
-            }
-
-            if let Some(colon_pos) = line.find(':') {
-                let field = &line[..colon_pos];
-                let value = line[colon_pos + 1..].trim_start();
-
-                match field {
-                    "event" => event_type = Some(value.to_string()),
-                    "data" => event_data.push(value.to_string()),
-                    "id" => event_id = Some(value.to_string()),
-                    _ => {}
-                }
-            }
-        }
-
-        // Save event ID
-        if let Some(id) = event_id {
-            *last_event_id.write().await = Some(id);
-        }
-
-        if event_data.is_empty() {
+        let Some(data_str) = event.data else {
             return Ok(());
-        }
-
-        let data_str = event_data.join("\n");
+        };
 
         // Handle different event types
-        match event_type.as_deref() {
+        match event.event.as_deref() {
             Some("endpoint") => {
                 // Legacy HTTP+SSE transport compatibility. Streamable HTTP
                 // (MCP 2025-11-25) uses a single endpoint, so connect/send must not
                 // depend on this event.
-                //
-                // The event data may be either:
-                // 1. A JSON object: {"uri":"http://..."}
-                // 2. A plain string: "http://..."
-                let endpoint_uri = if data_str.trim().starts_with('{') {
-                    // Parse JSON object and extract uri field
-                    let endpoint_json: serde_json::Value = serde_json::from_str(&data_str)
-                        .map_err(|e| {
-                            TransportError::SerializationFailed(format!(
-                                "Invalid endpoint JSON: {}",
-                                e
-                            ))
-                        })?;
-                    endpoint_json["uri"]
-                        .as_str()
-                        .ok_or_else(|| {
-                            TransportError::SerializationFailed(
-                                "Endpoint event missing 'uri' field".to_string(),
-                            )
-                        })?
-                        .to_string()
-                } else {
-                    // Plain string format
-                    data_str.clone()
-                };
-
-                info!("Discovered message endpoint: {}", endpoint_uri);
-                *message_endpoint.write().await = Some(endpoint_uri);
+                let endpoint = resolve_endpoint_event(endpoint_url, &data_str)?;
+                info!("Discovered message endpoint: {}", endpoint);
+                *message_endpoint.write().await = Some(endpoint);
                 Ok(())
             }
             Some("message") | None => {
@@ -962,63 +1053,30 @@ impl StreamableHttpClientTransport {
         }
     }
 
-    /// Process one complete SSE event (already split off a `\n\n` boundary) from a POST
-    /// response stream, queue it, and report whether it was the JSON-RPC *response* correlated
-    /// to `expected_id` — as opposed to some other message (a request or notification) the
-    /// server chose to send first over the same stream.
+    /// Queue one SSE event from a POST response stream, and report whether it
+    /// was the JSON-RPC *response* correlated to `expected_id` — as opposed to
+    /// some other message (a request or notification) the server chose to send
+    /// first over the same stream.
     ///
     /// Per the MCP Streamable HTTP transport, a server MAY keep this per-POST SSE stream open
     /// after sending the correlated response (e.g. to send further related messages later); the
     /// caller must stop reading once it has that response rather than waiting for the stream to
     /// close, which is not guaranteed to happen. See `send()`'s call site.
     async fn process_post_sse_event(
-        event_str: &str,
+        event: &SseEvent,
         response_sender: &mpsc::Sender<TransportMessage>,
-        last_event_id: &Arc<RwLock<Option<String>>>,
         expected_id: Option<&serde_json::Value>,
     ) -> TransportResult<bool> {
-        let lines: Vec<&str> = event_str.lines().collect();
-        let mut event_data: Vec<String> = Vec::new();
-        let mut event_id: Option<String> = None;
-
-        for line in lines {
-            if line.is_empty() {
-                continue;
-            }
-
-            if let Some(colon_pos) = line.find(':') {
-                let field = &line[..colon_pos];
-                let value = line[colon_pos + 1..].trim_start();
-
-                match field {
-                    "data" => event_data.push(value.to_string()),
-                    "id" => event_id = Some(value.to_string()),
-                    "event" => {
-                        // Event type field - we primarily care about "message" events
-                        // but we'll process any event with data
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Save event ID
-        if let Some(id) = event_id {
-            *last_event_id.write().await = Some(id);
-        }
-
-        if event_data.is_empty() {
+        let Some(data_str) = event.data.as_deref() else {
             return Ok(false);
-        }
-
-        let data_str = event_data.join("\n");
+        };
         if data_str.trim().is_empty() {
             debug!("Skipping empty POST SSE event");
             return Ok(false);
         }
 
         // Parse as JSON-RPC message
-        let json_value: serde_json::Value = serde_json::from_str(&data_str).map_err(|e| {
+        let json_value: serde_json::Value = serde_json::from_str(data_str).map_err(|e| {
             TransportError::SerializationFailed(format!("Invalid JSON in POST SSE: {}", e))
         })?;
 
@@ -1050,6 +1108,160 @@ impl StreamableHttpClientTransport {
             String::from_utf8_lossy(&message.payload)
         );
         Ok(is_correlated_response)
+    }
+
+    /// Read a POST's SSE answer until the response to `expected_id` arrives,
+    /// resuming the stream if its connection ends first.
+    ///
+    /// Returning before then would leave the caller waiting on a response that
+    /// nothing is going to deliver: this stream is the only place the server
+    /// puts it. §Sending Messages item 6 lets a connection end at any time
+    /// without ending the stream, and §Resumability says how to carry on — a
+    /// GET naming this stream's own last event id. A stream that ended without
+    /// ever carrying an id cannot be resumed, and is reported as lost.
+    async fn read_post_stream(
+        &self,
+        response: reqwest::Response,
+        expected_id: Option<&serde_json::Value>,
+    ) -> TransportResult<()> {
+        let mut response = Some(response);
+        let mut cursor: Option<String> = None;
+        let mut server_retry: Option<Duration> = None;
+        let mut attempt = 0u32;
+
+        loop {
+            if let Some(response) = response.take()
+                && self
+                    .drain_post_stream(response, expected_id, &mut cursor, &mut server_retry)
+                    .await?
+                    == PostStreamEnd::Answered
+            {
+                return Ok(());
+            }
+
+            let Some(last_event_id) = cursor.clone() else {
+                return Err(TransportError::ConnectionLost(
+                    "POST SSE stream ended before its response, with no event id to resume from"
+                        .to_string(),
+                ));
+            };
+            let Some(backoff) = self.config.retry_policy.delay(attempt) else {
+                return Err(TransportError::ConnectionLost(
+                    "POST SSE stream ended before its response; gave up resuming it".to_string(),
+                ));
+            };
+            if let Some(delay) = reconnect_delay((attempt > 0).then_some(backoff), server_retry) {
+                tokio::time::sleep(delay).await;
+            }
+            attempt += 1;
+
+            debug!("Resuming POST SSE stream from event {last_event_id}");
+            let mut headers = self.session.headers(Some("text/event-stream")).await;
+            if let Ok(event_value) = header::HeaderValue::from_str(&last_event_id) {
+                headers.insert("Last-Event-ID", event_value);
+            }
+            let request = self
+                .http_client
+                .get(self.get_endpoint_url())
+                .headers(headers)
+                .send();
+            match tokio::time::timeout(self.config.timeout, request).await {
+                Ok(Ok(resumed)) if resumed.status() == reqwest::StatusCode::NOT_FOUND => {
+                    return Err(self.expire_session().await);
+                }
+                Ok(Ok(resumed)) if resumed.status().is_success() => response = Some(resumed),
+                Ok(Ok(resumed)) => warn!("Resuming POST SSE stream failed: {}", resumed.status()),
+                Ok(Err(e)) => warn!("Resuming POST SSE stream failed: {}", e),
+                Err(_) => warn!(
+                    "Resuming POST SSE stream timed out after {:?}",
+                    self.config.timeout
+                ),
+            }
+        }
+    }
+
+    /// Read one connection's worth of a POST's SSE stream.
+    ///
+    /// Tracks the stream's cursor and the server's `retry` as it goes, so the
+    /// caller can resume from exactly here.
+    async fn drain_post_stream(
+        &self,
+        response: reqwest::Response,
+        expected_id: Option<&serde_json::Value>,
+        cursor: &mut Option<String>,
+        server_retry: &mut Option<Duration>,
+    ) -> TransportResult<PostStreamEnd> {
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        // Same buffer cap as the GET SSE loop — a buggy or malicious server that
+        // streams without ever closing an event must not OOM the client.
+        let buffer_cap = self
+            .config
+            .limits
+            .enforce_on_streams
+            .then_some(self.config.limits.max_response_size)
+            .flatten();
+
+        loop {
+            let chunk =
+                match tokio::time::timeout(self.config.sse_read_timeout, stream.next()).await {
+                    Ok(Some(Ok(chunk))) => chunk,
+                    Ok(Some(Err(e))) => {
+                        debug!("POST SSE stream interrupted: {}", e);
+                        return Ok(PostStreamEnd::Interrupted);
+                    }
+                    Ok(None) => return Ok(PostStreamEnd::Interrupted),
+                    Err(_) => {
+                        warn!(
+                            "POST SSE read idle for {:?}; resuming the stream",
+                            self.config.sse_read_timeout
+                        );
+                        return Ok(PostStreamEnd::Interrupted);
+                    }
+                };
+
+            // See the matching comment in the GET SSE loop above: normalize
+            // `\r\n`/lone `\r` to `\n` per chunk so the event-boundary search
+            // below works against servers using either line-ending convention
+            // (confirmed necessary live against a real server that emits `\r\n`).
+            buffer.push_str(&normalize_sse_line_endings(&String::from_utf8_lossy(
+                &chunk,
+            )));
+
+            while let Some(pos) = buffer.find("\n\n") {
+                let event = parse_sse_event(&buffer[..pos]);
+                buffer.drain(..pos + 2);
+
+                advance_cursor(cursor, &event);
+                if event.retry.is_some() {
+                    *server_retry = event.retry;
+                }
+                match Self::process_post_sse_event(&event, &self.response_sender, expected_id).await
+                {
+                    Ok(true) => {
+                        // An `initialize` answered over SSE negotiates just as
+                        // one answered with JSON does.
+                        if let Some(data) = event.data.as_deref() {
+                            self.session
+                                .capture_negotiated_version(data.as_bytes())
+                                .await;
+                        }
+                        return Ok(PostStreamEnd::Answered);
+                    }
+                    Ok(false) => {}
+                    Err(e) => warn!("Failed to process POST SSE event: {}", e),
+                }
+            }
+
+            if let Some(cap) = buffer_cap
+                && buffer.len() > cap
+            {
+                return Err(TransportError::ResponseTooLarge {
+                    size: buffer.len(),
+                    max: cap,
+                });
+            }
+        }
     }
 
     /// Await the next inbound message.
@@ -1095,34 +1307,38 @@ impl Transport for StreamableHttpClientTransport {
 
             // Build headers with proper Accept negotiation
             let headers = self
-                .build_headers("application/json, text/event-stream")
+                .session
+                .headers(Some("application/json, text/event-stream"))
                 .await;
+            let had_session = headers.contains_key("mcp-session-id");
+
+            // `timeout` covers the request up to its headers and, for a JSON
+            // answer, its body. An SSE answer is read with a per-chunk idle
+            // bound instead; see `read_post_stream`.
+            let deadline = tokio::time::Instant::now() + self.config.timeout;
+            let timed_out = || TransportError::RequestTimeout {
+                operation: "HTTP POST".to_string(),
+                timeout: self.config.timeout,
+            };
 
             // Send POST request
-            let response = self
+            let request = self
                 .http_client
                 .post(&url)
                 .headers(headers)
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(message.payload.to_vec())
-                .send()
+                .send();
+            let response = tokio::time::timeout_at(deadline, request)
                 .await
+                .map_err(|_| timed_out())?
                 .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
 
             // A 404 on a request that carried `Mcp-Session-Id` means the
             // server no longer knows that session — it restarted, or the
-            // session expired. The spec's remedy is to start a NEW session by
-            // re-initializing, so the stale id is cleared here. Keeping it
-            // would wedge the transport permanently: every subsequent POST
-            // resends the dead id and gets another 404.
-            if response.status() == reqwest::StatusCode::NOT_FOUND
-                && self.session_id.read().await.is_some()
-            {
-                *self.session_id.write().await = None;
-                return Err(TransportError::ConnectionFailed(
-                    "MCP session expired (HTTP 404); re-initialize to start a new session"
-                        .to_string(),
-                ));
+            // session expired.
+            if response.status() == reqwest::StatusCode::NOT_FOUND && had_session {
+                return Err(self.expire_session().await);
             }
 
             if !response.status().is_success() {
@@ -1132,21 +1348,16 @@ impl Transport for StreamableHttpClientTransport {
                 )));
             }
 
-            // Update session ID if provided
-            if let Some(session_id) = response
+            // Update session ID if provided. The standalone stream starts once
+            // the body has been read, so that it opens with the version this
+            // response negotiated rather than the configured default.
+            let assigned_session = response
                 .headers()
                 .get("Mcp-Session-Id")
                 .and_then(|v| v.to_str().ok())
-            {
-                *self.session_id.write().await = Some(session_id.to_string());
-                self.start_sse_connection().await?;
-            }
-
-            // MCP 2025-11-25: HTTP 202 Accepted means notification/response was accepted (no body)
-            if response.status() == reqwest::StatusCode::ACCEPTED {
-                debug!("Received HTTP 202 Accepted (no response body expected)");
-                self.record_message_sent(message.payload.len());
-                return Ok(());
+                .map(str::to_owned);
+            if let Some(session_id) = &assigned_session {
+                *self.session.session_id.write().await = Some(session_id.clone());
             }
 
             // Check response content type and handle accordingly
@@ -1154,21 +1365,27 @@ impl Transport for StreamableHttpClientTransport {
                 .headers()
                 .get(header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
+                .unwrap_or("")
+                .to_string();
 
-            if content_type.contains("application/json") {
+            if response.status() == reqwest::StatusCode::ACCEPTED {
+                // MCP 2025-11-25: HTTP 202 Accepted means notification/response was accepted (no body)
+                debug!("Received HTTP 202 Accepted (no response body expected)");
+            } else if content_type.contains("application/json") {
                 // MCP 2025-11-25: Server returned immediate JSON response
                 debug!("Received JSON response from POST");
 
-                let response_bytes = response
-                    .bytes()
+                let response_bytes = tokio::time::timeout_at(deadline, response.bytes())
                     .await
+                    .map_err(|_| timed_out())?
                     .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
 
                 // Validate response size against configured limits (v2.2.0+)
                 validate_response_size(response_bytes.len(), &self.config.limits)?;
 
-                self.capture_negotiated_version(&response_bytes).await;
+                self.session
+                    .capture_negotiated_version(&response_bytes)
+                    .await;
 
                 let response_message = TransportMessage::new(
                     MessageId::from("http-response".to_string()),
@@ -1187,7 +1404,7 @@ impl Transport for StreamableHttpClientTransport {
                 //
                 // Per the Streamable HTTP transport, a server MAY keep this stream open *after*
                 // sending the JSON-RPC response correlated to our request (e.g. to send further
-                // related messages later) — it is not required to close it. So this loop must
+                // related messages later) — it is not required to close it. So reading must
                 // stop as soon as it has queued that correlated response, not wait for the
                 // stream to end; otherwise a compliant server that keeps the connection open
                 // hangs this call until an unrelated operation-level timeout papers over it.
@@ -1202,70 +1419,14 @@ impl Transport for StreamableHttpClientTransport {
                         .ok()
                         .and_then(|v| v.get("id").cloned());
 
-                let response_sender = self.response_sender.clone();
-                let last_event_id = Arc::clone(&self.last_event_id);
-
-                // Process SSE stream inline (not spawned) to ensure proper ordering
-                let mut stream = response.bytes_stream();
-                let mut buffer = String::new();
-                // Same buffer cap as the GET SSE loop — a buggy or malicious server that
-                // streams without ever closing an event must not OOM the client.
-                let buffer_cap = self
-                    .config
-                    .limits
-                    .enforce_on_streams
-                    .then_some(self.config.limits.max_response_size)
-                    .flatten();
-
-                'post_sse_loop: while let Some(chunk_result) = stream.next().await {
-                    match chunk_result {
-                        Ok(chunk) => {
-                            let chunk_str = String::from_utf8_lossy(&chunk);
-                            // See the matching comment in the GET SSE loop above: normalize
-                            // `\r\n`/lone `\r` to `\n` per chunk so the event-boundary search
-                            // below works against servers using either line-ending convention
-                            // (confirmed necessary live against a real server that emits `\r\n`).
-                            buffer.push_str(&normalize_sse_line_endings(&chunk_str));
-
-                            // Process complete events
-                            while let Some(pos) = buffer.find("\n\n") {
-                                let event_str = buffer[..pos].to_string();
-                                buffer = buffer[pos + 2..].to_string();
-
-                                match Self::process_post_sse_event(
-                                    &event_str,
-                                    &response_sender,
-                                    &last_event_id,
-                                    expected_id.as_ref(),
-                                )
-                                .await
-                                {
-                                    Ok(true) => break 'post_sse_loop,
-                                    Ok(false) => {}
-                                    Err(e) => {
-                                        warn!("Failed to process POST SSE event: {}", e);
-                                    }
-                                }
-                            }
-
-                            if let Some(cap) = buffer_cap
-                                && buffer.len() > cap
-                            {
-                                error!(
-                                    "POST SSE event buffer exceeded {} bytes without an event \
-                                     boundary; closing stream to avoid OOM",
-                                    cap
-                                );
-                                break 'post_sse_loop;
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Error reading POST SSE stream: {}", e);
-                            break;
-                        }
-                    }
-                }
+                // Processed inline (not spawned) to ensure proper ordering
+                self.read_post_stream(response, expected_id.as_ref())
+                    .await?;
                 debug!("POST SSE stream processing completed");
+            }
+
+            if assigned_session.is_some() {
+                self.start_sse_connection().await?;
             }
 
             self.record_message_sent(message.payload.len());
@@ -1365,16 +1526,20 @@ impl Transport for StreamableHttpClientTransport {
                 handle.abort();
             }
 
-            // Send DELETE to terminate session
-            if let Some(session_id) = self.session_id.read().await.as_ref() {
-                let url = self.get_endpoint_url();
-                let mut headers = header::HeaderMap::new();
-                if let Ok(session_value) = header::HeaderValue::from_str(session_id) {
-                    headers.insert("Mcp-Session-Id", session_value);
-                }
-
-                let _ = self.http_client.delete(&url).headers(headers).send().await;
+            // Send DELETE to terminate session. It carries what every other
+            // request does — credentials above all, or an authenticated server
+            // refuses to end the session.
+            if self.session.session_id.read().await.is_some() {
+                let headers = self.session.headers(None).await;
+                let _ = self
+                    .http_client
+                    .delete(self.get_endpoint_url())
+                    .headers(headers)
+                    .timeout(self.config.timeout)
+                    .send()
+                    .await;
             }
+            self.session.reset().await;
 
             *self.state.write().await = TransportState::Disconnected;
 
@@ -1486,12 +1651,10 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
         let task = tokio::spawn(StreamableHttpClientTransport::sse_connection_task(
             format!("http://{addr}/mcp"),
-            config,
             HttpClient::new(),
             Arc::new(RwLock::new(TransportState::Disconnected)),
             tx,
-            Arc::new(RwLock::new(None)),
-            Arc::new(RwLock::new(None)),
+            SessionState::new(Arc::new(config)),
             Arc::new(RwLock::new(None)),
         ));
 
@@ -1572,12 +1735,10 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
         let task = tokio::spawn(StreamableHttpClientTransport::sse_connection_task(
             format!("http://{addr}/mcp"),
-            config,
             HttpClient::new(),
             Arc::new(RwLock::new(TransportState::Disconnected)),
             tx,
-            Arc::new(RwLock::new(None)),
-            Arc::new(RwLock::new(None)),
+            SessionState::new(Arc::new(config)),
             Arc::new(RwLock::new(None)),
         ));
 
@@ -1695,104 +1856,113 @@ mod tests {
         assert!(client.capabilities().supports_bidirectional);
     }
 
-    #[tokio::test]
-    async fn test_endpoint_event_json_parsing() {
-        // Legacy HTTP+SSE compatibility: verify JSON endpoint events still parse.
-        // Bug: Client was storing entire JSON string {"uri":"..."} instead of extracting URI.
-
-        use std::sync::Arc;
-        use tokio::sync::RwLock;
-
-        let message_endpoint = Arc::new(RwLock::new(None::<String>));
-
-        // Simulate a legacy endpoint event with JSON format.
-        let event_data = [r#"{"uri":"http://127.0.0.1:8080/mcp"}"#.to_string()];
-        let data_str = event_data.join("\n");
-
-        // Parse JSON and extract URI (mimics the fix)
-        let endpoint_uri = if data_str.trim().starts_with('{') {
-            let endpoint_json: serde_json::Value =
-                serde_json::from_str(&data_str).expect("Failed to parse endpoint JSON");
-            endpoint_json["uri"]
-                .as_str()
-                .expect("Missing uri field")
-                .to_string()
-        } else {
-            data_str.clone()
-        };
-
-        *message_endpoint.write().await = Some(endpoint_uri.clone());
-
-        // Verify URI was extracted correctly
-        let stored = message_endpoint.read().await;
-        assert_eq!(stored.as_ref().unwrap(), "http://127.0.0.1:8080/mcp");
-        assert!(stored.as_ref().unwrap().starts_with("http://"));
-
-        // Verify it's a valid URL
-        assert!(stored.as_ref().unwrap().parse::<url::Url>().is_ok());
+    #[test]
+    fn a_same_origin_endpoint_event_is_resolved_against_the_mcp_endpoint() {
+        let base = "http://127.0.0.1:8080/mcp";
+        for (data, expected) in [
+            (
+                r#"{"uri":"http://127.0.0.1:8080/messages"}"#,
+                "http://127.0.0.1:8080/messages",
+            ),
+            (
+                "http://127.0.0.1:8080/messages?s=1",
+                "http://127.0.0.1:8080/messages?s=1",
+            ),
+            ("/messages", "http://127.0.0.1:8080/messages"),
+        ] {
+            assert_eq!(resolve_endpoint_event(base, data).unwrap(), expected);
+        }
     }
 
-    #[tokio::test]
-    async fn test_endpoint_event_plain_string_parsing() {
-        // Legacy HTTP+SSE compatibility with plain string endpoint events.
+    /// The event redirects every later POST, bearer token included, so one
+    /// naming another origin must be refused — it used to be followed, which
+    /// handed the credentials to whoever could put an event on the stream.
+    #[test]
+    fn an_endpoint_event_naming_another_origin_is_refused() {
+        let base = "https://mcp.example.com/mcp";
+        for data in [
+            "https://evil.example/steal",
+            r#"{"uri":"https://evil.example/steal"}"#,
+            "http://mcp.example.com/mcp",
+            "https://mcp.example.com:8443/mcp",
+            "//evil.example/steal",
+        ] {
+            assert!(
+                resolve_endpoint_event(base, data).is_err(),
+                "{data} must not be accepted"
+            );
+        }
+    }
 
-        use std::sync::Arc;
-        use tokio::sync::RwLock;
+    #[test]
+    fn sse_fields_are_parsed_per_the_event_stream_rules() {
+        let event = parse_sse_event(
+            ": comment\nevent: message\nid: s-1-4\nretry: 2500\ndata: {\"a\":\ndata:  1}\n",
+        );
+        assert_eq!(event.event.as_deref(), Some("message"));
+        assert_eq!(event.id.as_deref(), Some("s-1-4"));
+        assert_eq!(event.retry, Some(Duration::from_millis(2500)));
+        // One leading space is the separator; any more belong to the value.
+        assert_eq!(event.data.as_deref(), Some("{\"a\":\n 1}"));
 
-        let message_endpoint = Arc::new(RwLock::new(None::<String>));
+        // A `retry` that is not all digits is ignored, as is an id with NUL.
+        let event = parse_sse_event("retry: 1.5\nid: a\0b\ndata");
+        assert_eq!(event.retry, None);
+        assert_eq!(event.id, None);
+        assert_eq!(event.data.as_deref(), Some(""));
+    }
 
-        // Simulate endpoint event with plain string format
-        let event_data = ["http://127.0.0.1:8080/mcp".to_string()];
-        let data_str = event_data.join("\n");
+    #[test]
+    fn an_empty_id_resets_the_cursor() {
+        let mut cursor = Some("s-1-3".to_string());
+        advance_cursor(&mut cursor, &parse_sse_event("data: x"));
+        assert_eq!(cursor.as_deref(), Some("s-1-3"), "no id leaves it alone");
+        advance_cursor(&mut cursor, &parse_sse_event("id:\ndata: x"));
+        assert_eq!(cursor, None);
+    }
 
-        // Parse (should detect it's not JSON and use as-is)
-        let endpoint_uri = if data_str.trim().starts_with('{') {
-            let endpoint_json: serde_json::Value =
-                serde_json::from_str(&data_str).expect("Failed to parse endpoint JSON");
-            endpoint_json["uri"]
-                .as_str()
-                .expect("Missing uri field")
-                .to_string()
-        } else {
-            data_str.clone()
-        };
-
-        *message_endpoint.write().await = Some(endpoint_uri.clone());
-
-        // Verify plain string was stored correctly
-        let stored = message_endpoint.read().await;
-        assert_eq!(stored.as_ref().unwrap(), "http://127.0.0.1:8080/mcp");
-        assert!(stored.as_ref().unwrap().starts_with("http://"));
+    /// §Sending Messages item 6: "The client MUST respect the `retry` field".
+    #[test]
+    fn the_servers_retry_is_a_floor_under_backoff() {
+        let second = Duration::from_secs(1);
+        assert_eq!(reconnect_delay(None, None), None);
+        assert_eq!(reconnect_delay(None, Some(second)), Some(second));
+        assert_eq!(reconnect_delay(Some(second), None), Some(second));
+        assert_eq!(
+            reconnect_delay(Some(second), Some(second * 3)),
+            Some(second * 3)
+        );
+        assert_eq!(
+            reconnect_delay(Some(second * 5), Some(second)),
+            Some(second * 5)
+        );
     }
 
     #[tokio::test]
     async fn test_post_sse_whitespace_data_event_is_ignored() {
         let (tx, mut rx) = mpsc::channel(1);
-        let last_event_id = Arc::new(RwLock::new(None));
 
         let is_response = StreamableHttpClientTransport::process_post_sse_event(
-            "id: primer-1\nevent: message\ndata:    \n",
+            &parse_sse_event("id: primer-1\nevent: message\ndata:    \n"),
             &tx,
-            &last_event_id,
             None,
         )
         .await
         .expect("whitespace POST SSE event should be ignored");
 
         assert!(!is_response, "an ignored/empty event is never the response");
-        assert_eq!(last_event_id.read().await.as_deref(), Some("primer-1"));
         assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
     async fn test_post_sse_json_event_is_queued() {
         let (tx, mut rx) = mpsc::channel(1);
-        let last_event_id = Arc::new(RwLock::new(None));
 
         let is_response = StreamableHttpClientTransport::process_post_sse_event(
-            "id: msg-1\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            &parse_sse_event(
+                "id: msg-1\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            ),
             &tx,
-            &last_event_id,
             None,
         )
         .await
@@ -1802,7 +1972,6 @@ mod tests {
             is_response,
             "a result-bearing message is the correlated response"
         );
-        assert_eq!(last_event_id.read().await.as_deref(), Some("msg-1"));
         let message = rx.try_recv().expect("queued message");
         let value: serde_json::Value =
             serde_json::from_slice(&message.payload).expect("valid queued JSON");
@@ -1815,13 +1984,13 @@ mod tests {
         // "result"/"error") over the same POST-response stream before the actual correlated
         // response. The caller must keep reading past it, not treat it as the final response.
         let (tx, mut rx) = mpsc::channel(2);
-        let last_event_id = Arc::new(RwLock::new(None));
         let expected_id = serde_json::json!(1);
 
         let is_response = StreamableHttpClientTransport::process_post_sse_event(
-            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n",
+            &parse_sse_event(
+                "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n",
+            ),
             &tx,
-            &last_event_id,
             Some(&expected_id),
         )
         .await
@@ -1832,9 +2001,10 @@ mod tests {
         );
 
         let is_response = StreamableHttpClientTransport::process_post_sse_event(
-            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            &parse_sse_event(
+                "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            ),
             &tx,
-            &last_event_id,
             Some(&expected_id),
         )
         .await
@@ -1858,13 +2028,13 @@ mod tests {
         // A late-arriving response to a DIFFERENT request than the one we're waiting on must not
         // be mistaken for ours — only an exact id match ends the read loop.
         let (tx, mut rx) = mpsc::channel(1);
-        let last_event_id = Arc::new(RwLock::new(None));
         let expected_id = serde_json::json!(2);
 
         let is_response = StreamableHttpClientTransport::process_post_sse_event(
-            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            &parse_sse_event(
+                "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            ),
             &tx,
-            &last_event_id,
             Some(&expected_id),
         )
         .await
@@ -1891,22 +2061,16 @@ mod tests {
         let pos = normalized
             .find("\n\n")
             .expect("normalized buffer must expose an event boundary");
-        let event_str = &normalized[..pos];
+        let event = parse_sse_event(&normalized[..pos]);
+        assert_eq!(event.id.as_deref(), Some("1"));
 
         let (tx, mut rx) = mpsc::channel(1);
-        let last_event_id = Arc::new(RwLock::new(None));
 
-        let is_response = StreamableHttpClientTransport::process_post_sse_event(
-            event_str,
-            &tx,
-            &last_event_id,
-            None,
-        )
-        .await
-        .expect("CRLF-terminated event should parse");
+        let is_response = StreamableHttpClientTransport::process_post_sse_event(&event, &tx, None)
+            .await
+            .expect("CRLF-terminated event should parse");
 
         assert!(is_response);
-        assert_eq!(last_event_id.read().await.as_deref(), Some("1"));
         let message = rx.try_recv().expect("queued message");
         let value: serde_json::Value =
             serde_json::from_slice(&message.payload).expect("valid queued JSON");

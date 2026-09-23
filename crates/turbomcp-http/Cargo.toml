@@ -42,6 +42,8 @@ fastrand = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
+# Scripted servers for the wire-level tests in tests/
+axum = { workspace = true }
 criterion = { workspace = true, features = ["async_tokio"] }
 
 [[bench]]

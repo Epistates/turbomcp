@@ -5,6 +5,7 @@
 //! development, staging, and production environments.
 
 use super::errors::SecurityError;
+use super::utils::get_header_case_insensitive;
 use crate::security::SecurityHeaders;
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
@@ -83,6 +84,17 @@ pub struct OriginConfig {
     pub allow_localhost: bool,
     /// Whether to allow any origin (DANGEROUS - only for testing)
     pub allow_any: bool,
+    /// Whether to accept a request that carries no `Origin` header from a
+    /// non-loopback client.
+    ///
+    /// Browsers attach `Origin` to the cross-origin and state-changing
+    /// requests DNS rebinding depends on; a CLI, an agent runtime, or another
+    /// server calling over the network sends none. Without this, the only way
+    /// to admit such a client was `allow_any`, which also stops checking the
+    /// browsers. A request that *does* carry an `Origin` is still validated
+    /// against the rest of this policy — this relaxes absence, never a bad
+    /// value. Pair it with authentication.
+    pub allow_missing: bool,
 }
 
 impl Default for OriginConfig {
@@ -94,6 +106,7 @@ impl Default for OriginConfig {
             allowed_origins: HashSet::new(),
             allow_localhost: true,
             allow_any: false,
+            allow_missing: false,
         }
     }
 }
@@ -112,6 +125,7 @@ impl OriginConfig {
             allowed_origins: allowed_origins.into_iter().collect(),
             allow_localhost: false,
             allow_any: false,
+            allow_missing: false,
         }
     }
 
@@ -144,13 +158,45 @@ impl OriginConfig {
     }
 }
 
-/// Get header value case-insensitively (HTTP headers are case-insensitive per RFC 7230)
-fn get_header_case_insensitive<'a>(headers: &'a SecurityHeaders, name: &str) -> Option<&'a String> {
-    let name_lower = name.to_lowercase();
-    headers
+/// Check one `Origin` value against the policy.
+///
+/// The single statement of what this policy accepts, shared by
+/// [`validate_origin`] and by anything that has to answer the same question
+/// for a browser — a CORS layer, say — so the two can never disagree about
+/// which origins are trusted.
+pub fn validate_origin_value(config: &OriginConfig, origin: &str) -> Result<(), SecurityError> {
+    if config.allow_any {
+        return Ok(());
+    }
+
+    // Parse + canonicalize the inbound origin. Anything that doesn't
+    // round-trip through the URL parser as a bare origin is rejected
+    // outright — that catches `http://localhost.evil.com`,
+    // `http://localhost@evil.com`, paths, queries, and userinfo.
+    let canonical = canonicalize_origin(origin).ok_or_else(|| {
+        SecurityError::InvalidOrigin(format!("Origin '{}' is not a valid origin", origin))
+    })?;
+
+    // Match against the configured allowlist using canonical form so
+    // `https://Example.com` and `https://example.com:443` collide.
+    if config
+        .allowed_origins
         .iter()
-        .find(|(k, _)| k.to_lowercase() == name_lower)
-        .map(|(_, v)| v)
+        .filter_map(|entry| canonicalize_origin(entry))
+        .any(|c| c == canonical)
+    {
+        return Ok(());
+    }
+
+    // Allow localhost origins for development.
+    if config.allow_localhost && is_loopback_origin_parsed(&canonical.0, &canonical.1) {
+        return Ok(());
+    }
+
+    Err(SecurityError::InvalidOrigin(format!(
+        "Origin '{}' not allowed",
+        origin
+    )))
 }
 
 /// Validate Origin header to prevent DNS rebinding attacks
@@ -163,54 +209,28 @@ fn get_header_case_insensitive<'a>(headers: &'a SecurityHeaders, name: &str) -> 
 /// - DNS rebinding attacks require remote→localhost connections
 /// - localhost→localhost connections are inherently safe (no DNS involved)
 /// - If Origin header missing BUT client is localhost → allow (Claude Code case)
-/// - If Origin header missing AND client is remote → reject (security)
+/// - If Origin header missing AND client is remote → reject, unless
+///   [`OriginConfig::allow_missing`] admits non-browser clients
+/// - If Origin header present → checked by [`validate_origin_value`] whatever
+///   the client address, so a bad value is always refused
 pub fn validate_origin(
     config: &OriginConfig,
     headers: &SecurityHeaders,
     client_ip: std::net::IpAddr,
 ) -> Result<(), SecurityError> {
-    if config.allow_any {
-        return Ok(());
-    }
-
     // Check if Origin header exists (case-insensitive per HTTP spec)
     match get_header_case_insensitive(headers, "Origin") {
-        Some(origin) => {
-            // Parse + canonicalize the inbound origin. Anything that doesn't
-            // round-trip through the URL parser as a bare origin is rejected
-            // outright — that catches `http://localhost.evil.com`,
-            // `http://localhost@evil.com`, paths, queries, and userinfo.
-            let canonical = canonicalize_origin(origin).ok_or_else(|| {
-                SecurityError::InvalidOrigin(format!("Origin '{}' is not a valid origin", origin))
-            })?;
-
-            // Match against the configured allowlist using canonical form so
-            // `https://Example.com` and `https://example.com:443` collide.
-            if config
-                .allowed_origins
-                .iter()
-                .filter_map(|entry| canonicalize_origin(entry))
-                .any(|c| c == canonical)
-            {
-                return Ok(());
-            }
-
-            // Allow localhost origins for development.
-            if config.allow_localhost && is_loopback_origin_parsed(&canonical.0, &canonical.1) {
-                return Ok(());
-            }
-
-            Err(SecurityError::InvalidOrigin(format!(
-                "Origin '{}' not allowed",
-                origin
-            )))
-        }
+        Some(origin) => validate_origin_value(config, origin),
         None => {
             // Origin missing → check if client is localhost
             // DNS rebinding attacks require remote clients, so localhost clients are safe
             if client_ip.is_loopback() {
                 // localhost→localhost: No DNS rebinding risk, allow it
                 // This enables Claude Code and other local clients
+                return Ok(());
+            }
+
+            if config.allow_any || config.allow_missing {
                 return Ok(());
             }
 
@@ -303,6 +323,32 @@ mod tests {
         assert!(validate_origin(&config, &headers, client_ip).is_err());
     }
 
+    /// A remote non-browser client sends no `Origin`. `allow_missing` admits it
+    /// without switching off validation for the requests that do carry one.
+    #[test]
+    fn allow_missing_admits_absence_but_still_rejects_a_bad_origin() {
+        let config = OriginConfig {
+            allowed_origins: ["https://app.example".to_string()].into_iter().collect(),
+            allow_localhost: false,
+            allow_any: false,
+            allow_missing: true,
+        };
+        let remote = "203.0.113.5".parse().unwrap();
+
+        assert!(validate_origin(&config, &HashMap::new(), remote).is_ok());
+
+        let mut evil = HashMap::new();
+        evil.insert("Origin".to_string(), "https://evil.example".to_string());
+        assert!(
+            validate_origin(&config, &evil, remote).is_err(),
+            "a present, disallowed Origin is refused whatever allow_missing says"
+        );
+
+        let mut good = HashMap::new();
+        good.insert("origin".to_string(), "https://app.example".to_string());
+        assert!(validate_origin(&config, &good, remote).is_ok());
+    }
+
     #[test]
     fn test_validate_origin_allow_any() {
         let config = OriginConfig {
@@ -358,6 +404,7 @@ mod tests {
             allowed_origins: allowed,
             allow_localhost: false,
             allow_any: false,
+            allow_missing: false,
         };
         let client_ip = "192.168.1.100".parse().unwrap();
 

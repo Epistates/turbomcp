@@ -30,6 +30,12 @@ pub const DEFAULT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 /// Default maximum message size (10MB).
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
+/// Default idle lifetime of a Streamable HTTP session (1 hour).
+pub const DEFAULT_HTTP_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+/// Default cap on concurrent Streamable HTTP sessions.
+pub const DEFAULT_MAX_HTTP_SESSIONS: usize = 10_000;
+
 /// Origin validation configuration for HTTP transports.
 #[derive(Debug, Clone)]
 pub struct OriginValidationConfig {
@@ -45,6 +51,20 @@ pub struct OriginValidationConfig {
     /// spoof their source IP via headers. Entries accept CIDR notation
     /// (`10.0.0.0/8`) or bare addresses (`10.0.0.5`).
     pub trusted_proxies: Vec<String>,
+    /// Whether to accept requests with no `Origin` header from non-loopback
+    /// clients.
+    ///
+    /// Non-browser clients — CLIs, agent runtimes, other servers — send no
+    /// `Origin`, so a server reachable over the network refuses all of them by
+    /// default. This admits them while still validating every `Origin` that is
+    /// present, which `allow_any` does not. Pair it with authentication.
+    pub allow_missing_origin: bool,
+    /// Whether the HTTP transport answers CORS preflights and attaches CORS
+    /// headers for the origins this policy accepts.
+    ///
+    /// Off by default. A browser-based client on an allowlisted origin needs it
+    /// to read responses at all, and in particular to see `Mcp-Session-Id`.
+    pub cors: bool,
 }
 
 impl Default for OriginValidationConfig {
@@ -54,6 +74,8 @@ impl Default for OriginValidationConfig {
             allow_localhost: true,
             allow_any: false,
             trusted_proxies: Vec::new(),
+            allow_missing_origin: false,
+            cors: false,
         }
     }
 }
@@ -63,6 +85,35 @@ impl OriginValidationConfig {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+/// Session lifetime policy for the Streamable HTTP transport.
+///
+/// A session holds memory for as long as it exists — replay history, log
+/// level, pending server requests — and a client that initializes and walks
+/// away never says so. §Session Management lets the server end a session at
+/// any time; requests naming it then get 404 and a conforming client starts
+/// a new one.
+#[derive(Debug, Clone, Copy)]
+pub struct HttpSessionConfig {
+    /// How long a session may sit idle before it is reaped.
+    ///
+    /// A session is idle while it has no request in flight and no attached
+    /// stream, so a client holding a GET stream open is never reaped however
+    /// quiet it is.
+    pub idle_timeout: Duration,
+    /// Maximum concurrent sessions. An `initialize` beyond this is refused
+    /// with 503 Service Unavailable, after idle sessions have been reaped.
+    pub max_sessions: usize,
+}
+
+impl Default for HttpSessionConfig {
+    fn default() -> Self {
+        Self {
+            idle_timeout: DEFAULT_HTTP_SESSION_IDLE_TIMEOUT,
+            max_sessions: DEFAULT_MAX_HTTP_SESSIONS,
+        }
     }
 }
 
@@ -81,6 +132,8 @@ pub struct ServerConfig {
     pub max_message_size: usize,
     /// HTTP origin validation policy.
     pub origin_validation: OriginValidationConfig,
+    /// Streamable HTTP session lifetime policy.
+    pub http_sessions: HttpSessionConfig,
 }
 
 impl Default for ServerConfig {
@@ -92,6 +145,7 @@ impl Default for ServerConfig {
             required_capabilities: RequiredCapabilities::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             origin_validation: OriginValidationConfig::default(),
+            http_sessions: HttpSessionConfig::default(),
         }
     }
 }
@@ -119,6 +173,7 @@ pub struct ServerConfigBuilder {
     required_capabilities: Option<RequiredCapabilities>,
     max_message_size: Option<usize>,
     origin_validation: Option<OriginValidationConfig>,
+    http_sessions: Option<HttpSessionConfig>,
 }
 
 impl ServerConfigBuilder {
@@ -211,6 +266,58 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Accept requests with no `Origin` header from non-loopback clients,
+    /// while still validating every `Origin` that is present.
+    ///
+    /// See [`OriginValidationConfig::allow_missing_origin`].
+    #[must_use]
+    pub fn allow_missing_origin(mut self, allow: bool) -> Self {
+        self.origin_validation
+            .get_or_insert_with(OriginValidationConfig::default)
+            .allow_missing_origin = allow;
+        self
+    }
+
+    /// Answer CORS preflights and attach CORS headers for accepted origins.
+    ///
+    /// See [`OriginValidationConfig::cors`].
+    #[must_use]
+    pub fn cors(mut self, enabled: bool) -> Self {
+        self.origin_validation
+            .get_or_insert_with(OriginValidationConfig::default)
+            .cors = enabled;
+        self
+    }
+
+    /// Set the Streamable HTTP session policy.
+    #[must_use]
+    pub fn http_sessions(mut self, config: HttpSessionConfig) -> Self {
+        self.http_sessions = Some(config);
+        self
+    }
+
+    /// Set how long a Streamable HTTP session may sit idle before it is reaped.
+    ///
+    /// Default: 1 hour.
+    #[must_use]
+    pub fn http_session_idle_timeout(mut self, timeout: Duration) -> Self {
+        self.http_sessions
+            .get_or_insert_with(HttpSessionConfig::default)
+            .idle_timeout = timeout;
+        self
+    }
+
+    /// Set the maximum number of concurrent Streamable HTTP sessions.
+    ///
+    /// Default: 10,000.
+    #[must_use]
+    pub fn max_http_sessions(mut self, max: usize) -> Self {
+        self.http_sessions
+            .get_or_insert_with(HttpSessionConfig::default)
+            .max_sessions = max;
+        self
+    }
+
     /// Build the server configuration with sensible defaults.
     ///
     /// This method always succeeds and uses defaults for any unset fields.
@@ -224,6 +331,7 @@ impl ServerConfigBuilder {
             required_capabilities: self.required_capabilities.unwrap_or_default(),
             max_message_size: self.max_message_size.unwrap_or(DEFAULT_MAX_MESSAGE_SIZE),
             origin_validation: self.origin_validation.unwrap_or_default(),
+            http_sessions: self.http_sessions.unwrap_or_default(),
         }
     }
 
@@ -240,6 +348,7 @@ impl ServerConfigBuilder {
     /// - Rate limit `max_requests` is 0
     /// - Rate limit `window` is zero
     /// - Connection limits have all values set to 0
+    /// - `max_http_sessions` is 0
     ///
     /// # Example
     ///
@@ -289,6 +398,13 @@ impl ServerConfigBuilder {
             });
         }
 
+        let http_sessions = self.http_sessions.unwrap_or_default();
+        if http_sessions.max_sessions == 0 {
+            return Err(ConfigValidationError::InvalidConnectionLimits {
+                reason: "max_http_sessions cannot be 0".to_string(),
+            });
+        }
+
         Ok(ServerConfig {
             protocol: self.protocol.unwrap_or_default(),
             rate_limit: self.rate_limit,
@@ -296,6 +412,7 @@ impl ServerConfigBuilder {
             required_capabilities: self.required_capabilities.unwrap_or_default(),
             max_message_size,
             origin_validation: self.origin_validation.unwrap_or_default(),
+            http_sessions,
         })
     }
 }

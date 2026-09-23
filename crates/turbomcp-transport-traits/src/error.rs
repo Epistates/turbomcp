@@ -105,6 +105,16 @@ pub enum TransportError {
     #[error("Authentication failed: {0}")]
     AuthenticationFailed(String),
 
+    /// The server no longer knows the session this transport was using.
+    ///
+    /// Streamable HTTP answers a request naming a terminated session with 404,
+    /// and the client "MUST start a new session by sending a new
+    /// `InitializeRequest` without a session ID attached". The transport has
+    /// already forgotten the session when it returns this, so the next
+    /// `initialize` it sends starts a fresh one.
+    #[error("Session expired: {0}")]
+    SessionExpired(String),
+
     /// The request was rejected due to rate limiting.
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
@@ -230,6 +240,9 @@ impl From<TransportError> for turbomcp_protocol::McpError {
                 ErrorKind::Authentication,
                 format!("Authentication failed: {}", msg),
             ),
+            TransportError::SessionExpired(msg) => {
+                (ErrorKind::Transport, format!("Session expired: {}", msg))
+            }
             TransportError::RateLimitExceeded => {
                 (ErrorKind::RateLimited, "Rate limit exceeded".to_string())
             }

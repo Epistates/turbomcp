@@ -6,16 +6,17 @@
 //! - `Session` - Session state with SSE broadcast and replay support
 //! - `StoredEvent` - SSE event with metadata for replay
 //!
-//! The actual HTTP server implementation lives in `turbomcp_server::runtime::http`.
+//! These types are configuration and bookkeeping only; they serve nothing on
+//! their own. The HTTP server is `turbomcp_server::transport::http`, which
+//! provides:
 //!
-//! ## Features
-//!
-//! - ✅ Single MCP endpoint supporting GET, POST, and DELETE
-//! - ✅ SSE streaming responses from POST requests
-//! - ✅ Message replay for Last-Event-ID resumability
-//! - ✅ Session management with Mcp-Session-Id headers
-//! - ✅ Industrial-grade security (Origin validation, rate limiting, IP binding)
-//! - ✅ CORS support for browser-based clients (e.g., MCP Inspector)
+//! - Single MCP endpoint supporting GET, POST, and DELETE
+//! - SSE streaming responses from POST requests
+//! - Message replay for Last-Event-ID resumability
+//! - Session management with Mcp-Session-Id headers, idle expiry, and a cap
+//! - Origin validation and rate limiting
+//! - Opt-in CORS for browser-based clients (e.g., MCP Inspector), driven by the
+//!   same origin allowlist — see `ServerConfigBuilder::cors`
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

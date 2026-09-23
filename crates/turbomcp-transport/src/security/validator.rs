@@ -209,6 +209,7 @@ mod tests {
                     .collect(),
                 allow_localhost: false,
                 allow_any: false,
+                allow_missing: false,
             },
             AuthConfig {
                 require_auth: true,
@@ -241,6 +242,7 @@ mod tests {
                     .collect(),
                 allow_localhost: false,
                 allow_any: false,
+                allow_missing: false,
             },
             AuthConfig {
                 require_auth: true,
@@ -381,6 +383,7 @@ mod tests {
             allowed_origins: vec!["https://new.com".to_string()].into_iter().collect(),
             allow_localhost: false,
             allow_any: false,
+            allow_missing: false,
         };
         let new_auth_config = AuthConfig {
             require_auth: true,
