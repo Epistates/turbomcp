@@ -19,12 +19,12 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use tokio::process::Child;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
-use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+use tokio_util::codec::{Decoder, FramedRead, FramedWrite, LinesCodec, LinesCodecError};
 use tracing::{debug, error, trace, warn};
 use turbomcp_protocol::MessageId;
 use turbomcp_transport_traits::{
@@ -39,8 +39,55 @@ use uuid::Uuid;
 type BoxedAsyncRead = Pin<Box<dyn AsyncRead + Send + Sync + 'static>>;
 type BoxedAsyncBufRead = BufReader<BoxedAsyncRead>;
 type BoxedAsyncWrite = Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>;
-type StdinReader = FramedRead<BoxedAsyncBufRead, LinesCodec>;
+type StdinReader = FramedRead<BoxedAsyncBufRead, BoundedLines>;
 type StdoutWriter = FramedWrite<BoxedAsyncWrite, LinesCodec>;
+
+/// One newline-delimited frame from the peer.
+#[derive(Debug)]
+enum Line {
+    /// A complete line within the size limit.
+    Message(String),
+    /// A line past the size limit, already discarded up to its newline.
+    Oversized,
+}
+
+/// `LinesCodec` that reports an oversized line as a frame, not an error.
+///
+/// `LinesCodec::new_with_max_length` already discards a line past the limit
+/// and resynchronises at the next newline, but it says so with an error, and
+/// `FramedRead` treats every decoder error as the end of the stream. Before
+/// this, one oversized message stopped the reader for good and every later
+/// response went unread.
+#[derive(Debug)]
+struct BoundedLines(LinesCodec);
+
+impl BoundedLines {
+    fn new(max_length: usize) -> Self {
+        Self(LinesCodec::new_with_max_length(max_length))
+    }
+
+    fn lift(
+        decoded: Result<Option<String>, LinesCodecError>,
+    ) -> Result<Option<Line>, LinesCodecError> {
+        match decoded {
+            Err(LinesCodecError::MaxLineLengthExceeded) => Ok(Some(Line::Oversized)),
+            other => other.map(|line| line.map(Line::Message)),
+        }
+    }
+}
+
+impl Decoder for BoundedLines {
+    type Item = Line;
+    type Error = LinesCodecError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
+        Self::lift(self.0.decode(src))
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
+        Self::lift(self.0.decode_eof(src))
+    }
+}
 
 /// Source of stdio streams for the transport
 enum StreamSource {
@@ -378,6 +425,16 @@ impl StdioTransport {
     }
 
     async fn setup_stdio_streams(&self) -> TransportResult<()> {
+        // Incoming lines are bounded by the same limit the reader task checks
+        // them against, so a peer the configuration allows 10 MiB is not cut
+        // off by a codec capped at 1 MiB. `None` is the documented "unlimited".
+        let max_line = self
+            .config
+            .lock()
+            .limits
+            .max_response_size
+            .unwrap_or(usize::MAX);
+
         // Get the stream source and set up reader/writer accordingly
         let mut stream_source = self.stream_source.lock().await;
 
@@ -388,14 +445,9 @@ impl StdioTransport {
                 let boxed_stdin: BoxedAsyncRead = Box::pin(stdin);
                 let buffered_reader: BoxedAsyncBufRead = BufReader::new(boxed_stdin);
                 let stdout: BoxedAsyncWrite = Box::pin(tokio::io::stdout());
-                *self.stdout_writer.lock().await = Some(FramedWrite::new(
-                    stdout,
-                    LinesCodec::new_with_max_length(turbomcp_protocol::MAX_MESSAGE_SIZE),
-                ));
-                FramedRead::new(
-                    buffered_reader,
-                    LinesCodec::new_with_max_length(turbomcp_protocol::MAX_MESSAGE_SIZE),
-                )
+                *self.stdout_writer.lock().await =
+                    Some(FramedWrite::new(stdout, LinesCodec::new()));
+                FramedRead::new(buffered_reader, BoundedLines::new(max_line))
             }
             StreamSource::Raw { reader, writer } => {
                 // Use provided raw streams
@@ -412,14 +464,9 @@ impl StdioTransport {
 
                 // Wrap the reader in a BufReader for line-based reading
                 let buffered_reader: BoxedAsyncBufRead = BufReader::new(raw_reader);
-                *self.stdout_writer.lock().await = Some(FramedWrite::new(
-                    raw_writer,
-                    LinesCodec::new_with_max_length(turbomcp_protocol::MAX_MESSAGE_SIZE),
-                ));
-                FramedRead::new(
-                    buffered_reader,
-                    LinesCodec::new_with_max_length(turbomcp_protocol::MAX_MESSAGE_SIZE),
-                )
+                *self.stdout_writer.lock().await =
+                    Some(FramedWrite::new(raw_writer, LinesCodec::new()));
+                FramedRead::new(buffered_reader, BoundedLines::new(max_line))
             }
         };
 
@@ -437,7 +484,22 @@ impl StdioTransport {
             let task_handle = tokio::spawn(async move {
                 while let Some(result) = stdin_reader.next().await {
                     match result {
-                        Ok(line) => {
+                        Ok(Line::Oversized) => {
+                            // One oversized message must not cost the peer
+                            // every message after it: the codec has already
+                            // skipped to the next newline, so read on.
+                            warn!(
+                                max_bytes = max_line,
+                                "Discarded an incoming line longer than the configured limit"
+                            );
+                            event_emitter.emit_error(
+                                TransportError::ProtocolError(format!(
+                                    "discarded an incoming line longer than {max_line} bytes"
+                                )),
+                                Some("response size validation".to_string()),
+                            );
+                        }
+                        Ok(Line::Message(line)) => {
                             trace!("Received line: {}", line);
 
                             // Validate response size against configured limits (v2.2.0+)
@@ -1158,6 +1220,71 @@ line2"}}"#;
 
         assert_eq!(server_transport.state().await, TransportState::Disconnected);
         assert_eq!(client_transport.state().await, TransportState::Disconnected);
+    }
+
+    /// A line past the limit is dropped on its own; the reader keeps going.
+    ///
+    /// Before 3.5.0 the codec's length error ended the reader task, so one
+    /// oversized response left the client deaf to everything that followed.
+    #[tokio::test]
+    async fn an_oversized_line_is_skipped_and_reading_continues() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut peer, reader) = tokio::io::duplex(64 * 1024);
+        let transport = StdioTransport::from_raw(reader, tokio::io::sink()).unwrap();
+        let mut config = TransportConfig {
+            transport_type: TransportType::Stdio,
+            ..Default::default()
+        };
+        config.limits.max_response_size = Some(256);
+        transport.configure(config).await.unwrap();
+        transport.connect().await.unwrap();
+
+        let oversized = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"pad":"{}"}}}}"#,
+            "x".repeat(1024)
+        );
+        let next = r#"{"jsonrpc":"2.0","id":2,"result":{}}"#;
+        peer.write_all(format!("{oversized}\n{next}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let received = tokio::time::timeout(Duration::from_secs(2), transport.receive())
+            .await
+            .expect("the reader must survive the oversized line")
+            .unwrap()
+            .expect("a message");
+        assert_eq!(received.payload.as_ref(), next.as_bytes());
+    }
+
+    /// The limit is the configured one, not a fixed 1 MiB: the server side
+    /// defaults to 10 MiB, and a client must be able to read what it sends.
+    #[tokio::test]
+    async fn lines_up_to_the_configured_limit_are_accepted() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut peer, reader) = tokio::io::duplex(64 * 1024);
+        let transport = StdioTransport::from_raw(reader, tokio::io::sink()).unwrap();
+        transport.connect().await.unwrap();
+
+        let large = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"pad":"{}"}}}}"#,
+            "x".repeat(2 * 1024 * 1024)
+        );
+        let writer = tokio::spawn(async move {
+            peer.write_all(format!("{large}\n").as_bytes())
+                .await
+                .unwrap();
+            peer
+        });
+
+        let received = tokio::time::timeout(Duration::from_secs(5), transport.receive())
+            .await
+            .expect("a 2 MiB line is within the default limit")
+            .unwrap()
+            .expect("a message");
+        assert!(received.payload.len() > 2 * 1024 * 1024);
+        drop(writer.await);
     }
 
     #[test]
