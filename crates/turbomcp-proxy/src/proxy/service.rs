@@ -298,7 +298,7 @@ mod tests {
 
     /// Icons, `execution`, and `_meta` on a tool, and the server's description
     /// and icons, all have to survive the hop. The proxy used to copy entries
-    /// into its own snake_case mirrors, which carried only the fields someone
+    /// into its own `snake_case` mirrors, which carried only the fields someone
     /// had remembered, so each of these was silently dropped.
     #[tokio::test]
     async fn the_upstream_catalogue_reaches_the_client_losslessly() {
@@ -359,8 +359,8 @@ mod tests {
             prompts: Some(PromptsCapabilities {
                 list_changed: Some(true),
             }),
-            logging: Some(Default::default()),
-            completions: Some(Default::default()),
+            logging: Some(turbomcp_protocol::types::LoggingCapabilities::default()),
+            completions: Some(turbomcp_protocol::types::CompletionCapabilities::default()),
             experimental: Some(HashMap::from([(
                 "io.example/feature".to_string(),
                 serde_json::json!({}),
