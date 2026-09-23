@@ -3,10 +3,10 @@
 //! Provides utilities for creating properly attributed spans for MCP operations.
 
 use crate::span_attributes::{
-    MCP_CLIENT_NAME, MCP_CLIENT_VERSION, MCP_DURATION_MS, MCP_ERROR_MESSAGE, MCP_METHOD,
-    MCP_PROMPT_NAME, MCP_PROTOCOL_VERSION, MCP_REQUEST_ID, MCP_RESOURCE_URI, MCP_SERVER_NAME,
-    MCP_SERVER_VERSION, MCP_SESSION_ID, MCP_STATUS, MCP_TENANT_ID, MCP_TOOL_NAME, MCP_TRANSPORT,
-    MCP_USER_ID,
+    MCP_CLIENT_NAME, MCP_CLIENT_VERSION, MCP_DURATION_MS, MCP_ERROR_CODE, MCP_ERROR_MESSAGE,
+    MCP_METHOD, MCP_PROMPT_NAME, MCP_PROTOCOL_VERSION, MCP_REQUEST_ID, MCP_RESOURCE_URI,
+    MCP_SERVER_NAME, MCP_SERVER_VERSION, MCP_SESSION_ID, MCP_STATUS, MCP_TENANT_ID, MCP_TOOL_NAME,
+    MCP_TRANSPORT, MCP_USER_ID,
 };
 use std::time::Duration;
 use tracing::{Span, info_span};
@@ -138,10 +138,17 @@ impl McpSpanContext {
     }
 
     /// Create a tracing span from this context
+    ///
+    /// The span also declares the completion fields (`mcp.duration_ms`,
+    /// `mcp.status`, `mcp.error.code`, `mcp.error.message`) as empty, so
+    /// [`record_completion`] can fill them in later.
     #[must_use]
     pub fn into_span(self) -> Span {
         let method = self.method.as_deref().unwrap_or("unknown");
 
+        // `Span::record` silently ignores any field the span did not declare
+        // when it was created, so every field recorded after the fact has to
+        // be listed here, including the ones only known at completion.
         let span = info_span!(
             "mcp.request",
             { MCP_METHOD } = method,
@@ -158,6 +165,10 @@ impl McpSpanContext {
             { MCP_CLIENT_VERSION } = tracing::field::Empty,
             { MCP_SERVER_NAME } = tracing::field::Empty,
             { MCP_SERVER_VERSION } = tracing::field::Empty,
+            { MCP_DURATION_MS } = tracing::field::Empty,
+            { MCP_STATUS } = tracing::field::Empty,
+            { MCP_ERROR_CODE } = tracing::field::Empty,
+            { MCP_ERROR_MESSAGE } = tracing::field::Empty,
         );
 
         // Record optional fields
@@ -207,8 +218,10 @@ impl McpSpanContext {
 
 /// Record request completion on a span.
 ///
-/// Used by the tower service's request-completion hook (see
-/// `tower::service::record_completion_for_span`). Public so external
+/// The span must come from [`McpSpanContext::into_span`] (or one of the
+/// `*_span` helpers below), which declares the fields recorded here; on any
+/// other span the values are silently dropped. The tower middleware records
+/// completion through this function, and it is public so external
 /// observability adapters can plug into the same recording shape.
 pub fn record_completion(span: &Span, duration: Duration, success: bool, error: Option<&str>) {
     let duration_ms = i64::try_from(duration.as_millis()).unwrap_or(i64::MAX);
