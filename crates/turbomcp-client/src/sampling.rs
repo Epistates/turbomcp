@@ -78,6 +78,13 @@ pub trait UserInteractionHandler: Send + Sync + std::fmt::Debug {
     fn approve_request(&self, request: &CreateMessageRequest) -> BoxSamplingFuture<'_, bool>;
 
     /// Present result to user for review
+    ///
+    /// Return `Some(result)` to send an edited result in place of the one the
+    /// LLM produced, or `None` to send it unmodified. Neither rejects it: to
+    /// refuse, return an error — [`HandlerError::UserCancelled`] answers the
+    /// server with the spec's `-1`.
+    ///
+    /// [`HandlerError::UserCancelled`]: crate::handlers::HandlerError::UserCancelled
     fn approve_response(
         &self,
         request: &CreateMessageRequest,
@@ -137,23 +144,49 @@ impl DelegatingSamplingHandler {
         }
     }
 
-    /// Select best LLM client based on model preferences
+    /// Select the LLM client to delegate to, honouring `modelPreferences.hints`.
+    ///
+    /// sampling.mdx: hints are substrings matched against model names,
+    /// evaluated in order, the first match winning. The first client serving
+    /// a model that matches the earliest matching hint is chosen; with no
+    /// hints, or none that match, the first client is. Hints are advisory, so
+    /// a client whose server info cannot be fetched is skipped, not fatal.
     async fn select_llm_client(
         &self,
-        _request: &CreateMessageRequest,
+        request: &CreateMessageRequest,
     ) -> Result<Arc<dyn LLMServerClient>, Box<dyn std::error::Error + Send + Sync>> {
-        // This is where the intelligence goes - matching model preferences
-        // to available LLM servers, exactly as the MCP spec describes
-
-        if let Some(first_client) = self.llm_clients.first() {
-            Ok(first_client.clone())
-        } else {
-            // FIXED: Return HandlerError::Configuration instead of string error
-            // This ensures proper error code mapping (-32601)
-            Err(Box::new(crate::handlers::HandlerError::Configuration {
+        let Some(first_client) = self.llm_clients.first() else {
+            // HandlerError::Configuration maps to -32601 on the wire.
+            return Err(Box::new(crate::handlers::HandlerError::Configuration {
                 message: "No LLM servers configured".to_string(),
-            }))
+            }));
+        };
+
+        let hints: Vec<&str> = request
+            .model_preferences
+            .iter()
+            .flat_map(|prefs| prefs.hints.iter().flatten())
+            .filter_map(|hint| hint.name.as_deref())
+            .collect();
+        if hints.is_empty() || self.llm_clients.len() == 1 {
+            return Ok(first_client.clone());
         }
+
+        let mut served = Vec::with_capacity(self.llm_clients.len());
+        for client in &self.llm_clients {
+            match client.get_server_info().await {
+                Ok(info) => served.push((client, info.models)),
+                Err(e) => tracing::debug!("Skipping LLM server for hint matching: {e}"),
+            }
+        }
+
+        let chosen = hints.iter().find_map(|hint| {
+            served
+                .iter()
+                .find(|(_, models)| models.iter().any(|model| model.contains(hint)))
+                .map(|(client, _)| Arc::clone(client))
+        });
+        Ok(chosen.unwrap_or_else(|| first_client.clone()))
     }
 }
 
@@ -202,5 +235,97 @@ impl UserInteractionHandler for AutoApprovingUserHandler {
         Box::pin(async move {
             Ok(None) // Auto-approve, don't modify
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use turbomcp_protocol::types::{ModelHint, ModelPreferences};
+
+    /// An LLM server that serves one model and answers with its name.
+    #[derive(Debug)]
+    struct Serving(&'static str);
+
+    impl LLMServerClient for Serving {
+        fn create_message(
+            &self,
+            _request: CreateMessageRequest,
+        ) -> BoxSamplingFuture<'_, CreateMessageResult> {
+            Box::pin(async move {
+                Ok(serde_json::from_value(serde_json::json!({
+                    "role": "assistant",
+                    "content": { "type": "text", "text": "hi" },
+                    "model": self.0
+                }))?)
+            })
+        }
+
+        fn get_server_info(&self) -> BoxSamplingFuture<'_, LlmServerInfo> {
+            Box::pin(async move {
+                Ok(LlmServerInfo {
+                    name: self.0.to_string(),
+                    models: vec![self.0.to_string()],
+                    capabilities: Vec::new(),
+                })
+            })
+        }
+    }
+
+    fn hinted(hints: &[&str]) -> CreateMessageRequest {
+        CreateMessageRequest {
+            max_tokens: 16,
+            model_preferences: Some(ModelPreferences {
+                hints: Some(
+                    hints
+                        .iter()
+                        .map(|name| ModelHint {
+                            name: Some((*name).to_string()),
+                        })
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    async fn model_chosen_for(request: CreateMessageRequest) -> String {
+        let handler = DelegatingSamplingHandler::new(
+            vec![
+                Arc::new(Serving("gpt-4o")),
+                Arc::new(Serving("claude-3-5-sonnet")),
+            ],
+            Arc::new(AutoApprovingUserHandler),
+        );
+        handler
+            .handle_create_message("1".to_string(), request)
+            .await
+            .expect("sampling succeeds")
+            .model
+    }
+
+    /// sampling.mdx: hints are substrings of model names, tried in order.
+    /// The first configured server used to be chosen whatever the hints said.
+    #[tokio::test]
+    async fn model_hints_choose_the_server() {
+        assert_eq!(
+            model_chosen_for(hinted(&["sonnet"])).await,
+            "claude-3-5-sonnet"
+        );
+        assert_eq!(
+            model_chosen_for(hinted(&["gemini", "gpt"])).await,
+            "gpt-4o",
+            "an unmatched hint falls through to the next"
+        );
+        assert_eq!(
+            model_chosen_for(hinted(&["gemini"])).await,
+            "gpt-4o",
+            "no match falls back to the first server"
+        );
+        assert_eq!(
+            model_chosen_for(CreateMessageRequest::default()).await,
+            "gpt-4o"
+        );
     }
 }

@@ -990,8 +990,17 @@ impl<T: Transport + 'static> Client<T> {
                     let handler_request =
                         crate::handlers::ElicitationRequest::new(request.id.clone(), proto_params);
 
-                    // Call the registered elicitation handler
-                    match handler.handle_elicitation(handler_request).await {
+                    // A user who dismissed the prompt is an outcome elicitation
+                    // has a word for — `action: cancel` — not a failure. As an
+                    // error it read to the server as "User rejected sampling
+                    // request", a feature it had not even asked about.
+                    let outcome = match handler.handle_elicitation(handler_request).await {
+                        Err(HandlerError::UserCancelled) => {
+                            Ok(crate::handlers::ElicitationResponse::cancel())
+                        }
+                        other => other,
+                    };
+                    match outcome {
                         Ok(elicit_response) => {
                             // Convert handler response back to protocol type
                             let proto_result = elicit_response.into_protocol();

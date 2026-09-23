@@ -132,11 +132,16 @@ impl HandlerError {
     ///
     /// # Error Code Mapping
     ///
-    /// - **-1**: User rejected sampling request (current MCP spec)
-    /// - **-32801**: Handler operation timed out
+    /// - **-1**: User rejected the request (the spec's code for a rejected
+    ///   sampling request)
     /// - **-32602**: Invalid input (bad request)
     /// - **-32601**: Handler configuration error (method not found)
-    /// - **-32603**: Generic/external handler error (internal error)
+    /// - **-32603**: Timeout, generic or external handler error (internal error)
+    ///
+    /// An elicitation handler returning [`HandlerError::UserCancelled`] is not
+    /// answered with an error at all: elicitation has its own way to say the
+    /// user dismissed the request, `{"action": "cancel"}`, and the client
+    /// sends that instead.
     ///
     /// # Examples
     ///
@@ -151,9 +156,16 @@ impl HandlerError {
     #[must_use]
     pub fn into_jsonrpc_error(&self) -> JsonRpcError {
         let (code, message) = match self {
-            HandlerError::UserCancelled => (-1, "User rejected sampling request".to_string()),
+            // Worded for any request: this also answers `roots/list`, where
+            // "rejected sampling request" named the wrong feature entirely.
+            HandlerError::UserCancelled => (-1, "User rejected the request".to_string()),
+            // -32603, not the -32801 used before: that is not a JSON-RPC or
+            // MCP code (LSP assigns it to ContentModified), so a server could
+            // only read it as an unknown failure. The spec's client error
+            // tables name -32603 for internal failures, which a handler that
+            // ran out of time is.
             HandlerError::Timeout { timeout_seconds } => (
-                -32801,
+                -32603,
                 format!(
                     "Handler operation timed out after {} seconds",
                     timeout_seconds
@@ -338,10 +350,6 @@ impl ElicitationResponse {
         }
     }
 
-    /// Create response with accept action using a JSON value directly.
-    ///
-    /// Use this when you already have a `serde_json::Value` (object) — avoids the
-    /// `HashMap` conversion round-trip done by [`ElicitationResponse::accept`].
     /// Accept with no content — the shape a URL-mode consent takes.
     ///
     /// For URL mode the interaction happens out of band, so the spec omits
@@ -363,6 +371,10 @@ impl ElicitationResponse {
         }
     }
 
+    /// Create response with accept action using a JSON value directly.
+    ///
+    /// Use this when you already have a `serde_json::Value` (object) — avoids the
+    /// `HashMap` conversion round-trip done by [`ElicitationResponse::accept`].
     #[must_use]
     pub fn accept_value(content: serde_json::Value) -> Self {
         Self {
@@ -1488,6 +1500,11 @@ mod tests {
             "User cancelled should map to -1 per current MCP spec"
         );
         assert!(jsonrpc_error.message.contains("User rejected"));
+        assert!(
+            !jsonrpc_error.message.contains("sampling"),
+            "the same mapping answers roots/list: {}",
+            jsonrpc_error.message
+        );
         assert!(jsonrpc_error.data.is_none());
     }
 
@@ -1498,7 +1515,10 @@ mod tests {
         };
         let jsonrpc_error = error.into_jsonrpc_error();
 
-        assert_eq!(jsonrpc_error.code, -32801, "Timeout should map to -32801");
+        assert_eq!(
+            jsonrpc_error.code, -32603,
+            "Timeout is an internal failure; -32801 is not a JSON-RPC or MCP code"
+        );
         assert!(jsonrpc_error.message.contains("30 seconds"));
         assert!(jsonrpc_error.data.is_none());
     }

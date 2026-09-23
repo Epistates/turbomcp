@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use turbomcp_client::Client;
 use turbomcp_client::handlers::{
     ElicitationCompleteHandler, ElicitationHandler, ElicitationRequest, ElicitationResponse,
-    HandlerResult,
+    HandlerError, HandlerResult,
 };
 use turbomcp_protocol::MessageId;
 use turbomcp_transport::{
@@ -210,6 +210,19 @@ impl ElicitationHandler for Consent {
     }
 }
 
+/// Stands in for a user who closed the prompt without choosing.
+#[derive(Debug)]
+struct Dismissed;
+
+impl ElicitationHandler for Dismissed {
+    fn handle_elicitation(
+        &self,
+        _request: ElicitationRequest,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<ElicitationResponse>> + Send + '_>> {
+        Box::pin(async { Err(HandlerError::UserCancelled) })
+    }
+}
+
 fn complete(elicitation_id: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -353,4 +366,30 @@ async fn a_url_elicitation_required_error_keeps_its_data() {
     server.send(complete("e-42"));
     settle().await;
     assert_eq!(completions.seen(), vec!["e-42".to_string()]);
+}
+
+/// A dismissed elicitation is `action: cancel`, the outcome elicitation.mdx
+/// defines for it — not a JSON-RPC error. It used to go out as -1 "User
+/// rejected sampling request", naming a feature the server never used.
+#[tokio::test]
+async fn a_user_cancelled_elicitation_answers_action_cancel() {
+    let (transport, server) = wire(json!({}), |_| None);
+    let client = Client::new(transport);
+    client.set_elicitation_handler(Arc::new(Dismissed));
+    client.initialize().await.expect("handshake");
+
+    server.send(json!({
+        "jsonrpc": "2.0",
+        "id": "s-1",
+        "method": "elicitation/create",
+        "params": {
+            "mode": "form",
+            "message": "Pick a colour",
+            "requestedSchema": { "type": "object", "properties": {} }
+        }
+    }));
+    let response = server.response_to("s-1").await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"]["action"], "cancel", "{response}");
 }
