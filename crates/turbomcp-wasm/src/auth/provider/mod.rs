@@ -389,20 +389,20 @@ impl OAuthProvider {
 
     async fn handle_authorize(&self, req: Request) -> worker::Result<Response> {
         // Rate limit authorization requests (if rate limiter configured)
-        if let Some(ref limiter) = self.rate_limiter {
-            if let Some(ip) = self.extract_client_ip(&req) {
-                match limiter
-                    .check(&format!("oauth:authorize:{}", ip), 20, 60)
-                    .await?
-                {
-                    RateLimitResult::Exceeded { retry_after_secs } => {
-                        let headers = Headers::new();
-                        let _ = headers.set("Retry-After", &retry_after_secs.to_string());
-                        return Response::error("Too many requests", 429)
-                            .map(|r| r.with_headers(headers));
-                    }
-                    RateLimitResult::Allowed { .. } => {}
+        if let Some(ref limiter) = self.rate_limiter
+            && let Some(ip) = self.extract_client_ip(&req)
+        {
+            match limiter
+                .check(&format!("oauth:authorize:{}", ip), 20, 60)
+                .await?
+            {
+                RateLimitResult::Exceeded { retry_after_secs } => {
+                    let headers = Headers::new();
+                    let _ = headers.set("Retry-After", &retry_after_secs.to_string());
+                    return Response::error("Too many requests", 429)
+                        .map(|r| r.with_headers(headers));
                 }
+                RateLimitResult::Allowed { .. } => {}
             }
         }
 
@@ -584,20 +584,20 @@ impl OAuthProvider {
 
     async fn handle_token(&self, mut req: Request) -> worker::Result<Response> {
         // Rate limit token requests (if rate limiter configured)
-        if let Some(ref limiter) = self.rate_limiter {
-            if let Some(ip) = self.extract_client_ip(&req) {
-                match limiter
-                    .check(&format!("oauth:token:{}", ip), 10, 60)
-                    .await?
-                {
-                    RateLimitResult::Exceeded { retry_after_secs } => {
-                        let headers = Headers::new();
-                        let _ = headers.set("Retry-After", &retry_after_secs.to_string());
-                        return Response::error("Too many requests", 429)
-                            .map(|r| r.with_headers(headers));
-                    }
-                    RateLimitResult::Allowed { .. } => {}
+        if let Some(ref limiter) = self.rate_limiter
+            && let Some(ip) = self.extract_client_ip(&req)
+        {
+            match limiter
+                .check(&format!("oauth:token:{}", ip), 10, 60)
+                .await?
+            {
+                RateLimitResult::Exceeded { retry_after_secs } => {
+                    let headers = Headers::new();
+                    let _ = headers.set("Retry-After", &retry_after_secs.to_string());
+                    return Response::error("Too many requests", 429)
+                        .map(|r| r.with_headers(headers));
                 }
+                RateLimitResult::Allowed { .. } => {}
             }
         }
 
@@ -978,17 +978,17 @@ impl OAuthProvider {
         }
 
         // Try as refresh token
-        if let Ok(data) = self.store.get_refresh_token(&token_hash).await {
-            if !data.used {
-                let response = IntrospectionResponse::active(
-                    &data.subject,
-                    &data.client_id,
-                    &data.scopes,
-                    data.expires_at,
-                    data.issued_at,
-                );
-                return self.json_response(&response);
-            }
+        if let Ok(data) = self.store.get_refresh_token(&token_hash).await
+            && !data.used
+        {
+            let response = IntrospectionResponse::active(
+                &data.subject,
+                &data.client_id,
+                &data.scopes,
+                data.expires_at,
+                data.issued_at,
+            );
+            return self.json_response(&response);
         }
 
         // Token not found or inactive
@@ -1061,12 +1061,11 @@ impl OAuthProvider {
                     return Ok(Some(client_id.clone()));
                 }
                 ClientAuthMethod::ClientSecretPost => {
-                    if let Some(secret) = params.get("client_secret") {
-                        if let Some(ref expected) = client.client_secret {
-                            if constant_time_compare(secret, expected) {
-                                return Ok(Some(client_id.clone()));
-                            }
-                        }
+                    if let Some(secret) = params.get("client_secret")
+                        && let Some(ref expected) = client.client_secret
+                        && constant_time_compare(secret, expected)
+                    {
+                        return Ok(Some(client_id.clone()));
                     }
                     return Ok(None);
                 }
@@ -1077,31 +1076,24 @@ impl OAuthProvider {
         }
 
         // Try Basic auth header
-        if let Ok(Some(auth)) = req.headers().get("Authorization") {
-            if let Some(credentials) = auth.strip_prefix("Basic ") {
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(credentials) {
-                    if let Ok(creds_str) = String::from_utf8(decoded) {
-                        if let Some((client_id, client_secret)) = creds_str.split_once(':') {
-                            if let Some(client) = self.config.get_client(client_id) {
-                                if let Some(ref expected) = client.client_secret {
-                                    if constant_time_compare(client_secret, expected) {
-                                        return Ok(Some(client_id.to_string()));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        if let Ok(Some(auth)) = req.headers().get("Authorization")
+            && let Some(credentials) = auth.strip_prefix("Basic ")
+            && let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(credentials)
+            && let Ok(creds_str) = String::from_utf8(decoded)
+            && let Some((client_id, client_secret)) = creds_str.split_once(':')
+            && let Some(client) = self.config.get_client(client_id)
+            && let Some(ref expected) = client.client_secret
+            && constant_time_compare(client_secret, expected)
+        {
+            return Ok(Some(client_id.to_string()));
         }
 
         // For public clients, just check client_id exists
-        if let Some(client_id) = params.get("client_id") {
-            if let Some(client) = self.config.get_client(client_id) {
-                if matches!(client.auth_method, ClientAuthMethod::None) {
-                    return Ok(Some(client_id.clone()));
-                }
-            }
+        if let Some(client_id) = params.get("client_id")
+            && let Some(client) = self.config.get_client(client_id)
+            && matches!(client.auth_method, ClientAuthMethod::None)
+        {
+            return Ok(Some(client_id.clone()));
         }
 
         Ok(None)

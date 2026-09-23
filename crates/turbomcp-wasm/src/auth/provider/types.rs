@@ -52,13 +52,14 @@ impl ResponseType {
 }
 
 /// PKCE code challenge methods (RFC 7636).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum CodeChallengeMethod {
     /// Plain (not recommended, only for legacy support)
     #[serde(rename = "plain")]
     Plain,
     /// SHA-256 (recommended)
     #[serde(rename = "S256")]
+    #[default]
     S256,
 }
 
@@ -72,28 +73,17 @@ impl CodeChallengeMethod {
     }
 }
 
-impl Default for CodeChallengeMethod {
-    fn default() -> Self {
-        Self::S256
-    }
-}
-
 /// Client authentication method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientAuthMethod {
     /// No authentication (public client, requires PKCE)
+    #[default]
     None,
     /// Client secret in POST body
     ClientSecretPost,
     /// Client secret in Authorization header (Basic auth)
     ClientSecretBasic,
-}
-
-impl Default for ClientAuthMethod {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Configuration for an OAuth client.
