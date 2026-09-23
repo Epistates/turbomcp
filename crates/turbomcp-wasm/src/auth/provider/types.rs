@@ -465,6 +465,17 @@ impl OAuthError {
         }
     }
 
+    /// Create an invalid_target error (RFC 8707 §2): the requested resource
+    /// is not one this server issues tokens for.
+    pub fn invalid_target(description: impl Into<String>) -> Self {
+        Self {
+            error: "invalid_target".to_string(),
+            error_description: Some(description.into()),
+            error_uri: None,
+            state: None,
+        }
+    }
+
     /// Set the state parameter.
     pub fn with_state(mut self, state: impl Into<String>) -> Self {
         self.state = Some(state.into());
@@ -556,6 +567,10 @@ pub struct IntrospectionResponse {
     /// Token type
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_type: Option<String>,
+
+    /// Audience: the RFC 8707 resource the token is bound to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aud: Option<String>,
 }
 
 impl IntrospectionResponse {
@@ -569,7 +584,14 @@ impl IntrospectionResponse {
             exp: None,
             iat: None,
             token_type: None,
+            aud: None,
         }
+    }
+
+    /// Set the audience.
+    pub fn with_audience(mut self, audience: Option<String>) -> Self {
+        self.aud = audience;
+        self
     }
 
     /// Create an active response.
@@ -592,6 +614,7 @@ impl IntrospectionResponse {
             exp: Some(expires_at),
             iat: Some(issued_at),
             token_type: Some("Bearer".to_string()),
+            aud: None,
         }
     }
 }
