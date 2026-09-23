@@ -35,6 +35,7 @@ mod handler;
 mod mapping;
 mod parser;
 mod provider;
+mod schema;
 mod security;
 
 pub use error::{OpenApiError, Result};

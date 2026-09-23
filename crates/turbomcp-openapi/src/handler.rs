@@ -13,6 +13,7 @@ use turbomcp_types::{
 };
 
 use crate::provider::{ExtractedOperation, OpenApiProvider, param_value};
+use crate::schema::hoist_defs;
 
 /// MCP handler that exposes OpenAPI operations as tools and resources.
 #[derive(Clone)]
@@ -63,10 +64,12 @@ impl OpenApiHandler {
     fn build_input_schema(op: &ExtractedOperation) -> ToolInputSchema {
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
+        let mut defs = serde_json::Map::new();
 
         // Add parameters
         for param in &op.parameters {
             let mut param_schema = param.schema.clone().unwrap_or(json!({"type": "string"}));
+            hoist_defs(&mut param_schema, &mut defs);
 
             // Add description if available
             if let Some(desc) = &param.description
@@ -84,13 +87,15 @@ impl OpenApiHandler {
 
         // Add request body if present
         if let Some(body_schema) = &op.request_body_schema {
-            properties.insert("body".to_string(), body_schema.clone());
+            let mut body_schema = body_schema.clone();
+            hoist_defs(&mut body_schema, &mut defs);
+            properties.insert("body".to_string(), body_schema);
             required.push("body".to_string());
         }
 
         // Carry the SEP-1613 default dialect by deferring to `Default::default`
         // for `extra_keywords`, which now contains `$schema = 2020-12`.
-        ToolInputSchema {
+        let mut schema = ToolInputSchema {
             schema_type: Some("object".into()),
             properties: Some(Value::Object(properties)),
             required: if required.is_empty() {
@@ -100,7 +105,15 @@ impl OpenApiHandler {
             },
             additional_properties: None,
             ..ToolInputSchema::default()
+        };
+        // Recursive definitions from any property live at the root, which is
+        // what their `#/$defs/…` pointers resolve against.
+        if !defs.is_empty() {
+            schema
+                .extra_keywords
+                .insert("$defs".to_string(), Value::Object(defs));
         }
+        schema
     }
 
     /// Find operation by tool name.
@@ -435,6 +448,69 @@ mod tests {
 
         assert_eq!(OpenApiHandler::tool_name(&op_with_id), "createUser");
         assert_eq!(OpenApiHandler::tool_name(&op_without_id), "delete_users_id");
+    }
+
+    #[test]
+    fn test_input_schema_is_2020_12_with_root_defs() {
+        const SPEC: &str = r##"{
+            "openapi": "3.0.0",
+            "info": { "title": "T", "version": "1.0" },
+            "paths": {
+                "/trees": {
+                    "post": {
+                        "operationId": "plantTree",
+                        "parameters": [{
+                            "name": "note", "in": "query",
+                            "schema": { "type": "string", "nullable": true }
+                        }],
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/Node" }
+                                }
+                            }
+                        },
+                        "responses": { "201": { "description": "ok" } }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "Node": {
+                        "type": "object",
+                        "properties": {
+                            "children": {
+                                "type": "array",
+                                "items": { "$ref": "#/components/schemas/Node" }
+                            }
+                        }
+                    }
+                }
+            }
+        }"##;
+
+        let tools = OpenApiProvider::from_string(SPEC)
+            .unwrap()
+            .into_handler()
+            .list_tools();
+        let schema = serde_json::to_value(&tools[0].input_schema).unwrap();
+
+        assert_eq!(
+            schema["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
+        assert_eq!(
+            schema.pointer("/properties/note/type"),
+            Some(&json!(["string", "null"]))
+        );
+        // The body's recursion points at the input schema's own root `$defs`,
+        // which is where `#/$defs/Node` resolves from.
+        assert_eq!(
+            schema.pointer("/properties/body/properties/children/items/$ref"),
+            Some(&json!("#/$defs/Node"))
+        );
+        assert!(schema.pointer("/$defs/Node").is_some(), "{schema:#}");
+        assert!(schema.pointer("/properties/body/$defs").is_none());
     }
 
     mod upstream {

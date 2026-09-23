@@ -9,13 +9,14 @@ use openapiv3::{
     OpenAPI, Operation, Parameter, ParameterSchemaOrContent, ReferenceOr, Schema, SecurityScheme,
 };
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-use serde_json::{Value, json};
+use serde_json::Value;
 use url::Url;
 
 use crate::error::{OpenApiError, Result};
 use crate::handler::OpenApiHandler;
 use crate::mapping::{McpType, RouteMapping};
 use crate::parser::{fetch_from_url, load_from_file, parse_spec};
+use crate::schema::SchemaConverter;
 use crate::security::SsrfGuard;
 
 /// An operation extracted from an OpenAPI spec.
@@ -45,10 +46,14 @@ pub struct ExtractedOperation {
     /// (`security: []`) on an operation disables auth.
     pub security: Vec<HashMap<String, Vec<String>>>,
     /// JSON Schema of the operation's primary success response (first 2xx
-    /// `application/json` response, with `$ref`s inlined). Surfaces in the
-    /// generated MCP `Tool::output_schema` for clients that consume MCP
-    /// 2025-11-25's `outputSchema`. `None` if the operation has no JSON
-    /// response or only `default` / non-2xx responses.
+    /// `application/json` response). Surfaces in the generated MCP
+    /// `Tool::output_schema` for clients that consume MCP 2025-11-25's
+    /// `outputSchema`. `None` if the operation has no JSON response or only
+    /// `default` / non-2xx responses.
+    ///
+    /// This and the other schemas here are JSON Schema 2020-12 converted from
+    /// OpenAPI 3.0: `$ref`s are inlined, except recursive ones, which point
+    /// into a `$defs` at the root of the same value.
     pub response_schema: Option<Value>,
 }
 
@@ -548,90 +553,10 @@ impl OpenApiProvider {
         }
     }
 
-    /// Convert an OpenAPI schema to a JSON Schema value, inlining `$ref`s
-    /// against `components.schemas`.
-    ///
-    /// OpenAPI lets schemas reference each other through
-    /// `{"$ref": "#/components/schemas/Foo"}`. MCP tool-input schemas have
-    /// no cross-operation component dictionary to share, so we resolve those
-    /// refs inline. Cycles are broken by leaving the first re-visited
-    /// reference as a `$ref` literal rather than expanding it forever.
+    /// Convert an OpenAPI schema to a self-contained JSON Schema 2020-12
+    /// value; see [`SchemaConverter`] for what changes and why.
     fn schema_to_json(&self, schema: &ReferenceOr<Schema>) -> Option<Value> {
-        let initial = match schema {
-            ReferenceOr::Item(s) => serde_json::to_value(s).ok()?,
-            ReferenceOr::Reference { reference } => {
-                json!({ "$ref": reference })
-            }
-        };
-        let mut visited = std::collections::HashSet::new();
-        Some(self.resolve_refs(initial, &mut visited))
-    }
-
-    /// Recursively inline `$ref` pointers that target `components.schemas`.
-    ///
-    /// `visited` tracks the ref path currently being expanded; re-encountering
-    /// the same pointer during expansion leaves the `$ref` in place so the
-    /// output stays finite on self-referential schemas (the default interpretation
-    /// consumers do — most JSON Schema validators understand internal `$ref`).
-    fn resolve_refs(&self, value: Value, visited: &mut std::collections::HashSet<String>) -> Value {
-        match value {
-            Value::Object(mut map) => {
-                if let Some(Value::String(reference)) = map.get("$ref").cloned()
-                    && map.len() == 1
-                {
-                    if !visited.insert(reference.clone()) {
-                        map.insert("$ref".to_string(), Value::String(reference));
-                        return Value::Object(map);
-                    }
-                    let expanded = self.lookup_ref(&reference).map(|target| {
-                        let target_json = serde_json::to_value(target).unwrap_or(Value::Null);
-                        self.resolve_refs(target_json, visited)
-                    });
-                    visited.remove(&reference);
-                    return expanded.unwrap_or(Value::Object({
-                        let mut fallback = serde_json::Map::new();
-                        fallback.insert("$ref".to_string(), Value::String(reference));
-                        fallback
-                    }));
-                }
-                let resolved = map
-                    .into_iter()
-                    .map(|(k, v)| (k, self.resolve_refs(v, visited)))
-                    .collect();
-                Value::Object(resolved)
-            }
-            Value::Array(items) => Value::Array(
-                items
-                    .into_iter()
-                    .map(|v| self.resolve_refs(v, visited))
-                    .collect(),
-            ),
-            other => other,
-        }
-    }
-
-    /// Look up a `#/components/schemas/Name` reference in the parsed spec.
-    /// Follows reference chains up to `MAX_DEPTH` levels deep with cycle detection,
-    /// so chains like `Foo -> Bar -> Baz` resolve correctly without unbounded recursion.
-    fn lookup_ref(&self, reference: &str) -> Option<&Schema> {
-        const PREFIX: &str = "#/components/schemas/";
-        const MAX_DEPTH: usize = 10;
-        let mut name = reference.strip_prefix(PREFIX)?;
-        let components = self.spec.components.as_ref()?;
-        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for _ in 0..MAX_DEPTH {
-            if !seen.insert(name) {
-                // Cycle.
-                return None;
-            }
-            match components.schemas.get(name)? {
-                ReferenceOr::Item(schema) => return Some(schema),
-                ReferenceOr::Reference { reference } => {
-                    name = reference.strip_prefix(PREFIX)?;
-                }
-            }
-        }
-        None
+        SchemaConverter::new(&self.spec).convert(schema)
     }
 
     /// Build the full URL for an operation.
@@ -760,6 +685,8 @@ fn expand_path_segment(segment: &str, args: &HashMap<String, Value>) -> Result<S
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     const TEST_SPEC: &str = r#"{
@@ -1061,13 +988,18 @@ mod tests {
             .iter()
             .find(|o| o.operation_id.as_deref() == Some("makeNode"))
             .unwrap();
-        // Must not infinite-loop or panic — resolver should have returned a finite value
-        // with the inner cycle preserved as a $ref.
+        // Must not infinite-loop or panic, and the cycle must point at a
+        // definition that exists: `#/components/schemas/Node` does not exist
+        // in a tool schema, so a client could never resolve it.
         let body = op.request_body_schema.as_ref().unwrap();
         let next = body.pointer("/properties/next").expect("next property");
         assert_eq!(
             next.get("$ref").and_then(|v| v.as_str()),
-            Some("#/components/schemas/Node")
+            Some("#/$defs/Node")
+        );
+        assert_eq!(
+            body.pointer("/$defs/Node/properties/next/$ref"),
+            Some(&json!("#/$defs/Node"))
         );
     }
 
