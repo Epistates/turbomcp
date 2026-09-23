@@ -313,6 +313,7 @@ mod tests {
             security_level: SecurityLevel::Standard,
             mcp_resource_uri: None,
             auto_resource_indicators: false,
+            allow_custom_scheme_redirect: false,
             #[cfg(feature = "dpop")]
             dpop_config: None,
         };

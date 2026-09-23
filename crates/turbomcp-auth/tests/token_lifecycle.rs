@@ -43,6 +43,7 @@ fn oauth_client_for_server(
         dpop_config: None,
         mcp_resource_uri: None,
         auto_resource_indicators: true,
+        allow_custom_scheme_redirect: false,
     };
 
     OAuth2Client::new(&config, ProviderType::Generic).expect("Failed to create OAuth2 client")
