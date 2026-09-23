@@ -139,10 +139,15 @@ impl OAuth2Provider {
     /// - Otherwise, an unverified decode of the token's own `aud` claim (if
     ///   it's a compact JWT). This crate has no JWKS for arbitrary third-party
     ///   IdPs here, so the claim can't be cryptographically verified in this
-    ///   code path — it's used only as an *additional* binding check after
-    ///   `fetch_user_info`'s round trip has already proven the token is live
-    ///   and was accepted by the provider that issued it, never as the sole
-    ///   trust decision.
+    ///   code path. That's safe *only* because [`Self::validate_token`] treats
+    ///   this check as one of two independent gates a token must pass, not
+    ///   the sole trust decision: it also requires (via cache or a live
+    ///   `fetch_user_info` call) that the provider itself currently accepts
+    ///   the token. A token with a forged-but-matching `aud` claim still has
+    ///   to be a real, live token the provider recognizes; a merely
+    ///   well-formed forgery fails that second gate regardless of what this
+    ///   one decided. Callers must keep both checks — don't call this alone
+    ///   and treat success as "the token is valid".
     ///
     /// If neither source can name an audience, or the resource URI isn't
     /// configured, this fails closed rather than silently skipping the check.
