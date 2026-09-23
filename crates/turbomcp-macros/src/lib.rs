@@ -67,6 +67,7 @@
 
 use proc_macro::TokenStream;
 
+mod attrs;
 mod schema;
 mod server;
 mod tool;
@@ -91,6 +92,10 @@ mod tool;
 ///   model much like a system prompt.
 /// - `website_url = "..."` - Homepage for this implementation
 /// - `icons = ["https://…/icon.png"]` - Icon sources (SEP-973)
+/// - `page_size = N` - Paginate the list methods at `N` entries
+/// - `logging` - Accepted for compatibility and has no effect: the `logging`
+///   capability is always advertised, since every server can emit
+///   `notifications/message` through `ctx.log()`
 ///
 /// Every value is an expression, not just a string literal, so server identity
 /// can come from the build or the environment. Unknown keys are a compile
@@ -152,11 +157,17 @@ mod tool;
 /// | [`#[completion]`](macro@completion) | `completion/complete` | `completions` |
 /// | [`#[subscribe]`](macro@subscribe) | `resources/subscribe` | `resources.subscribe` |
 /// | [`#[unsubscribe]`](macro@unsubscribe) | `resources/unsubscribe` | — |
-/// | [`#[set_level]`](macro@set_level) | `logging/setLevel` | `logging` |
+/// | [`#[set_level]`](macro@set_level) | `logging/setLevel` | — (`logging` is always advertised) |
 ///
 /// Each may appear at most once. Omitting one leaves the trait default, which
 /// answers `capability_not_supported`, and the capability stays unadvertised —
 /// so what `initialize` claims always matches what the server can serve.
+/// `#[subscribe]` without `#[unsubscribe]` is a compile error, since a client
+/// must be able to cancel a subscription the server accepted.
+///
+/// `logging/setLevel` is the exception: every server advertises `logging` and
+/// accepts the level (it is recorded per session and filters what `ctx.log()`
+/// emits), so `#[set_level]` is only needed to observe the change.
 ///
 /// ```ignore
 /// #[server(name = "docs", version = "1.0.0")]
@@ -221,6 +232,29 @@ pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
 ///     // ...
 /// }
 /// ```
+///
+/// # Attribute keys
+///
+/// `#[tool]`, `#[resource]`, and `#[prompt]` share one grammar. All three
+/// accept `description`, `title`, `tags`, `version`, and `icons`; an explicit
+/// `description` takes precedence over the doc comment. `#[tool]` adds:
+///
+/// - `read_only`, `destructive`, `idempotent`, `open_world` = `true`/`false` —
+///   the `ToolAnnotations` hints
+/// - `output_schema = Type` — overrides the schema inferred from a `Json<T>`
+///   return
+/// - `task_support = "forbidden" | "optional" | "required"` — advertised as
+///   `execution.taskSupport`. Declaration only: clients use task augmentation
+///   only against a server that also advertises `tasks.requests.tools.call`.
+///
+/// An unknown key is a compile error that lists the accepted ones.
+///
+/// # Arguments
+///
+/// The generated input schema declares `additionalProperties: false`, and the
+/// dispatcher enforces it: an argument the tool does not take is reported as a
+/// tool execution error (`isError: true`, classified `invalid_params` in
+/// `_meta`), like a missing or mistyped one, rather than silently dropped.
 ///
 /// # Cancellation
 ///
@@ -322,6 +356,36 @@ pub fn tool(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///     // ...
 /// }
 /// ```
+///
+/// The declared type is authoritative for a single-entry read, replacing the
+/// conversion's guess (`text/plain` for a `String`). A read that returns
+/// several entries keeps the type each entry set for itself; the declared one
+/// only fills in entries that have none.
+///
+/// # Attribute keys
+///
+/// After the URI, `#[resource]` accepts the keys every marker shares
+/// (`description`, `title`, `tags`, `version`, `icons` — see
+/// [`macro@tool`]) plus:
+///
+/// - `mime_type = "..."`
+/// - `audience = ["user", "assistant"]`, `priority = 0.0..=1.0`, and
+///   `last_modified = "2025-01-12T15:00:58Z"` — the `ResourceAnnotations`
+/// - `size = N` — the size in bytes; concrete URIs only, since a template
+///   stands for many resources
+///
+/// ```ignore
+/// #[resource(
+///     "docs://readme",
+///     mime_type = "text/markdown",
+///     audience = ["user"],
+///     priority = 0.9,
+///     size = 2048
+/// )]
+/// async fn readme(&self, uri: String, ctx: &RequestContext) -> String {
+///     // ...
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
     // Resource attribute must be used within a #[server] impl block
@@ -373,6 +437,13 @@ pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
 ///   the field, so a user is shown `repo_url` rather than "Repository URL".
 ///
 /// An `Option<T>` parameter is reported as optional; anything else as required.
+///
+/// # Attribute keys
+///
+/// `#[prompt]` accepts the keys every marker shares — `description`, `title`,
+/// `tags`, `version`, `icons` (see [`macro@tool`]) — or the
+/// `#[prompt("description")]` shorthand. An explicit `description` takes
+/// precedence over the doc comment.
 ///
 /// # Example
 ///
@@ -488,7 +559,8 @@ pub fn completion(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// resource changes. Emit those with
 /// `ctx.notify_client("notifications/resources/updated", ...)`.
 ///
-/// At most one `#[subscribe]` method may exist per server.
+/// At most one `#[subscribe]` method may exist per server, and it must be
+/// paired with an [`macro@unsubscribe`] handler.
 ///
 /// # Signature
 ///
@@ -505,8 +577,9 @@ pub fn subscribe(_args: TokenStream, input: TokenStream) -> TokenStream {
 
 /// Marks a method as the handler for `resources/unsubscribe`.
 ///
-/// Pairs with [`macro@subscribe`]. A server that declares `#[subscribe]` should
-/// declare this too, so clients can cancel what they started.
+/// Pairs with [`macro@subscribe`]. A server that declares `#[subscribe]` must
+/// declare this too — `#[server]` rejects one without the other — so clients
+/// can cancel what they started.
 ///
 /// # Signature
 ///
@@ -521,10 +594,14 @@ pub fn unsubscribe(_args: TokenStream, input: TokenStream) -> TokenStream {
 
 /// Marks a method as the handler for `logging/setLevel`.
 ///
-/// Declaring it makes `#[server]` advertise the `logging` capability. The level
-/// is the raw spec string: `debug`, `info`, `notice`, `warning`, `error`,
-/// `critical`, `alert`, or `emergency`. Persist it and use it to filter the
-/// `notifications/message` your server emits.
+/// Optional: every `#[server]` advertises the `logging` capability and accepts
+/// `logging/setLevel` without it, recording the level per session so that
+/// `ctx.log()` drops messages below it. Declare this marker to observe the
+/// change as well — for example to reconfigure logging the server does outside
+/// `ctx.log()`. The level is the raw spec string, already validated: `debug`,
+/// `info`, `notice`, `warning`, `error`, `critical`, `alert`, or `emergency`.
+/// Returning an error rejects the request and leaves the recorded level as it
+/// was.
 ///
 /// At most one `#[set_level]` method may exist per server.
 ///

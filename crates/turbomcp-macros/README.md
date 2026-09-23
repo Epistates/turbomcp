@@ -92,8 +92,16 @@ tool description is taken from doc comments unless overridden via the attribute.
 - `#[tool("description")]` — shorthand for the description.
 - `#[tool(description = "...", tags = ["a", "b"], version = "1.0")]` — named arguments.
 
-Recognized named keys: `description`, `tags`, `version`. Unknown keys are silently
-ignored by the parser.
+`#[tool]`, `#[resource]`, and `#[prompt]` share one attribute grammar. All three accept
+`description`, `title`, `tags`, `version`, and `icons`; an explicit `description` takes
+precedence over the doc comment. `#[tool]` adds `read_only`, `destructive`,
+`idempotent`, `open_world` (the `ToolAnnotations` hints), `output_schema = Type`, and
+`task_support = "forbidden" | "optional" | "required"` (advertised as
+`execution.taskSupport`). An unknown key is a compile error that lists the accepted
+ones.
+
+A raw identifier is advertised without its prefix: `async fn r#type` is the tool `type`,
+and a parameter `r#match` is the argument `match`.
 
 ```rust
 #[server]
@@ -128,7 +136,13 @@ Marks a method as a resource handler. Requires a URI template as the first argum
 
 - `#[resource("uri://template")]`
 - `#[resource("uri://template", mime_type = "application/json")]`
-- `#[resource("uri://template", tags = ["..."], version = "1.0")]`
+- `#[resource("uri://template", description = "...", tags = ["..."], version = "1.0")]`
+- `#[resource("uri://x", audience = ["user", "assistant"], priority = 0.8,
+  last_modified = "2025-01-12T15:00:58Z", size = 1024)]` — the `ResourceAnnotations`
+  and the size in bytes (`size` on concrete URIs only)
+
+The shared keys (`description`, `title`, `tags`, `version`, `icons`) work as on
+`#[tool]`.
 
 ```rust
 #[server]
@@ -163,7 +177,9 @@ impl MyServer {
 }
 ```
 
-Function parameters (other than `&self` and context) are exposed as prompt arguments.
+Function parameters (other than `&self` and context) are exposed as prompt arguments;
+an `Option<T>` parameter (however it is qualified) is optional. `#[prompt]` accepts the
+shared keys, or the `#[prompt("description")]` shorthand.
 
 ## `#[description]`
 

@@ -24,11 +24,13 @@ fn turbomcp_crate() -> TokenStream {
     }
 }
 
+use super::attrs::{CommonAttrs, parse_lit_str, parse_marker_attrs};
 use super::tool::{
-    ToolAttrs, ToolInfo, generate_annotations_code, generate_call_args, generate_extraction_code,
-    generate_icons_code, generate_output_schema_code, generate_schema_code, parse_quoted_value,
-    parse_string_array, parse_tags_array,
+    ToolAttrs, ToolInfo, args_ident, ctx_ident, generate_annotations_code, generate_call_args,
+    generate_execution_code, generate_extraction_code, generate_icons_code,
+    generate_output_schema_code, generate_schema_code,
 };
+use syn::ext::IdentExt;
 
 /// Information collected from analyzing the impl block.
 pub struct ServerInfo {
@@ -56,8 +58,6 @@ pub struct ServerInfo {
     pub prompts: Vec<PromptInfo>,
     /// Optional extension-point handlers discovered from marker attributes.
     pub extensions: ExtensionHandlers,
-    /// Whether `#[server(logging)]` asked for the `logging` capability.
-    pub logging: bool,
     /// `#[server(page_size = N)]`, if given.
     pub page_size: Option<TokenStream>,
 }
@@ -69,15 +69,18 @@ pub struct ServerInfo {
 /// capability. Leaving one unset keeps the trait default, which reports
 /// `capability_not_supported` — so what a server claims during initialization
 /// always matches what it can actually serve.
+///
+/// `#[set_level]` is the exception: `logging` is always advertised, and the
+/// trait default accepts the level, so the marker only lets a server observe it.
 #[derive(Default)]
 pub struct ExtensionHandlers {
     /// `#[completion]` → `complete` + `completions` capability.
     pub completion: Option<ExtensionHandler>,
     /// `#[subscribe]` → `subscribe` + `resources.subscribe` capability.
     pub subscribe: Option<ExtensionHandler>,
-    /// `#[unsubscribe]` → `unsubscribe`.
+    /// `#[unsubscribe]` → `unsubscribe`. Required alongside `#[subscribe]`.
     pub unsubscribe: Option<ExtensionHandler>,
-    /// `#[set_level]` → `set_log_level` + `logging` capability.
+    /// `#[set_level]` → `set_log_level`.
     pub set_level: Option<ExtensionHandler>,
     /// `#[roots_changed]` → `on_roots_list_changed`. Advertises nothing:
     /// `roots` is a client capability, not a server one.
@@ -114,6 +117,30 @@ pub struct ResourceInfo {
     pub title: Option<String>,
     /// Icon URIs (SEP-973).
     pub icons: Vec<String>,
+    /// `ResourceAnnotations` hints.
+    pub annotations: ResourceAnnotationAttrs,
+    /// `size = N`: the resource's size in bytes. Concrete resources only.
+    pub size: Option<u64>,
+}
+
+/// `ResourceAnnotations` declared on a `#[resource]`.
+///
+/// Flat keys, like the tool annotation hints (`read_only = true`), rather than
+/// a nested `annotations(...)` group.
+#[derive(Clone, Default)]
+pub struct ResourceAnnotationAttrs {
+    /// `audience = ["user", "assistant"]`, as `Role` variant names.
+    pub audience: Vec<Ident>,
+    /// `priority = 0.0..=1.0`.
+    pub priority: Option<f64>,
+    /// `last_modified = "..."`, an ISO 8601 timestamp passed through as written.
+    pub last_modified: Option<String>,
+}
+
+impl ResourceAnnotationAttrs {
+    fn is_empty(&self) -> bool {
+        self.audience.is_empty() && self.priority.is_none() && self.last_modified.is_none()
+    }
 }
 
 /// Prompt handler info.
@@ -147,8 +174,10 @@ pub struct PromptInfo {
 /// Prompt argument info (HIGH-002).
 #[derive(Clone)]
 pub struct PromptArgumentInfo {
-    /// Argument name
+    /// Argument name on the wire, with any `r#` prefix removed.
     pub name: String,
+    /// The parameter's identifier as written, for the generated binding.
+    pub ident: Ident,
     /// Human-readable label for the argument, from `#[title("...")]`
     pub title: Option<String>,
     /// Argument description
@@ -182,15 +211,13 @@ pub struct ServerAttrs {
     pub website_url: Option<syn::Expr>,
     /// Icon source URIs (SEP-973)
     pub icons: Vec<syn::Expr>,
-    /// Bare `logging` flag: declare the `logging` capability.
-    pub logging: bool,
     /// `page_size = N`: paginate the list methods at N entries.
     pub page_size: Option<syn::Expr>,
 }
 
 impl ServerAttrs {
     /// Parse from attribute token stream.
-    pub fn parse(args: proc_macro::TokenStream) -> Result<Self, syn::Error> {
+    pub fn parse(args: TokenStream) -> Result<Self, syn::Error> {
         let mut attrs = Self::default();
 
         if args.is_empty() {
@@ -205,7 +232,6 @@ impl ServerAttrs {
             ref mut instructions,
             ref mut website_url,
             ref mut icons,
-            ref mut logging,
             ref mut page_size,
         } = attrs;
 
@@ -235,13 +261,11 @@ impl ServerAttrs {
             } else if meta.path.is_ident("page_size") {
                 *page_size = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("logging") {
-                // A bare flag, not a key=value: `#[server(name = "x", logging)]`.
-                // The `logging` capability means "this server emits
-                // notifications/message". That is independent of implementing
-                // `logging/setLevel`, so it cannot be inferred from
-                // `#[set_level]` alone — a server may emit logs without letting
-                // clients change the level.
-                *logging = true;
+                // A bare flag, still accepted so servers that declare it keep
+                // compiling. It no longer changes anything: every server
+                // can emit `notifications/message` through `ctx.log()`, and a
+                // server that emits log notifications must declare `logging`,
+                // so the capability is now always advertised.
             } else if meta.path.is_ident("transports") {
                 // v3: The `transports` attribute was removed.
                 //
@@ -270,13 +294,14 @@ impl ServerAttrs {
                     .unwrap_or_else(|| "<unknown>".to_string());
                 return Err(meta.error(format!(
                     "unknown #[server] attribute key `{key}`; expected one of `name`, \
-                     `version`, `description`, `title`, `instructions`, `website_url`, `icons`",
+                     `version`, `description`, `title`, `instructions`, `website_url`, `icons`, \
+                     `page_size`, `logging`",
                 )));
             }
             Ok(())
         });
 
-        syn::parse::Parser::parse(parser, args)?;
+        syn::parse::Parser::parse2(parser, args)?;
 
         Ok(attrs)
     }
@@ -346,36 +371,47 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
                 } else if attr.path().is_ident("resource") {
                     let resource_attrs = extract_resource_attrs(attr)?;
                     let fn_name = method.sig.ident.clone();
-                    let description = extract_doc_comments(&method.attrs);
+                    let common = resource_attrs.common;
+                    // An explicit description wins over the doc comment, as on
+                    // `#[tool]`.
+                    let description = common
+                        .description
+                        .or_else(|| extract_doc_comments(&method.attrs));
                     resources.push(ResourceInfo {
                         uri_template: resource_attrs.uri_template,
-                        name: fn_name.to_string(),
+                        name: fn_name.unraw().to_string(),
                         description,
                         mime_type: resource_attrs.mime_type,
                         fn_name,
-                        tags: resource_attrs.tags,
-                        version: resource_attrs.version,
-                        title: resource_attrs.title,
-                        icons: resource_attrs.icons,
+                        tags: common.tags,
+                        version: common.version,
+                        title: common.title,
+                        icons: common.icons,
+                        annotations: resource_attrs.annotations,
+                        size: resource_attrs.size,
                     });
                     break;
                 } else if attr.path().is_ident("prompt") {
                     let fn_name = method.sig.ident.clone();
-                    let prompt_attrs = extract_prompt_attrs(attr);
-                    let description =
-                        extract_doc_comments(&method.attrs).or(prompt_attrs.description);
+                    let common = extract_prompt_attrs(attr)?;
+                    // An explicit description wins over the doc comment, as on
+                    // `#[tool]`. It used to be the other way round here, so a
+                    // `description = "..."` next to any `///` line was ignored.
+                    let description = common
+                        .description
+                        .or_else(|| extract_doc_comments(&method.attrs));
                     let arguments = extract_prompt_arguments(&method.sig);
                     prompts.push(PromptInfo {
-                        name: fn_name.to_string(),
+                        name: fn_name.unraw().to_string(),
                         description,
                         arguments,
                         returns_mcp_error: returns_mcp_error(&method.sig),
                         returns_result: returns_result(&method.sig),
                         fn_name,
-                        tags: prompt_attrs.tags,
-                        version: prompt_attrs.version,
-                        title: prompt_attrs.title,
-                        icons: prompt_attrs.icons,
+                        tags: common.tags,
+                        version: common.version,
+                        title: common.title,
+                        icons: common.icons,
                     });
                     break;
                 } else if let Some(slot) = extension_slot(attr, &mut extensions) {
@@ -413,9 +449,33 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
         resources,
         prompts,
         extensions,
-        logging: attrs.logging,
         page_size: attrs.page_size.as_ref().map(|expr| quote!(#expr)),
     })
+}
+
+/// Reject marker combinations that would advertise a method the server cannot
+/// serve.
+///
+/// `#[subscribe]` advertises `resources.subscribe`, and a client that holds a
+/// subscription must be able to cancel it. Generating a no-op `unsubscribe`
+/// would answer success while the handler's own bookkeeping kept the
+/// subscription alive, so the server would go on sending updates the client
+/// asked to stop — the same "accepted and then ignored" failure a no-op
+/// `logging/setLevel` would be. Only the author knows how to undo what their
+/// `#[subscribe]` did, so the pairing is enforced here instead.
+fn validate_extensions(extensions: &ExtensionHandlers) -> Result<(), syn::Error> {
+    if let (Some(subscribe), None) = (&extensions.subscribe, &extensions.unsubscribe) {
+        return Err(syn::Error::new_spanned(
+            &subscribe.fn_name,
+            "#[subscribe] requires a matching #[unsubscribe] handler\n\n\
+             Declaring #[subscribe] advertises `resources.subscribe`, which commits the \
+             server to answering `resources/unsubscribe` as well:\n\
+             \n\
+             #[unsubscribe]\n\
+             async fn unwatch(&self, uri: String) -> McpResult<()> { ... }",
+        ));
+    }
+    Ok(())
 }
 
 /// Map a marker attribute to its slot in [`ExtensionHandlers`].
@@ -456,22 +516,25 @@ fn signature_takes_context(sig: &syn::Signature) -> bool {
 pub struct ResourceAttrInfo {
     pub uri_template: String,
     pub mime_type: Option<String>,
-    /// Tags for categorization
-    pub tags: Vec<String>,
-    /// Version string
-    pub version: Option<String>,
-    /// Human-readable title (SEP-973).
-    pub title: Option<String>,
-    /// Icon URIs (SEP-973).
-    pub icons: Vec<String>,
+    /// Keys every handler marker shares (`description`, `tags`, ...).
+    pub common: CommonAttrs,
+    /// `ResourceAnnotations` hints.
+    pub annotations: ResourceAnnotationAttrs,
+    /// Size in bytes.
+    pub size: Option<u64>,
 }
 
-/// Extract resource URI and optional mime_type, tags, version from attribute.
+/// Keys only `#[resource]` accepts, on top of [`CommonAttrs`].
+const RESOURCE_KEYS: &[&str] = &["mime_type", "audience", "priority", "last_modified", "size"];
+
+/// Extract the resource URI and its `key = value` metadata.
 ///
 /// Supports:
 /// - `#[resource("uri://template")]` - URI only
 /// - `#[resource("uri://template", mime_type = "text/plain")]` - URI with MIME type
-/// - `#[resource("uri://template", tags = ["admin"], version = "1.0")]` - Full syntax
+/// - `#[resource("uri://template", description = "...", tags = ["admin"], version = "1.0")]`
+/// - `#[resource("uri://x", audience = ["user"], priority = 0.8,
+///   last_modified = "2025-01-12T15:00:58Z", size = 1024)]` - `ResourceAnnotations` and size
 fn extract_resource_attrs(attr: &syn::Attribute) -> Result<ResourceAttrInfo, syn::Error> {
     let syn::Meta::List(meta_list) = &attr.meta else {
         return Err(syn::Error::new_spanned(
@@ -480,59 +543,125 @@ fn extract_resource_attrs(attr: &syn::Attribute) -> Result<ResourceAttrInfo, syn
         ));
     };
 
-    let tokens = meta_list.tokens.clone();
-
-    // Try to parse as just a string literal first (simple case).
-    if let Ok(lit) = syn::parse2::<syn::LitStr>(tokens.clone()) {
-        return Ok(ResourceAttrInfo {
-            uri_template: lit.value(),
-            mime_type: None,
-            tags: Vec::new(),
-            version: None,
-            title: None,
-            icons: Vec::new(),
-        });
-    }
-
-    // Walk tokens: first item must be a string literal (the URI), followed by
-    // an optional `, key = value` list. Walking the token stream is safer than
-    // substring search because the URI itself may legitimately contain commas
-    // or brackets.
-    let mut iter = tokens.clone().into_iter();
-    let Some(proc_macro2::TokenTree::Literal(uri_lit)) = iter.next() else {
-        return Err(syn::Error::new_spanned(
-            attr,
-            "Expected #[resource(\"uri://template\", ...)] - the first argument must be the URI string",
-        ));
-    };
-    let uri_template = syn::parse_str::<syn::LitStr>(&uri_lit.to_string())
-        .map_err(|_| {
-            syn::Error::new_spanned(
-                attr,
-                "Resource URI must be a string literal, e.g. #[resource(\"file://{path}\")]",
+    // The URI comes first, followed by an optional `, key = value` list.
+    let split = |input: syn::parse::ParseStream<'_>| {
+        let uri: syn::LitStr = input.parse().map_err(|e| {
+            syn::Error::new(
+                e.span(),
+                "Expected #[resource(\"uri://template\", ...)] - the first argument must be the URI string",
             )
-        })?
-        .value();
+        })?;
+        if !input.is_empty() {
+            input.parse::<syn::Token![,]>()?;
+        }
+        Ok((uri, input.parse::<TokenStream>()?))
+    };
+    let (uri, rest) = syn::parse::Parser::parse2(split, meta_list.tokens.clone())?;
+    let uri_template = uri.value();
 
-    // The remaining tokens (after the leading URI and its trailing comma) carry
-    // the named arguments. Re-stringify them so we can reuse the shared
-    // token-aware key/value extractors.
-    let rest: proc_macro2::TokenStream = iter.collect();
-    let rest_str = rest.to_string();
-    let mime_type = parse_quoted_value(&rest_str, "mime_type");
-    let version = parse_quoted_value(&rest_str, "version");
-    let tags = parse_tags_array(&rest_str);
-    let title = parse_quoted_value(&rest_str, "title");
-    let icons = parse_string_array(&rest_str, "icons");
+    let mut mime_type = None;
+    let mut annotations = ResourceAnnotationAttrs::default();
+    let mut size = None;
+    let common = parse_marker_attrs(rest, "resource", RESOURCE_KEYS, |meta| {
+        if meta.path.is_ident("mime_type") {
+            mime_type = Some(parse_lit_str(meta)?);
+        } else if meta.path.is_ident("audience") {
+            let value = meta.value()?;
+            let items;
+            syn::bracketed!(items in value);
+            for role in
+                syn::punctuated::Punctuated::<syn::LitStr, syn::Token![,]>::parse_terminated(
+                    &items,
+                )?
+            {
+                let variant = match role.value().as_str() {
+                    "user" => "User",
+                    "assistant" => "Assistant",
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            &role,
+                            format!(
+                                "unknown audience `{other}`; expected \"user\" or \"assistant\""
+                            ),
+                        ));
+                    }
+                };
+                annotations.audience.push(Ident::new(variant, role.span()));
+            }
+        } else if meta.path.is_ident("priority") {
+            let lit: syn::Lit = meta.value()?.parse()?;
+            let priority = match &lit {
+                syn::Lit::Float(f) => f.base10_parse::<f64>()?,
+                syn::Lit::Int(i) => i.base10_parse::<f64>()?,
+                _ => return Err(syn::Error::new_spanned(&lit, "priority must be a number")),
+            };
+            // The schema bounds it: 1 is "most important", 0 "least".
+            if !(0.0..=1.0).contains(&priority) {
+                return Err(syn::Error::new_spanned(
+                    &lit,
+                    "priority must be between 0 and 1 inclusive",
+                ));
+            }
+            annotations.priority = Some(priority);
+        } else if meta.path.is_ident("last_modified") {
+            annotations.last_modified = Some(parse_lit_str(meta)?);
+        } else if meta.path.is_ident("size") {
+            let lit: syn::LitInt = meta.value()?.parse()?;
+            // `ResourceTemplate` has no `size`: a template stands for many
+            // resources, which have no one size between them.
+            if uri_template.contains('{') {
+                return Err(syn::Error::new_spanned(
+                    &lit,
+                    "`size` applies only to a concrete resource; a URI template has no single size",
+                ));
+            }
+            size = Some(lit.base10_parse::<u64>()?);
+        } else {
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
 
     Ok(ResourceAttrInfo {
         uri_template,
         mime_type,
-        tags,
-        version,
-        title,
-        icons,
+        common,
+        annotations,
+        size,
     })
+}
+
+/// Generate `Resource.annotations` / `ResourceTemplate.annotations` as
+/// `Option<ResourceAnnotations>`.
+fn generate_resource_annotations_code(
+    annotations: &ResourceAnnotationAttrs,
+    krate: &TokenStream,
+) -> TokenStream {
+    if annotations.is_empty() {
+        return quote! { None };
+    }
+    let types = quote! { #krate::__macro_support::turbomcp_types };
+    let audience = if annotations.audience.is_empty() {
+        quote! { None }
+    } else {
+        let roles = &annotations.audience;
+        quote! { Some(vec![#(#types::Role::#roles),*]) }
+    };
+    let priority = match annotations.priority {
+        Some(p) => quote! { Some(#p) },
+        None => quote! { None },
+    };
+    let last_modified = match &annotations.last_modified {
+        Some(t) => quote! { Some(#t.to_string()) },
+        None => quote! { None },
+    };
+    quote! {
+        Some(#types::ResourceAnnotations {
+            audience: #audience,
+            priority: #priority,
+            last_modified: #last_modified,
+        })
+    }
 }
 
 /// Does this handler hand back an `McpError` the dispatcher can inspect?
@@ -618,40 +747,25 @@ fn is_request_context_type(ty: &syn::Type) -> bool {
     false
 }
 
-/// Parsed prompt attributes.
-#[derive(Default)]
-struct PromptAttrs {
-    description: Option<String>,
-    tags: Vec<String>,
-    version: Option<String>,
-    title: Option<String>,
-    icons: Vec<String>,
-}
-
-/// Extract prompt attributes from #[prompt(...)] attribute.
-fn extract_prompt_attrs(attr: &syn::Attribute) -> PromptAttrs {
-    let mut attrs = PromptAttrs::default();
-
+/// Extract prompt attributes from `#[prompt(...)]`.
+///
+/// `#[prompt]` has no keys of its own: it takes the shared set, or the
+/// `#[prompt("description")]` shorthand.
+fn extract_prompt_attrs(attr: &syn::Attribute) -> Result<CommonAttrs, syn::Error> {
     // Handle empty #[prompt]
     let syn::Meta::List(meta_list) = &attr.meta else {
-        return attrs;
+        return Ok(CommonAttrs::default());
     };
 
     // Handle #[prompt("description")] shorthand
     if let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone()) {
-        attrs.description = Some(lit.value());
-        return attrs;
+        return Ok(CommonAttrs {
+            description: Some(lit.value()),
+            ..CommonAttrs::default()
+        });
     }
 
-    // Parse full syntax from token string
-    let token_str = meta_list.tokens.to_string();
-    attrs.description = parse_quoted_value(&token_str, "description");
-    attrs.version = parse_quoted_value(&token_str, "version");
-    attrs.tags = parse_tags_array(&token_str);
-    attrs.title = parse_quoted_value(&token_str, "title");
-    attrs.icons = parse_string_array(&token_str, "icons");
-
-    attrs
+    parse_marker_attrs(meta_list.tokens.clone(), "prompt", &[], |_| Ok(false))
 }
 
 /// Extract prompt arguments from function signature (HIGH-002).
@@ -662,7 +776,7 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
         if let syn::FnArg::Typed(pat_type) = input
             && let syn::Pat::Ident(pat_ident) = &*pat_type.pat
         {
-            let name = pat_ident.ident.to_string();
+            let name = pat_ident.ident.unraw().to_string();
 
             // Skip self parameter
             if name == "self" {
@@ -674,14 +788,16 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
                 continue;
             }
 
-            // Check if type is Option<T> to determine if required
+            // Check if type is Option<T> to determine if required. The last
+            // segment, as `#[tool]` checks it: the first segment of
+            // `std::option::Option<String>` is `std`, which listed the argument
+            // as required and bound it as a `String` the handler cannot take.
             let is_option = if let syn::Type::Path(type_path) = &*pat_type.ty {
                 type_path
                     .path
                     .segments
-                    .first()
-                    .map(|s| s.ident == "Option")
-                    .unwrap_or(false)
+                    .last()
+                    .is_some_and(|s| s.ident == "Option")
             } else {
                 false
             };
@@ -699,6 +815,7 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
 
             args.push(PromptArgumentInfo {
                 name,
+                ident: pat_ident.ident.clone(),
                 title,
                 description,
                 required: !is_option,
@@ -910,10 +1027,15 @@ fn generate_extension_handlers(
 /// Generate `server_capabilities`, inferred from what the server can serve.
 ///
 /// Tools, resources, and prompts are advertised when the impl block declares
-/// any; `completions`, `logging`, and `resources.subscribe` are advertised only
-/// when the corresponding marker attribute supplied a handler. A server
-/// therefore never claims a capability whose method would answer
-/// `capability_not_supported`.
+/// any; `completions` and `resources.subscribe` are advertised only when the
+/// corresponding marker attribute supplied a handler. A server therefore never
+/// claims a capability whose method would answer `capability_not_supported`.
+///
+/// `logging` is always advertised. Every server can emit
+/// `notifications/message` through `ctx.log()`, a server that emits log
+/// notifications must declare `logging`, and the trait default for
+/// `logging/setLevel` accepts the level (the router records it), so the method
+/// is served whether or not `#[set_level]` is present.
 fn generate_capabilities(info: &ServerInfo, turbomcp: &TokenStream) -> TokenStream {
     let types = quote! { #turbomcp::__macro_support::turbomcp_types };
 
@@ -960,15 +1082,6 @@ fn generate_capabilities(info: &ServerInfo, turbomcp: &TokenStream) -> TokenStre
         }
     });
 
-    // Either signal is enough: implementing `logging/setLevel` implies the
-    // server does logging, and `#[server(logging)]` covers the server that
-    // emits `notifications/message` without letting clients set a level.
-    let logging_code = (info.extensions.set_level.is_some() || info.logging).then(|| {
-        quote! {
-            capabilities.logging = Some(#types::LoggingCapabilities::default());
-        }
-    });
-
     quote! {
         fn server_capabilities(&self) -> #types::ServerCapabilities {
             let mut capabilities = #types::ServerCapabilities::default();
@@ -976,7 +1089,7 @@ fn generate_capabilities(info: &ServerInfo, turbomcp: &TokenStream) -> TokenStre
             #resources_code
             #prompts_code
             #completions_code
-            #logging_code
+            capabilities.logging = Some(#types::LoggingCapabilities::default());
             capabilities
         }
     }
@@ -1092,6 +1205,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         let icons_code = generate_icons_code(&tool.icons, &turbomcp);
         let annotations_code = generate_annotations_code(&tool.annotations, &tool.title, &turbomcp);
         let output_schema_code = generate_output_schema_code(&tool.output_schema, &turbomcp);
+        let execution_code = generate_execution_code(&tool.task_support, &turbomcp);
 
         quote! {
             #turbomcp::__macro_support::turbomcp_types::Tool {
@@ -1101,7 +1215,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 title: #title_code,
                 icons: #icons_code,
                 annotations: #annotations_code,
-                execution: None,
+                execution: #execution_code,
                 output_schema: #output_schema_code,
                 meta: #meta_code,
             }
@@ -1132,6 +1246,12 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 None => quote! { None },
             };
             let icons_code = generate_icons_code(&resource.icons, &turbomcp);
+            let annotations_code =
+                generate_resource_annotations_code(&resource.annotations, &turbomcp);
+            let size_code = match resource.size {
+                Some(size) => quote! { Some(#size) },
+                None => quote! { None },
+            };
             quote! {
                 #turbomcp::__macro_support::turbomcp_types::Resource {
                     uri: #uri.to_string(),
@@ -1140,8 +1260,8 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                     title: #title_code,
                     icons: #icons_code,
                     mime_type: #mime_type_code,
-                    annotations: None,
-                    size: None,
+                    annotations: #annotations_code,
+                    size: #size_code,
                     meta: #meta_code,
                 }
             }
@@ -1169,6 +1289,8 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 None => quote! { None },
             };
             let icons_code = generate_icons_code(&resource.icons, &turbomcp);
+            let annotations_code =
+                generate_resource_annotations_code(&resource.annotations, &turbomcp);
             quote! {
                 #turbomcp::__macro_support::turbomcp_types::ResourceTemplate {
                     uri_template: #uri_template.to_string(),
@@ -1177,7 +1299,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                     title: #title_code,
                     icons: #icons_code,
                     mime_type: #mime_type_code,
-                    annotations: None,
+                    annotations: #annotations_code,
                     meta: #meta_code,
                 }
             }
@@ -1250,7 +1372,9 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     // to bubble up as protocol errors.
     let tool_dispatch_code = info.tools.iter().map(|tool| {
         let tool_name = &tool.name;
-        let fn_name = syn::Ident::new(&tool.name, proc_macro2::Span::call_site());
+        // The identifier as written, not rebuilt from the wire name: `r#type`
+        // is the tool `type`, but only `r#type` names the method.
+        let fn_name = &tool.sig.ident;
         let extraction = generate_extraction_code(&tool.parameters, &turbomcp);
         let call_args = generate_call_args(&tool.sig);
 
@@ -1320,8 +1444,28 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         // guess from the body (`text/plain`, `application/octet-stream`), which
         // left the catalogue and the content describing the same resource
         // differently.
-        let mime_override = match &resource.mime_type {
-            Some(mime) => quote! { .with_mime_type(#mime) },
+        //
+        // That holds for a single entry, which *is* the listed resource. A read
+        // returning several entries — a directory's children, or renditions of
+        // one document — carries a type per entry that the handler chose, and
+        // overwriting them all with the one declared type mislabelled every
+        // entry but the matching ones. There the declared type only fills in
+        // entries that set none.
+        let apply_mime = match &resource.mime_type {
+            Some(mime) => quote! {
+                let mut read = read;
+                if read.contents.len() == 1 {
+                    read = read.with_mime_type(#mime);
+                } else {
+                    for entry in &mut read.contents {
+                        let slot = match entry {
+                            #turbomcp::__macro_support::turbomcp_types::ResourceContents::Text(text) => &mut text.mime_type,
+                            #turbomcp::__macro_support::turbomcp_types::ResourceContents::Blob(blob) => &mut blob.mime_type,
+                        };
+                        slot.get_or_insert_with(|| #mime.to_string());
+                    }
+                }
+            },
             None => quote! {},
         };
 
@@ -1332,10 +1476,11 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 #turbomcp::__macro_support::turbomcp_types::ResourceResult
             > = ::std::boxed::Box::pin(async {
                 match self.#fn_name(uri.to_string(), ctx).await {
-                    Ok(r) => Ok(
-                        #turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)
-                            #mime_override
-                    ),
+                    Ok(r) => {
+                        let read = #turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri);
+                        #apply_mime
+                        Ok(read)
+                    }
                     Err(e) => Err(e),
                 }
             }).await;
@@ -1372,6 +1517,8 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     // - String, &str -> PromptResult::user(...)
     // - PromptResult -> passed through
     // - Result<T, E> -> Ok unwrapped, Err converted to message
+    let args = args_ident();
+    let ctx = ctx_ident();
     let prompt_dispatch_code = info.prompts.iter().map(|prompt| {
         let prompt_name = &prompt.name;
         let fn_name = &prompt.fn_name;
@@ -1379,11 +1526,11 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         // Generate argument extraction code
         let arg_extractions = prompt.arguments.iter().map(|arg| {
             let arg_name = &arg.name;
-            let arg_ident = syn::Ident::new(arg_name, proc_macro2::Span::call_site());
+            let arg_ident = &arg.ident;
 
             if arg.required {
                 quote! {
-                    let #arg_ident: String = prompt_args
+                    let #arg_ident: String = #args
                         .as_ref()
                         .and_then(|a| a.get(#arg_name))
                         .and_then(|v| v.as_str())
@@ -1394,7 +1541,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 }
             } else {
                 quote! {
-                    let #arg_ident: Option<String> = prompt_args
+                    let #arg_ident: Option<String> = #args
                         .as_ref()
                         .and_then(|a| a.get(#arg_name))
                         .and_then(|v| v.as_str())
@@ -1404,10 +1551,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         });
 
         // Generate call arguments (excluding ctx which is passed separately)
-        let call_args = prompt.arguments.iter().map(|arg| {
-            let arg_ident = syn::Ident::new(&arg.name, proc_macro2::Span::call_site());
-            quote! { #arg_ident }
-        });
+        let call_args = prompt.arguments.iter().map(|arg| &arg.ident);
 
         // A prompt returning `McpResult<T>` propagates its error as a JSON-RPC
         // error. The blanket `IntoPromptResult` conversion renders `Err` as a
@@ -1442,11 +1586,11 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         };
 
         let call = if prompt.arguments.is_empty() {
-            quote! { let result = self.#fn_name(ctx).await; }
+            quote! { let result = self.#fn_name(#ctx).await; }
         } else {
             quote! {
                 #(#arg_extractions)*
-                let result = self.#fn_name(#(#call_args,)* ctx).await;
+                let result = self.#fn_name(#(#call_args,)* #ctx).await;
             }
         };
 
@@ -1520,12 +1664,12 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             fn call_tool<'a>(
                 &'a self,
                 name: &'a str,
-                args: #turbomcp::__macro_support::serde_json::Value,
-                ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+                #args: #turbomcp::__macro_support::serde_json::Value,
+                #ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
             ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::ToolResult>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
                 let name = name.to_string();
                 async move {
-                    let args = args.as_object().cloned().unwrap_or_default();
+                    let #args = #args.as_object().cloned().unwrap_or_default();
                     match name.as_str() {
                         #(#tool_dispatch_code)*
                         _ => Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::tool_not_found(&name))
@@ -1563,12 +1707,12 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             fn get_prompt<'a>(
                 &'a self,
                 name: &'a str,
-                args: Option<#turbomcp::__macro_support::serde_json::Value>,
-                ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+                #args: Option<#turbomcp::__macro_support::serde_json::Value>,
+                #ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
             ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::PromptResult>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
                 let name = name.to_string();
                 // HIGH-002: Convert args to Map for argument extraction
-                let prompt_args = args.and_then(|v| v.as_object().cloned());
+                let #args = #args.and_then(|v| v.as_object().cloned());
                 async move {
                     match name.as_str() {
                         #(#prompt_dispatch_code)*
@@ -1628,7 +1772,7 @@ pub fn generate_server(
         return e.to_compile_error().into();
     }
 
-    let attrs = match ServerAttrs::parse(args) {
+    let attrs = match ServerAttrs::parse(args.into()) {
         Ok(attrs) => attrs,
         Err(e) => return e.to_compile_error().into(),
     };
@@ -1716,6 +1860,8 @@ fn validate_handlers(info: &ServerInfo) -> Result<(), syn::Error> {
         // But we could warn in the future
     }
 
+    validate_extensions(&info.extensions)?;
+
     // Validate tool signatures
     for tool in &info.tools {
         // Check for async
@@ -1756,4 +1902,193 @@ fn validate_handlers(info: &ServerInfo) -> Result<(), syn::Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    /// Run the analysis and validation `#[server]` performs, stopping short of
+    /// code generation.
+    fn check(impl_block: ItemImpl) -> Result<ServerInfo, syn::Error> {
+        let info = analyze_impl(&impl_block, &ServerAttrs::default())?;
+        validate_handlers(&info)?;
+        Ok(info)
+    }
+
+    #[test]
+    fn subscribe_without_unsubscribe_is_rejected() {
+        let err = check(parse_quote! {
+            impl S {
+                #[subscribe]
+                async fn watch(&self, uri: String) -> McpResult<()> { Ok(()) }
+            }
+        })
+        .err()
+        .expect("an unpaired #[subscribe] must not compile");
+        assert!(err.to_string().contains("#[unsubscribe]"), "{err}");
+
+        check(parse_quote! {
+            impl S {
+                #[subscribe]
+                async fn watch(&self, uri: String) -> McpResult<()> { Ok(()) }
+                #[unsubscribe]
+                async fn unwatch(&self, uri: String) -> McpResult<()> { Ok(()) }
+            }
+        })
+        .unwrap_or_else(|e| panic!("a paired #[subscribe] must compile: {e}"));
+    }
+
+    #[test]
+    fn server_unknown_key_lists_every_key() {
+        let err = ServerAttrs::parse(quote!(nmae = "x"))
+            .err()
+            .expect("a misspelled #[server] key must not compile");
+        let message = err.to_string();
+        for key in [
+            "name",
+            "version",
+            "description",
+            "title",
+            "instructions",
+            "website_url",
+            "icons",
+            "page_size",
+            "logging",
+        ] {
+            assert!(message.contains(&format!("`{key}`")), "{message}");
+        }
+    }
+
+    /// Before the shared parser, `#[tool]` discarded the strict parser's error
+    /// in favour of a string-scanning fallback, and `#[resource]`/`#[prompt]`
+    /// only had the fallback: all three compiled a typo into a handler with
+    /// the metadata silently missing.
+    #[test]
+    fn every_marker_rejects_unknown_keys() {
+        for impl_block in [
+            parse_quote! {
+                impl S {
+                    #[tool(descriptio = "typo")]
+                    async fn t(&self) -> String { String::new() }
+                }
+            },
+            parse_quote! {
+                impl S {
+                    #[resource("mem://x", mime = "text/plain")]
+                    async fn r(&self, uri: String, ctx: &RequestContext) -> String { uri }
+                }
+            },
+            parse_quote! {
+                impl S {
+                    #[prompt(descriptio = "typo")]
+                    async fn p(&self, ctx: &RequestContext) -> String { String::new() }
+                }
+            },
+        ] {
+            let err = check(impl_block)
+                .err()
+                .expect("an unknown key must not compile");
+            assert!(err.to_string().contains("unknown #["), "{err}");
+        }
+    }
+
+    #[test]
+    fn explicit_descriptions_win_over_doc_comments_on_every_marker() {
+        let info = check(parse_quote! {
+            impl S {
+                /// doc
+                #[tool(description = "explicit")]
+                async fn t(&self) -> String { String::new() }
+
+                /// doc
+                #[resource("mem://x", description = "explicit")]
+                async fn r(&self, uri: String, ctx: &RequestContext) -> String { uri }
+
+                /// doc
+                #[prompt(description = "explicit")]
+                async fn p(&self, ctx: &RequestContext) -> String { String::new() }
+
+                /// doc only
+                #[prompt]
+                async fn q(&self, ctx: &RequestContext) -> String { String::new() }
+            }
+        })
+        .unwrap();
+        assert_eq!(info.tools[0].description, "explicit");
+        assert_eq!(info.resources[0].description.as_deref(), Some("explicit"));
+        assert_eq!(info.prompts[0].description.as_deref(), Some("explicit"));
+        assert_eq!(info.prompts[1].description.as_deref(), Some("doc only"));
+    }
+
+    #[test]
+    fn a_fully_qualified_option_is_an_optional_prompt_argument() {
+        let info = check(parse_quote! {
+            impl S {
+                #[prompt]
+                async fn p(
+                    &self,
+                    a: std::option::Option<String>,
+                    b: ::core::option::Option<String>,
+                    c: String,
+                    ctx: &RequestContext,
+                ) -> String { String::new() }
+            }
+        })
+        .unwrap();
+        let required: Vec<_> = info.prompts[0]
+            .arguments
+            .iter()
+            .map(|a| a.required)
+            .collect();
+        assert_eq!(required, [false, false, true]);
+    }
+
+    #[test]
+    fn metadata_values_are_validated_at_compile_time() {
+        for (impl_block, expected) in [
+            (
+                parse_quote! {
+                    impl S {
+                        #[resource("mem://x", audience = ["model"])]
+                        async fn r(&self, uri: String, ctx: &RequestContext) -> String { uri }
+                    }
+                },
+                "unknown audience",
+            ),
+            (
+                parse_quote! {
+                    impl S {
+                        #[resource("mem://x", priority = 1.5)]
+                        async fn r(&self, uri: String, ctx: &RequestContext) -> String { uri }
+                    }
+                },
+                "between 0 and 1",
+            ),
+            (
+                parse_quote! {
+                    impl S {
+                        #[resource("mem://{id}", size = 10)]
+                        async fn r(&self, uri: String, ctx: &RequestContext) -> String { uri }
+                    }
+                },
+                "concrete resource",
+            ),
+            (
+                parse_quote! {
+                    impl S {
+                        #[tool(task_support = "sometimes")]
+                        async fn t(&self) -> String { String::new() }
+                    }
+                },
+                "unknown task_support",
+            ),
+        ] {
+            let err = check(impl_block)
+                .err()
+                .expect("an out-of-range value must not compile");
+            assert!(err.to_string().contains(expected), "{err}");
+        }
+    }
 }

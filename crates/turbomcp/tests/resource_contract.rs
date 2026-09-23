@@ -71,6 +71,58 @@ async fn undeclared_mime_type_keeps_the_inferred_one() {
     assert_eq!(result["result"]["contents"][0]["mimeType"], "text/plain");
 }
 
+/// A read that returns several entries carries a type per entry, chosen by the
+/// handler. The declared `mime_type` used to overwrite all of them, so the
+/// image below was served as `text/markdown`. It may only fill in the gaps.
+#[tokio::test]
+async fn declared_mime_type_does_not_overwrite_a_multi_entry_read() {
+    #[derive(Clone)]
+    struct Bundle;
+
+    #[server(name = "bundle", version = "1.0.0")]
+    impl Bundle {
+        #[resource("mem://bundle", mime_type = "text/markdown")]
+        async fn bundle(&self, uri: String, _ctx: &RequestContext) -> McpResult<ResourceResult> {
+            let text = |mime_type: Option<&str>, text: &str| {
+                ResourceContents::Text(TextResourceContents {
+                    uri: uri.clone(),
+                    mime_type: mime_type.map(str::to_string),
+                    text: text.to_string(),
+                    meta: None,
+                })
+            };
+            Ok(ResourceResult {
+                contents: vec![
+                    text(None, "# readme"),
+                    text(Some("text/csv"), "a,b"),
+                    ResourceContents::Blob(BlobResourceContents {
+                        uri: uri.clone(),
+                        mime_type: Some("image/png".to_string()),
+                        blob: "iVBORw0KGgo=".to_string(),
+                        meta: None,
+                    }),
+                ],
+                meta: None,
+            })
+        }
+    }
+
+    let response = Bundle
+        .handle_request(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "resources/read",
+                "params": { "uri": "mem://bundle" }
+            }),
+            RequestContext::stdio(),
+        )
+        .await
+        .unwrap();
+    let contents = &response["result"]["contents"];
+    assert_eq!(contents[0]["mimeType"], "text/markdown", "{response}");
+    assert_eq!(contents[1]["mimeType"], "text/csv", "{response}");
+    assert_eq!(contents[2]["mimeType"], "image/png", "{response}");
+}
+
 /// `uri` is schema-required; omitting it is a malformed request, not a
 /// lookup for the empty URI that then reports "not found".
 #[tokio::test]

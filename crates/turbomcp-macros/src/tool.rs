@@ -54,12 +54,15 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
+use syn::ext::IdentExt;
 use syn::{FnArg, ItemFn, Pat, PatType, Signature, Type};
+
+use crate::attrs::{CommonAttrs, parse_lit_bool, parse_marker_attrs};
 
 /// Information about a tool handler method.
 #[derive(Clone)]
 pub struct ToolInfo {
-    /// Tool name (from function name)
+    /// Tool name on the wire: the function name with any `r#` prefix removed.
     pub name: String,
     /// Tool description (from doc comments or attribute)
     pub description: String,
@@ -80,6 +83,8 @@ pub struct ToolInfo {
     /// Optional output-schema source type. The macro emits
     /// `schemars::schema_for!(ty)` and stores the result as `Tool.outputSchema`.
     pub output_schema: Option<Type>,
+    /// `TaskSupportLevel` variant for `execution.taskSupport`, if declared.
+    pub task_support: Option<syn::Ident>,
 }
 
 /// Boolean hints copied verbatim into `ToolAnnotations`.
@@ -103,8 +108,12 @@ impl ToolAnnotationFlags {
 /// Information about a function parameter.
 #[derive(Clone)]
 pub struct ParameterInfo {
-    /// Parameter name
+    /// Parameter name on the wire: the identifier with any `r#` prefix removed,
+    /// so `r#type` is the `type` argument a client actually sends.
     pub name: String,
+    /// The identifier as written, which generated code must bind and pass.
+    /// `Ident::new` rejects `r#type`, so it cannot be rebuilt from `name`.
+    pub ident: syn::Ident,
     /// Parameter type
     pub ty: Type,
     /// Parameter description (from doc comments or #[description] attribute)
@@ -116,21 +125,26 @@ pub struct ParameterInfo {
 /// Parsed attributes from the #[tool(...)] macro.
 #[derive(Default)]
 pub struct ToolAttrs {
-    /// Tool description
-    pub description: Option<String>,
-    /// Tags for categorization
-    pub tags: Vec<String>,
-    /// Version string
-    pub version: Option<String>,
-    /// Human-readable title (SEP-973).
-    pub title: Option<String>,
-    /// Icon URIs (SEP-973). Plain string array; each entry becomes an `Icon`.
-    pub icons: Vec<String>,
+    /// Keys every handler marker shares (`description`, `tags`, ...).
+    pub common: CommonAttrs,
     /// `ToolAnnotations` boolean hints.
     pub annotations: ToolAnnotationFlags,
     /// Output-schema source type (`output_schema = MyType`).
     pub output_schema: Option<Type>,
+    /// `task_support = "..."`: the `TaskSupportLevel` variant to advertise
+    /// as `execution.taskSupport`.
+    pub task_support: Option<syn::Ident>,
 }
+
+/// Keys only `#[tool]` accepts, on top of [`CommonAttrs`].
+const TOOL_KEYS: &[&str] = &[
+    "read_only",
+    "destructive",
+    "idempotent",
+    "open_world",
+    "output_schema",
+    "task_support",
+];
 
 impl ToolAttrs {
     /// Parse tool attributes from a syn::Attribute.
@@ -149,244 +163,68 @@ impl ToolAttrs {
 
         // Handle #[tool("description")] shorthand
         if let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone()) {
-            attrs.description = Some(lit.value());
+            attrs.common.description = Some(lit.value());
             return Ok(attrs);
         }
 
-        // Parse #[tool(description = "...", tags = [...], version = "...", ...)]
-        let parser = syn::meta::parser(|meta| {
-            if meta.path.is_ident("description") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                attrs.description = Some(value.value());
-            } else if meta.path.is_ident("tags") {
-                // Parse tags = ["a", "b", "c"]
-                attrs.tags = parse_lit_str_array(&meta)?;
-            } else if meta.path.is_ident("version") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                attrs.version = Some(value.value());
-            } else if meta.path.is_ident("title") {
-                let value: syn::LitStr = meta.value()?.parse()?;
-                attrs.title = Some(value.value());
-            } else if meta.path.is_ident("icons") {
-                // Surface only `src` from the attribute. The MCP `Icon` schema
-                // also carries mimeType / sizes / theme; users wanting richer
-                // icons can construct them via the runtime builder.
-                attrs.icons = parse_lit_str_array(&meta)?;
-            } else if meta.path.is_ident("read_only") {
-                attrs.annotations.read_only = Some(meta.value()?.parse::<syn::LitBool>()?.value);
+        let Self {
+            common,
+            annotations,
+            output_schema,
+            task_support,
+        } = &mut attrs;
+        *common = parse_marker_attrs(meta_list.tokens.clone(), "tool", TOOL_KEYS, |meta| {
+            if meta.path.is_ident("read_only") {
+                annotations.read_only = Some(parse_lit_bool(meta)?);
             } else if meta.path.is_ident("destructive") {
-                attrs.annotations.destructive = Some(meta.value()?.parse::<syn::LitBool>()?.value);
+                annotations.destructive = Some(parse_lit_bool(meta)?);
             } else if meta.path.is_ident("idempotent") {
-                attrs.annotations.idempotent = Some(meta.value()?.parse::<syn::LitBool>()?.value);
+                annotations.idempotent = Some(parse_lit_bool(meta)?);
             } else if meta.path.is_ident("open_world") {
-                attrs.annotations.open_world = Some(meta.value()?.parse::<syn::LitBool>()?.value);
+                annotations.open_world = Some(parse_lit_bool(meta)?);
             } else if meta.path.is_ident("output_schema") {
                 // `output_schema = SomeType` — accept any syn::Type so generics
                 // and qualified paths work.
-                attrs.output_schema = Some(meta.value()?.parse::<Type>()?);
+                *output_schema = Some(meta.value()?.parse::<Type>()?);
+            } else if meta.path.is_ident("task_support") {
+                let value: syn::LitStr = meta.value()?.parse()?;
+                let variant = match value.value().as_str() {
+                    "forbidden" => "Forbidden",
+                    "optional" => "Optional",
+                    "required" => "Required",
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            &value,
+                            format!(
+                                "unknown task_support `{other}`; expected \"forbidden\", \
+                                 \"optional\", or \"required\""
+                            ),
+                        ));
+                    }
+                };
+                *task_support = Some(syn::Ident::new(variant, value.span()));
             } else {
-                // Unknown key — surface a clear compile-time error instead of
-                // silently dropping it. A typo like `descriptio = "..."` would
-                // previously parse, leaving the resulting tool with the default
-                // description and no diagnostic.
-                let key = meta
-                    .path
-                    .get_ident()
-                    .map(|i| i.to_string())
-                    .unwrap_or_else(|| "<unknown>".to_string());
-                return Err(meta.error(format!(
-                    "unknown #[tool] attribute key `{key}`; expected one of `description`, `tags`, `version`, `title`, `icons`, `read_only`, `destructive`, `idempotent`, `open_world`, `output_schema`",
-                )));
+                return Ok(false);
             }
-            Ok(())
-        });
-
-        // Try to parse, but if it fails with the nested parser, try an alternative
-        if syn::parse::Parser::parse2(parser, meta_list.tokens.clone()).is_err() {
-            // Alternative: parse comma-separated items including array literals
-            attrs = Self::parse_alternative(&meta_list.tokens)?;
-        }
+            Ok(true)
+        })?;
 
         Ok(attrs)
     }
-
-    /// Alternative parser for complex attribute syntax.
-    ///
-    /// Used as a fallback when the `syn::meta::parser` path fails. Handles
-    /// scalar string keys, the `tags`/`icons` array forms, and the boolean
-    /// hints. `output_schema` (a `Type`) is intentionally unsupported here —
-    /// stringly extracting a Rust type is brittle, and the primary parser
-    /// already covers the realistic syntax.
-    fn parse_alternative(tokens: &proc_macro2::TokenStream) -> Result<Self, syn::Error> {
-        let mut attrs = Self::default();
-        let token_str = tokens.to_string();
-
-        attrs.description = parse_quoted_value(&token_str, "description");
-        attrs.version = parse_quoted_value(&token_str, "version");
-        attrs.title = parse_quoted_value(&token_str, "title");
-        attrs.tags = parse_string_array(&token_str, "tags");
-        attrs.icons = parse_string_array(&token_str, "icons");
-        attrs.annotations.read_only = parse_bool_value(&token_str, "read_only");
-        attrs.annotations.destructive = parse_bool_value(&token_str, "destructive");
-        attrs.annotations.idempotent = parse_bool_value(&token_str, "idempotent");
-        attrs.annotations.open_world = parse_bool_value(&token_str, "open_world");
-
-        Ok(attrs)
-    }
-}
-
-/// Parse `["a", "b", ...]` from a `syn::meta::ParseNestedMeta` value position.
-///
-/// Used by the primary `syn::meta::parser` for array-valued attribute keys
-/// (`tags`, `icons`). Without this the meta parser would bail on the bracketed
-/// value and the alternative string-based parser would take over — losing any
-/// attrs (like `output_schema = Type`) that only the primary parser supports.
-fn parse_lit_str_array(meta: &syn::meta::ParseNestedMeta<'_>) -> Result<Vec<String>, syn::Error> {
-    let value = meta.value()?;
-    let arr;
-    syn::bracketed!(arr in value);
-    let parsed: syn::punctuated::Punctuated<syn::LitStr, syn::Token![,]> =
-        syn::punctuated::Punctuated::parse_terminated(&arr)?;
-    Ok(parsed.into_iter().map(|s| s.value()).collect())
-}
-
-/// Parse a `key = "value"` pattern from a stringified token stream.
-///
-/// Fallback for complex attribute syntax when standard parsing fails. Walks
-/// the token stream looking for the bare ident `key`, an `=` punct, and a
-/// string literal — this avoids substring matches inside other identifiers
-/// or string values (e.g. a description containing the word `version` would
-/// previously poison the lookup).
-pub fn parse_quoted_value(token_str: &str, key: &str) -> Option<String> {
-    let tokens = syn::parse_str::<proc_macro2::TokenStream>(token_str).ok()?;
-    let mut iter = tokens.into_iter().peekable();
-
-    while let Some(token) = iter.next() {
-        let proc_macro2::TokenTree::Ident(ident) = &token else {
-            continue;
-        };
-        if ident != key {
-            continue;
-        }
-        // Expect `=` punct next.
-        let Some(proc_macro2::TokenTree::Punct(p)) = iter.next() else {
-            continue;
-        };
-        if p.as_char() != '=' {
-            continue;
-        }
-        // Expect a string literal next.
-        let Some(proc_macro2::TokenTree::Literal(lit)) = iter.next() else {
-            continue;
-        };
-        // syn parses `Literal` -> `LitStr` to safely unquote and unescape.
-        if let Ok(s) = syn::parse_str::<syn::LitStr>(&lit.to_string()) {
-            return Some(s.value());
-        }
-    }
-
-    None
-}
-
-/// Parse `key = ["a", "b", "c"]` pattern from a stringified token stream.
-///
-/// Fallback for complex attribute syntax when standard parsing fails. Walks
-/// tokens to find the `key` ident, an `=` punct, and a bracketed group, then
-/// extracts the string literals inside. This avoids substring collisions —
-/// for example, a description containing the literal `key` text or `[`
-/// would previously break the parser.
-pub fn parse_string_array(token_str: &str, key: &str) -> Vec<String> {
-    let Ok(tokens) = syn::parse_str::<proc_macro2::TokenStream>(token_str) else {
-        return Vec::new();
-    };
-    let mut iter = tokens.into_iter();
-
-    while let Some(token) = iter.next() {
-        let proc_macro2::TokenTree::Ident(ident) = &token else {
-            continue;
-        };
-        if ident != key {
-            continue;
-        }
-        let Some(proc_macro2::TokenTree::Punct(p)) = iter.next() else {
-            continue;
-        };
-        if p.as_char() != '=' {
-            continue;
-        }
-        let Some(proc_macro2::TokenTree::Group(group)) = iter.next() else {
-            continue;
-        };
-        if group.delimiter() != proc_macro2::Delimiter::Bracket {
-            continue;
-        }
-
-        return group
-            .stream()
-            .into_iter()
-            .filter_map(|tt| {
-                if let proc_macro2::TokenTree::Literal(lit) = tt {
-                    syn::parse_str::<syn::LitStr>(&lit.to_string())
-                        .ok()
-                        .map(|s| s.value())
-                } else {
-                    None
-                }
-            })
-            .collect();
-    }
-
-    Vec::new()
-}
-
-/// Back-compat alias: `tags = [...]`.
-pub fn parse_tags_array(token_str: &str) -> Vec<String> {
-    parse_string_array(token_str, "tags")
-}
-
-/// Parse `key = true|false` from a stringified token stream.
-///
-/// Used by the alternative attribute parser. Returns `None` if the key is
-/// absent, the value is malformed, or the literal isn't a boolean.
-pub fn parse_bool_value(token_str: &str, key: &str) -> Option<bool> {
-    let tokens = syn::parse_str::<proc_macro2::TokenStream>(token_str).ok()?;
-    let mut iter = tokens.into_iter();
-
-    while let Some(token) = iter.next() {
-        let proc_macro2::TokenTree::Ident(ident) = &token else {
-            continue;
-        };
-        if ident != key {
-            continue;
-        }
-        let Some(proc_macro2::TokenTree::Punct(p)) = iter.next() else {
-            continue;
-        };
-        if p.as_char() != '=' {
-            continue;
-        }
-        let Some(next) = iter.next() else {
-            continue;
-        };
-        // `true` / `false` arrive as `Ident`s, not `Literal`s.
-        return match next {
-            proc_macro2::TokenTree::Ident(b) if b == "true" => Some(true),
-            proc_macro2::TokenTree::Ident(b) if b == "false" => Some(false),
-            _ => None,
-        };
-    }
-
-    None
 }
 
 impl ToolInfo {
     /// Extract tool info from a function.
     pub fn from_fn(item: &ItemFn, attrs: ToolAttrs) -> Result<Self, syn::Error> {
-        let name = item.sig.ident.to_string();
+        let name = item.sig.ident.unraw().to_string();
 
-        // Get description from doc comments or attribute
+        // An explicit description wins over the doc comment.
         let doc_description = extract_doc_comments(&item.attrs);
-        let description = attrs.description.or(doc_description).unwrap_or_default();
+        let description = attrs
+            .common
+            .description
+            .or(doc_description)
+            .unwrap_or_default();
 
         // Analyze parameters
         let parameters = analyze_parameters(&item.sig)?;
@@ -396,10 +234,10 @@ impl ToolInfo {
             description,
             sig: item.sig.clone(),
             parameters,
-            tags: attrs.tags,
-            version: attrs.version,
-            title: attrs.title,
-            icons: attrs.icons,
+            tags: attrs.common.tags,
+            version: attrs.common.version,
+            title: attrs.common.title,
+            icons: attrs.common.icons,
             annotations: attrs.annotations,
             // An explicit `output_schema = T` always wins; otherwise infer it
             // from a `Json<T>` return, which is the wrapper whose whole purpose
@@ -407,6 +245,7 @@ impl ToolInfo {
             output_schema: attrs
                 .output_schema
                 .or_else(|| infer_output_schema_type(&item.sig)),
+            task_support: attrs.task_support,
         })
     }
 }
@@ -498,7 +337,7 @@ fn analyze_parameters(sig: &Signature) -> Result<Vec<ParameterInfo>, syn::Error>
             }
             FnArg::Typed(PatType { pat, ty, attrs, .. }) => {
                 if let Pat::Ident(pat_ident) = pat.as_ref() {
-                    let param_name = pat_ident.ident.to_string();
+                    let param_name = pat_ident.ident.unraw().to_string();
 
                     // Skip context parameters
                     if is_context_type(ty) {
@@ -512,6 +351,7 @@ fn analyze_parameters(sig: &Signature) -> Result<Vec<ParameterInfo>, syn::Error>
 
                     parameters.push(ParameterInfo {
                         name: param_name,
+                        ident: pat_ident.ident.clone(),
                         ty: (**ty).clone(),
                         description,
                         is_optional,
@@ -713,35 +553,72 @@ pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -
 /// Maximum size for a single parameter value (1MB)
 const MAX_PARAM_VALUE_SIZE: usize = 1024 * 1024;
 
+/// The arguments map as the generated dispatch code binds it.
+///
+/// Every handler parameter is bound under the user's own name in the same
+/// scope as this map, so a plain `args` would be shadowed by a parameter called
+/// `args` — and every parameter extracted after it would then read from the
+/// wrong value. A reserved name keeps the two apart.
+pub fn args_ident() -> syn::Ident {
+    syn::Ident::new("__turbomcp_args", proc_macro2::Span::call_site())
+}
+
+/// The `&RequestContext` as the generated dispatch code binds it, reserved for
+/// the same reason as [`args_ident`]: a tool parameter called `ctx` would
+/// otherwise shadow the context that a `&RequestContext` parameter is handed.
+pub fn ctx_ident() -> syn::Ident {
+    syn::Ident::new("__turbomcp_ctx", proc_macro2::Span::call_site())
+}
+
 /// Generate parameter extraction code with size validation.
 ///
 /// This includes security checks to prevent DoS attacks via oversized parameters.
 /// The `krate` parameter is the resolved path to the turbomcp crate.
+///
+/// Reads the arguments map bound as [`args_ident`].
 pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStream) -> TokenStream {
-    if parameters.is_empty() {
-        return quote! {};
-    }
+    let args = args_ident();
 
-    // Add parameter count validation at the start
-    let param_count = parameters.len();
+    // The generated input schema declares `additionalProperties: false`
+    // (`ToolInputSchema::empty()` included), so an argument the tool does not
+    // take is invalid input, not something to drop. Dropping it silently ran a
+    // tool without a misspelt optional argument and reported success, and it
+    // left a validating client and this dispatcher disagreeing about the same
+    // call. The check also bounds how many keys reach extraction, which the
+    // old "no more than N + 10 parameters" guard existed for.
+    let names = parameters.iter().map(|param| &param.name);
+    let unknown_message = if parameters.is_empty() {
+        quote! { format!("Unknown argument '{}': this tool takes no arguments", unknown) }
+    } else {
+        quote! {
+            format!(
+                "Unknown argument '{}'; expected one of: {}",
+                unknown,
+                __TURBOMCP_PARAMETERS.join(", ")
+            )
+        }
+    };
     let mut extraction = quote! {
-        // Validate parameter count (defense against parameter pollution)
-        if args.len() > #param_count + 10 {
+        const __TURBOMCP_PARAMETERS: &[&str] = &[#(#names),*];
+        if let Some(unknown) = #args
+            .keys()
+            .find(|key| !__TURBOMCP_PARAMETERS.contains(&key.as_str()))
+        {
             return Err(#krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
-                format!("Too many parameters: got {}, expected at most {}", args.len(), #param_count)
+                #unknown_message
             ));
         }
     };
 
     for param in parameters {
         let name_str = &param.name;
-        let name_ident = syn::Ident::new(&param.name, proc_macro2::Span::call_site());
+        let name_ident = &param.ident;
         let ty = &param.ty;
 
         // Generate size check code
         let size_check = quote! {
             // Security: Validate parameter size before deserialization
-            if let Some(v) = args.get(#name_str) {
+            if let Some(v) = #args.get(#name_str) {
                 let size_estimate = v.to_string().len();
                 if size_estimate > #MAX_PARAM_VALUE_SIZE {
                     return Err(#krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
@@ -763,7 +640,7 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStrea
             // distinction by parsing the value as `Option<T>` directly.
             extraction.extend(quote! {
                 #size_check
-                let #name_ident: #ty = match args.get(#name_str) {
+                let #name_ident: #ty = match #args.get(#name_str) {
                     None => None,
                     Some(v) => {
                         #krate::__macro_support::serde_json::from_value::<#ty>(v.clone())
@@ -776,7 +653,7 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStrea
         } else {
             extraction.extend(quote! {
                 #size_check
-                let #name_ident: #ty = args
+                let #name_ident: #ty = #args
                     .get(#name_str)
                     .ok_or_else(|| #krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
                         format!("Missing required parameter: {}", #name_str)
@@ -856,6 +733,26 @@ pub fn generate_annotations_code(
     }
 }
 
+/// Generate `Tool.execution` as `Option<ToolExecution>` from `task_support`.
+///
+/// This is declaration only. Clients may attempt task augmentation only when
+/// the server also advertises `tasks.requests.tools.call`, which a
+/// `#[server]` does not; the key exists so the catalogue can say what the spec
+/// lets a tool say about itself.
+pub fn generate_execution_code(
+    task_support: &Option<syn::Ident>,
+    krate: &TokenStream,
+) -> TokenStream {
+    let Some(level) = task_support else {
+        return quote! { None };
+    };
+    quote! {
+        Some(#krate::__macro_support::turbomcp_types::ToolExecution {
+            task_support: Some(#krate::__macro_support::turbomcp_types::TaskSupportLevel::#level),
+        })
+    }
+}
+
 /// Generate `Tool.outputSchema` as `Option<ToolOutputSchema>`.
 ///
 /// When `output_schema = MyType` is supplied, runs `schemars::schema_for!(MyType)`
@@ -890,6 +787,7 @@ pub fn generate_output_schema_code(ty: &Option<Type>, krate: &TokenStream) -> To
 /// Generate call arguments.
 pub fn generate_call_args(sig: &Signature) -> TokenStream {
     let mut args = Vec::new();
+    let ctx = ctx_ident();
 
     for input in &sig.inputs {
         match input {
@@ -897,7 +795,7 @@ pub fn generate_call_args(sig: &Signature) -> TokenStream {
             FnArg::Typed(PatType { pat, ty, .. }) => {
                 if let Pat::Ident(pat_ident) = pat.as_ref() {
                     if is_context_type(ty) {
-                        args.push(quote! { ctx });
+                        args.push(quote! { #ctx });
                     } else {
                         let name = &pat_ident.ident;
                         args.push(quote! { #name });
