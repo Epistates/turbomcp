@@ -80,22 +80,10 @@ impl RestAdapter {
     pub async fn run(self) -> ProxyResult<()> {
         info!("Starting REST adapter on {}", self.config.bind);
 
-        let state = RestAdapterState {
+        let router = router(RestAdapterState {
             backend: self.backend,
             spec: Arc::new(self.spec),
-        };
-
-        // Build router with OpenAPI routes
-        let router = Router::new()
-            .route("/api/tools", get(list_tools).post(call_tool))
-            .route("/api/tools/:name", post(call_tool_by_name))
-            .route("/api/resources", get(list_resources))
-            .route("/api/resources/:uri", get(read_resource))
-            .route("/api/prompts", get(list_prompts))
-            .route("/api/prompts/:name", post(get_prompt))
-            .route("/openapi.json", get(openapi_spec))
-            .route("/health", get(health_check))
-            .with_state(state);
+        });
 
         // Note: Full Swagger UI integration requires utoipa-swagger-ui feature
         if self.config.openapi_ui {
@@ -122,6 +110,26 @@ impl RestAdapter {
 
         Ok(())
     }
+}
+
+/// The adapter's routes.
+///
+/// Path parameters use axum 0.8's `{name}` syntax. The `:name` form this used
+/// to have is axum 0.7's, and 0.8 panics on it when the route is registered,
+/// so the adapter crashed on startup. A resource URI takes the rest of the
+/// path (`{*uri}`), since URIs contain slashes.
+#[cfg(feature = "rest")]
+fn router(state: RestAdapterState) -> Router {
+    Router::new()
+        .route("/api/tools", get(list_tools).post(call_tool))
+        .route("/api/tools/{name}", post(call_tool_by_name))
+        .route("/api/resources", get(list_resources))
+        .route("/api/resources/{*uri}", get(read_resource))
+        .route("/api/prompts", get(list_prompts))
+        .route("/api/prompts/{name}", post(get_prompt))
+        .route("/openapi.json", get(openapi_spec))
+        .route("/health", get(health_check))
+        .with_state(state)
 }
 
 // ============ REST Endpoint Handlers ============
@@ -474,5 +482,52 @@ mod tests {
         let config = RestAdapterConfig::new("127.0.0.1:3001", true);
         assert_eq!(config.bind, "127.0.0.1:3001");
         assert!(config.openapi_ui);
+    }
+
+    /// axum 0.8 panics while registering a route that uses the 0.7 `:name`
+    /// syntax, so the adapter used to die before it served anything. Build
+    /// the real router and send it a request on each parameterised route.
+    #[tokio::test]
+    #[cfg(feature = "rest")]
+    async fn the_router_builds_and_routes_path_parameters() {
+        use tower::ServiceExt;
+
+        let backend = BackendConnector::from_static_data_for_test(
+            vec![turbomcp_protocol::types::Tool {
+                name: "echo".to_string(),
+                ..Default::default()
+            }],
+            vec![],
+            vec![],
+            vec![],
+        );
+        let spec = backend.introspect().await.expect("introspection");
+        let app = router(RestAdapterState {
+            backend,
+            spec: Arc::new(spec),
+        });
+
+        let call = axum::http::Request::post("/api/tools/echo")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from("{}"))
+            .unwrap();
+        let response = app.clone().oneshot(call).await.unwrap();
+        // The static test backend rejects every call; what matters is that
+        // the request reached the handler with the tool name bound.
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["tool"], "echo");
+
+        let read = axum::http::Request::get("/api/resources/file:///etc/motd")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = app.oneshot(read).await.unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["uri"], "file:///etc/motd");
     }
 }
