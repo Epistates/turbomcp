@@ -52,7 +52,9 @@ pub struct TelemetryLayerConfig {
     pub service_version: String,
     /// Whether to record request/response sizes
     pub record_sizes: bool,
-    /// Whether to record request timing
+    /// Whether to record completion on the span (`mcp.duration_ms`,
+    /// `mcp.status`, `mcp.error.code`, `mcp.error.message`) and emit a
+    /// completion event
     pub record_timing: bool,
     /// Methods to exclude from instrumentation
     pub excluded_methods: Vec<String>,

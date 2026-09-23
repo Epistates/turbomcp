@@ -51,7 +51,8 @@ use turbomcp_telemetry::TelemetryConfig;
 
 let config = TelemetryConfig::builder()
     .service_name("my-server")
-    .otlp_endpoint("http://localhost:4317")
+    // OTLP over HTTP/protobuf; the URL is used as-is, so include /v1/traces
+    .otlp_endpoint("http://localhost:4318/v1/traces")
     .sampling_ratio(1.0)
     .build();
 
@@ -111,6 +112,8 @@ The telemetry system records MCP-specific attributes on spans:
 | `mcp.transport` | Transport type (stdio, http, websocket, tcp, unix) |
 | `mcp.duration_ms` | Request duration in milliseconds |
 | `mcp.status` | Request status (success/error) |
+| `mcp.error.code` | JSON-RPC error code, when the response is an error |
+| `mcp.error.message` | JSON-RPC error message, truncated to `error_message_max_len` (512 bytes by default) |
 
 ## Pre-defined Metrics
 
