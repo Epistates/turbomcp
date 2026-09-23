@@ -26,6 +26,9 @@ default = []
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "3.0", features = ["full", "parsing", "extra-traits"] }
+# Decides at expansion time whether a `#[resource]` URI is a template, with the
+# same RFC 6570 parser the server routes by.
+turbomcp-core = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1.0"

@@ -197,3 +197,27 @@ fn test_multi_resource_server() {
     assert!(uris.contains(&"config://app"));
     assert!(uris.contains(&"data://metrics"));
 }
+
+/// A URI with a variable is a resource template, not a resource whose URI
+/// happens to contain braces: it belongs in `resources/templates/list`, and
+/// `resources/read` of an instance of it must reach the method.
+#[tokio::test]
+async fn templated_resource_uris_register_as_templates() {
+    let server = MultiResourceServer.into_mcp_server();
+
+    let templates: Vec<_> = server
+        .resource_templates()
+        .iter()
+        .map(|t| t.uri_template.clone())
+        .collect();
+    assert_eq!(templates, ["file://{path}"]);
+
+    let resources: Vec<_> = server.resources().iter().map(|r| r.uri.clone()).collect();
+    assert_eq!(resources, ["config://app", "data://metrics"]);
+
+    let ctx = turbomcp_wasm::wasm_server::new_wasm_context();
+    let read = McpHandler::read_resource(&server, "file://notes/today.md", &ctx)
+        .await
+        .expect("a template instance is readable");
+    assert_eq!(read.contents[0].uri(), "file://notes/today.md");
+}
