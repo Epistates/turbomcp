@@ -654,11 +654,7 @@ fn expand_path_segment(segment: &str, args: &HashMap<String, Value>) -> Result<S
     let mut last_param = None;
     let mut rest = segment;
 
-    while let Some(open) = rest.find('{') {
-        let Some(len) = rest[open..].find('}') else {
-            break;
-        };
-        let name = &rest[open + 1..open + len];
+    while let Some((literal, name, after)) = split_placeholder(rest) {
         let value = args
             .get(name)
             .ok_or_else(|| OpenApiError::MissingParameter(name.to_string()))?;
@@ -670,10 +666,10 @@ fn expand_path_segment(segment: &str, args: &HashMap<String, Value>) -> Result<S
             ));
         }
 
-        expanded.push_str(&rest[..open]);
+        expanded.push_str(literal);
         expanded.extend(utf8_percent_encode(&value, PATH_SEGMENT));
         last_param = Some(name);
-        rest = &rest[open + len + 1..];
+        rest = after;
     }
     expanded.push_str(rest);
 
@@ -687,6 +683,29 @@ fn expand_path_segment(segment: &str, args: &HashMap<String, Value>) -> Result<S
     }
 
     Ok(expanded)
+}
+
+/// The names of a path template's `{name}` placeholders, in order.
+pub(crate) fn path_param_names(path: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = path;
+    while let Some((_, name, after)) = split_placeholder(rest) {
+        names.push(name);
+        rest = after;
+    }
+    names
+}
+
+/// Split off the first `{name}` placeholder in `template`, as the text before
+/// it, the name, and the text after it. An unclosed `{` is literal text.
+fn split_placeholder(template: &str) -> Option<(&str, &str, &str)> {
+    let open = template.find('{')?;
+    let len = template[open..].find('}')?;
+    Some((
+        &template[..open],
+        &template[open + 1..open + len],
+        &template[open + len + 1..],
+    ))
 }
 
 #[cfg(test)]

@@ -9,14 +9,15 @@ use serde_json::{Value, json};
 use turbomcp_core::context::RequestContext;
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
+use turbomcp_core::uri_template::UriTemplate;
 use turbomcp_types::{
-    Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool, ToolInputSchema,
-    ToolOutputSchema, ToolResult, structured_content_if_object,
+    Prompt, PromptResult, Resource, ResourceResult, ResourceTemplate, ServerInfo, Tool,
+    ToolInputSchema, ToolOutputSchema, ToolResult, structured_content_if_object,
 };
 
 use crate::error::{OpenApiError, Result};
 use crate::mapping::McpType;
-use crate::provider::{ExtractedOperation, OpenApiProvider, param_value};
+use crate::provider::{ExtractedOperation, OpenApiProvider, param_value, path_param_names};
 use crate::schema::hoist_defs;
 
 /// Longest tool name the MCP specification recommends.
@@ -265,10 +266,46 @@ impl OpenApiHandler {
     }
 
     /// Find operation by resource URI.
-    fn find_resource_operation(&self, uri: &str) -> Option<&ExtractedOperation> {
-        self.provider
-            .resources()
+    ///
+    /// Returns the path parameters a templated resource's URI supplies. A
+    /// concrete resource wins over a template that also matches, the way
+    /// OpenAPI routes a concrete path ahead of a templated one.
+    fn find_resource_operation(
+        &self,
+        uri: &str,
+    ) -> Option<(&ExtractedOperation, HashMap<String, Value>)> {
+        if let Some(op) = self
+            .resource_operations(false)
             .find(|op| Self::resource_uri(op) == uri)
+        {
+            return Some((op, HashMap::new()));
+        }
+
+        self.resource_operations(true).find_map(|op| {
+            let template = Self::resource_uri(op);
+            let values = UriTemplate::parse(&template).captures(uri)?;
+            let names = path_param_names(&op.path);
+            // A path parameter is one segment, and RFC 6570 expansion encodes
+            // any `/` in a value. So a value holding one is not an expansion of
+            // this template: `…/users/{id}` taking `7/posts` belongs to
+            // `…/users/{id}/posts`.
+            if values.len() != names.len() || values.iter().any(|value| value.contains('/')) {
+                return None;
+            }
+            let args = names
+                .into_iter()
+                .zip(values)
+                .map(|(name, value)| (name.to_string(), Value::String(value.to_string())))
+                .collect();
+            Some((op, args))
+        })
+    }
+
+    /// Resource operations whose URI has, or has not, path parameters.
+    fn resource_operations(&self, templated: bool) -> impl Iterator<Item = &ExtractedOperation> {
+        self.provider.resources().filter(move |op| {
+            UriTemplate::parse(&Self::resource_uri(op)).is_concrete() != templated
+        })
     }
 
     /// Execute an operation via HTTP, returning the body of a 2xx response.
@@ -471,8 +508,7 @@ impl McpHandler for OpenApiHandler {
     }
 
     fn list_resources(&self) -> Vec<Resource> {
-        self.provider
-            .resources()
+        self.resource_operations(false)
             .map(|op| Resource {
                 uri: Self::resource_uri(op),
                 name: op.operation_id.clone().unwrap_or_else(|| op.path.clone()),
@@ -482,6 +518,25 @@ impl McpHandler for OpenApiHandler {
                 mime_type: Some("application/json".to_string()),
                 annotations: None,
                 size: None,
+                meta: Some(self.build_operation_meta(op)),
+            })
+            .collect()
+    }
+
+    /// GET operations with path parameters, such as `/users/{id}`.
+    ///
+    /// Their URI is a template a client fills in, not a resource it can read
+    /// as listed, so they are templates rather than resources.
+    fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
+        self.resource_operations(true)
+            .map(|op| ResourceTemplate {
+                uri_template: Self::resource_uri(op),
+                name: op.operation_id.clone().unwrap_or_else(|| op.path.clone()),
+                description: op.summary.clone().or_else(|| op.description.clone()),
+                title: op.summary.clone(),
+                icons: None,
+                mime_type: Some("application/json".to_string()),
+                annotations: None,
                 meta: Some(self.build_operation_meta(op)),
             })
             .collect()
@@ -534,13 +589,14 @@ impl McpHandler for OpenApiHandler {
     + turbomcp_core::marker::MaybeSend
     + 'a {
         async move {
-            let op = self
+            let (op, args) = self
                 .find_resource_operation(uri)
                 .ok_or_else(|| McpError::resource_not_found(uri))?;
 
-            // Resources are GET operations with no body
+            // Resources are GET operations with no body; a templated one takes
+            // its path parameters from the URI.
             let body = self
-                .execute_operation(op, HashMap::new())
+                .execute_operation(op, args)
                 .await
                 .map_err(to_mcp_error)?;
 
@@ -1024,6 +1080,83 @@ mod tests {
                 .unwrap();
             assert!(result.is_error());
             assert!(result.first_text().unwrap().contains("created"));
+        }
+
+        const USERS_SPEC: &str = r#"{
+            "openapi": "3.0.0",
+            "info": { "title": "T", "version": "1.0" },
+            "paths": {
+                "/users": { "get": { "operationId": "listUsers", "responses": { "200": { "description": "ok" } } } },
+                "/users/me": { "get": { "operationId": "getMe", "responses": { "200": { "description": "ok" } } } },
+                "/users/{id}": { "get": {
+                    "operationId": "getUser",
+                    "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+                    "responses": { "200": { "description": "ok" } }
+                } },
+                "/users/{id}/posts": { "get": {
+                    "operationId": "getUserPosts",
+                    "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+                    "responses": { "200": { "description": "ok" } }
+                } }
+            }
+        }"#;
+
+        #[tokio::test]
+        async fn test_templated_gets_are_resource_templates() {
+            let server = MockServer::start().await;
+            let handler = handler_for(USERS_SPEC, &server);
+
+            let resources: Vec<String> = handler
+                .list_resources()
+                .into_iter()
+                .map(|r| r.uri)
+                .collect();
+            assert_eq!(resources, ["openapi://get/users", "openapi://get/users/me"]);
+
+            let templates: Vec<String> = handler
+                .list_resource_templates()
+                .into_iter()
+                .map(|t| t.uri_template)
+                .collect();
+            assert_eq!(
+                templates,
+                ["openapi://get/users/{id}", "openapi://get/users/{id}/posts"]
+            );
+        }
+
+        #[tokio::test]
+        async fn test_reading_a_template_instance_fills_its_path_params() {
+            let server = MockServer::start().await;
+            for (route, body) in [
+                ("/users/42", "user 42"),
+                ("/users/42/posts", "posts of 42"),
+                ("/users/me", "me"),
+            ] {
+                Mock::given(method("GET"))
+                    .and(path(route))
+                    .respond_with(ResponseTemplate::new(200).set_body_string(body))
+                    .expect(1)
+                    .mount(&server)
+                    .await;
+            }
+            let handler = handler_for(USERS_SPEC, &server);
+            let ctx = RequestContext::new();
+
+            for (uri, body) in [
+                ("openapi://get/users/42", "user 42"),
+                // `{id}` is the trailing variable of `/users/{id}`, but a path
+                // parameter is one segment.
+                ("openapi://get/users/42/posts", "posts of 42"),
+                ("openapi://get/users/me", "me"),
+            ] {
+                let result = handler.read_resource(uri, &ctx).await.unwrap();
+                assert_eq!(result.first_text(), Some(body), "{uri}");
+            }
+
+            for uri in ["openapi://get/users/..", "openapi://get/users/a%2Fb"] {
+                let err = handler.read_resource(uri, &ctx).await.unwrap_err();
+                assert_eq!(err.jsonrpc_error_code(), -32002, "{uri}");
+            }
         }
 
         #[tokio::test]
