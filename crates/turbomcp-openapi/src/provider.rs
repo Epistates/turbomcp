@@ -36,6 +36,9 @@ pub struct ExtractedOperation {
     pub parameters: Vec<ExtractedParameter>,
     /// Request body schema (if any)
     pub request_body_schema: Option<Value>,
+    /// Whether the request body is required (`requestBody.required`, which
+    /// OpenAPI defaults to `false`).
+    pub request_body_required: bool,
     /// What MCP type this maps to
     pub mcp_type: McpType,
     /// Effective security requirements: a list of alternative
@@ -438,6 +441,8 @@ impl OpenApiProvider {
                 .and_then(|s| self.schema_to_json(s)),
             ReferenceOr::Reference { .. } => None,
         });
+        let request_body_required = request_body_schema.is_some()
+            && matches!(&operation.request_body, Some(ReferenceOr::Item(body)) if body.required);
 
         // Operation-level `security` overrides spec-level. An explicit empty
         // list (`security: []`) on the operation disables auth and must NOT
@@ -497,6 +502,7 @@ impl OpenApiProvider {
             description: operation.description.clone(),
             parameters,
             request_body_schema,
+            request_body_required,
             mcp_type,
             security,
             response_schema,
