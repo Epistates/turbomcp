@@ -143,7 +143,7 @@ pub mod core;
 /// HTTP transport types and configuration for MCP 2025-11-25 specification compliance.
 ///
 /// This module provides configuration and session management types.
-/// The actual HTTP server implementation is in `turbomcp_server::runtime::http`.
+/// The actual HTTP server implementation is in `turbomcp_server::transport::http`.
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod streamable_http;
