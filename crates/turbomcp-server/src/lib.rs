@@ -14,8 +14,11 @@
 //!
 //! ## Quick Start
 //!
+//! The `#[server]` and `#[tool]` macros are re-exported by the `turbomcp`
+//! facade crate, whose prelude also includes everything below:
+//!
 //! ```rust,ignore
-//! use turbomcp_server::prelude::*;
+//! use turbomcp::prelude::*;
 //!
 //! #[derive(Clone)]
 //! struct Calculator;
@@ -31,15 +34,15 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     // Simplest: uses STDIO by default
-//!     Calculator.serve().await.unwrap();
+//!     // Simplest: STDIO
+//!     Calculator.run_stdio().await.unwrap();
 //! }
 //! ```
 //!
 //! ## Runtime Transport Selection
 //!
 //! ```rust,ignore
-//! use turbomcp_server::prelude::*;
+//! use turbomcp::prelude::*;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -60,11 +63,11 @@
 //! ## Bring Your Own Server (Axum Integration)
 //!
 //! ```rust,ignore
-//! use axum::Router;
-//! use turbomcp_server::prelude::*;
+//! use axum::{Router, routing::get};
+//! use turbomcp::prelude::*;
 //!
 //! #[tokio::main]
-//! async fn main() {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Get MCP as an Axum router
 //!     let mcp = Calculator.builder().into_axum_router();
 //!
@@ -75,6 +78,7 @@
 //!
 //!     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 //!     axum::serve(listener, app).await?;
+//!     Ok(())
 //! }
 //! ```
 
@@ -164,6 +168,8 @@ pub mod __macro_support {
 ///
 /// ```rust,ignore
 /// use turbomcp_server::prelude::*;
+/// // The macros come from the `turbomcp` facade.
+/// use turbomcp::{server, tool};
 ///
 /// #[derive(Clone)]
 /// struct MyServer;
@@ -178,7 +184,7 @@ pub mod __macro_support {
 ///
 /// #[tokio::main]
 /// async fn main() {
-///     MyServer.serve().await.unwrap();
+///     MyServer.run_stdio().await.unwrap();
 /// }
 /// ```
 pub mod prelude {

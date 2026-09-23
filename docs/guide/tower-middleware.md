@@ -1,98 +1,148 @@
 # Tower Middleware
 
-TurboMCP v3 introduces native Tower integration for composable middleware patterns.
+TurboMCP v3 has two kinds of middleware: typed MCP middleware for servers, and
+Tower layers for the HTTP, gRPC, and client stacks.
 
 ## Overview
 
-[Tower](https://docs.rs/tower) is the de-facto standard for building modular and reusable network services in Rust. TurboMCP v3 provides Tower-native `Layer` and `Service` implementations for:
+- **MCP middleware** (`turbomcp-server`) - implement `McpMiddleware` and wrap a
+  handler in `MiddlewareStack`. Hooks see MCP operations (`tools/call` with the
+  tool name and arguments, `resources/read` with the URI, list results) and run on
+  every transport. This is the way to add logging, metrics, or access control to a
+  server.
+- **Tower layers** - [Tower](https://docs.rs/tower) `Layer`/`Service`
+  implementations in:
+  - **Authentication** (`turbomcp-auth`): `AuthLayer`, `RateLimitLayer` for HTTP services
+  - **Telemetry** (`turbomcp-telemetry`): `TelemetryLayer`
+  - **gRPC** (`turbomcp-grpc`): `McpGrpcLayer`
+  - **Client Middleware** (`turbomcp-client`): `CacheLayer`, `MetricsLayer`, `TracingLayer`
 
-- **Authentication** (`turbomcp-auth`)
-- **Telemetry** (`turbomcp-telemetry`)
-- **gRPC** (`turbomcp-grpc`)
-- **Client Middleware** (`turbomcp-client`)
+  The server's HTTP transport is an Axum router, so any Tower layer whose error
+  type is `Infallible` (for example `tower-http`'s) also applies to
+  `into_axum_router()`.
 
-## Basic Usage
+## MCP Middleware
 
 ```rust
-use tower::ServiceBuilder;
-use turbomcp_auth::tower::AuthLayer;
-use turbomcp_telemetry::tower::TelemetryLayer;
+use serde_json::Value;
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Instant;
+use turbomcp::prelude::*;
+use turbomcp_server::{McpMiddleware, MiddlewareStack, Next};
 
-let service = ServiceBuilder::new()
-    .layer(TelemetryLayer::new())
-    .layer(AuthLayer::new(auth_config))
-    .service(mcp_handler);
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    /// Delete everything.
+    #[tool(destructive = true)]
+    async fn purge(&self) -> String {
+        "purged".to_string()
+    }
+
+    /// Say hello.
+    #[tool(read_only = true)]
+    async fn hello(&self) -> String {
+        "hello".to_string()
+    }
+}
+
+/// Log every tool call with its duration.
+struct Timing;
+
+impl McpMiddleware for Timing {
+    fn on_call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            let started = Instant::now();
+            let result = next.call_tool(name, args, ctx).await;
+            tracing::info!(tool = name, elapsed = ?started.elapsed(), "tool call");
+            result
+        })
+    }
+}
+
+/// Only administrators may call `purge`.
+struct AdminOnly;
+
+impl McpMiddleware for AdminOnly {
+    fn on_call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            if name == "purge" && !ctx.has_any_role(&["admin"]) {
+                return Err(McpError::permission_denied("purge requires the admin role"));
+            }
+            next.call_tool(name, args, ctx).await
+        })
+    }
+}
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    // Middleware runs in the order added; the stack is itself an McpHandler.
+    MiddlewareStack::new(MyServer)
+        .with_middleware(Timing)
+        .with_middleware(AdminOnly)
+        .run_stdio()
+        .await
+}
 ```
+
+The other hooks (`on_list_tools`, `on_list_resources`, `on_list_resource_templates`,
+`on_list_prompts`, `on_read_resource`, `on_get_prompt`) default to passing the call
+through; override only the ones you need. To hide tools rather than refuse them,
+see `VisibilityLayer` in the [Server API](../api/server.md).
 
 ## Authentication Middleware
 
-The `turbomcp-auth` crate provides Tower middleware for OAuth 2.1, JWT, and API key authentication.
+For an MCP server, use the HTTP transport's built-in authorization
+(`HttpAuthorization`; see [Authentication](authentication.md)): it serves the
+metadata and challenges MCP clients expect, and puts the principal on the
+request context.
+
+`turbomcp-auth`'s Tower layers (feature `middleware`) are for other HTTP
+services. `AuthLayer` validates the `Authorization` header (or an API key header)
+with an auth provider and stores the resulting `AuthContext` in the request's
+extensions; `RateLimitLayer` limits requests per client IP.
+
+### RateLimitLayer
+
+```rust
+use axum::body::Body;
+use axum::http::{Request, Response};
+use tower::ServiceBuilder;
+use turbomcp_auth::rate_limit::RateLimiter;
+use turbomcp_auth::tower::RateLimitLayer;
+
+let inner = tower::service_fn(|_request: Request<Body>| async move {
+    Ok::<_, std::convert::Infallible>(Response::new(Body::from("ok")))
+});
+
+// Limits requests per client IP, with the auth-endpoint defaults
+let service = ServiceBuilder::new()
+    .layer(RateLimitLayer::new(RateLimiter::for_auth()))
+    .service(inner);
+```
 
 ### AuthLayer
 
-```rust
-use turbomcp_auth::tower::{AuthLayer, AuthConfig};
-
-let auth_config = AuthConfig::builder()
-    .jwt_secret("your-secret-key")
-    .issuer("https://auth.example.com")
-    .audience("my-mcp-server")
-    .build();
-
-let layer = AuthLayer::new(auth_config);
-
-let service = ServiceBuilder::new()
-    .layer(layer)
-    .service(my_handler);
-```
-
-### OAuth 2.1 Integration
-
-```rust
-use turbomcp_auth::tower::{OAuthLayer, OAuthConfig};
-use turbomcp_auth::providers::GoogleOAuthProvider;
-
-let oauth_config = OAuthConfig::builder()
-    .provider(GoogleOAuthProvider::new(
-        "client-id",
-        "client-secret",
-    ))
-    .redirect_uri("https://example.com/callback")
-    .scopes(vec!["openid", "profile"])
-    .build();
-
-let layer = OAuthLayer::new(oauth_config);
-```
-
-### API Key Authentication
-
-```rust
-use turbomcp_auth::tower::{ApiKeyLayer, ApiKeyConfig};
-
-let config = ApiKeyConfig::builder()
-    .header_name("X-API-Key")
-    .validator(|key: &str| {
-        // Validate against your database
-        validate_api_key(key)
-    })
-    .build();
-
-let layer = ApiKeyLayer::new(config);
-```
-
-### Extracting Auth Context
-
-```rust
-use turbomcp_auth::AuthContext;
-
-#[tool]
-async fn protected_handler(auth: AuthContext) -> McpResult<String> {
-    let user_id = auth.user_id();
-    let claims = auth.claims();
-
-    Ok(format!("Hello, user {}!", user_id))
-}
-```
+`AuthLayer::new(provider)` takes an `AuthProvider`. Its `Layer` implementation
+requires the provider to be `Clone`, which neither built-in provider
+(`ApiKeyProvider`, `OAuth2Provider`) is, so in 3.5 it only works with a provider
+of your own that derives `Clone`. Its error type is `McpError`, so wrapping an
+Axum router with it also needs `axum::error_handling::HandleErrorLayer`.
 
 ## Telemetry Middleware
 
@@ -100,24 +150,35 @@ The `turbomcp-telemetry` crate provides OpenTelemetry integration via Tower midd
 
 ### TelemetryLayer
 
+`TelemetryLayer` wraps a `Service<serde_json::Value>` that answers JSON-RPC
+requests (for example one built on `McpHandlerExt::handle_request`), or an HTTP
+service:
+
 ```rust
+use tower::ServiceBuilder;
 use turbomcp_telemetry::tower::{TelemetryLayer, TelemetryLayerConfig};
 
 let config = TelemetryLayerConfig::new()
     .service_name("my-mcp-server")
-    .exclude_method("ping")  // Don't trace ping requests
-    .sample_rate(0.1);       // Sample 10% of requests
+    .exclude_method("ping"); // Don't trace ping requests
 
 let layer = TelemetryLayer::new(config);
 
 let service = ServiceBuilder::new()
     .layer(layer)
-    .service(my_handler);
+    .service(tower::service_fn(|request: serde_json::Value| async move {
+        // Dispatch the JSON-RPC request here
+        Ok::<_, std::convert::Infallible>(request)
+    }));
 ```
+
+Sampling is set on the exporter, not the layer: `TelemetryConfig::sampling_ratio`.
+See [Observability](observability.md#tower-middleware-v3) for a complete
+example.
 
 ### MCP Span Attributes
 
-The telemetry layer automatically adds MCP-specific attributes to spans:
+The telemetry layer adds MCP-specific attributes to spans for JSON-RPC requests:
 
 | Attribute | Description |
 |-----------|-------------|
@@ -133,17 +194,11 @@ The telemetry layer automatically adds MCP-specific attributes to spans:
 
 ### Prometheus Metrics
 
-```rust
-use turbomcp_telemetry::tower::{MetricsLayer, MetricsConfig};
-
-let config = MetricsConfig::new()
-    .endpoint("/metrics")
-    .buckets(vec![0.001, 0.01, 0.1, 1.0]);
-
-let layer = MetricsLayer::new(config);
-```
-
-Pre-defined metrics:
+There is no metrics layer. With the `prometheus` feature,
+`turbomcp_telemetry::metrics` defines the metrics below and functions to record
+them (`record_request`, `McpMetrics::tool_call`, …); call them from an
+`McpMiddleware` as shown in [Observability](observability.md#available-metrics).
+`TelemetryConfig::prometheus_port` serves them.
 
 | Metric | Type | Description |
 |--------|------|-------------|
@@ -156,91 +211,88 @@ Pre-defined metrics:
 
 ## gRPC Middleware
 
-The `turbomcp-grpc` crate provides Tower layers for gRPC transport.
+The `turbomcp-grpc` crate provides a Tower layer for the gRPC transport.
 
 ### McpGrpcLayer
 
+`McpGrpcLayer` logs and times each gRPC call inside a `grpc_request` span:
+
 ```rust
-use turbomcp_grpc::layer::McpGrpcLayer;
-use tower::ServiceBuilder;
-use std::time::Duration;
+use turbomcp_grpc::{McpGrpcLayer, McpGrpcServer};
 
-let layer = McpGrpcLayer::new()
-    .timeout(Duration::from_secs(30))
-    .logging(true)
-    .timing(true);
+async fn serve() -> Result<(), Box<dyn std::error::Error>> {
+    let server = McpGrpcServer::builder()
+        .server_info("my-server", "1.0.0")
+        .build();
 
-let service = ServiceBuilder::new()
-    .layer(layer)
-    .service(inner_service);
+    tonic::transport::Server::builder()
+        .layer(McpGrpcLayer::new().logging(true).timing(true))
+        .add_service(server.into_service())
+        .serve("[::1]:50051".parse()?)
+        .await?;
+    Ok(())
+}
 ```
 
 ## Client Middleware
 
-The `turbomcp-client` crate provides middleware for MCP clients.
+The `turbomcp-client` crate provides Tower layers over
+`Service<McpRequest, Response = McpResponse>`. The `Client` does not send its
+own requests through them; compose them around a service you provide (see the
+[turbomcp-client README](https://github.com/Epistates/turbomcp/tree/main/crates/turbomcp-client#tower-middleware)).
 
 ### Caching Layer
 
 ```rust
-use turbomcp_client::middleware::{CacheLayer, CacheConfig};
-
-let config = CacheConfig::builder()
-    .max_entries(1000)
-    .ttl(Duration::from_secs(300))
-    .build();
-
-let layer = CacheLayer::new(config);
-```
-
-### Retry Layer
-
-```rust
-use turbomcp_client::middleware::{RetryLayer, RetryConfig};
-
-let config = RetryConfig::builder()
-    .max_retries(3)
-    .backoff(ExponentialBackoff::default())
-    .retry_on(|err| err.is_transient())
-    .build();
-
-let layer = RetryLayer::new(config);
-```
-
-### Timeout Layer
-
-```rust
-use tower::timeout::TimeoutLayer;
 use std::time::Duration;
+use turbomcp_client::middleware::{CacheConfig, CacheLayer};
 
-let layer = TimeoutLayer::new(Duration::from_secs(30));
+let layer = CacheLayer::new(CacheConfig {
+    max_entries: 1000,
+    ttl: Duration::from_secs(300),
+    ..Default::default()
+});
 ```
+
+### Retry and Timeouts
+
+Client retries come from `ClientBuilder::build_resilient` (retry, circuit
+breaker, health checks); request timeouts from `ClientBuilder::with_timeout` or
+`client.with_timeout(duration)` for a single call. See the
+[Client API](../api/client.md).
 
 ## Composing Middleware
 
-Tower middleware composes naturally using `ServiceBuilder`:
+Tower middleware composes with `ServiceBuilder`. On the server's HTTP router,
+use layers that keep the router's `Infallible` error type:
 
 ```rust
-use tower::ServiceBuilder;
-use turbomcp_auth::tower::AuthLayer;
-use turbomcp_telemetry::tower::{TelemetryLayer, MetricsLayer};
-use tower::timeout::TimeoutLayer;
+use axum::Router;
 use std::time::Duration;
+use tower::ServiceBuilder;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+use turbomcp::prelude::*;
 
-let service = ServiceBuilder::new()
-    // Outer layers process first on request, last on response
-    .layer(TelemetryLayer::new(telemetry_config))
-    .layer(MetricsLayer::new(metrics_config))
-    .layer(TimeoutLayer::new(Duration::from_secs(30)))
-    .layer(AuthLayer::new(auth_config))
-    // Inner service
-    .service(mcp_handler);
+fn app() -> Router {
+    MyServer.builder().into_axum_router().layer(
+        ServiceBuilder::new()
+            // Outer layers process first on request, last on response
+            .layer(TraceLayer::new_for_http())
+            .layer(tower::limit::ConcurrencyLimitLayer::new(512)),
+    )
+}
 ```
+
+The HTTP transport already applies origin validation, CORS (when enabled in
+`ServerConfig`), rate limits, and authorization; add Tower layers for what it does
+not do.
 
 ### Execution Order
 
 ```
-Request:  Telemetry → Metrics → Timeout → Auth → Handler
-Response: Handler → Auth → Timeout → Metrics → Telemetry
+Request:  Trace → ConcurrencyLimit → MCP transport → MiddlewareStack → Handler
+Response: Handler → MiddlewareStack → MCP transport → ConcurrencyLimit → Trace
 ```
 
 ## Custom Middleware
@@ -248,10 +300,15 @@ Response: Handler → Auth → Timeout → Metrics → Telemetry
 Implement custom middleware using Tower's `Layer` and `Service` traits:
 
 ```rust
-use tower::{Layer, Service};
-use std::task::{Context, Poll};
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tower::{Layer, Service};
+
+#[derive(Clone)]
+pub struct MyConfig {
+    pub label: &'static str,
+}
 
 // Layer (factory for services)
 #[derive(Clone)]
@@ -292,18 +349,20 @@ where
     }
 
     fn call(&mut self, request: Request) -> Self::Future {
-        let inner = self.inner.clone();
-        let config = self.config.clone();
+        // Use the service that was polled ready, leave a fresh clone behind
+        let clone = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, clone);
+        let label = self.config.label;
 
         Box::pin(async move {
             // Pre-processing
-            println!("Before request");
+            tracing::debug!(label, "before request");
 
             // Call inner service
             let response = inner.call(request).await?;
 
             // Post-processing
-            println!("After response");
+            tracing::debug!(label, "after response");
 
             Ok(response)
         })
@@ -315,83 +374,128 @@ where
 
 ### Request Logging
 
+Logging MCP requests is a job for `McpMiddleware`, which sees the operation
+already parsed:
+
 ```rust
-use tower::{Layer, Service};
-use tracing::info;
+use serde_json::Value;
+use std::future::Future;
+use std::pin::Pin;
+use turbomcp::prelude::*;
+use turbomcp_server::{McpMiddleware, Next};
 
-#[derive(Clone)]
-pub struct RequestLoggingLayer;
+pub struct RequestLogging;
 
-impl<S> Layer<S> for RequestLoggingLayer {
-    type Service = RequestLoggingService<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        RequestLoggingService { inner }
+impl McpMiddleware for RequestLogging {
+    fn on_call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            tracing::info!(tool = name, id = %ctx.request_id(), "MCP tool call received");
+            next.call_tool(name, args, ctx).await
+        })
     }
-}
 
-#[derive(Clone)]
-pub struct RequestLoggingService<S> {
-    inner: S,
-}
-
-impl<S> Service<McpRequest> for RequestLoggingService<S>
-where
-    S: Service<McpRequest>,
-{
-    // ... implementation
-
-    fn call(&mut self, request: McpRequest) -> Self::Future {
-        info!(
-            method = %request.method,
-            id = ?request.id,
-            "MCP request received"
-        );
-        self.inner.call(request)
+    fn on_read_resource<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ResourceResult>> + Send + 'a>> {
+        Box::pin(async move {
+            tracing::info!(uri, id = %ctx.request_id(), "MCP resource read received");
+            next.read_resource(uri, ctx).await
+        })
     }
 }
 ```
 
 ### Rate Limiting by Tool
 
-```rust
-use tower::limit::RateLimitLayer;
-use std::time::Duration;
+The server's `with_rate_limit` limits requests per client. For a per-tool limit,
+count in middleware:
 
-fn rate_limit_for_tool(tool_name: &str) -> RateLimitLayer {
-    let (rate, per) = match tool_name {
-        "expensive_operation" => (10, Duration::from_secs(60)),
-        "normal_operation" => (100, Duration::from_secs(60)),
-        _ => (1000, Duration::from_secs(60)),
-    };
-    RateLimitLayer::new(rate, per)
+```rust
+use serde_json::Value;
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use turbomcp::prelude::*;
+use turbomcp_server::{McpMiddleware, Next};
+
+/// Allows `limit` calls of `tool` per `window`, across all clients.
+pub struct ToolRateLimit {
+    tool: &'static str,
+    limit: usize,
+    window: Duration,
+    calls: Mutex<HashMap<&'static str, Vec<Instant>>>,
+}
+
+impl McpMiddleware for ToolRateLimit {
+    fn on_call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            if name == self.tool {
+                let mut calls = self.calls.lock().unwrap();
+                let recent = calls.entry(self.tool).or_default();
+                recent.retain(|at| at.elapsed() < self.window);
+                if recent.len() >= self.limit {
+                    return Err(McpError::rate_limited(format!("{name} is rate limited")));
+                }
+                recent.push(Instant::now());
+            }
+            next.call_tool(name, args, ctx).await
+        })
+    }
 }
 ```
 
 ## Integration with MCP Server
 
+Both kinds together: MCP middleware wraps the handler, Tower layers wrap the
+HTTP router built from it:
+
 ```rust
-use turbomcp_server::McpServer;
-use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
+use turbomcp::prelude::*;
+use turbomcp_server::MiddlewareStack;
 
-let middleware = ServiceBuilder::new()
-    .layer(TelemetryLayer::new(telemetry_config))
-    .layer(AuthLayer::new(auth_config));
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let handler = MiddlewareStack::new(MyServer).with_middleware(Timing);
 
-let server = McpServer::new()
-    .with_tower_middleware(middleware)
-    .http(8080)
-    .run()
-    .await?;
+    let app = handler
+        .builder()
+        .into_axum_router()
+        .layer(TraceLayer::new_for_http());
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
 ```
+
+(`Timing` is the middleware from [MCP Middleware](#mcp-middleware).)
 
 ## Migration from v2 Plugin System
 
-TurboMCP v3 replaces the v2 plugin system with Tower middleware.
+TurboMCP v3 replaces the v2 plugin system with Tower middleware on the client
+and `McpMiddleware` on the server.
 
 ### Before (v2 Plugin System)
 
-```rust
+```rust,ignore
 // v2: Custom plugin system
 use turbomcp_client::plugins::{Plugin, PluginContext};
 
@@ -406,38 +510,54 @@ impl Plugin for MyPlugin {
 client.register_plugin(MyPlugin);
 ```
 
-### After (v3 Tower Middleware)
+This is the removed v2 API, shown for comparison.
+
+### After (v3)
 
 ```rust
-// v3: Standard Tower middleware
-use tower::{Layer, Service};
+use tower::ServiceBuilder;
+use turbomcp_client::middleware::{McpRequest, McpResponse, TracingLayer};
 
 let service = ServiceBuilder::new()
-    .layer(MyLayer::new())
-    .service(client);
+    .layer(TracingLayer::new())
+    .service(tower::service_fn(|request: McpRequest| async move {
+        Ok::<_, turbomcp_client::Error>(McpResponse::success(serde_json::json!({}), request.elapsed()))
+    }));
 ```
 
 ## Best Practices
 
 ### 1. Order Matters
 
-Place tracing/metrics layers outermost to capture full request lifecycle:
-
-```rust
-ServiceBuilder::new()
-    .layer(TelemetryLayer::new(...))  // First
-    .layer(MetricsLayer::new(...))
-    .layer(TimeoutLayer::new(...))
-    .layer(AuthLayer::new(...))       // Last before handler
-    .service(handler)
-```
+`MiddlewareStack` runs middleware in the order added, and `ServiceBuilder` runs
+its first layer outermost. Put tracing and metrics first to capture the whole
+request, and authorization checks last, closest to the handler.
 
 ### 2. Use Timeouts
 
-Always add timeout layers to prevent hanging:
+Bound slow work inside the handler, where you can return a meaningful error:
 
 ```rust
-.layer(TimeoutLayer::new(Duration::from_secs(30)))
+use std::time::Duration;
+use turbomcp::prelude::*;
+
+async fn slow() -> String {
+    "done".to_string()
+}
+
+#[derive(Clone)]
+struct Bounded;
+
+#[server]
+impl Bounded {
+    /// Give up after 30 seconds.
+    #[tool]
+    async fn bounded(&self) -> McpResult<String> {
+        tokio::time::timeout(Duration::from_secs(30), slow())
+            .await
+            .map_err(|_| McpError::timeout("Took longer than 30 seconds"))
+    }
+}
 ```
 
 ### 3. Clone-Friendly
@@ -445,6 +565,10 @@ Always add timeout layers to prevent hanging:
 Tower services must be `Clone`. Use `Arc` for shared state:
 
 ```rust
+use std::sync::Arc;
+
+pub struct SharedState;
+
 #[derive(Clone)]
 pub struct MyService<S> {
     inner: S,
@@ -454,20 +578,10 @@ pub struct MyService<S> {
 
 ### 4. Graceful Errors
 
-Handle errors gracefully in middleware:
-
-```rust
-async fn call(&mut self, request: Request) -> Result<Response, Error> {
-    match self.inner.call(request).await {
-        Ok(response) => Ok(response),
-        Err(e) => {
-            // Log error, update metrics, etc.
-            tracing::error!(error = %e, "Request failed");
-            Err(e)
-        }
-    }
-}
-```
+An `McpMiddleware` that returns `Err` from `on_call_tool` produces a tool
+execution error, exactly as a failing tool would; return the right
+`McpError` kind (`permission_denied`, `rate_limited`, …) so the client can tell
+why.
 
 ## Next Steps
 

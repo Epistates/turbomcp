@@ -106,17 +106,24 @@ tools, resources, prompts, and metadata inspection patterns.
 
 ## Network Transports
 
-Use the explicit transport methods enabled by Cargo features:
+Use the explicit transport methods enabled by Cargo features. With
+`HelloServer` from above:
 
 ```rust
-// STDIO, enabled by the default feature
-HelloServer.run_stdio().await?;
+use turbomcp::prelude::*;
 
-// TCP, requires the "tcp" feature
-HelloServer.run_tcp("127.0.0.1:8765").await?;
-
-// Unix sockets, requires the "unix" feature and a Unix platform
-HelloServer.run_unix("/tmp/turbomcp.sock").await?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    match std::env::var("TRANSPORT").as_deref() {
+        // TCP, requires the "tcp" feature
+        Ok("tcp") => HelloServer.run_tcp("127.0.0.1:8765").await?,
+        // Unix sockets, requires the "unix" feature and a Unix platform
+        Ok("unix") => HelloServer.run_unix("/tmp/turbomcp.sock").await?,
+        // STDIO, enabled by the default feature
+        _ => HelloServer.run_stdio().await?,
+    }
+    Ok(())
+}
 ```
 
 Runnable transport pairs:

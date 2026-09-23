@@ -341,21 +341,23 @@ Nested lists:
 **Good Example:**
 
 ```rust
-/// Calculate the sum of numbers.
-///
-/// # Examples
-///
-/// ```
-/// use turbomcp::prelude::*;
-///
-/// #[tool]
-/// pub async fn calculate_sum(
-///     #[description("Numbers to sum")]
-///     numbers: Vec<f64>,
-/// ) -> McpResult<f64> {
-///     Ok(numbers.iter().sum())
-/// }
-/// ```
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+pub struct MathServer;
+
+#[server(name = "math", version = "1.0.0")]
+impl MathServer {
+    /// Calculate the sum of numbers.
+    #[tool]
+    async fn calculate_sum(
+        &self,
+        #[description("Numbers to sum")]
+        numbers: Vec<f64>,
+    ) -> McpResult<f64> {
+        Ok(numbers.iter().sum())
+    }
+}
 ```
 
 **What Makes It Good:**
@@ -387,113 +389,116 @@ fn sum(v: Vec<f64>) -> f64 {
 // Minimal viable example
 use turbomcp::prelude::*;
 
-#[server]
+#[derive(Clone)]
 pub struct MyServer;
 
-#[tool]
-pub async fn hello(name: String) -> McpResult<String> {
-    Ok(format!("Hello, {}!", name))
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self, name: String) -> McpResult<String> {
+        Ok(format!("Hello, {}!", name))
+    }
 }
 ```
 
 **Intermediate Example:**
 
 ```rust
-// Realistic example with common features
+// Realistic example with common features: shared state, a cache,
+// parameter descriptions, and error handling
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use turbomcp::prelude::*;
 
-#[server]
-pub struct MyServer;
+#[derive(Clone, Serialize, Deserialize)]
+pub struct User {
+    pub id: String,
+    pub name: String,
+}
 
-#[tool]
-#[description("Fetch user profile from database")]
-pub async fn get_user(
-    #[description("User ID")]
-    user_id: String,
-    db: Database,
-    cache: Cache,
-) -> McpResult<User> {
-    // Try cache first
-    let cache_key = format!("user:{}", user_id);
-    if let Some(user) = cache.get(&cache_key).await? {
-        return Ok(user);
+#[derive(Clone, Default)]
+pub struct UserServer {
+    users: Arc<RwLock<HashMap<String, User>>>,
+    cache: Arc<RwLock<HashMap<String, User>>>,
+}
+
+#[server(name = "users", version = "1.0.0")]
+impl UserServer {
+    /// Fetch a user profile
+    #[tool(read_only = true)]
+    async fn get_user(
+        &self,
+        #[description("User ID")]
+        user_id: String,
+    ) -> McpResult<String> {
+        // Try cache first
+        if let Some(user) = self.cache.read().await.get(&user_id) {
+            return Ok(user.name.clone());
+        }
+
+        // Fall back to the store
+        let user = self
+            .users
+            .read()
+            .await
+            .get(&user_id)
+            .cloned()
+            .ok_or_else(|| McpError::invalid_params(format!("no user {user_id}")))?;
+
+        // Cache result
+        self.cache.write().await.insert(user_id, user.clone());
+        Ok(user.name)
     }
-
-    // Fetch from database
-    let user = db.query_one(
-        "SELECT * FROM users WHERE id = $1",
-        &[&user_id],
-    ).await?;
-
-    // Cache result
-    cache.set(&cache_key, &user, Some(Duration::from_secs(300))).await?;
-
-    Ok(user)
 }
 ```
 
 **Advanced Example:**
 
 ```rust
-// Complex scenario with error handling, tracing, etc.
+// Complex scenario with validation, tracing, progress, and cancellation
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::{info, instrument};
 use turbomcp::prelude::*;
-use tracing::{instrument, info};
 
-#[server]
-pub struct PaymentServer;
+#[derive(Clone, Default)]
+pub struct PaymentServer {
+    paid_orders: Arc<Mutex<Vec<String>>>,
+}
 
-#[tool]
-#[description("Process payment transaction")]
-#[instrument(skip(db, payment_gateway))]
-pub async fn process_payment(
-    order_id: String,
-    amount: f64,
-    payment_method: PaymentMethod,
-    db: Database,
-    payment_gateway: PaymentGateway,
-    logger: Logger,
-) -> McpResult<PaymentResult> {
-    logger
-        .with_field("order_id", &order_id)
-        .with_field("amount", amount)
-        .info("Processing payment")
-        .await?;
-
-    // Validate amount
-    if amount <= 0.0 {
-        return Err(McpError::InvalidParams("Amount must be positive".into()));
-    }
-
-    // Process in transaction
-    db.transaction(|tx| async move {
-        // Verify order exists and is not already paid
-        let order: Order = tx.query_one(
-            "SELECT * FROM orders WHERE id = $1 FOR UPDATE",
-            &[&order_id],
-        ).await?;
-
-        if order.status == OrderStatus::Paid {
-            return Err(McpError::AlreadyPaid);
+#[server(name = "payments", version = "1.0.0")]
+impl PaymentServer {
+    /// Process a payment for an order
+    #[tool(destructive = true)]
+    #[instrument(skip(self, ctx))]
+    async fn process_payment(
+        &self,
+        #[description("Order to charge")] order_id: String,
+        #[description("Amount, in the order's currency")] amount: f64,
+        ctx: &RequestContext,
+    ) -> McpResult<String> {
+        // Validate input: reported to the model as a tool error it can correct
+        if amount <= 0.0 {
+            return Err(McpError::invalid_params("Amount must be positive"));
         }
 
-        // Process payment
-        let payment_result = payment_gateway
-            .charge(amount, payment_method)
-            .await?;
+        let mut paid = self.paid_orders.lock().await;
+        if paid.contains(&order_id) {
+            return Err(McpError::invalid_params(format!("Order {order_id} is already paid")));
+        }
 
-        // Update order
-        tx.execute(
-            "UPDATE orders SET status = $1, payment_id = $2 WHERE id = $3",
-            &[&OrderStatus::Paid, &payment_result.id, &order_id],
-        ).await?;
+        // Honour cancellation before the irreversible step
+        if ctx.is_cancelled() {
+            return Err(McpError::cancelled("payment cancelled by client"));
+        }
+        ctx.report_progress(0.5, Some(1.0), Some("charging")).await?;
 
-        logger
-            .with_field("payment_id", &payment_result.id)
-            .info("Payment processed successfully")
-            .await?;
-
-        Ok(payment_result)
-    }.boxed()).await
+        paid.push(order_id.clone());
+        info!(%order_id, amount, "payment processed");
+        Ok(format!("Charged {amount:.2} for order {order_id}"))
+    }
 }
 ```
 
@@ -507,19 +512,26 @@ All examples should be testable:
 ```rust
 use turbomcp::prelude::*;
 
-#[tool]
-pub async fn add(a: i32, b: i32) -> McpResult<i32> {
-    Ok(a + b)
+#[derive(Clone)]
+pub struct Calculator;
+
+#[server]
+impl Calculator {
+    /// Add two numbers
+    #[tool]
+    async fn add(&self, a: i32, b: i32) -> McpResult<i32> {
+        Ok(a + b)
+    }
 }
 
 # #[tokio::test]
 # async fn test_add() {
-#     assert_eq!(add(2, 3).await.unwrap(), 5);
+#     assert_eq!(Calculator.add(2, 3).await.unwrap(), 5);
 # }
 ```
 ````
 
-Lines starting with `#` are hidden in docs but run in tests.
+In rustdoc, lines starting with `# ` are hidden from the rendered docs but still compiled and run by `cargo test --doc`. The mkdocs site does not hide them.
 
 **Testing:**
 
@@ -533,38 +545,56 @@ cargo test --doc
 **Show defaults:**
 
 ```rust
-use turbomcp::config::*;
+use std::time::Duration;
+use turbomcp::prelude::*;
+use turbomcp_server::{ConnectionLimits, RateLimitConfig};
 
-let config = ServerConfig {
-    // Connection settings
-    max_connections: 1000,              // Default: 1000
-    connection_timeout: Duration::from_secs(30),  // Default: 30s
-    idle_timeout: Duration::from_secs(300),       // Default: 5min
-
-    // Request limits
-    max_request_size: 1024 * 1024,      // Default: 1MB
-    max_response_size: 10 * 1024 * 1024, // Default: 10MB
-
-    // Performance
-    worker_threads: 4,                   // Default: num_cpus
-    use_simd: true,                      // Default: false
-};
+let config = ServerConfig::builder()
+    // Largest accepted message, in bytes.   Default: 10 MB
+    .max_message_size(1024 * 1024)
+    // Per-client rate limit.                Default: none
+    .rate_limit(RateLimitConfig::new(100, Duration::from_secs(1)))
+    // Concurrent connections per transport. Default: 1000
+    .connection_limits(ConnectionLimits::default())
+    // Idle HTTP sessions are reaped after.  Default: 1 hour
+    .http_session_idle_timeout(Duration::from_secs(30 * 60))
+    .build();
 ```
 
 **Show common patterns:**
 
 ```rust
-// Development config
-let dev_config = ServerConfig::development();
+use std::time::Duration;
+use turbomcp::prelude::*;
 
-// Production config
-let prod_config = ServerConfig::production();
+// Defaults: multi-version protocol negotiation, no rate limit,
+// localhost origins only
+let default_config = ServerConfig::default();
 
-// Custom config
-let custom_config = ServerConfig::default()
-    .with_max_connections(5000)
-    .with_connection_timeout(Duration::from_secs(60))
-    .with_simd(true);
+// Validated custom config: `try_build` rejects impossible values
+let custom_config = ServerConfig::builder()
+    .max_message_size(4 * 1024 * 1024)
+    .allow_origin("https://app.example.com")
+    .try_build()
+    .expect("valid configuration");
+
+// Or configure through the server builder
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self) -> String {
+        "hello".into()
+    }
+}
+
+let builder = MyServer
+    .builder()
+    .with_connection_limit(5000)
+    .with_rate_limit(100, Duration::from_secs(1));
 ```
 
 ## Diagrams
@@ -699,9 +729,13 @@ Every page should end with related links:
 
 ### Rustdoc
 
+The blocks below are templates for doc comments (`my_crate` stands for the
+crate you are documenting), so the site does not compile them. The doctests
+inside them are compiled by `cargo test --doc` in that crate.
+
 **Modules:**
 
-```rust
+```rust,ignore
 //! # Module Name
 //!
 //! Brief description of module purpose.
@@ -713,7 +747,7 @@ Every page should end with related links:
 //! ## Examples
 //!
 //! ```
-//! use turbomcp::module_name::Type;
+//! use my_crate::module_name::Type;
 //!
 //! let instance = Type::new();
 //! ```
@@ -723,7 +757,7 @@ pub mod my_module;
 
 **Public Items:**
 
-```rust
+```rust,ignore
 /// Brief one-line description.
 ///
 /// Longer description explaining the purpose and behavior.
@@ -746,10 +780,11 @@ pub mod my_module;
 /// # Examples
 ///
 /// ```
-/// use turbomcp::prelude::*;
-///
-/// let result = my_function("input").await?;
+/// # async fn example() -> turbomcp::McpResult<()> {
+/// let result = my_crate::my_function("input".to_string()).await?;
 /// assert_eq!(result, "expected");
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// # Panics
@@ -762,12 +797,13 @@ pub mod my_module;
 /// This function is safe because...
 pub async fn my_function(param: String) -> McpResult<String> {
     // Implementation
+    Ok(param)
 }
 ```
 
 **Struct Fields:**
 
-```rust
+```rust,ignore
 /// Server configuration.
 pub struct ServerConfig {
     /// Maximum number of concurrent connections.
@@ -784,20 +820,20 @@ pub struct ServerConfig {
 
 ### Documentation Tests
 
-```rust
+```rust,ignore
 /// Calculate sum of numbers.
 ///
 /// # Examples
 ///
 /// ```
-/// use turbomcp::math::sum;
+/// use my_crate::math::sum;
 ///
 /// assert_eq!(sum(&[1, 2, 3]), 6);
 /// assert_eq!(sum(&[]), 0);
 /// ```
 ///
 /// ```should_panic
-/// use turbomcp::math::sum;
+/// use my_crate::math::sum;
 ///
 /// // This will panic due to overflow
 /// sum(&[i32::MAX, 1]);

@@ -14,7 +14,7 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use turbomcp::prelude::*;
 //!
 //! #[derive(Clone)]
@@ -37,11 +37,13 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     Calculator.serve().await.unwrap();
+//!     Calculator.run_stdio().await.unwrap();
 //! }
 //! ```
 //!
 //! ## Runtime Transport Selection
+//!
+//! With the `full` feature set, and `Calculator` from above:
 //!
 //! ```rust,ignore
 //! use turbomcp::prelude::*;
@@ -64,6 +66,8 @@
 //! ```
 //!
 //! ## BYO Server (Axum Integration)
+//!
+//! With the `http` feature:
 //!
 //! ```rust,ignore
 //! use axum::{Router, routing::get};

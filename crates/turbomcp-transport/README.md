@@ -334,15 +334,27 @@ let health_config = HealthCheckConfig {
 
 ### With TurboMCP Framework
 
-Transport selection is automatic when using the main framework:
+With the main framework, pick a transport at runtime through the `run_*`
+methods, each behind its Cargo feature:
 
 ```rust
 use turbomcp::prelude::*;
 
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    #[tool]
+    async fn ping(&self) -> String {
+        "pong".to_string()
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = MyServer::new();
-    
+    let server = MyServer;
+
     // Transport selected based on environment/configuration
     match std::env::var("TRANSPORT").as_deref() {
         Ok("http") => server.run_http("127.0.0.1:8080").await?,
@@ -463,44 +475,43 @@ let tasks = (0..50).map(|i| {
 let results = futures::future::join_all(tasks).await;
 ```
 
-### Integration with Multiple Clients
+### Sharing One Connection Between Tasks
+
+Do not give one transport to several `turbomcp_client::Client`s: each client
+runs its own dispatcher, which must be the only reader of the transport, and
+each would initialize the same session again. Share the connection by cloning
+one client instead — clones share the transport and dispatcher:
 
 ```rust
-use turbomcp_transport::SharedTransport;
+use std::time::Duration;
 use turbomcp_client::Client;
 
-// Share a single transport across multiple clients
-let transport = TcpTransport::connect("127.0.0.1:8080").await?;
-let shared_transport = SharedTransport::new(transport);
+#[tokio::main]
+async fn main() -> turbomcp_client::Result<()> {
+    // Connects and initializes once
+    let client = Client::connect_tcp("127.0.0.1:8080").await?;
 
-// Create multiple clients sharing the same transport
-let client1 = Client::new(shared_transport.clone());
-let client2 = Client::new(shared_transport.clone());
-let client3 = Client::new(shared_transport.clone());
+    let tools_client = client.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Ok(tools) = tools_client.list_tools().await {
+                // Process tools...
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
 
-// Initialize all clients concurrently
-let (result1, result2, result3) = tokio::try_join!(
-    client1.initialize(),
-    client2.initialize(),
-    client3.initialize()
-)?;
-
-// All clients can now operate independently
-tokio::spawn(async move {
-    loop {
-        let tools = client1.list_tools().await?;
-        // Process tools...
-        tokio::time::sleep(Duration::from_secs(30)).await;
-    }
-});
-
-tokio::spawn(async move {
-    loop {
-        let resources = client2.list_resources().await?;
-        // Process resources...
-        tokio::time::sleep(Duration::from_secs(45)).await;
-    }
-});
+    let resources_client = client.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Ok(resources) = resources_client.list_resources().await {
+                // Process resources...
+            }
+            tokio::time::sleep(Duration::from_secs(45)).await;
+        }
+    });
+    Ok(())
+}
 ```
 
 ### Benefits

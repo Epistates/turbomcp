@@ -4,44 +4,96 @@ Configure and use multiple transport protocols for your MCP server. TurboMCP v3 
 
 ## Overview
 
-TurboMCP v3 supports multiple transport protocols through individual crates:
+The `turbomcp` crate enables each server transport with a Cargo feature:
 
 | Transport | Crate | Feature | Use Case |
 |-----------|-------|---------|----------|
-| **STDIO** | `turbomcp-stdio` | `stdio` | CLI, Claude desktop |
-| **HTTP** | `turbomcp-http` | `http` | Web applications, REST APIs |
+| **STDIO** | `turbomcp-stdio` | `stdio` (default) | CLI, Claude desktop |
+| **Streamable HTTP** | `turbomcp-http` (client) / `turbomcp-server` (server) | `http` | Web applications, remote servers |
 | **WebSocket** | `turbomcp-websocket` | `websocket` | Real-time bidirectional |
 | **TCP** | `turbomcp-tcp` | `tcp` | High performance |
 | **Unix** | `turbomcp-unix` | `unix` | Local IPC |
-| **gRPC** | `turbomcp-grpc` | `grpc` | Enterprise, microservices (v3) |
+| **Channel** | `turbomcp-server` | `channel` | In-process testing and benchmarks |
+
+gRPC lives in the standalone `turbomcp-grpc` crate with its own server type; it is
+not a `turbomcp` feature. See the [gRPC API Reference](../api/grpc.md).
+
+```toml
+[dependencies]
+turbomcp = { version = "3.5.0", features = ["full"] } # every transport + telemetry
+```
 
 ## Basic Usage
+
+Every `#[server]` type (every `McpHandler`) gets one `run_*` method per enabled
+transport from the `McpHandlerExt` trait in the prelude, and a `builder()` for
+configuration. The examples on this page use this server:
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Get the weather for a city.
+    #[tool]
+    async fn get_weather(&self, city: String) -> String {
+        format!("Sunny in {city}")
+    }
+}
+```
 
 ### Single Transport (STDIO)
 
 ```rust
+use turbomcp::prelude::*;
+
 #[tokio::main]
 async fn main() -> McpResult<()> {
-    let server = McpServer::new()
-        .stdio()
-        .run()
-        .await?;
-
-    Ok(())
+    MyServer.run_stdio().await
 }
 ```
 
 ### Multiple Transports
 
+A handler is `Clone`, so one server can listen on several transports at once by
+running each on its own task:
+
 ```rust
-let server = McpServer::new()
-    .stdio()                  // Enable STDIO
-    .http(8080)               // Enable HTTP on port 8080
-    .websocket(8081)          // Enable WebSocket on port 8081
-    .tcp(9000)                // Enable TCP on port 9000
-    .grpc(50051)              // Enable gRPC on port 50051 (v3)
-    .run()
-    .await?;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    let server = MyServer;
+    tokio::try_join!(
+        server.run_http("0.0.0.0:8080"),      // Streamable HTTP
+        server.run_websocket("0.0.0.0:8081"), // WebSocket
+        server.run_tcp("0.0.0.0:9000"),       // TCP
+    )?;
+    Ok(())
+}
+```
+
+### Runtime Selection
+
+Choose the transport at startup with the builder:
+
+```rust
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    let transport = match std::env::var("TRANSPORT").as_deref() {
+        Ok("http") => Transport::http("0.0.0.0:8080"),
+        Ok("ws") => Transport::websocket("0.0.0.0:8081"),
+        Ok("tcp") => Transport::tcp("0.0.0.0:9000"),
+        Ok("unix") => Transport::unix("/tmp/mcp.sock"),
+        _ => Transport::stdio(),
+    };
+    MyServer.builder().transport(transport).serve().await
+}
 ```
 
 ## STDIO Transport
@@ -56,60 +108,68 @@ Standard input/output for CLI tools and local testing.
 
 **Features:**
 - No network configuration needed
-- Single client connection
-- Blocking I/O on stdin/stdout
+- Single client connection (the process that launched the server)
+- Newline-delimited JSON-RPC on stdin/stdout, so all logging must go to stderr
 
 ```rust
-let server = McpServer::new()
-    .stdio()
-    .run()
-    .await?;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    // Keep stdout for the protocol
+    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+    MyServer.run_stdio().await
+}
 ```
 
 ## HTTP Transport
 
-REST API with Server-Sent Events (SSE) for server-to-client communication.
+MCP's Streamable HTTP transport: one endpoint that takes JSON-RPC messages by
+`POST`, streams server messages back as Server-Sent Events, and tracks each
+client with an `Mcp-Session-Id` header.
 
 **Use cases:**
 - Web applications
-- Mobile clients
+- Remote and multi-client servers
 - Cross-network communication
-- Public APIs
 
 **Features:**
-- RESTful endpoint for tool calls
-- SSE for server-to-client notifications
-- Connection pooling
-- CORS support
+- Sessions (`Mcp-Session-Id`), with an idle timeout and session cap
+- SSE for server-to-client requests and notifications, with `Last-Event-ID` resumption
+- Origin validation, optional CORS, rate and connection limits
+- MCP authorization (see [Authentication](authentication.md))
 
 ```rust
-let server = McpServer::new()
-    .http(8080)  // Listen on port 8080
-    .run()
-    .await?;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MyServer.run_http("0.0.0.0:8080").await
+}
 ```
 
 **Endpoints:**
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/tools/call` | Call a tool |
-| GET | `/tools/list` | List available tools |
-| POST | `/resources/read` | Read a resource |
-| GET | `/resources/list` | List resources |
-| GET | `/events` | Server-Sent Events stream |
+| POST | `/mcp` (or `/`) | Send a JSON-RPC request, notification, or response |
+| GET | `/mcp` (or `/`) | Open the SSE stream for server-initiated messages |
+| DELETE | `/mcp` (or `/`) | End the session |
+| GET | `/.well-known/oauth-protected-resource…` | Protected Resource Metadata, when authorization is configured |
 
 **Example client:**
 
 ```bash
-# Call a tool
-curl -X POST http://localhost:8080/tools/call \
+# Initialize; the response carries the Mcp-Session-Id header to send on later requests
+curl -i -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "get_weather",
-    "arguments": {"city": "New York"}
-  }'
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 ```
+
+A request from a non-loopback address with no `Origin` header (a CLI or
+another server, rather than a browser) is refused unless you allow it; see
+[Configuration](#configuration).
 
 ## WebSocket Transport
 
@@ -117,24 +177,25 @@ Full-duplex WebSocket for bidirectional real-time communication.
 
 **Use cases:**
 - Real-time applications
-- Bidirectional elicitation
+- Bidirectional elicitation and sampling
 - High-frequency updates
 - Interactive tools
 
 **Features:**
 - Full duplex communication
 - Low latency
-- Automatic reconnection
-- Heartbeat/ping-pong
+- One JSON-RPC message per WebSocket text frame
 
 ```rust
-let server = McpServer::new()
-    .websocket(8081)  // Listen on port 8081
-    .run()
-    .await?;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MyServer.run_websocket("0.0.0.0:8081").await
+}
 ```
 
-**Connection URL:** `ws://localhost:8081`
+**Connection URL:** `ws://localhost:8081` (also served at `/ws` and `/mcp/ws`)
 
 **Example client (JavaScript):**
 
@@ -145,10 +206,11 @@ ws.onopen = () => {
     ws.send(JSON.stringify({
         jsonrpc: '2.0',
         id: 1,
-        method: 'tools/call',
+        method: 'initialize',
         params: {
-            name: 'get_weather',
-            arguments: { city: 'New York' }
+            protocolVersion: '2025-11-25',
+            capabilities: {},
+            clientInfo: { name: 'browser', version: '1.0' }
         }
     }));
 };
@@ -161,22 +223,24 @@ ws.onmessage = (event) => {
 
 ## TCP Transport
 
-Low-level TCP networking for custom protocols.
+Raw TCP networking.
 
 **Use cases:**
-- Custom binary protocols
 - High-performance scenarios
 - Private networks
 - Legacy system integration
 
 ```rust
-let server = McpServer::new()
-    .tcp(9000)  // Listen on port 9000
-    .run()
-    .await?;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MyServer.run_tcp("0.0.0.0:9000").await
+}
 ```
 
-**Protocol:** JSON-RPC 2.0 messages separated by newlines
+**Protocol:** JSON-RPC 2.0 messages separated by newlines. There is no
+authentication or encryption on this transport; keep it on a private network.
 
 ## Unix Socket Transport
 
@@ -188,41 +252,27 @@ Local inter-process communication.
 - Multi-process applications
 
 ```rust
-let server = McpServer::new()
-    .unix("/tmp/mcp.sock")  // Create socket at path
-    .run()
-    .await?;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MyServer.run_unix("/tmp/mcp.sock").await // Create socket at path
+}
 ```
+
+Access control is the socket file's permissions.
 
 ## gRPC Transport (v3)
 
-High-performance gRPC transport using tonic.
-
-**Use cases:**
-- Enterprise applications
-- Microservices
-- Load balancing
-- Streaming
-
-```rust
-use turbomcp_grpc::server::McpGrpcServer;
-
-let server = McpGrpcServer::builder()
-    .server_info("my-server", "1.0.0")
-    .add_tool(my_tool)
-    .build();
-
-tonic::transport::Server::builder()
-    .add_service(server.into_service())
-    .serve("[::1]:50051".parse()?)
-    .await?;
-```
-
-See [gRPC API Reference](../api/grpc.md) for full details.
+High-performance gRPC transport using tonic, in the standalone `turbomcp-grpc`
+crate. It has its own server builder (`McpGrpcServer::builder()`) that takes tool,
+resource, and prompt handlers directly, rather than running a `#[server]` type.
+See the [gRPC API Reference](../api/grpc.md).
 
 ## Wire Codecs (v3)
 
-TurboMCP v3 supports pluggable wire codecs:
+`turbomcp-wire` provides pluggable codecs for code that encodes MCP messages
+itself:
 
 ```rust
 use turbomcp_wire::{Codec, JsonCodec, SimdJsonCodec};
@@ -230,175 +280,169 @@ use turbomcp_wire::{Codec, JsonCodec, SimdJsonCodec};
 // Standard JSON (default)
 let codec = JsonCodec::new();
 
-// SIMD-accelerated JSON (2-4x faster)
+// SIMD-accelerated JSON (`simd` feature)
 let codec = SimdJsonCodec::new();
 ```
 
-Configure per transport:
-
-```rust
-use turbomcp_http::HttpTransportConfig;
-
-let config = HttpTransportConfig::builder()
-    .codec("simd")  // Use SIMD codec
-    .build();
-```
+The built-in transports do not take a codec: they speak JSON, as MCP requires.
+See [Wire Codecs](wire-codecs.md).
 
 ## Configuration
 
-### Port Configuration
+The `run_*` methods use the default configuration. For anything else, use the
+builder, or build a `ServerConfig`:
 
 ```rust
-let server = McpServer::new()
-    .http(8080)        // HTTP on port 8080
-    .websocket(8081)   // WebSocket on port 8081
-    .tcp(9000)         // TCP on port 9000
-    .grpc(50051)       // gRPC on port 50051
-    .run()
-    .await?;
+use std::time::Duration;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MyServer
+        .builder()
+        .transport(Transport::http("0.0.0.0:8080"))
+        .with_allowed_origin("https://app.example.com") // browser clients from this origin
+        .with_rate_limit(100, Duration::from_secs(1))   // per client
+        .with_connection_limit(1000)
+        .with_max_message_size(4 * 1024 * 1024)         // default 10 MiB
+        .with_graceful_shutdown(Duration::from_secs(30)) // HTTP: drain in-flight requests
+        .serve()
+        .await
+}
+```
+
+`ServerConfig` covers the rest, including CORS, requests without an `Origin`
+header, and the HTTP session policy:
+
+```rust
+use std::time::Duration;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    let config = ServerConfig::builder()
+        .allow_origin("https://app.example.com")
+        .cors(true)                    // answer CORS preflights for allowed origins
+        .allow_missing_origin(true)    // accept CLIs and other servers (pair with auth)
+        .http_session_idle_timeout(Duration::from_secs(15 * 60))
+        .build();
+
+    // `with_config` does not carry the HTTP session policy or authorization;
+    // run the HTTP transport with the config directly to keep them.
+    turbomcp_server::transport::http::run_with_config(&MyServer, "0.0.0.0:8080", &config)
+        .await
+}
 ```
 
 ### TLS/SSL
 
-```rust
-let server = McpServer::new()
-    .http(8080)
-    .with_tls(TlsConfig {
-        cert_path: "path/to/cert.pem",
-        key_path: "path/to/key.pem",
-    })
-    .run()
-    .await?;
-```
+The server transports do not terminate TLS. Put a reverse proxy (nginx, Envoy,
+a cloud load balancer) in front of the HTTP or WebSocket transport, or serve the
+Axum router from `MyServer.builder().into_axum_router()` with a TLS-capable
+server such as `axum-server`.
 
-### CORS Configuration
+### Embedding in an Axum App
 
 ```rust
-let server = McpServer::new()
-    .http(8080)
-    .with_cors(CorsConfig {
-        allowed_origins: vec!["https://example.com"],
-        allowed_methods: vec!["POST", "GET"],
-        allowed_headers: vec!["Content-Type"],
-        max_age: 3600,
-    })
-    .run()
-    .await?;
+use axum::{Router, routing::get};
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = Router::new()
+        .route("/health", get(|| async { "OK" }))
+        .merge(MyServer.builder().into_axum_router());
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
 ```
 
 ## Connection Management
 
 ### Graceful Shutdown
 
-```rust
-let server = McpServer::new()
-    .stdio()
-    .with_graceful_shutdown(Duration::from_secs(30))
-    .run()
-    .await?;
-```
-
-### Connection Pooling
-
-HTTP and TCP transports automatically manage connection pools:
+The HTTP transport stops on Ctrl-C (and SIGTERM on Unix) and waits up to the
+configured time for in-flight requests. A STDIO server exits when stdin closes.
 
 ```rust
-let server = McpServer::new()
-    .http(8080)
-    .with_connection_pool(ConnectionPoolConfig {
-        min_connections: 10,
-        max_connections: 100,
-        timeout: Duration::from_secs(30),
-    })
-    .run()
-    .await?;
+use std::time::Duration;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    MyServer
+        .builder()
+        .transport(Transport::http("0.0.0.0:8080"))
+        .with_graceful_shutdown(Duration::from_secs(30))
+        .serve()
+        .await
+}
 ```
 
-### Circuit Breaker
+### Client-Side Resilience
 
-Automatic protection against cascading failures:
-
-```rust
-let server = McpServer::new()
-    .http(8080)
-    .with_circuit_breaker(CircuitBreakerConfig {
-        failure_threshold: 5,
-        success_threshold: 2,
-        timeout: Duration::from_secs(60),
-    })
-    .run()
-    .await?;
-```
+Retries and circuit breaking are client concerns: see
+`ClientBuilder::build_resilient` in the [Client API](../api/client.md).
 
 ## Transport Selection Guide
 
 | Transport | Latency | Throughput | Duplex | Best For |
 |-----------|---------|-----------|--------|----------|
-| STDIO | Low | Medium | Half | CLI, local dev |
-| HTTP | Medium | High | Half | Web, REST APIs |
+| STDIO | Low | Medium | Full | CLI, local dev |
+| HTTP | Medium | High | Full (POST + SSE) | Web, remote servers |
 | WebSocket | Low | Medium | Full | Real-time, interactive |
-| TCP | Low | Very High | Full | High performance |
+| TCP | Low | Very High | Full | High performance, private networks |
 | Unix Socket | Very Low | Very High | Full | Local IPC |
 | gRPC | Low | Very High | Full | Enterprise, microservices |
 
 ## Using Individual Transport Crates
 
-For fine-grained control, depend on individual crates:
-
-```toml
-[dependencies]
-turbomcp-http = "3.5.0"
-turbomcp-websocket = "3.5.0"
-turbomcp-grpc = "3.5.0"
-```
+The transport crates (`turbomcp-stdio`, `turbomcp-http`, `turbomcp-websocket`,
+`turbomcp-tcp`, `turbomcp-unix`) implement the `Transport` trait that the
+*client* runs on. Most applications reach them through `turbomcp-client`, which
+re-exports each one behind a feature:
 
 ```rust
-use turbomcp_http::HttpTransport;
-use turbomcp_websocket::WebSocketTransport;
+use std::net::SocketAddr;
+use turbomcp_client::{Client, StreamableHttpClientConfig, StreamableHttpClientTransport, TcpTransport};
 
-let http = HttpTransport::new(8080);
-let ws = WebSocketTransport::new(8081);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let http = StreamableHttpClientTransport::new(StreamableHttpClientConfig {
+        base_url: "http://localhost:8080".to_string(),
+        ..Default::default()
+    })?;
+    let http_client = Client::new(http);
+
+    let server: SocketAddr = "127.0.0.1:9000".parse()?;
+    let tcp = TcpTransport::new_client("0.0.0.0:0".parse()?, server);
+    let tcp_client = Client::new(tcp);
+    Ok(())
+}
 ```
 
 ## Monitoring & Metrics
 
-Get transport statistics:
-
-```rust
-let stats = server.transport_stats().await?;
-
-println!("Active connections: {}", stats.active_connections);
-println!("Total requests: {}", stats.total_requests);
-println!("Error rate: {}%", stats.error_rate);
-```
-
-With OpenTelemetry (v3):
-
-```rust
-use turbomcp_telemetry::tower::TelemetryLayer;
-
-let service = ServiceBuilder::new()
-    .layer(TelemetryLayer::new(config))
-    .service(transport);
-```
+Enable the `telemetry` feature for OpenTelemetry tracing and Prometheus metrics.
+See [Observability](observability.md).
 
 ## Troubleshooting
 
 ### "Address already in use"
 
-Port is already bound. Use a different port:
+The port is already bound. Pick another one, or stop the process holding it.
 
-```rust
-.http(8081)  // Use different port
-```
+### HTTP 403 for a CLI or server client
+
+The request came from a non-loopback address without an `Origin` header. Set
+`allow_missing_origin(true)` on the `ServerConfig`, together with authorization.
 
 ### Connection timeouts
 
-Increase timeout or adjust network:
-
-```rust
-.with_connection_timeout(Duration::from_secs(60))
-```
+Client request timeouts are set on the client
+(`ClientBuilder::with_timeout`, or `client.with_timeout(duration)` for one call).
 
 ### WebSocket connection drops
 
@@ -412,61 +456,22 @@ ws.onclose = () => {
 };
 ```
 
-### gRPC connection issues
-
-Check TLS configuration and port accessibility:
-
-```rust
-// Without TLS (development)
-tonic::transport::Server::builder()
-    .add_service(server.into_service())
-    .serve("[::1]:50051".parse()?)
-    .await?;
-
-// With TLS (production)
-let identity = Identity::from_pem(cert, key);
-tonic::transport::Server::builder()
-    .tls_config(ServerTlsConfig::new().identity(identity))?
-    .add_service(server.into_service())
-    .serve("[::1]:50051".parse()?)
-    .await?;
-```
-
 ## Performance Tuning
 
 ### For High Throughput
 
-Use TCP, WebSocket, or gRPC:
-
-```rust
-let server = McpServer::new()
-    .tcp(9000)
-    .websocket(8081)
-    .grpc(50051)
-    .with_buffer_size(1024 * 1024)  // 1MB buffers
-    .run()
-    .await?;
-```
+Use TCP, Unix sockets, or WebSocket, and raise the connection limit to match
+your expected concurrency (`with_connection_limit`).
 
 ### For Low Latency
 
-Use WebSocket, Unix Socket, or gRPC:
-
-```rust
-let server = McpServer::new()
-    .websocket(8081)
-    .unix("/tmp/mcp.sock")
-    .grpc(50051)
-    .with_tcp_nodelay(true)  // Disable Nagle's algorithm
-    .run()
-    .await?;
-```
+Use a Unix socket for local clients, or WebSocket for remote ones.
 
 ### SIMD-Accelerated JSON (v3)
 
-The `turbomcp` facade does not expose a `simd` feature. Use `turbomcp-wire`
-or lower-level protocol codec configuration directly when you need explicit
-SIMD codec control:
+`turbomcp-protocol` enables SIMD JSON (`sonic-rs`) through its default `simd`
+feature, so the server gets it without extra configuration. For explicit codec
+control in your own code, use `turbomcp-wire`:
 
 ```toml
 turbomcp-wire = { version = "3.5.0", features = ["simd"] }

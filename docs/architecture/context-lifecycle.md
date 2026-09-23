@@ -12,6 +12,22 @@ Understanding the request lifecycle is critical for building robust MCP servers.
 - **Observability** - Built-in logging, metrics, and tracing at every stage
 - **Type Safety** - Compile-time validation of handler signatures and dependencies
 
+!!! note "Sketches, not source"
+    The code blocks for the internal phases below are conceptual sketches,
+    marked `rust,ignore`; the type and function names in them do not match the
+    source. The real pieces are: the line-based transports in
+    `turbomcp-server/src/transport/` (`LineTransportRunner`) and the Streamable
+    HTTP transport in `transport/http.rs`; `turbomcp_core::router::parse_request`
+    and `route_request`; `turbomcp_core::context::RequestContext`; typed
+    middleware through `turbomcp_server::{McpMiddleware, MiddlewareStack}`; and
+    the `McpHandler` the `#[server]` macro generates. The handler examples
+    (phases 6 and 7, context propagation, and the complete example) are real
+    code that compiles against the current release.
+
+    TurboMCP has no dependency-injection container: the only parameter injected
+    into a handler is `&RequestContext`. Shared state (database pools, caches,
+    clients) lives on the server struct.
+
 ## Request Lifecycle Phases
 
 ```mermaid
@@ -35,7 +51,7 @@ graph TD
 
 **Responsibility:** Receive raw bytes from the transport protocol.
 
-```rust
+```rust,ignore
 // STDIO transport example
 pub struct StdioTransport {
     stdin: tokio::io::Stdin,
@@ -55,7 +71,7 @@ impl StdioTransport {
 }
 ```
 
-```rust
+```rust,ignore
 // HTTP transport example
 pub struct HttpTransport {
     router: Router,
@@ -89,7 +105,7 @@ impl HttpTransport {
 
 **Responsibility:** Parse bytes into structured JSON-RPC request.
 
-```rust
+```rust,ignore
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -121,7 +137,7 @@ pub fn deserialize_request(bytes: &[u8]) -> McpResult<JsonRpcRequest> {
 
 **Validation:**
 
-```rust
+```rust,ignore
 impl JsonRpcRequest {
     pub fn validate(&self) -> McpResult<()> {
         // Validate JSON-RPC version
@@ -163,7 +179,7 @@ Benchmark: Deserialize 1KB JSON-RPC request (1M iterations)
 
 **Responsibility:** Create context object that carries request metadata and correlation IDs.
 
-```rust
+```rust,ignore
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -218,7 +234,7 @@ impl RequestContext {
 
 **Context Accessors:**
 
-```rust
+```rust,ignore
 impl RequestContext {
     pub fn request_id(&self) -> &RequestId {
         &self.request_id
@@ -259,7 +275,7 @@ impl RequestContext {
 
 **Responsibility:** Run pre-processing middleware before handler execution.
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait Middleware: Send + Sync {
     async fn process(
@@ -301,7 +317,7 @@ impl<'a> Next<'a> {
 
 **Built-in Middleware:**
 
-```rust
+```rust,ignore
 // Logging middleware
 pub struct LoggingMiddleware {
     logger: Arc<Logger>,
@@ -418,7 +434,7 @@ impl Middleware for AuthMiddleware {
 
 **Responsibility:** Route request to the appropriate handler based on method name.
 
-```rust
+```rust,ignore
 pub struct RequestRouter {
     registry: Arc<HandlerRegistry>,
     middleware: Vec<Arc<dyn Middleware>>,
@@ -466,7 +482,7 @@ impl HandlerRegistry {
 
 **Method Dispatch:**
 
-```rust
+```rust,ignore
 #[async_trait]
 pub trait Handler: Send + Sync {
     async fn handle(
@@ -516,202 +532,77 @@ impl Handler for ToolCallHandler {
 }
 ```
 
-### Phase 6: Dependency Resolution
+### Phase 6: Argument Extraction
 
-**Responsibility:** Inject dependencies into handler based on function signature.
+**Responsibility:** Turn the request's `arguments` into the handler's parameters.
+
+The `#[server]` macro generates this step. For each tool it deserializes every
+declared parameter from the arguments object (rejecting unknown, missing, or
+mistyped arguments as a tool error), passes `&RequestContext` to any parameter
+of that type, and converts the return value with `IntoToolResult`. There is no
+other injection: shared state lives on `self`.
 
 ```rust
-pub struct ContextFactory {
-    providers: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use turbomcp::prelude::*;
+
+#[derive(Clone, Default)]
+pub struct Notes {
+    // Shared state lives on the server, behind an Arc
+    notes: Arc<RwLock<Vec<String>>>,
 }
 
-impl ContextFactory {
-    pub fn new() -> Self {
-        Self {
-            providers: HashMap::new(),
-        }
-    }
-
-    pub fn register<T: Any + Send + Sync>(&mut self, value: T) {
-        self.providers.insert(
-            TypeId::of::<T>(),
-            Arc::new(value),
-        );
-    }
-
-    pub fn resolve<T: Any + Send + Sync + Clone>(&self) -> Option<T> {
-        self.providers
-            .get(&TypeId::of::<T>())
-            .and_then(|provider| provider.downcast_ref::<T>())
-            .cloned()
+#[server(name = "notes", version = "1.0.0")]
+impl Notes {
+    /// Add a note. `text` comes from the arguments; `ctx` is injected.
+    #[tool]
+    async fn add_note(&self, text: String, ctx: &RequestContext) -> McpResult<String> {
+        self.notes.write().await.push(text);
+        Ok(format!("stored (request {})", ctx.request_id()))
     }
 }
 ```
-
-**Macro-Generated Injection:**
-
-```rust
-// User writes:
-#[tool]
-pub async fn my_tool(
-    name: String,
-    ctx: Context,
-    logger: Logger,
-    db: Database,
-) -> McpResult<String> {
-    // Handler logic
-}
-
-// Macro generates:
-pub struct MyToolHandler {
-    factory: Arc<ContextFactory>,
-}
-
-#[async_trait]
-impl ToolHandler for MyToolHandler {
-    async fn invoke(
-        &self,
-        params: Value,
-        ctx: &RequestContext,
-    ) -> McpResult<Value> {
-        // 1. Deserialize regular parameters
-        let name: String = params.get("name")
-            .ok_or(McpError::InvalidParams("Missing 'name'".into()))?
-            .as_str()
-            .ok_or(McpError::InvalidParams("'name' must be string".into()))?
-            .to_string();
-
-        // 2. Resolve injected dependencies
-        let ctx_dep = self.factory.resolve::<Context>()
-            .ok_or(McpError::InternalError("Context not available".into()))?;
-
-        let logger = self.factory.resolve::<Logger>()
-            .ok_or(McpError::InternalError("Logger not available".into()))?;
-
-        let db = self.factory.resolve::<Database>()
-            .ok_or(McpError::InternalError("Database not available".into()))?;
-
-        // 3. Call original function
-        let result = my_tool(name, ctx_dep, logger, db).await?;
-
-        // 4. Serialize result
-        Ok(serde_json::to_value(result)?)
-    }
-}
-```
-
-**Dependency Types:**
-
-```rust
-// Context - request metadata
-#[derive(Clone)]
-pub struct Context {
-    inner: Arc<RequestContext>,
-}
-
-impl Context {
-    pub fn request_id(&self) -> &RequestId {
-        self.inner.request_id()
-    }
-
-    pub fn correlation_id(&self) -> &CorrelationId {
-        self.inner.correlation_id()
-    }
-}
-
-// Logger - structured logging
-#[derive(Clone)]
-pub struct Logger {
-    inner: Arc<LoggerImpl>,
-    fields: HashMap<String, Value>,
-}
-
-impl Logger {
-    pub async fn info(&self, message: &str) -> McpResult<()> {
-        self.inner.log(LogLevel::Info, message, &self.fields).await
-    }
-
-    pub fn with_field(mut self, key: &str, value: impl Into<Value>) -> Self {
-        self.fields.insert(key.to_string(), value.into());
-        self
-    }
-}
-
-// Database - connection pool
-#[derive(Clone)]
-pub struct Database {
-    pool: Arc<Pool<AsyncPgConnection>>,
-}
-
-impl Database {
-    pub async fn query<T>(&self, sql: &str) -> McpResult<Vec<T>>
-    where
-        T: FromRow,
-    {
-        let mut conn = self.pool.get().await?;
-        sqlx::query_as(sql)
-            .fetch_all(&mut conn)
-            .await
-            .map_err(|e| McpError::DatabaseError(e.to_string()))
-    }
-}
-```
-
-See [Dependency Injection](./dependency-injection.md) for complete details.
 
 ### Phase 7: Handler Execution
 
 **Responsibility:** Execute user-defined handler logic.
 
 ```rust
-#[tool]
-pub async fn calculate_sum(
-    numbers: Vec<i32>,
-    logger: Logger,
-) -> McpResult<i32> {
-    logger.info("Calculating sum").await?;
+use std::time::Duration;
+use turbomcp::prelude::*;
 
-    let sum: i32 = numbers.iter().sum();
+#[derive(Clone)]
+pub struct MathServer;
 
-    logger
-        .with_field("count", numbers.len())
-        .with_field("sum", sum)
-        .info("Sum calculated")
-        .await?;
-
-    Ok(sum)
-}
-```
-
-**Error Handling:**
-
-```rust
-#[tool]
-pub async fn divide(
-    a: i32,
-    b: i32,
-) -> McpResult<f64> {
-    if b == 0 {
-        return Err(McpError::InvalidParams(
-            "Division by zero".into()
-        ));
+#[server(name = "math", version = "1.0.0")]
+impl MathServer {
+    /// Sum a list of numbers
+    #[tool]
+    async fn calculate_sum(&self, numbers: Vec<i32>) -> McpResult<i32> {
+        tracing::info!(count = numbers.len(), "calculating sum");
+        Ok(numbers.iter().sum())
     }
 
-    Ok(a as f64 / b as f64)
-}
-```
+    /// Divide two numbers. The error reaches the client as a tool error
+    /// (`isError: true`), so the model can correct its call.
+    #[tool]
+    async fn divide(&self, a: i32, b: i32) -> McpResult<f64> {
+        if b == 0 {
+            return Err(McpError::invalid_params("Division by zero"));
+        }
+        Ok(a as f64 / b as f64)
+    }
 
-**Async Operations:**
-
-```rust
-use tokio::time::sleep;
-
-#[tool]
-pub async fn delayed_operation(
-    delay_ms: u64,
-) -> McpResult<String> {
-    sleep(Duration::from_millis(delay_ms)).await;
-    Ok("Operation completed".to_string())
+    /// Wait, honouring cancellation
+    #[tool]
+    async fn delayed_operation(&self, delay_ms: u64, ctx: &RequestContext) -> McpResult<String> {
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        if ctx.is_cancelled() {
+            return Err(McpError::cancelled("cancelled by client"));
+        }
+        Ok("Operation completed".to_string())
+    }
 }
 ```
 
@@ -719,7 +610,7 @@ pub async fn delayed_operation(
 
 **Responsibility:** Post-process response before serialization.
 
-```rust
+```rust,ignore
 pub struct ResponseCompressionMiddleware {
     min_size: usize,
 }
@@ -757,7 +648,7 @@ impl Middleware for ResponseCompressionMiddleware {
 
 **Responsibility:** Serialize response to JSON-RPC format.
 
-```rust
+```rust,ignore
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,  // Always "2.0"
@@ -795,7 +686,7 @@ pub fn serialize_response(response: &JsonRpcResponse) -> McpResult<Bytes> {
 
 **Error Conversion:**
 
-```rust
+```rust,ignore
 impl From<McpError> for JsonRpcResponse {
     fn from(error: McpError) -> Self {
         JsonRpcResponse {
@@ -816,7 +707,7 @@ impl From<McpError> for JsonRpcResponse {
 
 **Responsibility:** Send response bytes over transport.
 
-```rust
+```rust,ignore
 // STDIO transport
 impl StdioTransport {
     pub async fn send(&mut self, bytes: Bytes) -> Result<()> {
@@ -853,38 +744,39 @@ impl WebSocketTransport {
 
 ### Context Propagation
 
+Pass `&RequestContext` down to helpers; they see the same request ID,
+session, and principal:
+
 ```rust
-#[tool]
-pub async fn parent_operation(
-    ctx: Context,
-    logger: Logger,
-) -> McpResult<String> {
-    logger.info("Parent operation started").await?;
+use turbomcp::prelude::*;
 
-    // Context automatically propagates to child operations
-    let result1 = child_operation_1(ctx.clone(), logger.clone()).await?;
-    let result2 = child_operation_2(ctx.clone(), logger.clone()).await?;
+#[derive(Clone)]
+pub struct Pipeline;
 
-    Ok(format!("{} {}", result1, result2))
+#[server(name = "pipeline", version = "1.0.0")]
+impl Pipeline {
+    /// Run two steps under one request
+    #[tool]
+    async fn parent_operation(&self, ctx: &RequestContext) -> McpResult<String> {
+        tracing::info!(request_id = ctx.request_id(), "parent operation started");
+
+        let result1 = child_operation(ctx, "child_1").await?;
+        let result2 = child_operation(ctx, "child_2").await?;
+
+        Ok(format!("{} {}", result1, result2))
+    }
 }
 
-async fn child_operation_1(
-    ctx: Context,
-    logger: Logger,
-) -> McpResult<String> {
-    // Same request_id and correlation_id as parent
-    logger
-        .with_field("operation", "child_1")
-        .info("Child operation 1")
-        .await?;
-
-    Ok("Result 1".to_string())
+async fn child_operation(ctx: &RequestContext, name: &str) -> McpResult<String> {
+    // Same request_id and session as the parent
+    tracing::info!(request_id = ctx.request_id(), operation = name, "child operation");
+    Ok(format!("{name} done"))
 }
 ```
 
 ### Context Cloning
 
-```rust
+```rust,ignore
 impl RequestContext {
     pub fn clone(&self) -> Self {
         // Cheap clone - Arc increments
@@ -903,7 +795,7 @@ impl RequestContext {
 
 ### Context Extension
 
-```rust
+```rust,ignore
 impl RequestContext {
     pub fn with_metadata<T: Any + Send + Sync>(
         mut self,
@@ -957,7 +849,7 @@ Total overhead: ~1.2 ms (excluding handler execution)
 
 ## Error Handling Flow
 
-```rust
+```rust,ignore
 // Error during deserialization
 Transport -> Deserialize (ERROR)
   ↓
@@ -995,58 +887,55 @@ Send to client
 ## Complete Example
 
 ```rust
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Duration;
 use turbomcp::prelude::*;
+use turbomcp_server::{McpMiddleware, MiddlewareStack, Next};
 
-#[server]
+#[derive(Clone)]
 pub struct MyServer;
 
-// Custom middleware
-pub struct RequestIdMiddleware;
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    /// Process some data
+    #[tool]
+    async fn process_data(&self, data: String, ctx: &RequestContext) -> McpResult<String> {
+        tracing::info!(request_id = ctx.request_id(), data_len = data.len(), "processing data");
 
-#[async_trait]
-impl Middleware for RequestIdMiddleware {
-    async fn process(
-        &self,
-        request: JsonRpcRequest,
-        ctx: &RequestContext,
-        next: Next<'_>,
-    ) -> McpResult<JsonRpcResponse> {
-        println!("Request ID: {}", ctx.request_id());
+        // Simulate processing
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let response = next.run(request, ctx).await;
-
-        println!("Response ready for: {}", ctx.request_id());
-
-        response
+        Ok(format!("Processed: {}", data))
     }
 }
 
-#[tool]
-pub async fn process_data(
-    data: String,
-    ctx: Context,
-    logger: Logger,
-) -> McpResult<String> {
-    logger
-        .with_field("request_id", ctx.request_id().to_string())
-        .with_field("data_len", data.len())
-        .info("Processing data")
-        .await?;
+/// Logs every tool call around the handler.
+pub struct RequestIdMiddleware;
 
-    // Simulate processing
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    Ok(format!("Processed: {}", data))
+impl McpMiddleware for RequestIdMiddleware {
+    fn on_call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: serde_json::Value,
+        ctx: &'a RequestContext,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Log to stderr: stdout is the STDIO protocol stream
+            eprintln!("Request {}: calling {name}", ctx.request_id());
+            let response = next.call_tool(name, args, ctx).await;
+            eprintln!("Response ready for: {}", ctx.request_id());
+            response
+        })
+    }
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    MyServer::new()
+async fn main() -> McpResult<()> {
+    MiddlewareStack::new(MyServer)
         .with_middleware(RequestIdMiddleware)
-        .with_middleware(LoggingMiddleware::new())
-        .with_middleware(MetricsMiddleware::new())
-        .stdio()
-        .run()
+        .run_stdio()
         .await
 }
 ```

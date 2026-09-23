@@ -94,11 +94,17 @@ async fn main() {
 ### WASM Server (Cloudflare Workers)
 
 ```rust
+use serde::Deserialize;
 use turbomcp_wasm::wasm_server::*;
 use worker::*;
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GreetArgs {
+    name: String,
+}
+
 #[event(fetch)]
-async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
     let server = McpServer::builder("my-server", "1.0.0")
         .tool("greet", "Say hello", |args: GreetArgs| async move {
             format!("Hello, {}!", args.name)
@@ -112,13 +118,18 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 ### WASM Server with Authentication
 
 ```rust
-use turbomcp_wasm::wasm_server::*;
+use std::sync::Arc;
 use turbomcp_wasm::auth::CloudflareAccessAuthenticator;
+use turbomcp_wasm::wasm_server::*;
+use worker::*;
 
 #[event(fetch)]
-async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
     let server = McpServer::builder("my-server", "1.0.0")
-        .tool("greet", "Say hello", greet_handler)
+        // The authenticated principal reaches handlers through the context
+        .tool_with_ctx_no_args("whoami", "Who am I", |ctx: Arc<RequestContext>| async move {
+            ctx.subject().unwrap_or("anonymous").to_string()
+        })
         .build();
 
     // Wrap with Cloudflare Access authentication
@@ -133,9 +144,9 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
 ### Unified Handler Trait (`turbomcp-core`)
 
-The `McpHandler` trait uses conditional `Send` bounds via marker traits:
+The `McpHandler` trait uses conditional `Send` bounds via marker traits (simplified from `turbomcp-core`):
 
-```rust
+```rust,ignore
 /// Marker trait that's `Send` on native, nothing on WASM.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait MaybeSend: Send {}
@@ -153,14 +164,17 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
 
 ### Request Context (`turbomcp-core`)
 
-Minimal, `no_std` compatible context:
+Minimal, `no_std` compatible context (the main fields; see `turbomcp_core::context::RequestContext`):
 
-```rust
+```rust,ignore
 pub struct RequestContext {
     pub request_id: String,
     pub transport: TransportType,
-    pub metadata: BTreeMap<String, String>,
+    pub session_id: Option<String>,
+    pub metadata: HashMap<String, serde_json::Value>,
     pub principal: Option<Principal>,  // Set after authentication
+    pub headers: Option<HashMap<String, String>>,
+    // ... session handle, progress token, cancellation token (std only)
 }
 ```
 

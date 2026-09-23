@@ -243,9 +243,9 @@ cargo watch -x "check -p turbomcp-server --features http,websocket"
 
 #### 2. Add Tests
 
-Every change should include tests:
+Every change should include tests (a template; `my_function` stands for the code under test):
 
-```rust
+```rust,ignore
 // Unit test
 #[cfg(test)]
 mod tests {
@@ -381,12 +381,13 @@ RUST_LOG=debug cargo run --example macro_server
 
 **Print Debugging:**
 
-```rust
-// Use debug!() macro instead of println!()
-use log::debug;
+```rust,ignore
+// Use tracing's debug!() instead of println!(): a STDIO server's stdout
+// is the protocol stream
+use tracing::debug;
 
-debug!("Processing request: {:?}", request);
-debug!("Handler found: {}", handler_name);
+debug!(?request, "processing request");
+debug!(handler = %handler_name, "handler found");
 ```
 
 **Using Debugger (VS Code):**
@@ -465,12 +466,13 @@ cargo +nightly fuzz run fuzz_jsonrpc_parsing
 ```rust
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use serde_json::json;
+    use turbomcp_server::parse_request;
 
     #[test]
     fn test_parse_request() {
-        let json = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
-        let request = parse_json_rpc_request(json).unwrap();
+        let input = r#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
+        let request = parse_request(input).unwrap();
 
         assert_eq!(request.method, "ping");
         assert_eq!(request.id, Some(json!(1)));
@@ -480,22 +482,39 @@ mod tests {
 
 **Async Test:**
 
-```rust
-#[tokio::test]
-async fn test_server_initialization() {
-    let server = McpServer::new()
-        .with_test_config()
-        .stdio()
-        .build();
+`McpTestClient` drives a handler through MCP dispatch without a transport:
 
-    let response = server.initialize(InitializeRequest::default()).await;
-    assert!(response.is_ok());
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Calculator;
+
+#[server(name = "calculator", version = "1.0.0")]
+impl Calculator {
+    /// Add two numbers
+    #[tool]
+    async fn add(&self, a: i64, b: i64) -> i64 {
+        a + b
+    }
+}
+
+#[tokio::test]
+async fn test_add() {
+    let client = McpTestClient::new(Calculator);
+    client.assert_tool_exists("add");
+
+    let result = client
+        .call_tool("add", serde_json::json!({"a": 2, "b": 3}))
+        .await
+        .unwrap();
+    assert_eq!(result.first_text(), Some("5"));
 }
 ```
 
 **Property-Based Test:**
 
-```rust
+```rust,ignore
 use proptest::prelude::*;
 
 proptest! {
@@ -508,14 +527,17 @@ proptest! {
 
 **Benchmark:**
 
-```rust
+A `benches/` target (with `harness = false` in `Cargo.toml`), so not compiled here:
+
+```rust,ignore
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use turbomcp_server::parse_request;
 
 fn bench_json_parsing(c: &mut Criterion) {
     let json = r#"{"jsonrpc":"2.0","method":"test","id":1}"#;
 
     c.bench_function("parse_json_rpc", |b| {
-        b.iter(|| parse_json_rpc_request(black_box(json)))
+        b.iter(|| parse_request(black_box(json)))
     });
 }
 
@@ -619,19 +641,28 @@ cargo machete  # Install: cargo install cargo-machete
 
 ### Code Documentation
 
+These are templates for doc comments, so they are not compiled here; the
+examples inside them are, as doctests, in the crate they are written in.
+Prefer `no_run` over `ignore` for a doctest that needs a transport, so it
+still compiles.
+
 **Modules:**
 
-```rust
+```rust,ignore
 //! # Module Name
 //!
 //! Brief description of what this module does.
 //!
 //! ## Examples
 //!
-//! ```
+//! ```no_run
 //! use turbomcp::prelude::*;
 //!
-//! let server = McpServer::new();
+//! # #[derive(Clone)] struct MyServer;
+//! # #[server] impl MyServer { #[tool] async fn ping(&self) -> String { "pong".into() } }
+//! # async fn run() -> McpResult<()> {
+//! MyServer.run_stdio().await
+//! # }
 //! ```
 
 mod my_module;
@@ -639,7 +670,7 @@ mod my_module;
 
 **Functions:**
 
-```rust
+```rust,ignore
 /// Calculate the sum of two numbers.
 ///
 /// # Arguments
@@ -654,7 +685,7 @@ mod my_module;
 /// # Examples
 ///
 /// ```
-/// use turbomcp::math::add;
+/// use my_crate::math::add;
 ///
 /// assert_eq!(add(2, 3), 5);
 /// ```
@@ -665,25 +696,22 @@ pub fn add(a: i32, b: i32) -> i32 {
 
 **Structs:**
 
-```rust
-/// MCP server instance.
+```rust,ignore
+/// Token-bucket rate limiter for one client.
 ///
-/// The server manages handlers, middleware, and transport protocols.
+/// Cheap to clone; clones share the same bucket.
 ///
 /// # Examples
 ///
 /// ```
-/// use turbomcp::prelude::*;
+/// use std::time::Duration;
+/// use my_crate::RateLimiter;
 ///
-/// #[tokio::main]
-/// async fn main() -> Result<()> {
-///     McpServer::new()
-///         .stdio()
-///         .run()
-///         .await
-/// }
+/// let limiter = RateLimiter::new(100, Duration::from_secs(1));
+/// assert!(limiter.check("client-1"));
 /// ```
-pub struct McpServer<S> {
+#[derive(Clone)]
+pub struct RateLimiter {
     // fields...
 }
 ```

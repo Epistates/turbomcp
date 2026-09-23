@@ -65,6 +65,48 @@ let config = StreamableHttpClientConfig {
 };
 ```
 
+## Authorization
+
+A server that requires authorization answers a request without a usable token
+`401` (or `403` for a missing scope) with a `WWW-Authenticate` challenge. Set
+`auth_provider` to an `AuthProvider` to supply the bearer token and to handle the
+challenge. The transport parses the challenge into an `AuthChallenge` (whose
+`resource_metadata` names the server's RFC 9728 Protected Resource Metadata) and
+hands it to `on_challenge`; if that returns `true`, the request is retried once with
+the provider's new token. `auth_provider` takes precedence over `auth_token`.
+
+```rust
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use turbomcp_http::{AuthChallenge, AuthFuture, AuthProvider, StreamableHttpClientConfig};
+
+#[derive(Debug, Default)]
+struct Tokens {
+    current: RwLock<Option<String>>,
+}
+
+impl AuthProvider for Tokens {
+    fn token(&self) -> AuthFuture<'_, Option<String>> {
+        Box::pin(async move { self.current.read().await.clone() })
+    }
+
+    fn on_challenge<'a>(&'a self, challenge: &'a AuthChallenge) -> AuthFuture<'a, bool> {
+        Box::pin(async move {
+            // Discover the authorization server from `challenge.resource_metadata`
+            // (see turbomcp_auth::discovery), obtain a token, store it, return true.
+            eprintln!("authorization required: {challenge}");
+            false
+        })
+    }
+}
+
+let config = StreamableHttpClientConfig {
+    base_url: "https://mcp.example.com".to_string(),
+    auth_provider: Some(Arc::new(Tokens::default())),
+    ..Default::default()
+};
+```
+
 ## Security
 
 - TLS 1.3 is required by default (v3.0 security requirement)

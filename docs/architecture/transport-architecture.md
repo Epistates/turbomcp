@@ -23,9 +23,12 @@ This was raised as potential redundancy, but upon analysis, this is **intentiona
 
 The `LineTransportRunner` is optimized for MCP server patterns:
 
-```rust
+Its shape, simplified from `turbomcp-server/src/transport/line.rs`:
+
+```rust,ignore
 pub struct LineTransportRunner<H: McpHandler> {
     handler: H,
+    // ... ServerConfig, session state
 }
 
 impl<H: McpHandler> LineTransportRunner<H> {
@@ -40,6 +43,10 @@ impl<H: McpHandler> LineTransportRunner<H> {
         writer: W,
         ctx_factory: F,
     ) -> Result<(), McpError>
+    where
+        R: LineReader + 'static,
+        W: LineWriter,
+        F: Fn() -> RequestContext;
 }
 ```
 
@@ -54,11 +61,18 @@ impl<H: McpHandler> LineTransportRunner<H> {
 
 The transport crates (`turbomcp-stdio`, `turbomcp-http`, `turbomcp-tcp`, etc.) provide:
 
-```rust
-pub trait Transport: Send + Sync + 'static {
-    async fn send(&self, message: &[u8]) -> Result<(), TransportError>;
-    async fn receive(&self) -> Result<Vec<u8>, TransportError>;
-    async fn close(&self) -> Result<(), TransportError>;
+```rust,ignore
+// turbomcp-transport-traits (abridged; the futures are boxed, `Pin<Box<dyn Future<...> + Send + '_>>`)
+pub trait Transport: Send + Sync + std::fmt::Debug {
+    fn transport_type(&self) -> TransportType;
+    fn capabilities(&self) -> &TransportCapabilities;
+    async fn state(&self) -> TransportState;
+    async fn connect(&self) -> TransportResult<()>;
+    async fn disconnect(&self) -> TransportResult<()>;
+    async fn send(&self, message: TransportMessage) -> TransportResult<()>;
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>>;
+    async fn metrics(&self) -> TransportMetrics;
+    // ... is_connected, endpoint, configure (with defaults)
 }
 ```
 

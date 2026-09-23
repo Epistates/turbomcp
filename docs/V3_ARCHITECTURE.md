@@ -4,6 +4,15 @@
 > **Reference Branch**: `gemini-v3-attempt-reference` (contains incomplete prior attempt)
 > **Target**: Clean, SOTA MCP SDK implementation
 
+!!! note "Design document"
+    This is the design written before v3 was implemented. Its code blocks are
+    design sketches, marked `rust,ignore`, and the shipped types, signatures,
+    and module paths differ in places (for example, `McpError` lives in
+    `turbomcp-core`, `McpHandler` bounds are `MaybeSend`/`MaybeSync`, and the
+    router is `turbomcp-core`'s `router` module). The two user-facing examples,
+    the server definition and "After (v3)", compile against the current release.
+    See `V3_UNIFIED_ARCHITECTURE.md` for how the design was realized.
+
 ## Executive Summary
 
 TurboMCP v3 is a major architectural redesign focused on:
@@ -85,7 +94,7 @@ TurboMCP v3 is a major architectural redesign focused on:
 
 All MCP types are defined ONCE in `turbomcp-types`. Other crates re-export, never duplicate.
 
-```rust
+```rust,ignore
 // turbomcp-types/src/lib.rs
 pub mod content;      // TextContent, ImageContent, AudioContent, etc.
 pub mod definitions;  // Tool, Resource, Prompt, ServerInfo
@@ -98,7 +107,7 @@ pub mod traits;       // IntoToolResult, IntoResourceResult
 
 The `McpHandler` trait defines the interface for ALL MCP operations:
 
-```rust
+```rust,ignore
 // turbomcp-core/src/handler.rs
 pub trait McpHandler: Clone + Send + Sync + 'static {
     /// Returns server information for initialization
@@ -140,7 +149,7 @@ pub trait McpHandler: Clone + Send + Sync + 'static {
 
 ### 3. Minimal Request Context
 
-```rust
+```rust,ignore
 // turbomcp-core/src/context.rs
 #[derive(Debug, Clone)]
 pub struct RequestContext {
@@ -184,16 +193,17 @@ impl MyServer {
         chrono::Utc::now().to_rfc3339()
     }
 
-    /// Reads a file resource
+    /// Reads a file resource. The handler gets the full URI that matched.
     #[resource("file://{path}")]
-    async fn read_file(&self, path: String) -> String {
-        std::fs::read_to_string(&path).unwrap_or_default()
+    async fn read_file(&self, uri: String, ctx: &RequestContext) -> McpResult<String> {
+        let path = uri.trim_start_matches("file://");
+        std::fs::read_to_string(path).map_err(|e| McpError::resource_not_found(e.to_string()))
     }
 }
 
 #[tokio::main]
-async fn main() {
-    MyServer.run_stdio().await;
+async fn main() -> McpResult<()> {
+    MyServer.run_stdio().await
 }
 ```
 
@@ -236,7 +246,7 @@ The `#[server]` macro generates:
 
 ### Content Types
 
-```rust
+```rust,ignore
 // Already well-defined in turbomcp-types/src/content.rs
 pub enum Content {
     Text(TextContent),
@@ -259,7 +269,7 @@ pub struct ImageContent {
 
 ### Definition Types
 
-```rust
+```rust,ignore
 // turbomcp-types/src/definitions.rs
 pub struct Tool {
     pub name: String,
@@ -290,7 +300,7 @@ pub struct ServerInfo {
 
 ### Result Types
 
-```rust
+```rust,ignore
 // turbomcp-types/src/results.rs
 pub struct ToolResult {
     pub content: Vec<Content>,
@@ -309,7 +319,7 @@ pub struct PromptResult {
 
 ### Error Type
 
-```rust
+```rust,ignore
 // turbomcp-types/src/error.rs
 #[derive(Debug, Clone)]
 pub struct McpError {
@@ -333,7 +343,7 @@ impl McpError {
 
 The router dispatches JSON-RPC requests to McpHandler methods:
 
-```rust
+```rust,ignore
 // turbomcp-server/src/v3/router.rs
 pub async fn route_request<H: McpHandler>(
     handler: &H,
@@ -358,7 +368,7 @@ pub async fn route_request<H: McpHandler>(
 
 ### STDIO
 
-```rust
+```rust,ignore
 // turbomcp-server/src/v3/transports/stdio.rs
 pub async fn run_stdio<H: McpHandler>(handler: H) {
     let stdin = BufReader::new(tokio::io::stdin());
@@ -379,7 +389,7 @@ pub async fn run_stdio<H: McpHandler>(handler: H) {
 
 ### HTTP (Axum)
 
-```rust
+```rust,ignore
 // turbomcp-server/src/v3/transports/http.rs
 pub async fn run_http<H: McpHandler>(handler: H, addr: SocketAddr) {
     let app = Router::new()
@@ -403,7 +413,7 @@ async fn handle_mcp_request<H: McpHandler>(
 
 The `#[server]` macro transforms:
 
-```rust
+```rust,ignore
 #[server]
 impl MyServer {
     #[tool]
@@ -415,7 +425,7 @@ impl MyServer {
 
 Into:
 
-```rust
+```rust,ignore
 impl MyServer {
     async fn add(&self, a: i32, b: i32) -> i32 {
         a + b
@@ -478,7 +488,7 @@ impl McpHandler for MyServer {
 
 ### Before (v2)
 
-```rust
+```rust,ignore
 use turbomcp::prelude::*;
 use turbomcp_macros::server;
 
@@ -495,6 +505,9 @@ impl MyServer {
 
 ```rust
 use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
 
 #[server]
 impl MyServer {

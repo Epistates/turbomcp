@@ -20,7 +20,7 @@ impl MyHandler {
     }
 }
 
-// Native: Use .serve() (stdio default), or .builder().transport(Transport::http(..)).serve()
+// Native: Use .run_stdio(), or .builder().transport(Transport::http(..)).serve()
 // WASM: Use WasmHandlerExt trait for Cloudflare Workers
 ```
 

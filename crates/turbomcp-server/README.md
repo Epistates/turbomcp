@@ -16,6 +16,7 @@ validation), and the JSON-RPC router shared by every transport.
 - [Quick Start](#quick-start)
 - [Server Builder](#server-builder)
 - [Server Configuration](#server-configuration)
+- [HTTP Authorization](#http-authorization)
 - [Protocol Version Negotiation](#protocol-version-negotiation)
 - [Visibility](#visibility)
 - [Middleware](#middleware)
@@ -39,17 +40,19 @@ type) into a running MCP server. It owns:
 - The typed `McpMiddleware` trait and `MiddlewareStack<H>` composition wrapper.
 - Progressive disclosure (`VisibilityLayer`) and server composition
   (`CompositeHandler`).
+- MCP authorization for the Streamable HTTP transport (`HttpAuthorization`,
+  `BearerTokenValidator`), with the `http` feature.
 
-Authentication (OAuth 2.1 / JWT / API keys) lives in `turbomcp-auth`.
-Telemetry lives in `turbomcp-telemetry`. Session management lives in
-`turbomcp-protocol`. This crate does not bundle them.
+Token validators (OAuth 2.1 / JWT / API keys) live in `turbomcp-auth`.
+Telemetry lives in `turbomcp-telemetry`. This crate does not bundle them.
 
 ## Quick Start
 
 Any type that implements `McpHandler` (the `#[server]` macro generates one for
 you) gets the `run*` and `builder()` methods automatically via blanket impls.
+The macros come from the `turbomcp` facade crate:
 
-```rust,ignore
+```rust
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
@@ -86,13 +89,15 @@ on every `McpHandler`). The methods available on it:
 | `.with_origin_validation(OriginValidationConfig)` | Replace the full origin config |
 | `.allow_localhost_origins(bool)` | Accept/deny localhost origins |
 | `.allow_any_origin(bool)` | Disable origin checks entirely |
-| `.with_config(ServerConfig)` | Apply a fully constructed `ServerConfig` |
+| `.with_config(ServerConfig)` | Apply a `ServerConfig` (protocol, rate limit, connection limits, required capabilities, message size, origin validation) |
 | `.serve()` | Start the server (async, blocks until shutdown) |
 | `.into_axum_router()` | Return an `axum::Router` for BYO server integration (requires `http`) |
 | `.into_service()` | Return a Tower service (requires `http`) |
 | `.handler()` / `.into_handler()` | Borrow / consume the underlying handler |
 
-```rust,ignore
+With `Calculator` from the Quick Start and the `http` feature:
+
+```rust
 use std::time::Duration;
 use turbomcp::prelude::*;
 
@@ -110,7 +115,7 @@ async fn main() -> McpResult<()> {
 
 ### BYO server (Axum integration)
 
-```rust,ignore
+```rust
 use axum::{Router, routing::get};
 use turbomcp::prelude::*;
 
@@ -139,7 +144,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `connection_limits` | `ConnectionLimits` | 1000 per transport |
 | `required_capabilities` | `RequiredCapabilities` | none |
 | `max_message_size` | `usize` | 10 MB |
-| `origin_validation` | `OriginValidationConfig` | `allow_localhost = true`, no explicit origins, `allow_any = false` |
+| `origin_validation` | `OriginValidationConfig` | `allow_localhost = true`, no explicit origins, `allow_any = false`, `allow_missing_origin = false`, `cors = false` |
+| `http_sessions` | `HttpSessionConfig` | 1 hour idle timeout, 10,000 sessions |
+| `authorization` | `Option<HttpAuthorization>` (`http` feature) | `None` |
+
+A request with no `Origin` header from a non-loopback address is refused
+unless `allow_missing_origin(true)` is set. CLIs, agent runtimes, and other
+servers send no `Origin`, so a networked server that serves them needs it,
+paired with authorization.
 
 Use `.build()` for an infallible build with defaults, or `.try_build()` to
 validate. `try_build()` returns `ConfigValidationError` when:
@@ -160,39 +172,102 @@ let config = ServerConfig::builder()
     .expect("invalid server configuration");
 ```
 
+## HTTP Authorization
+
+With the `http` feature, `ServerConfig::builder().authorization(...)` makes
+the Streamable HTTP transport an OAuth 2.1 protected resource, as MCP's
+authorization spec describes. The server publishes RFC 9728 Protected
+Resource Metadata under `/.well-known/oauth-protected-resource`, answers a
+request without a valid bearer token `401` with a `WWW-Authenticate`
+challenge pointing at it (`403 insufficient_scope` for a missing scope), and
+puts the validated `Principal` on each request's context.
+
+Tokens are checked by a `BearerTokenValidator`, which must accept only tokens
+issued for this server. `turbomcp_auth::server::JwtBearerValidator` (feature
+`mcp-http-server`) validates JWTs, audience included; a hand-written one looks
+like this:
+
+```rust
+use turbomcp::prelude::*;
+use turbomcp_core::auth::Principal;
+use turbomcp_server::{BearerRejection, BearerTokenValidator, HttpAuthorization, ValidationFuture};
+
+/// Accepts one static token. Real servers validate a JWT, audience included.
+struct StaticToken(String);
+
+impl BearerTokenValidator for StaticToken {
+    fn validate<'a>(&'a self, token: &'a str) -> ValidationFuture<'a> {
+        Box::pin(async move {
+            if token == self.0 {
+                Ok(Principal::new("service-account"))
+            } else {
+                Err(BearerRejection::InvalidToken("unknown token".into()))
+            }
+        })
+    }
+}
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    let authorization = HttpAuthorization::new(
+        "https://mcp.example.com/mcp", // this server's canonical URL
+        "https://auth.example.com",    // where clients get tokens
+        StaticToken("s3cret".into()),
+    )
+    .with_scopes_supported(["mcp:tools"]);
+
+    let config = ServerConfig::builder()
+        .authorization(authorization)
+        .allow_missing_origin(true)
+        .build();
+
+    turbomcp_server::transport::http::run_with_config(&Calculator, "0.0.0.0:8080", &config).await
+}
+```
+
 ## Protocol Version Negotiation
 
-`ProtocolConfig` controls which MCP spec versions the server accepts.
+`ProtocolConfig` controls which MCP spec versions the server speaks.
 Fields: `preferred_version: ProtocolVersion`, `supported_versions:
 Vec<ProtocolVersion>`, `allow_fallback: bool`.
 
-**Default** (as of v3.1): `preferred_version = ProtocolVersion::LATEST`,
-`supported_versions = ProtocolVersion::STABLE.to_vec()` (all stable spec
-versions), `allow_fallback = false`. Older clients are accepted and responses
-are filtered through the appropriate version adapter.
+**Default**: `preferred_version = ProtocolVersion::LATEST` (`2025-11-25`),
+`supported_versions = ProtocolVersion::STABLE.to_vec()` (`2025-06-18` and
+`2025-11-25`), `allow_fallback = true`. A client asking for a supported
+version gets it, and responses are filtered through that version's adapter.
+A client asking for any other version is offered the preferred one, as the
+lifecycle spec requires, and decides for itself whether to continue.
 
-Use `ProtocolConfig::strict(version)` to restore exact-match negotiation
-against a single version. Use `ProtocolConfig::multi_version()` to construct
-the default multi-version config explicitly.
+`ProtocolConfig::strict(version)` speaks only `version`. It still answers a
+client that asked for another version, offering `version` rather than
+refusing the handshake, because the spec does not permit a refusal.
+`ProtocolConfig::multi_version()` builds the default explicitly.
 
-```rust,ignore
+```rust
 use turbomcp::prelude::*;
-use turbomcp_server::config::ProtocolVersion;
+use turbomcp_server::ProtocolVersion;
 
-// Exact-match against the latest version only
-Calculator.builder()
-    .with_protocol(ProtocolConfig::strict(ProtocolVersion::LATEST.clone()))
-    .serve().await?;
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    // Speak only 2025-11-25
+    Calculator.builder()
+        .with_protocol(ProtocolConfig::strict(ProtocolVersion::LATEST))
+        .serve()
+        .await?;
 
-// Explicit multi-version (same as default)
-Calculator.builder()
-    .with_protocol(ProtocolConfig::multi_version())
-    .serve().await?;
+    // Explicit multi-version (same as default)
+    Calculator.builder()
+        .with_protocol(ProtocolConfig::multi_version())
+        .serve()
+        .await
+}
 ```
 
 `ProtocolConfig::negotiate(client_version)` returns the negotiated
-`ProtocolVersion` or `None` if no compatible version is found (and fallback
-is disabled).
+`ProtocolVersion`. It returns `None` only when `allow_fallback` has been set to
+`false` and the client asked for an unsupported version, which makes the
+server refuse the handshake with `-32602`; the spec does not allow that, so
+leave `allow_fallback` on.
 
 ## Visibility
 
@@ -204,17 +279,21 @@ found; hidden components stay callable but are omitted from list responses.
 Use it for both human UX and LLM-facing AX: expose only the tools relevant to a
 deployment profile, disable unsafe operations, and keep client context focused.
 
-```rust,ignore
-use turbomcp_server::{VisibilityConfig, VisibilityLayer};
+```rust
+use turbomcp::prelude::*;
 
-let config = VisibilityConfig::new()
-    .with_allowed_tools(["search", "read_note", "list_notes"])
-    .with_disabled_tools(["delete_note", "reindex_all"])
-    .with_hidden_tools(["advanced_graph_query"])
-    .require_read_only_tools();
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    let config = VisibilityConfig::new()
+        .with_allowed_tools(["search", "read_note", "list_notes"])
+        .with_disabled_tools(["delete_note", "reindex_all"])
+        .with_hidden_tools(["advanced_graph_query"])
+        .require_read_only_tools();
 
-let server = VisibilityLayer::new(MyServer).with_visibility_config(config);
-server.builder().serve().await?;
+    // `Notes` is your #[server] type
+    let server = VisibilityLayer::new(Notes).with_visibility_config(config);
+    server.run_stdio().await
+}
 ```
 
 For config files, map user choices into `VisibilityConfig`: exact tool
@@ -234,14 +313,12 @@ advertised components at runtime can call `refresh_component_registry()` or
 Middleware is typed around the MCP operation set. Implement `McpMiddleware`
 and layer it onto any `McpHandler` via `MiddlewareStack`:
 
-```rust,ignore
-use turbomcp_server::{McpMiddleware, MiddlewareStack, Next, McpServerExt};
-use turbomcp_core::context::RequestContext;
-use turbomcp_core::error::{McpError, McpResult};
-use turbomcp_types::ToolResult;
+```rust
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
+use turbomcp::prelude::*;
+use turbomcp_server::{McpMiddleware, MiddlewareStack, Next};
 
 struct Logging;
 
@@ -260,10 +337,13 @@ impl McpMiddleware for Logging {
     }
 }
 
-// MiddlewareStack wraps a handler; it itself implements McpHandler,
-// so it participates in the same builder / transport pipeline.
-let stack = MiddlewareStack::new(Calculator).with_middleware(Logging);
-stack.builder().serve().await?;
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    // MiddlewareStack wraps a handler; it itself implements McpHandler,
+    // so it participates in the same builder / transport pipeline.
+    let stack = MiddlewareStack::new(Calculator).with_middleware(Logging);
+    stack.builder().serve().await
+}
 ```
 
 The trait's other hooks (`on_list_tools`, `on_list_resources`,
@@ -278,7 +358,7 @@ gated by the matching feature flag.
 | Constructor | Feature flag | Notes |
 |---|---|---|
 | `Transport::stdio()` | `stdio` | Default; line-based JSON-RPC over stdin/stdout (Claude Desktop) |
-| `Transport::http(addr)` | `http` | JSON-RPC over HTTP POST (Axum) |
+| `Transport::http(addr)` | `http` | Streamable HTTP (Axum): POST for requests, SSE for server messages, `Mcp-Session-Id` sessions; served at `/` and `/mcp` |
 | `Transport::websocket(addr)` | `websocket` | Bidirectional JSON-RPC; depends on `http` |
 | `Transport::tcp(addr)` | `tcp` | Line-framed JSON-RPC over TCP |
 | `Transport::unix(path)` | `unix` | Line-framed JSON-RPC over Unix domain socket |

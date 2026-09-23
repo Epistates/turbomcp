@@ -42,10 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         flow_type: OAuth2FlowType::AuthorizationCode,
         additional_params: Default::default(),
         security_level: Default::default(),
-        #[cfg(feature = "dpop")]
-        dpop_config: None,
+        // With turbomcp-auth's `dpop` feature, also set `dpop_config: None`
         mcp_resource_uri: None,
         auto_resource_indicators: true,
+        allow_custom_scheme_redirect: false,
     };
 
     // Create OAuth2 client
@@ -81,14 +81,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Server: Protected Resource with RFC 9728 Metadata
+### Server: Protecting a TurboMCP HTTP Server
+
+`turbomcp-server`'s Streamable HTTP transport implements MCP authorization
+itself: configured with an `HttpAuthorization`, it serves RFC 9728 Protected
+Resource Metadata, answers requests without a valid token `401` with a
+`WWW-Authenticate` challenge, and puts the validated principal on the request
+context. With the `mcp-http-server` feature, `server::JwtBearerValidator`
+supplies the token check over this crate's JWT validator — signature, issuer,
+expiry, and the audience validation MCP requires — plus required scopes:
+
+```rust
+use turbomcp_auth::jwt::JwtValidator;
+use turbomcp_auth::server::JwtBearerValidator;
+use turbomcp_server::{HttpAuthorization, ServerConfig};
+
+/// Pass to `turbomcp_server::transport::http::run_with_config(&handler, addr, &config)`.
+fn server_config() -> ServerConfig {
+    // The server's canonical URL: tokens must name it as their audience
+    let resource = "https://mcp.example.com/mcp";
+    let validator = JwtValidator::with_jwks_uri(
+        "https://auth.example.com".to_string(),
+        resource.to_string(),
+        "https://auth.example.com/.well-known/jwks.json".to_string(),
+    );
+    ServerConfig::builder()
+        .authorization(HttpAuthorization::new(
+            resource,
+            "https://auth.example.com",
+            JwtBearerValidator::new(validator).with_required_scopes(["mcp:tools"]),
+        ))
+        // Non-browser clients send no Origin header
+        .allow_missing_origin(true)
+        .build()
+}
+```
+
+Through the `turbomcp` crate, the same types are `turbomcp::auth::jwt::JwtValidator`
+and `turbomcp::auth::server::JwtBearerValidator` (features `auth` and `http`).
+
+### Server: RFC 9728 Helpers for Other HTTP Stacks
+
+For a server that is not built on `turbomcp-server`, the `server` module has the
+pieces to assemble the same responses by hand:
 
 ```rust
 use turbomcp_auth::server::{
     ProtectedResourceMetadataBuilder, WwwAuthenticateBuilder, BearerTokenValidator,
 };
 
-// Serve Protected Resource Metadata at /.well-known/protected-resource
+// Serve Protected Resource Metadata at /.well-known/oauth-protected-resource
 fn get_metadata() -> Result<String, Box<dyn std::error::Error>> {
     let metadata = ProtectedResourceMetadataBuilder::new(
         "https://mcp.example.com".to_string(),
@@ -104,7 +146,7 @@ fn get_metadata() -> Result<String, Box<dyn std::error::Error>> {
 // Handle 401 Unauthorized responses
 fn handle_unauthorized() -> (String, String) {
     let www_auth = WwwAuthenticateBuilder::new(
-        "https://mcp.example.com/.well-known/protected-resource".to_string(),
+        "https://mcp.example.com/.well-known/oauth-protected-resource".to_string(),
     )
     .with_scope("mcp:read".to_string())
     .build();
@@ -112,7 +154,7 @@ fn handle_unauthorized() -> (String, String) {
     (www_auth, "Unauthorized".to_string())
 }
 
-// Validate incoming bearer tokens
+// Extract a bearer token and check its shape (this does not validate it)
 fn extract_token(auth_header: &str) -> Result<String, Box<dyn std::error::Error>> {
     let token = BearerTokenValidator::extract_from_header(auth_header)?;
     BearerTokenValidator::validate_format(&token)?;
@@ -165,6 +207,7 @@ MCP 2025-11-25 draft authorization:
 - `mcp-cimd` — Client ID Metadata Documents (SEP-991)
 - `mcp-oidc-discovery` — OIDC Discovery 1.0 / RFC 8414
 - `mcp-incremental-consent` — Incremental scope consent via WWW-Authenticate (SEP-835)
+- `mcp-http-server` — `server::JwtBearerValidator` for `turbomcp-server`'s HTTP authorization
 
 Bundles:
 - `full` — All of the above
@@ -194,44 +237,37 @@ All providers support:
 
 ### Provider Examples
 
-#### Google Sign-In
-```rust
-let client = OAuth2Client::new(&config, ProviderType::Google)?;
-```
+The provider is the second argument to `OAuth2Client::new`, with an
+`OAuth2Config` like the one in the Quick Start:
 
-#### Microsoft Azure AD
 ```rust
-let client = OAuth2Client::new(&config, ProviderType::Microsoft)?;
-```
+use turbomcp_auth::config::{OAuth2Config, ProviderType};
+use turbomcp_auth::oauth2::OAuth2Client;
 
-#### Apple Sign In
-```rust
-let client = OAuth2Client::new(&config, ProviderType::Apple)?;
-// Note: Apple requires PKCE and response_mode=form_post
-```
+fn clients(config: &OAuth2Config) -> Result<(), Box<dyn std::error::Error>> {
+    // Google Sign-In
+    let google = OAuth2Client::new(config, ProviderType::Google)?;
 
-#### Okta Enterprise
-```rust
-let client = OAuth2Client::new(&config, ProviderType::Okta)?;
-// Replace {domain} in auth/token URLs with your Okta domain
-```
+    // Microsoft Azure AD
+    let microsoft = OAuth2Client::new(config, ProviderType::Microsoft)?;
 
-#### Auth0
-```rust
-let client = OAuth2Client::new(&config, ProviderType::Auth0)?;
-// Configure with your Auth0 tenant domain
-```
+    // Apple Sign In: requires PKCE and response_mode=form_post
+    let apple = OAuth2Client::new(config, ProviderType::Apple)?;
 
-#### Keycloak Self-Hosted
-```rust
-let client = OAuth2Client::new(&config, ProviderType::Keycloak)?;
-// Configure with your Keycloak realm and server URL
-```
+    // Okta: replace {domain} in the auth/token URLs with your Okta domain
+    let okta = OAuth2Client::new(config, ProviderType::Okta)?;
 
-#### Custom Provider
-```rust
-let client = OAuth2Client::new(&config, ProviderType::Generic)?;
-// Or use ProviderType::Custom("my-provider".to_string())
+    // Auth0: configure with your tenant domain
+    let auth0 = OAuth2Client::new(config, ProviderType::Auth0)?;
+
+    // Keycloak: configure with your realm and server URL
+    let keycloak = OAuth2Client::new(config, ProviderType::Keycloak)?;
+
+    // Any other OIDC provider
+    let generic = OAuth2Client::new(config, ProviderType::Generic)?;
+    let custom = OAuth2Client::new(config, ProviderType::Custom("my-provider".to_string()))?;
+    Ok(())
+}
 ```
 
 ## Architecture
@@ -260,9 +296,10 @@ let client = OAuth2Client::new(&config, ProviderType::Generic)?;
   - Token validation on every request
 
 - **Server Helpers** (`server::*`)
+  - `JwtBearerValidator` - Token validation for `turbomcp-server`'s HTTP authorization (`mcp-http-server`)
   - `ProtectedResourceMetadataBuilder` - RFC 9728 metadata generation
   - `WwwAuthenticateBuilder` - RFC 9728 401 response headers
-  - `BearerTokenValidator` - Token extraction and validation
+  - `BearerTokenValidator` - Token extraction and format checks
 
 ### RFC Compliance
 
@@ -278,13 +315,13 @@ Run the examples to see the implementations in action:
 
 ```bash
 # OAuth 2.1 Authorization Code Flow
-cargo run --example oauth2_auth_code_flow
+cargo run -p turbomcp-auth --example oauth2_auth_code_flow
 
 # Protected Resource Server with RFC 9728
-cargo run --example protected_resource_server
+cargo run -p turbomcp-auth --example protected_resource_server
 
 # Tower middleware: rate limiting (requires --features middleware)
-cargo run --example tower_rate_limiting --features middleware
+cargo run -p turbomcp-auth --example tower_rate_limiting --features middleware
 ```
 
 ## Security Best Practices

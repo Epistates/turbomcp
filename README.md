@@ -112,15 +112,21 @@ turbomcp = { version = "3.5.0", features = ["full-stack"] }
 
 ## Procedural Macros
 
-TurboMCP provides five attribute macros:
+`#[server]` turns an impl block into an MCP server. Inside it, marker attributes register handlers:
 
 | Macro | Purpose |
 |-------|---------|
-| `#[server]` | Define an MCP server with name, version, and transport configuration |
+| `#[server]` | Define an MCP server: name, version, description, instructions, icons, `page_size` |
 | `#[tool]` | Register a method as a tool handler with automatic JSON schema generation |
-| `#[resource]` | Register a resource handler with URI pattern matching |
-| `#[prompt]` | Register a prompt template with parameter substitution |
-| `#[description]` | Add rich descriptions to tool parameters |
+| `#[resource]` | Register a resource handler for a URI or RFC 6570 URI template |
+| `#[prompt]` | Register a prompt template; its parameters become prompt arguments |
+| `#[completion]` | Answer `completion/complete` (advertises `completions`) |
+| `#[subscribe]` / `#[unsubscribe]` | Answer `resources/subscribe` and `resources/unsubscribe` (must be declared together) |
+| `#[set_level]` | Observe `logging/setLevel` |
+| `#[roots_changed]` | React to `notifications/roots/list_changed` |
+| `#[description]` / `#[title]` | Describe a parameter; `#[title]` gives a prompt argument a display label |
+
+The server advertises exactly the capabilities its handlers can serve. `logging` is always advertised, because every server can send log messages through `ctx.log()` and accepts `logging/setLevel` without a `#[set_level]` handler.
 
 ### Server Definition
 
@@ -152,40 +158,71 @@ impl MyServer {
         Ok(format!("Order {} queued at priority {}", order_id, priority))
     }
 
-    /// System status prompt.
+    /// Review a piece of code.
     #[prompt]
-    async fn system_status(&self) -> McpResult<String> {
-        Ok("Report the current system status.".to_string())
+    async fn code_review(
+        &self,
+        #[title("Language")]
+        #[description("Language the code is written in")]
+        language: String,
+        ctx: &RequestContext,
+    ) -> McpResult<String> {
+        Ok(format!("Review this {language} code for bugs."))
     }
 
     /// Configuration resource.
-    #[resource(uri = "config://app", mime_type = "application/json")]
-    async fn app_config(&self) -> McpResult<String> {
+    #[resource("config://app", mime_type = "application/json")]
+    async fn app_config(&self, uri: String, ctx: &RequestContext) -> McpResult<String> {
         Ok(r#"{"debug": false, "version": "1.0"}"#.to_string())
+    }
+
+    /// A user record. The handler receives the full URI that matched the template.
+    #[resource("users://{id}", mime_type = "application/json")]
+    async fn user(&self, uri: String, ctx: &RequestContext) -> McpResult<String> {
+        let id = uri.trim_start_matches("users://");
+        Ok(format!(r#"{{"id": "{id}"}}"#))
     }
 }
 ```
+
+Handler signatures follow a few rules:
+
+- **Tools** take their arguments as parameters; add `ctx: &RequestContext` anywhere to get the request context. Return any `IntoToolResult` type (`String`, numbers, `Json<T>`, `ToolResult`, or `McpResult<T>` of those).
+- **Resources** take `(uri: String, ctx: &RequestContext)` and return `McpResult<T>`. The URI is the attribute's first argument. A template's variables are not bound to parameters, so parse them out of `uri`.
+- **Prompts** take `String` (required) or `Option<String>` (optional) arguments followed by `ctx: &RequestContext`.
+
+`#[tool]` also accepts `read_only`, `destructive`, `idempotent`, `open_world`, `output_schema = Type`, and `task_support = "forbidden" | "optional" | "required"`. `#[resource]` accepts `mime_type`, `audience = ["user", "assistant"]`, `priority`, `last_modified`, and `size`. All markers accept `description`, `title`, `tags`, `version`, and `icons`, and an unknown key is a compile error.
 
 JSON schemas are generated at compile time from function signatures. No runtime schema computation.
 
 ### Transport Selection
 
-The `#[server]` macro generates transport-specific methods based on enabled features:
+Every handler gets `run_*` methods from the `McpHandlerExt` trait, one per enabled transport feature, and a `builder()` for more control. Continuing with `MyServer` from above:
 
 ```rust
-// STDIO (default feature)
-MyServer.run_stdio().await?;
+use std::time::Duration;
+use turbomcp::prelude::*;
 
-// Or use the builder for more control
-MyServer.builder()
-    .transport(Transport::Http { addr: "0.0.0.0:8080".to_string() })
-    .serve()
-    .await?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `MyServer.run_stdio().await?` is all a STDIO server needs. The builder
+    // adds rate limits, connection limits, and graceful shutdown.
+    // `Transport::http` needs the `http` feature.
+    MyServer
+        .builder()
+        .transport(Transport::http("0.0.0.0:8080"))
+        .with_rate_limit(100, Duration::from_secs(1))
+        .with_graceful_shutdown(Duration::from_secs(30))
+        .serve()
+        .await?;
+    Ok(())
+}
 ```
 
 Available `run_*` methods (when features are enabled):
 - `run_stdio()` — STDIO transport
 - `run_http(addr)` — Streamable HTTP
+- `run_websocket(addr)` — WebSocket
 - `run_tcp(addr)` — Raw TCP
 - `run_unix(path)` — Unix domain socket
 
@@ -193,21 +230,38 @@ Available `run_*` methods (when features are enabled):
 
 ## Client Connections
 
-TurboMCP provides a client library for connecting to MCP servers (requires `client-integration` or `full-client` feature):
+TurboMCP provides a client library for connecting to MCP servers. `client-integration` gives the client with STDIO; `full-client` adds the HTTP, WebSocket, TCP, and Unix transports that the `connect_*` helpers below need:
 
 ```rust
-use turbomcp_client::Client;
+use std::collections::HashMap;
+use std::time::Duration;
+use turbomcp::prelude::*;
 
-// One-liner connection with auto-initialization
-let client = Client::connect_http("http://localhost:8080").await?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Connects to http://localhost:8080/mcp and runs the initialize handshake
+    let client = Client::connect_http("http://localhost:8080").await?;
 
-// Call tools
-let tools = client.list_tools().await?;
-let result = client.call_tool("greet", Some(serde_json::json!({"name": "World"}))).await?;
+    let tools = client.list_tools().await?;
 
-// Other transports
-let client = Client::connect_tcp("127.0.0.1:8765").await?;
-let client = Client::connect_unix("/tmp/mcp.sock").await?;
+    // Arguments are a name -> JSON value map; the last parameter is an
+    // optional task augmentation.
+    let args = HashMap::from([("name".to_string(), serde_json::json!("World"))]);
+    let result = client.call_tool("greet", Some(args), None).await?;
+
+    // A per-call timeout for one slow request, without reconfiguring the client
+    let slow = client
+        .with_timeout(Duration::from_secs(600))
+        .call_tool("reindex", None, None)
+        .await?;
+
+    client.shutdown().await?;
+
+    // Other transports
+    let tcp = Client::connect_tcp("127.0.0.1:8765").await?;
+    let unix = Client::connect_unix("/tmp/mcp.sock").await?;
+    Ok(())
+}
 ```
 
 ---
@@ -243,14 +297,14 @@ Key design decisions:
 - **Compile-time schema generation** from Rust types via `schemars` — zero runtime cost
 - **Feature-gated transports** — only compile what you use
 - **`no_std` core** — `turbomcp-core` and `turbomcp-wire` work on WASM and embedded targets
-- **Arc-cloning pattern** — `McpServer` and `Client` are cheap to clone (Axum/Tower convention)
+- **Arc-cloning pattern** — handlers (`McpHandler: Clone`) and `Client` are cheap to clone (Axum/Tower convention)
 - **Unified errors** — `McpError`/`McpResult` from `turbomcp-core`, re-exported everywhere
 
 ---
 
 ## Examples
 
-15 focused examples covering all patterns. Run with `cargo run --example <name>`.
+16 focused examples covering all patterns. Run with `cargo run -p turbomcp --example <name>`; the TCP and Unix examples need their transport feature (and `full-client` for the clients), e.g. `cargo run -p turbomcp --example tcp_client --features tcp,full-client`.
 
 ### Server Basics
 
@@ -278,6 +332,7 @@ Key design decisions:
 |---------|----------------|
 | [tcp_server](./crates/turbomcp/examples/tcp_server.rs) | TCP network server |
 | [tcp_client](./crates/turbomcp/examples/tcp_client.rs) | TCP client connection |
+| [unix_server](./crates/turbomcp/examples/unix_server.rs) | Unix socket server |
 | [unix_client](./crates/turbomcp/examples/unix_client.rs) | Unix socket client |
 | [transports_demo](./crates/turbomcp/examples/transports_demo.rs) | Multi-transport demonstration |
 
@@ -302,13 +357,22 @@ See the [Examples Guide](./crates/turbomcp/examples/README.md) for learning path
 | Unix Socket | `unix` | Container IPC |
 | Channel | `channel` | In-process testing |
 
+Runtime transport selection, with the `full` feature set and `MyServer` from above:
+
 ```rust
-// Runtime transport selection
-match std::env::var("TRANSPORT").as_deref() {
-    Ok("http") => server.run_http("0.0.0.0:8080").await?,
-    Ok("tcp") => server.run_tcp("0.0.0.0:9000").await?,
-    Ok("unix") => server.run_unix("/var/run/mcp.sock").await?,
-    _ => server.run_stdio().await?,
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MyServer;
+    match std::env::var("TRANSPORT").as_deref() {
+        Ok("http") => server.run_http("0.0.0.0:8080").await?,
+        Ok("ws") => server.run_websocket("0.0.0.0:8080").await?,
+        Ok("tcp") => server.run_tcp("0.0.0.0:9000").await?,
+        Ok("unix") => server.run_unix("/var/run/mcp.sock").await?,
+        _ => server.run_stdio().await?,
+    }
+    Ok(())
 }
 ```
 
@@ -322,6 +386,40 @@ match std::env::var("TRANSPORT").as_deref() {
 - **Rate limiting** configuration
 - **CORS** and security headers for HTTP transports
 - **TLS** support via `rustls`
+- **MCP authorization** for Streamable HTTP: the server publishes RFC 9728 protected-resource metadata and refuses requests without a valid bearer token. On the client, `StreamableHttpClientConfig::auth_provider` answers a server's `401`/`403` challenge.
+
+With the `auth` and `http` features and `turbomcp-server` as a direct dependency (for `HttpAuthorization`), `JwtBearerValidator` checks JWTs, audience included:
+
+```rust
+use turbomcp::auth::jwt::JwtValidator;
+use turbomcp::auth::server::JwtBearerValidator;
+use turbomcp::prelude::*;
+use turbomcp_server::HttpAuthorization;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The server's canonical URL: tokens must name it as their audience
+    let resource = "https://mcp.example.com/mcp";
+    let jwt = JwtValidator::with_jwks_uri(
+        "https://auth.example.com".to_string(),
+        resource.to_string(),
+        "https://auth.example.com/.well-known/jwks.json".to_string(),
+    );
+    let config = ServerConfig::builder()
+        .authorization(HttpAuthorization::new(
+            resource,
+            "https://auth.example.com",
+            JwtBearerValidator::new(jwt).with_required_scopes(["mcp:tools"]),
+        ))
+        // Non-browser clients send no Origin header, and a server reachable
+        // over the network refuses them unless told otherwise
+        .allow_missing_origin(true)
+        .build();
+
+    turbomcp_server::transport::http::run_with_config(&MyServer, "0.0.0.0:8080", &config).await?;
+    Ok(())
+}
+```
 
 See [Security Features](./crates/turbomcp-transport/SECURITY_FEATURES.md) for details.
 
@@ -425,7 +523,7 @@ spec:
 | Migration Guide (v1/v2/v3) | [MIGRATION.md](./MIGRATION.md) |
 | Architecture | [ARCHITECTURE.md](./ARCHITECTURE.md) |
 | Crate Overview | [crates/README.md](./crates/README.md) |
-| Examples (15) | [examples/](./crates/turbomcp/examples/README.md) |
+| Examples (16) | [examples/](./crates/turbomcp/examples/README.md) |
 | Security | [SECURITY_FEATURES.md](./crates/turbomcp-transport/SECURITY_FEATURES.md) |
 | Benchmarks | [benches/](./benches/README.md) |
 | MCP Specification | [modelcontextprotocol.io](https://modelcontextprotocol.io) |

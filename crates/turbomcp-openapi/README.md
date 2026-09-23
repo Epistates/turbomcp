@@ -19,26 +19,31 @@ use std::time::Duration;
 use turbomcp_openapi::{OpenApiHandler, OpenApiProvider};
 use turbomcp_server::{ServerBuilder, Transport};
 
-// Load from URL
-let provider = OpenApiProvider::from_url("https://api.example.com/openapi.json")
-    .await?
-    .with_base_url("https://api.example.com")?
-    .with_timeout(Duration::from_secs(30));  // Optional, 30s default
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load from URL
+    let provider = OpenApiProvider::from_url("https://api.example.com/openapi.json")
+        .await?
+        .with_base_url("https://api.example.com")?
+        .with_timeout(Duration::from_secs(30));  // Optional, 30s default
 
-// Or load from file
-let provider = OpenApiProvider::from_file(Path::new("openapi.yaml"))?
-    .with_base_url("https://api.example.com")?;
+    // Or load from file
+    let provider = OpenApiProvider::from_file(Path::new("openapi.yaml"))?
+        .with_base_url("https://api.example.com")?;
 
-// Or load from string
-let provider = OpenApiProvider::from_string(spec_json)?
-    .with_base_url("https://api.example.com")?;
+    // Or load from string
+    let spec_json = std::fs::read_to_string("openapi.json")?;
+    let provider = OpenApiProvider::from_string(&spec_json)?
+        .with_base_url("https://api.example.com")?;
 
-// Convert to an McpHandler and serve it with any transport
-let handler: OpenApiHandler = provider.into_handler();
-ServerBuilder::new(handler)
-    .transport(Transport::stdio())
-    .serve()
-    .await?;
+    // Convert to an McpHandler and serve it with any transport
+    let handler: OpenApiHandler = provider.into_handler();
+    ServerBuilder::new(handler)
+        .transport(Transport::stdio())
+        .serve()
+        .await?;
+    Ok(())
+}
 ```
 
 ## Security Features

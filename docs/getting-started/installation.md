@@ -23,7 +23,7 @@ Add TurboMCP to your `Cargo.toml`:
 [package]
 name = "my-mcp-server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 turbomcp = "3.5.0"
@@ -37,7 +37,8 @@ Add the Tokio runtime macro to `src/main.rs`:
 ```rust
 #[tokio::main]
 async fn main() {
-    println!("Hello, world!");
+    // A STDIO server owns stdout for protocol messages, so log to stderr
+    eprintln!("Hello, world!");
 }
 ```
 
@@ -62,9 +63,8 @@ turbomcp = { version = "3.5.0", features = ["full", "auth"] }
 ```
 
 - All facade transports (STDIO, Streamable HTTP, WebSocket, TCP, Unix)
-- OAuth 2.1 authentication
+- OAuth 2.1 authentication, and MCP authorization for Streamable HTTP
 - OpenTelemetry observability
-- All built-in injectables
 - Production ready
 
 ### Common Configurations
@@ -83,11 +83,15 @@ turbomcp-grpc = "3.5.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
-**For OAuth authentication:**
+**For OAuth authentication and HTTP authorization:**
 
 ```toml
 turbomcp = { version = "3.5.0", features = ["http", "auth"] }
+# HttpAuthorization is exported by turbomcp-server
+turbomcp-server = { version = "3.5.0", features = ["http"] }
 ```
+
+`http` and `auth` together enable `turbomcp::auth::server::JwtBearerValidator`, which validates the bearer tokens an `HttpAuthorization`-protected server receives.
 
 **For DPoP token binding:**
 
@@ -137,7 +141,8 @@ gRPC is available through the separate `turbomcp-grpc` crate, not a facade featu
 |---------|----------|-------------------|
 | `auth` | OAuth 2.1 authentication | oauth2, jsonwebtoken |
 | `dpop` | DPoP token binding (RFC 9449) | ring, zeroize |
-| `redis-storage` | Redis-based DPoP nonce tracking | redis |
+
+Redis-backed DPoP nonce tracking is the `redis-storage` feature of the `turbomcp-dpop` crate, not a `turbomcp` feature.
 
 ### Observability Features (v3)
 

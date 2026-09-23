@@ -55,12 +55,21 @@ TurboMCP enables you to build MCP servers with:
 
 ### Zero-Boilerplate Development
 
-Define handlers with simple Rust functions – the framework generates everything:
+Write methods on your type, and `#[server]` generates the MCP handler — tool listing, argument parsing, dispatch, and capabilities:
 
 ```rust
-#[tool]
-async fn get_weather(city: String) -> McpResult<String> {
-    Ok(format!("Weather for {}", city))
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Weather;
+
+#[server(name = "weather", version = "1.0.0")]
+impl Weather {
+    /// Get the weather for a city
+    #[tool]
+    async fn get_weather(&self, city: String) -> McpResult<String> {
+        Ok(format!("Weather for {}", city))
+    }
 }
 ```
 
@@ -69,14 +78,23 @@ async fn get_weather(city: String) -> McpResult<String> {
 JSON schemas are generated at compile time from your function signatures:
 
 ```rust
-#[tool(description = "Get weather for a city")]
-async fn get_weather(
-    #[description = "City name"]
-    city: String,
-    #[description = "Units (C/F)"]
-    units: Option<String>,
-) -> McpResult<String> {
-    Ok("Weather data".to_string())
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Weather;
+
+#[server]
+impl Weather {
+    #[tool(description = "Get weather for a city")]
+    async fn get_weather(
+        &self,
+        #[description("City name")]
+        city: String,
+        #[description("Units (C/F)")]
+        units: Option<String>,
+    ) -> McpResult<String> {
+        Ok("Weather data".to_string())
+    }
 }
 ```
 
@@ -85,7 +103,7 @@ async fn get_weather(
 A single `McpError` type across the entire SDK with JSON-RPC code mapping:
 
 ```rust
-use turbomcp::McpError;
+use turbomcp::{McpError, McpResult};
 
 fn my_handler() -> McpResult<String> {
     // Unified error type with rich context
@@ -95,35 +113,58 @@ fn my_handler() -> McpResult<String> {
 
 ### Multiple Transports
 
-Choose the right transport for your use case:
+Choose the transport at runtime; each `run_*` method needs its transport's feature (`full` enables them all). gRPC lives in the separate `turbomcp-grpc` crate.
 
 ```rust
-let server = McpServer::new()
-    .stdio()           // Standard I/O transport
-    .http(8080)        // HTTP with Server-Sent Events
-    .websocket(8081)   // WebSocket support
-    .tcp(9000)         // TCP networking
-    .grpc(50051)       // gRPC transport (v3)
-    .run()
-    .await?;
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    /// Say hello
+    #[tool]
+    async fn hello(&self, name: String) -> String {
+        format!("Hello, {name}!")
+    }
+}
+
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    match std::env::var("TRANSPORT").as_deref() {
+        Ok("http") => MyServer.run_http("0.0.0.0:8080").await,           // Streamable HTTP
+        Ok("ws") => MyServer.run_websocket("0.0.0.0:8081").await,        // WebSocket
+        Ok("tcp") => MyServer.run_tcp("0.0.0.0:9000").await,             // TCP
+        Ok("unix") => MyServer.run_unix("/tmp/mcp.sock").await,          // Unix socket
+        _ => MyServer.run_stdio().await,                                 // Standard I/O
+    }
+}
 ```
 
-### Context Injection System
+### Request Context
 
-Access request context, correlation IDs, and inject custom services:
+Add `ctx: &RequestContext` to a handler to read request metadata and talk back to the client — progress, sampling, elicitation, roots:
 
 ```rust
-#[tool]
-async fn my_handler(
-    ctx: InjectContext,
-    info: RequestInfo,
-    logger: Logger,
-) -> McpResult<String> {
-    logger.info(&format!("Request {}: {}",
-        info.request_id,
-        info.handler_name
-    )).await?;
-    Ok("Success".to_string())
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[server]
+impl MyServer {
+    /// Show what the server knows about this request
+    #[tool]
+    async fn my_handler(&self, ctx: &RequestContext) -> McpResult<String> {
+        ctx.report_progress(1.0, Some(1.0), Some("done")).await?;
+        Ok(format!(
+            "Request {} over {:?}, session {:?}",
+            ctx.request_id(),
+            ctx.transport(),
+            ctx.session_id(),
+        ))
+    }
 }
 ```
 
@@ -145,7 +186,15 @@ Run MCP clients in browsers and build servers on edge platforms:
 
 === "Edge Server (Cloudflare Workers)"
     ```rust
+    // turbomcp-wasm with the `macros` feature, built for wasm32-unknown-unknown
+    use serde::Deserialize;
     use turbomcp_wasm::prelude::*;
+    use worker::{event, Result};
+
+    #[derive(Deserialize, schemars::JsonSchema)]
+    struct HelloArgs {
+        name: String,
+    }
 
     #[derive(Clone)]
     struct MyServer;
@@ -210,20 +259,21 @@ tokio = { version = "1", features = ["full"] }
 ```rust
 use turbomcp::prelude::*;
 
-#[tokio::main]
-async fn main() -> McpResult<()> {
-    let server = McpServer::new()
-        .with_name("hello-world")
-        .stdio()
-        .run()
-        .await?;
+#[derive(Clone)]
+struct HelloWorld;
 
-    Ok(())
+#[server(name = "hello-world", version = "1.0.0")]
+impl HelloWorld {
+    /// Say hello to someone
+    #[tool]
+    async fn hello(&self, name: String) -> McpResult<String> {
+        Ok(format!("Hello, {}!", name))
+    }
 }
 
-#[tool]
-async fn hello(name: String) -> McpResult<String> {
-    Ok(format!("Hello, {}!", name))
+#[tokio::main]
+async fn main() -> McpResult<()> {
+    HelloWorld.run_stdio().await
 }
 ```
 
