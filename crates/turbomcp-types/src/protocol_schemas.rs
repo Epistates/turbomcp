@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(feature = "std"))]
 use alloc::{
     collections::BTreeMap as HashMap,
+    format,
     string::{String, ToString},
+    vec,
     vec::Vec,
 };
 #[cfg(feature = "std")]
@@ -52,7 +54,84 @@ pub struct ElicitationSchema {
     pub additional_properties: Option<bool>,
 }
 
+/// An integer that may have been written with a fractional part of zero.
+fn integral<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+    let Some(number) = Option::<serde_json::Number>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    if let Some(value) = number.as_i64() {
+        return Ok(Some(value));
+    }
+    match number.as_f64() {
+        // Exact: an f64 with no fractional part inside i64's range converts
+        // without rounding.
+        Some(value) if value.fract() == 0.0 && value.abs() < 9.2e18 => Ok(Some(value as i64)),
+        _ => Err(serde::de::Error::custom(format!(
+            "expected an integer, found {number}"
+        ))),
+    }
+}
+
 impl ElicitationSchema {
+    /// Check that accepted form content satisfies this schema.
+    ///
+    /// The elicitation spec: servers SHOULD validate received data against
+    /// the requested schema. Checks that every required field is present and
+    /// that each value has its property's type — and, for enums, one of its
+    /// values — and that no undeclared field is present when
+    /// `additionalProperties` is `false`. String formats and length bounds are
+    /// left to the handler.
+    pub fn validate_content(&self, content: &serde_json::Value) -> Result<(), String> {
+        let Some(fields) = content.as_object() else {
+            return Err("content must be an object".into());
+        };
+
+        for name in self.required.iter().flatten() {
+            if !fields.contains_key(name) {
+                return Err(format!("required field '{name}' is missing"));
+            }
+        }
+
+        for (name, value) in fields {
+            let Some(property) = self.properties.get(name) else {
+                if self.additional_properties == Some(false) {
+                    return Err(format!("'{name}' is not a field of the requested schema"));
+                }
+                continue;
+            };
+            property
+                .validate_value(value)
+                .map_err(|reason| format!("field '{name}': {reason}"))?;
+        }
+        Ok(())
+    }
+
+    /// Refuse what the 2025-06-18 wire cannot express.
+    ///
+    /// Multi-select (`array`) and titled single-select (`oneOf`) properties
+    /// were added in 2025-11-25; a 2025-06-18 client has no rendering for
+    /// them.
+    pub fn check_representable_on_2025_06_18(&self) -> Result<(), String> {
+        for (name, property) in &self.properties {
+            match property {
+                PrimitiveSchemaDefinition::Array { .. } => {
+                    return Err(format!(
+                        "field '{name}' is a multi-select, which 2025-06-18 does not have"
+                    ));
+                }
+                PrimitiveSchemaDefinition::String {
+                    one_of: Some(_), ..
+                } => {
+                    return Err(format!(
+                        "field '{name}' uses oneOf, which 2025-06-18 does not have"
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Create an empty object schema with `required: []` and `additionalProperties: false`.
     #[must_use]
     pub fn new() -> Self {
@@ -263,6 +342,10 @@ pub enum PrimitiveSchemaDefinition {
         default: Option<f64>,
     },
     /// Integer-valued field.
+    ///
+    /// The schema types these bounds as JSON numbers, so an integral value
+    /// written as `50.0` — Python's `json.dumps` does this — is accepted.
+    /// Refusing it failed the whole typed schema.
     #[serde(rename = "integer")]
     Integer {
         /// Optional human-readable title.
@@ -272,13 +355,25 @@ pub enum PrimitiveSchemaDefinition {
         #[serde(skip_serializing_if = "Option::is_none")]
         description: Option<String>,
         /// Minimum value.
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "integral",
+            skip_serializing_if = "Option::is_none"
+        )]
         minimum: Option<i64>,
         /// Maximum value.
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "integral",
+            skip_serializing_if = "Option::is_none"
+        )]
         maximum: Option<i64>,
         /// Default value (MCP 2025-11-25 spec).
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            deserialize_with = "integral",
+            skip_serializing_if = "Option::is_none"
+        )]
         default: Option<i64>,
     },
     /// Boolean-valued field.
@@ -319,6 +414,105 @@ pub enum PrimitiveSchemaDefinition {
         #[serde(skip_serializing_if = "Option::is_none")]
         default: Option<Vec<String>>,
     },
+}
+
+impl PrimitiveSchemaDefinition {
+    fn validate_value(&self, value: &serde_json::Value) -> Result<(), String> {
+        match self {
+            Self::String {
+                enum_values,
+                one_of,
+                ..
+            } => {
+                let Some(text) = value.as_str() else {
+                    return Err("expected a string".into());
+                };
+                let allowed: Option<Vec<&str>> = one_of
+                    .as_ref()
+                    .map(|options| options.iter().map(|o| o.const_value.as_str()).collect())
+                    .or_else(|| {
+                        enum_values
+                            .as_ref()
+                            .map(|values| values.iter().map(String::as_str).collect())
+                    });
+                match allowed {
+                    Some(allowed) if !allowed.contains(&text) => {
+                        Err(format!("'{text}' is not one of the allowed values"))
+                    }
+                    _ => Ok(()),
+                }
+            }
+            Self::Number {
+                minimum, maximum, ..
+            } => {
+                let Some(number) = value.as_f64() else {
+                    return Err("expected a number".into());
+                };
+                in_bounds(number, *minimum, *maximum)
+            }
+            Self::Integer {
+                minimum, maximum, ..
+            } => {
+                let Some(number) = value.as_i64().or_else(|| {
+                    value
+                        .as_f64()
+                        .filter(|v| v.fract() == 0.0)
+                        .map(|v| v as i64)
+                }) else {
+                    return Err("expected an integer".into());
+                };
+                in_bounds(
+                    number as f64,
+                    minimum.map(|m| m as f64),
+                    maximum.map(|m| m as f64),
+                )
+            }
+            Self::Boolean { .. } => value
+                .is_boolean()
+                .then_some(())
+                .ok_or_else(|| "expected a boolean".into()),
+            Self::Array {
+                min_items,
+                max_items,
+                items,
+                ..
+            } => {
+                let Some(selected) = value.as_array() else {
+                    return Err("expected an array".into());
+                };
+                if min_items.is_some_and(|min| selected.len() < min as usize)
+                    || max_items.is_some_and(|max| selected.len() > max as usize)
+                {
+                    return Err("wrong number of selections".into());
+                }
+                let allowed: Vec<&str> = match items {
+                    MultiSelectItemsDefinition::Titled(titled) => titled
+                        .any_of
+                        .iter()
+                        .map(|o| o.const_value.as_str())
+                        .collect(),
+                    MultiSelectItemsDefinition::Untitled(untitled) => {
+                        untitled.enum_values.iter().map(String::as_str).collect()
+                    }
+                };
+                for item in selected {
+                    match item.as_str() {
+                        Some(text) if allowed.contains(&text) => {}
+                        _ => return Err(format!("{item} is not one of the allowed values")),
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+fn in_bounds(value: f64, minimum: Option<f64>, maximum: Option<f64>) -> Result<(), String> {
+    if minimum.is_some_and(|min| value < min) || maximum.is_some_and(|max| value > max) {
+        Err(format!("{value} is out of range"))
+    } else {
+        Ok(())
+    }
 }
 
 /// The two item shapes a multi-select may take.
@@ -457,12 +651,46 @@ pub struct UntitledMultiSelectItems {
     pub enum_values: Vec<String>,
 }
 
+/// Legacy single-select enum with display names (`enum` + `enumNames`).
+///
+/// Deprecated by the spec in favour of [`TitledSingleSelectEnumSchema`], but
+/// still part of the union — so still sent by servers, and dropping
+/// `enumNames` loses what the user is shown.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LegacyTitledEnumSchema {
+    /// Schema type — must be `"string"`.
+    #[serde(rename = "type")]
+    pub schema_type: String,
+    /// The allowed values.
+    #[serde(rename = "enum")]
+    pub enum_values: Vec<String>,
+    /// Display names, parallel to `enum_values`.
+    #[serde(rename = "enumNames")]
+    pub enum_names: Vec<String>,
+    /// Optional title.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Optional description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional default value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
 /// Union of standards-based enum schema variants (SEP-1330).
+///
+/// Untagged, so order matters: each shape is tried before any it is a
+/// superset of.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum EnumSchema {
     /// Single-select enum with titles (`oneOf` + `const`).
     TitledSingleSelect(TitledSingleSelectEnumSchema),
+    /// Legacy single-select enum with titles (`enum` + `enumNames`). Tried
+    /// before the untitled form, which would otherwise match and drop the
+    /// names.
+    LegacyTitledSingleSelect(LegacyTitledEnumSchema),
     /// Single-select enum without titles (plain `enum`).
     UntitledSingleSelect(UntitledSingleSelectEnumSchema),
     /// Multi-select enum with titles (`array` + `anyOf`).

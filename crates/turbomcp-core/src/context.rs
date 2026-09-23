@@ -764,6 +764,17 @@ impl RequestContext {
     }
 
     /// Request form-based user input from the client.
+    ///
+    /// `schema` must be what the spec allows a form to ask for: a flat object
+    /// whose properties are strings, numbers, integers, booleans or enums —
+    /// no nesting — and, on a 2025-06-18 session, none of the multi-select or
+    /// titled-enum shapes added in 2025-11-25. Anything else is refused with
+    /// invalid params before it is sent.
+    ///
+    /// Accepted content is checked against the schema, as the spec says a
+    /// server SHOULD: a client whose answer is missing a required field or has
+    /// a value of the wrong type yields invalid params rather than a
+    /// successful result the handler then trusts.
     pub async fn elicit_form(
         &self,
         message: impl Into<String>,
@@ -771,15 +782,43 @@ impl RequestContext {
     ) -> McpResult<ElicitResult> {
         let session = self.require_session("elicitation/create")?;
         self.require_elicitation_capability(session, "form").await?;
+
+        let requested: turbomcp_types::ElicitationSchema = serde_json::from_value(schema.clone())
+            .ok()
+            .filter(|parsed: &turbomcp_types::ElicitationSchema| parsed.schema_type == "object")
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    "requestedSchema must be an object schema whose properties are all                      primitives (string, number, integer, boolean, or an enum)",
+                )
+            })?;
+        if session.protocol_version().await? == Some(ProtocolVersion::V2025_06_18) {
+            requested
+                .check_representable_on_2025_06_18()
+                .map_err(McpError::invalid_params)?;
+        }
+
+        // No `mode`: form is the default, and 2025-06-18 has no such field.
         let params = serde_json::json!({
-            "mode": "form",
             "message": message.into(),
             "requestedSchema": schema,
         });
         let result = session.call("elicitation/create", params).await?;
-        serde_json::from_value(result).map_err(|e| {
+        let result: ElicitResult = serde_json::from_value(result).map_err(|e| {
             McpError::internal(alloc::format!("Failed to parse elicitation result: {e}"))
-        })
+        })?;
+
+        if result.action == turbomcp_types::ElicitAction::Accept {
+            // No content reads as an empty form, which passes when nothing
+            // was required.
+            let empty = Value::Object(serde_json::Map::new());
+            let content = result.content.as_ref().unwrap_or(&empty);
+            requested.validate_content(content).map_err(|reason| {
+                McpError::invalid_params(alloc::format!(
+                    "the client's answer does not match the requested schema: {reason}"
+                ))
+            })?;
+        }
+        Ok(result)
     }
 
     /// Request URL-based user action from the client.
@@ -1056,18 +1095,21 @@ impl RequestContext {
         }
 
         // `includeContext: thisServer | allServers` is soft-deprecated, and a
-        // server SHOULD only use it against a client that declared
+        // server SHOULD NOT use it against a client that did not declare
         // `sampling.context`. It cannot be refused unconditionally: on the
         // 2025-06-18 wire `sampling.context` does not exist and both values are
-        // fully legal. `sampling.tools` is the usable proxy for "this client
-        // speaks 2025-11-25" — the sub-capability exists only there — so a
-        // client declaring `tools` but not `context` has deliberately opted
-        // out, and that is the only case worth refusing.
+        // fully legal. So the negotiated version decides — and when the
+        // session does not know it, `sampling.tools` (which exists only in
+        // 2025-11-25) stands in.
+        let has_sampling_context = match session.protocol_version().await? {
+            Some(version) => version != ProtocolVersion::V2025_06_18,
+            None => sampling.tools.is_some(),
+        };
         if matches!(
             request.include_context,
             Some(IncludeContext::ThisServer | IncludeContext::AllServers)
         ) && sampling.context.is_none()
-            && sampling.tools.is_some()
+            && has_sampling_context
         {
             return Err(McpError::capability_not_supported(
                 "client sampling.context capability required for includeContext \

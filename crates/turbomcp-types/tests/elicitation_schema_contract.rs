@@ -164,3 +164,43 @@ fn the_builders_produce_spec_shapes() {
     assert_eq!(json["properties"]["tags"]["items"]["enum"][1], "b");
     assert_eq!(json["required"], json!(["color"]));
 }
+
+/// Python's `json.dumps` writes `50.0` for an integral float. The schema types
+/// these bounds as numbers, so refusing them failed the whole typed schema and
+/// a client's UI fell back to nothing.
+#[test]
+fn integral_numbers_written_with_a_fraction_parse() {
+    let schema: ElicitationSchema = serde_json::from_value(json!({
+        "type": "object",
+        "properties": { "n": { "type": "integer", "minimum": 1.0, "default": 50.0 } }
+    }))
+    .expect("an integral 50.0 is an integer");
+    assert!(matches!(
+        schema.properties["n"],
+        turbomcp_types::PrimitiveSchemaDefinition::Integer {
+            minimum: Some(1),
+            default: Some(50),
+            ..
+        }
+    ));
+}
+
+/// The legacy `enum` + `enumNames` form is deprecated but still in the union;
+/// read as a plain enum it lost the names the user is shown.
+#[test]
+fn the_legacy_titled_enum_keeps_its_names() {
+    let parsed: turbomcp_types::EnumSchema = serde_json::from_value(json!({
+        "type": "string",
+        "enum": ["r", "g"],
+        "enumNames": ["Red", "Green"]
+    }))
+    .expect("parses");
+    assert!(
+        matches!(
+            parsed,
+            turbomcp_types::EnumSchema::LegacyTitledSingleSelect(ref legacy)
+                if legacy.enum_names == ["Red", "Green"]
+        ),
+        "{parsed:?}"
+    );
+}

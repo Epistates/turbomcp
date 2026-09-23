@@ -303,6 +303,28 @@ async fn include_context_needs_the_context_capability_on_an_11_25_client() {
     );
 }
 
+/// On a 2025-11-25 session a bare `sampling: {}` has not declared `context`
+/// either. `sampling.tools` used to stand in for the negotiated version, so
+/// this case was let through.
+#[tokio::test]
+async fn include_context_needs_the_context_capability_on_any_11_25_session() {
+    let session = FakeClient::new(
+        Some(sampling_caps(SamplingCapabilities::default())),
+        ProtocolVersion::V2025_11_25,
+    );
+    let ctx = ctx_for(Arc::clone(&session));
+
+    let error = ctx
+        .sample(CreateMessageRequest {
+            include_context: Some(IncludeContext::ThisServer),
+            ..request(vec![text(Role::User, "hi")])
+        })
+        .await
+        .expect_err("the client did not declare sampling.context");
+    assert!(error.to_string().contains("sampling.context"), "{error}");
+    assert_eq!(session.sent_count(), 0);
+}
+
 /// The refusal must not reach a 2025-06-18 client, where `sampling.context`
 /// does not exist and both values are entirely legal.
 #[tokio::test]
@@ -388,5 +410,29 @@ async fn task_augmented_sampling_is_refused_without_known_capabilities() {
     .await
     .expect_err("unknown capabilities must not become permission");
 
+    assert_eq!(session.sent_count(), 0);
+}
+
+/// The schema bounds every priority to `0..=1`; a client is free to reject
+/// anything else, so the server refuses to send it.
+#[tokio::test]
+async fn out_of_range_model_priorities_are_refused_before_sending() {
+    let session = FakeClient::new(
+        Some(sampling_caps(SamplingCapabilities::default())),
+        ProtocolVersion::V2025_11_25,
+    );
+    let ctx = ctx_for(Arc::clone(&session));
+
+    let error = ctx
+        .sample(CreateMessageRequest {
+            model_preferences: Some(turbomcp_types::ModelPreferences {
+                cost_priority: Some(1.5),
+                ..Default::default()
+            }),
+            ..request(vec![text(Role::User, "hi")])
+        })
+        .await
+        .expect_err("costPriority 1.5 is outside 0..=1");
+    assert!(error.to_string().contains("costPriority"), "{error}");
     assert_eq!(session.sent_count(), 0);
 }

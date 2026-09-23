@@ -7,7 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[cfg(not(feature = "std"))]
-use alloc::{collections::BTreeMap as HashMap, format, string::String, vec::Vec};
+use alloc::{
+    collections::BTreeMap as HashMap,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 #[cfg(feature = "std")]
 use std::collections::HashMap;
 
@@ -381,7 +386,22 @@ impl CreateMessageRequest {
     ///
     /// Version-agnostic: `tool_use` and `tool_result` do not exist on the
     /// 2025-06-18 wire, so on that wire this cannot fire.
+    ///
+    /// Also checks that `modelPreferences` priorities lie in `0..=1`, the range
+    /// the schema gives them.
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(preferences) = &self.model_preferences {
+            for (name, priority) in [
+                ("costPriority", preferences.cost_priority),
+                ("speedPriority", preferences.speed_priority),
+                ("intelligencePriority", preferences.intelligence_priority),
+            ] {
+                if priority.is_some_and(|p| !(0.0..=1.0).contains(&p)) {
+                    return Err(format!("modelPreferences.{name} must be between 0 and 1"));
+                }
+            }
+        }
+
         // Tool uses from the immediately preceding assistant message, still
         // waiting to be answered.
         let mut pending: Vec<&str> = Vec::new();
