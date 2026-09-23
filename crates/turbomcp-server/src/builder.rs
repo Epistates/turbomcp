@@ -390,18 +390,7 @@ impl<H: McpHandler> ServerBuilder<H> {
     /// ```
     #[must_use]
     pub fn with_config(mut self, config: ServerConfig) -> Self {
-        let mut builder = ServerConfig::builder()
-            .protocol(config.protocol)
-            .connection_limits(config.connection_limits)
-            .required_capabilities(config.required_capabilities)
-            .max_message_size(config.max_message_size)
-            .origin_validation(config.origin_validation);
-
-        if let Some(rate_limit) = config.rate_limit {
-            builder = builder.rate_limit(rate_limit);
-        }
-
-        self.config = builder;
+        self.config = config.into();
         self
     }
 
@@ -610,6 +599,39 @@ mod tests {
     use turbomcp_types::{
         Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool, ToolResult,
     };
+
+    /// `with_config` used to copy fields one at a time and dropped
+    /// `authorization`, so a server configured for it served HTTP
+    /// unauthenticated.
+    #[cfg(feature = "http")]
+    #[test]
+    fn with_config_keeps_every_setting() {
+        struct AcceptAll;
+        impl crate::BearerTokenValidator for AcceptAll {
+            fn validate<'a>(&'a self, _token: &'a str) -> crate::ValidationFuture<'a> {
+                Box::pin(async { Ok(turbomcp_core::auth::Principal::new("u")) })
+            }
+        }
+
+        let config = ServerConfig::builder()
+            .max_http_sessions(7)
+            .authorization(crate::HttpAuthorization::new(
+                "https://mcp.example.com/mcp",
+                "https://auth.example.com",
+                AcceptAll,
+            ))
+            .build();
+        let kept = ServerBuilder::new(TestHandler)
+            .with_config(config)
+            .config
+            .build();
+
+        assert_eq!(kept.http_sessions.max_sessions, 7);
+        assert_eq!(
+            kept.authorization.as_ref().map(|a| a.resource()),
+            Some("https://mcp.example.com/mcp")
+        );
+    }
 
     #[derive(Clone)]
     struct TestHandler;

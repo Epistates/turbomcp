@@ -326,10 +326,13 @@ impl turbomcp_server::BearerTokenValidator for JwtBearerValidator {
             match validate_bearer_token(&self.validator, token, &required).await {
                 Ok(context) => {
                     let mut principal =
-                        turbomcp_protocol::mcp_core::auth::Principal::new(context.sub);
+                        turbomcp_protocol::mcp_core::auth::Principal::new(context.sub)
+                            .with_roles(context.roles);
                     principal.issuer = context.iss;
                     principal.audience = context.aud;
                     principal.expires_at = context.exp;
+                    principal.email = context.user.email;
+                    principal.name = context.user.display_name;
                     if !context.scopes.is_empty() {
                         principal =
                             principal.with_claim("scope", Value::String(context.scopes.join(" ")));
@@ -448,18 +451,41 @@ pub async fn validate_bearer_token(
         .map(|s| s.split_whitespace().map(str::to_string).collect())
         .unwrap_or_default();
 
-    let subject = claims.sub.unwrap_or_default();
+    // Roles and profile claims are carried when the token has them: an
+    // authorization check on `roles` otherwise never matches a JWT's.
+    let string_claim = |name: &str| {
+        claims
+            .additional
+            .get(name)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    let roles: Vec<String> = claims
+        .additional
+        .get("roles")
+        .and_then(Value::as_array)
+        .map(|roles| {
+            roles
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let subject = claims.sub.clone().unwrap_or_default();
     let mut builder = crate::context::AuthContext::builder()
         .subject(subject.clone())
         .user(crate::types::UserInfo {
             id: subject.clone(),
             username: subject,
-            email: None,
-            display_name: None,
+            email: string_claim("email"),
+            display_name: string_claim("name"),
             avatar_url: None,
             metadata: HashMap::new(),
         })
         .provider("jwt")
+        .roles(roles)
         .scopes(granted.clone())
         .authenticated_at(std::time::SystemTime::now());
 

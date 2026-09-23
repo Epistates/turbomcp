@@ -441,6 +441,38 @@ impl ServerConfigBuilder {
     }
 }
 
+/// Every field carries over. The destructuring is exhaustive on purpose: a
+/// field added to `ServerConfig` and not handled here is a compile error.
+/// `ServerBuilder::with_config` used to copy fields one by one and silently
+/// dropped `http_sessions` and `authorization` — the latter leaving a server
+/// configured for authorization serving HTTP unauthenticated.
+impl From<ServerConfig> for ServerConfigBuilder {
+    fn from(config: ServerConfig) -> Self {
+        let ServerConfig {
+            protocol,
+            rate_limit,
+            connection_limits,
+            required_capabilities,
+            max_message_size,
+            origin_validation,
+            http_sessions,
+            #[cfg(feature = "http")]
+            authorization,
+        } = config;
+        Self {
+            protocol: Some(protocol),
+            rate_limit,
+            connection_limits: Some(connection_limits),
+            required_capabilities: Some(required_capabilities),
+            max_message_size: Some(max_message_size),
+            origin_validation: Some(origin_validation),
+            http_sessions: Some(http_sessions),
+            #[cfg(feature = "http")]
+            authorization,
+        }
+    }
+}
+
 /// Errors that can occur during configuration validation.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConfigValidationError {

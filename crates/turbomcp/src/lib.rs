@@ -201,6 +201,14 @@ pub use turbomcp_server::VisibilityConfig;
 /// Handler wrapper for progressive disclosure and AI-friendly tool filtering
 pub use turbomcp_server::VisibilityLayer;
 
+/// MCP authorization (OAuth 2.1 protected resource) for the Streamable HTTP
+/// transport. With the `auth` feature, `auth::server::JwtBearerValidator`
+/// implements [`BearerTokenValidator`].
+#[cfg(feature = "http")]
+pub use turbomcp_server::{
+    BearerRejection, BearerTokenValidator, HttpAuthorization, ValidationFuture,
+};
+
 /// RAII cleanup guard for session-specific visibility overrides
 pub use turbomcp_server::VisibilitySessionGuard;
 

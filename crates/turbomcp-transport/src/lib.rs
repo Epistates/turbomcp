@@ -156,7 +156,8 @@ pub mod streamable_http;
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod streamable_http_client {
     pub use turbomcp_http::{
-        RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTransport,
+        AuthChallenge, AuthFuture, AuthProvider, RetryPolicy, StreamableHttpClientConfig,
+        StreamableHttpClientTransport,
     };
 }
 
