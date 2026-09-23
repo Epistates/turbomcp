@@ -7,13 +7,11 @@
 //! - Progressive disclosure of advanced features
 //! - Role-based component visibility
 //!
-//! # Security
-//!
-//! The visibility layer includes secure CORS handling:
-//!
-//! - Echoes the request `Origin` header instead of using wildcard `*`
-//! - Adds `Vary: Origin` header for proper caching behavior
-//! - Falls back to `*` only for non-browser clients (no Origin header)
+//! The layer is an [`McpHandler`] wrapping another one, so every request is
+//! dispatched by the core router like any other WASM entry point. A hidden
+//! component is indistinguishable from one that does not exist: it is left out
+//! of listings, and calling it gets the same "not found" error an unknown name
+//! would.
 //!
 //! # Example
 //!
@@ -23,29 +21,38 @@
 //! // Create a server
 //! let server = McpServer::builder("my-server", "1.0.0")
 //!     .tool("public_tool", "Public tool", public_handler)
-//!     .tool("admin_tool", "Admin tool", admin_handler) // tagged with "admin"
+//!     .tool("admin_tool", "Admin tool", admin_handler)
 //!     .build();
 //!
 //! // Create a visibility layer that hides admin tools by default
 //! let layer = VisibilityLayer::new(server)
+//!     .with_tool_tags("admin_tool", ["admin"])
 //!     .disable_tags(["admin"]);
 //!
 //! // Enable admin tools for a specific session
 //! layer.enable_for_session("session123", &["admin".to_string()]);
 //!
-//! // Handle requests through the layer
-//! layer.handle(request).await
+//! // Handle requests for that session through the layer
+//! layer.handle_with_session(request, Some("session123")).await
 //! ```
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::sync::{Arc, RwLock};
 
-use turbomcp_core::PROTOCOL_VERSION;
-use worker::{Headers, Request, Response};
+use serde_json::Value;
+use turbomcp_core::MaybeSend;
+use turbomcp_core::error::{McpError, McpResult};
+use turbomcp_core::handler::McpHandler;
+use turbomcp_core::uri_template::UriTemplate;
+use turbomcp_types::{
+    Implementation, Prompt, PromptResult, Resource, ResourceResult, ResourceTemplate,
+    ServerCapabilities, Tool, ToolResult,
+};
+use worker::{Request, Response};
 
 use super::context::RequestContext;
 use super::server::McpServer;
-use super::types::{JsonRpcRequest, JsonRpcResponse};
 
 /// A simple tag-based component filter.
 #[derive(Debug, Clone, Default)]
@@ -77,14 +84,17 @@ impl ComponentFilter {
     }
 }
 
+/// Per-session tag overrides, keyed by session id.
+type SessionTags = Arc<RwLock<HashMap<String, HashSet<String>>>>;
+
 /// RAII guard that automatically cleans up session visibility state when dropped.
 ///
 /// This is the recommended way to manage session visibility lifetime.
 #[derive(Debug)]
 pub struct VisibilitySessionGuard {
     session_id: String,
-    session_enabled: Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    session_disabled: Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    session_enabled: SessionTags,
+    session_disabled: SessionTags,
 }
 
 impl VisibilitySessionGuard {
@@ -105,10 +115,17 @@ impl Drop for VisibilitySessionGuard {
     }
 }
 
-/// A visibility layer that wraps an `McpServer` and filters components.
+/// A visibility layer that wraps a handler and filters its components.
 ///
 /// This allows per-session control over which tools, resources, and prompts
-/// are visible to clients through the `list_*` methods.
+/// are visible to clients. It wraps an [`McpServer`] by default, and any other
+/// [`McpHandler`] — a middleware stack, a composite server — just as well.
+///
+/// Per-session overrides apply to requests served through
+/// [`handle_with_session`](Self::handle_with_session). The layer's own
+/// `McpHandler` implementation (what `handle` and Streamable HTTP use) applies
+/// the global rules only: listings carry no request context to take a session
+/// from, and a component that is listed must be callable and vice versa.
 ///
 /// # Example
 ///
@@ -121,34 +138,36 @@ impl Drop for VisibilitySessionGuard {
 /// layer.enable_for_session("session123", &["admin".to_string()]);
 ///
 /// // Handle requests
-/// layer.handle(request).await
+/// layer.handle_with_session(request, Some("session123")).await
 /// ```
 #[derive(Clone)]
-pub struct VisibilityLayer {
-    /// The wrapped server
-    inner: McpServer,
+pub struct VisibilityLayer<H: McpHandler = McpServer> {
+    /// The wrapped handler
+    inner: H,
+    /// Session whose overrides this view applies; `None` for the global rules
+    session: Option<Arc<str>>,
     /// Globally disabled component filters
     global_disabled: Arc<RwLock<Vec<ComponentFilter>>>,
     /// Session-specific enabled tags (keyed by session_id)
-    session_enabled: Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    session_enabled: SessionTags,
     /// Session-specific disabled tags (keyed by session_id)
-    session_disabled: Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    session_disabled: SessionTags,
     /// Tool tags mapping (tool_name -> tags)
     tool_tags: Arc<RwLock<HashMap<String, Vec<String>>>>,
-    /// Resource tags mapping (uri -> tags)
+    /// Resource tags mapping (uri or uri template -> tags)
     resource_tags: Arc<RwLock<HashMap<String, Vec<String>>>>,
     /// Prompt tags mapping (prompt_name -> tags)
     prompt_tags: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
 
-impl std::fmt::Debug for VisibilityLayer {
+impl<H: McpHandler> std::fmt::Debug for VisibilityLayer<H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let global_count = self.global_disabled.read().map(|g| g.len()).unwrap_or(0);
         let enabled_count = self.session_enabled.read().map(|e| e.len()).unwrap_or(0);
         let disabled_count = self.session_disabled.read().map(|d| d.len()).unwrap_or(0);
 
         f.debug_struct("VisibilityLayer")
-            .field("server_name", &self.inner.server_info.name)
+            .field("server_name", &self.inner.server_info().name)
             .field("global_disabled_count", &global_count)
             .field("session_enabled_count", &enabled_count)
             .field("session_disabled_count", &disabled_count)
@@ -156,11 +175,12 @@ impl std::fmt::Debug for VisibilityLayer {
     }
 }
 
-impl VisibilityLayer {
-    /// Create a new visibility layer wrapping the given server.
-    pub fn new(inner: McpServer) -> Self {
+impl<H: McpHandler> VisibilityLayer<H> {
+    /// Create a new visibility layer wrapping the given handler.
+    pub fn new(inner: H) -> Self {
         Self {
             inner,
+            session: None,
             global_disabled: Arc::new(RwLock::new(Vec::new())),
             session_enabled: Arc::new(RwLock::new(HashMap::new())),
             session_disabled: Arc::new(RwLock::new(HashMap::new())),
@@ -196,6 +216,9 @@ impl VisibilityLayer {
     }
 
     /// Assign tags to a resource for visibility filtering.
+    ///
+    /// `uri` may be a resource URI or a resource template's URI template; a
+    /// URI read through a template inherits the template's tags.
     #[must_use]
     pub fn with_resource_tags<I, S>(self, uri: &str, tags: I) -> Self
     where
@@ -314,14 +337,23 @@ impl VisibilityLayer {
         sessions.len()
     }
 
-    /// Get a reference to the inner server.
-    pub fn inner(&self) -> &McpServer {
+    /// Get a reference to the inner handler.
+    pub fn inner(&self) -> &H {
         &self.inner
     }
 
-    /// Unwrap the layer and return the inner server.
-    pub fn into_inner(self) -> McpServer {
+    /// Unwrap the layer and return the inner handler.
+    pub fn into_inner(self) -> H {
         self.inner
+    }
+
+    /// This layer, seen by one session: the same rules and state, with that
+    /// session's overrides applied.
+    fn scoped(&self, session_id: Option<&str>) -> Self {
+        Self {
+            session: session_id.map(Arc::from),
+            ..self.clone()
+        }
     }
 
     /// Check if a component is visible given its tags and session.
@@ -357,363 +389,347 @@ impl VisibilityLayer {
         false
     }
 
-    /// Get tags for a tool from the stored mapping.
-    fn get_tool_tags(&self, tool_name: &str) -> Vec<String> {
-        self.tool_tags
-            .read()
+    /// Visibility of a component under this view's session.
+    fn shows(&self, component_tags: &[String]) -> bool {
+        self.is_visible(component_tags, self.session.as_deref())
+    }
+
+    fn tags_of(map: &RwLock<HashMap<String, Vec<String>>>, key: &str) -> Vec<String> {
+        map.read()
             .ok()
-            .and_then(|map| map.get(tool_name).cloned())
+            .and_then(|map| map.get(key).cloned())
             .unwrap_or_default()
     }
 
-    /// Get tags for a resource from the stored mapping.
-    fn get_resource_tags(&self, uri: &str) -> Vec<String> {
-        self.resource_tags
-            .read()
-            .ok()
-            .and_then(|map| map.get(uri).cloned())
-            .unwrap_or_default()
-    }
-
-    /// Get tags for a prompt from the stored mapping.
-    fn get_prompt_tags(&self, prompt_name: &str) -> Vec<String> {
-        self.prompt_tags
-            .read()
-            .ok()
-            .and_then(|map| map.get(prompt_name).cloned())
+    /// Tags for a resource URI: its own, or else those of the template it is
+    /// read through.
+    fn resource_tags_for(&self, uri: &str) -> Vec<String> {
+        let Ok(map) = self.resource_tags.read() else {
+            return Vec::new();
+        };
+        if let Some(tags) = map.get(uri) {
+            return tags.clone();
+        }
+        self.inner
+            .list_resource_templates()
+            .iter()
+            .find(|template| UriTemplate::parse(&template.uri_template).matches(uri))
+            .and_then(|template| map.get(&template.uri_template).cloned())
             .unwrap_or_default()
     }
 
     /// Handle an incoming Cloudflare Worker request.
     ///
     /// This routes requests through the visibility layer, filtering
-    /// tools/resources/prompts based on visibility rules.
+    /// tools/resources/prompts by the global rules.
     pub async fn handle(&self, req: Request) -> worker::Result<Response> {
         self.handle_with_session(req, None).await
     }
 
     /// Handle an incoming request with session context.
     ///
-    /// This allows session-specific visibility overrides to take effect.
+    /// This allows session-specific visibility overrides to take effect. The
+    /// session id is the caller's to establish (for example from an
+    /// authenticated principal); it is also set on the request context the
+    /// handlers see.
     pub async fn handle_with_session(
         &self,
-        mut req: Request,
+        req: Request,
         session_id: Option<&str>,
     ) -> worker::Result<Response> {
-        // SECURITY: Extract Origin header early for CORS responses.
-        // We echo this back instead of using wildcard "*".
-        let request_origin = req.headers().get("origin").ok().flatten();
-        let origin_ref = request_origin.as_deref();
+        let scoped = self.scoped(session_id);
+        let session = session_id.map(str::to_string);
+        super::endpoint::serve(
+            &scoped,
+            req,
+            &super::EndpointConfig::default(),
+            move |ctx| match session {
+                Some(session) => ctx.with_session_id(session),
+                None => ctx,
+            },
+            super::endpoint::admit_all,
+        )
+        .await
+    }
+}
 
-        // Handle CORS preflight
-        if req.method() == worker::Method::Options {
-            return self.cors_preflight_response(origin_ref);
-        }
+#[allow(clippy::manual_async_fn)]
+impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
+    fn server_info(&self) -> Implementation {
+        self.inner.server_info()
+    }
 
-        // Parse JSON-RPC request
-        let body = req.text().await?;
-        let rpc_request: JsonRpcRequest = match serde_json::from_str(&body) {
-            Ok(r) => r,
-            Err(e) => {
-                return self.json_rpc_error_response(
-                    None,
-                    -32700,
-                    &format!("Parse error: {}", e),
-                    origin_ref,
-                );
+    fn instructions(&self) -> Option<String> {
+        self.inner.instructions()
+    }
+
+    fn server_capabilities(&self) -> ServerCapabilities {
+        self.inner.server_capabilities()
+    }
+
+    fn list_tools(&self) -> Vec<Tool> {
+        self.inner
+            .list_tools()
+            .into_iter()
+            .filter(|tool| self.shows(&Self::tags_of(&self.tool_tags, &tool.name)))
+            .collect()
+    }
+
+    fn list_resources(&self) -> Vec<Resource> {
+        self.inner
+            .list_resources()
+            .into_iter()
+            .filter(|resource| self.shows(&Self::tags_of(&self.resource_tags, &resource.uri)))
+            .collect()
+    }
+
+    fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
+        self.inner
+            .list_resource_templates()
+            .into_iter()
+            .filter(|template| {
+                self.shows(&Self::tags_of(&self.resource_tags, &template.uri_template))
+            })
+            .collect()
+    }
+
+    fn list_prompts(&self) -> Vec<Prompt> {
+        self.inner
+            .list_prompts()
+            .into_iter()
+            .filter(|prompt| self.shows(&Self::tags_of(&self.prompt_tags, &prompt.name)))
+            .collect()
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<ToolResult>> + MaybeSend + 'a {
+        async move {
+            if !self.shows(&Self::tags_of(&self.tool_tags, name)) {
+                return Err(McpError::tool_not_found(name));
             }
-        };
+            self.inner.call_tool(name, args, ctx).await
+        }
+    }
 
-        let id = rpc_request.id.clone();
-
-        // Route based on method
-        let result = match rpc_request.method.as_str() {
-            "initialize" => self.handle_initialize(&rpc_request).await,
-            "tools/list" => self.handle_list_tools(session_id),
-            "tools/call" => self.handle_call_tool(&rpc_request, session_id).await,
-            "resources/list" => self.handle_list_resources(session_id),
-            "resources/read" => self.handle_read_resource(&rpc_request, session_id).await,
-            "resources/templates/list" => self.handle_list_resource_templates(session_id),
-            "prompts/list" => self.handle_list_prompts(session_id),
-            "prompts/get" => self.handle_get_prompt(&rpc_request, session_id).await,
-            method => {
-                return self.json_rpc_error_response(
-                    id.clone(),
-                    -32601,
-                    &format!("Method not found: {}", method),
-                    origin_ref,
-                );
+    fn read_resource<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<ResourceResult>> + MaybeSend + 'a {
+        async move {
+            if !self.shows(&self.resource_tags_for(uri)) {
+                return Err(McpError::resource_not_found(uri));
             }
-        };
-
-        match result {
-            Ok(value) => self.json_rpc_success_response(id, value, origin_ref),
-            Err(e) => self.json_rpc_error_response(id, -32603, &e, origin_ref),
+            self.inner.read_resource(uri, ctx).await
         }
     }
 
-    // =========================================================================
-    // Request Handlers (with visibility filtering)
-    // =========================================================================
-
-    async fn handle_initialize(&self, _req: &JsonRpcRequest) -> Result<serde_json::Value, String> {
-        Ok(serde_json::json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": self.inner.capabilities,
-            "serverInfo": self.inner.server_info
-        }))
-    }
-
-    fn handle_list_tools(&self, session_id: Option<&str>) -> Result<serde_json::Value, String> {
-        let filtered_tools: Vec<_> = self
-            .inner
-            .tools()
-            .into_iter()
-            .filter(|tool| {
-                let tags = self.get_tool_tags(&tool.name);
-                self.is_visible(&tags, session_id)
-            })
-            .cloned()
-            .collect();
-
-        Ok(serde_json::json!({
-            "tools": filtered_tools
-        }))
-    }
-
-    async fn handle_call_tool(
-        &self,
-        req: &JsonRpcRequest,
-        session_id: Option<&str>,
-    ) -> Result<serde_json::Value, String> {
-        let params = req
-            .params
-            .as_ref()
-            .ok_or_else(|| "Missing params".to_string())?;
-
-        let name = params
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing tool name".to_string())?;
-
-        // Check visibility
-        let tags = self.get_tool_tags(name);
-        if !self.is_visible(&tags, session_id) {
-            return Err(format!("Tool not found: {}", name));
+    fn get_prompt<'a>(
+        &'a self,
+        name: &'a str,
+        args: Option<Value>,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<PromptResult>> + MaybeSend + 'a {
+        async move {
+            if !self.shows(&Self::tags_of(&self.prompt_tags, name)) {
+                return Err(McpError::prompt_not_found(name));
+            }
+            self.inner.get_prompt(name, args, ctx).await
         }
+    }
 
-        let args = params
-            .get("arguments")
-            .cloned()
-            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    fn list_tasks<'a>(
+        &'a self,
+        cursor: Option<&'a str>,
+        limit: Option<usize>,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<turbomcp_types::ListTasksResult>> + MaybeSend + 'a {
+        self.inner.list_tasks(cursor, limit, ctx)
+    }
 
-        // Create context with session
-        let mut ctx = RequestContext::new();
-        if let Some(sid) = session_id {
-            ctx = ctx.with_session_id(sid);
+    fn get_task<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<turbomcp_types::Task>> + MaybeSend + 'a {
+        self.inner.get_task(task_id, ctx)
+    }
+
+    fn cancel_task<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<turbomcp_types::Task>> + MaybeSend + 'a {
+        self.inner.cancel_task(task_id, ctx)
+    }
+
+    fn get_task_result<'a>(
+        &'a self,
+        task_id: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<Value>> + MaybeSend + 'a {
+        self.inner.get_task_result(task_id, ctx)
+    }
+
+    fn subscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<()>> + MaybeSend + 'a {
+        async move {
+            if !self.shows(&self.resource_tags_for(uri)) {
+                return Err(McpError::resource_not_found(uri));
+            }
+            self.inner.subscribe(uri, ctx).await
         }
-        let ctx = Arc::new(ctx);
-
-        // Call the tool
-        let result = self.inner.call_tool_internal(name, args, ctx).await?;
-
-        Ok(serde_json::json!({
-            "content": result.content,
-            "isError": result.is_error
-        }))
     }
 
-    fn handle_list_resources(&self, session_id: Option<&str>) -> Result<serde_json::Value, String> {
-        let filtered_resources: Vec<_> = self
-            .inner
-            .resources()
-            .into_iter()
-            .filter(|resource| {
-                let tags = self.get_resource_tags(&resource.uri);
-                self.is_visible(&tags, session_id)
-            })
-            .cloned()
-            .collect();
-
-        Ok(serde_json::json!({
-            "resources": filtered_resources
-        }))
+    fn unsubscribe<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<()>> + MaybeSend + 'a {
+        self.inner.unsubscribe(uri, ctx)
     }
 
-    fn handle_list_resource_templates(
-        &self,
-        _session_id: Option<&str>,
-    ) -> Result<serde_json::Value, String> {
-        // For templates, we'd need a similar tag extraction mechanism
-        // For now, return all templates (visibility filtering for templates could be added later)
-        let templates: Vec<_> = self
-            .inner
-            .resource_templates()
-            .into_iter()
-            .cloned()
-            .collect();
-
-        Ok(serde_json::json!({
-            "resourceTemplates": templates
-        }))
+    fn set_log_level<'a>(
+        &'a self,
+        level: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<()>> + MaybeSend + 'a {
+        self.inner.set_log_level(level, ctx)
     }
 
-    async fn handle_read_resource(
-        &self,
-        req: &JsonRpcRequest,
-        session_id: Option<&str>,
-    ) -> Result<serde_json::Value, String> {
-        let params = req
-            .params
-            .as_ref()
-            .ok_or_else(|| "Missing params".to_string())?;
-
-        let uri = params
-            .get("uri")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing resource URI".to_string())?;
-
-        // Check visibility
-        let tags = self.get_resource_tags(uri);
-        if !self.is_visible(&tags, session_id) {
-            return Err(format!("Resource not found: {}", uri));
-        }
-
-        // Create context with session
-        let mut ctx = RequestContext::new();
-        if let Some(sid) = session_id {
-            ctx = ctx.with_session_id(sid);
-        }
-        let ctx = Arc::new(ctx);
-
-        // Read the resource
-        let result = self.inner.read_resource_internal(uri, ctx).await?;
-
-        Ok(serde_json::json!({
-            "contents": result.contents
-        }))
+    fn complete<'a>(
+        &'a self,
+        params: Value,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<Value>> + MaybeSend + 'a {
+        self.inner.complete(params, ctx)
     }
 
-    fn handle_list_prompts(&self, session_id: Option<&str>) -> Result<serde_json::Value, String> {
-        let filtered_prompts: Vec<_> = self
-            .inner
-            .prompts()
-            .into_iter()
-            .filter(|prompt| {
-                let tags = self.get_prompt_tags(&prompt.name);
-                self.is_visible(&tags, session_id)
-            })
-            .cloned()
-            .collect();
-
-        Ok(serde_json::json!({
-            "prompts": filtered_prompts
-        }))
+    fn page_size(&self) -> Option<usize> {
+        self.inner.page_size()
     }
 
-    async fn handle_get_prompt(
-        &self,
-        req: &JsonRpcRequest,
-        session_id: Option<&str>,
-    ) -> Result<serde_json::Value, String> {
-        let params = req
-            .params
-            .as_ref()
-            .ok_or_else(|| "Missing params".to_string())?;
-
-        let name = params
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing prompt name".to_string())?;
-
-        // Check visibility
-        let tags = self.get_prompt_tags(name);
-        if !self.is_visible(&tags, session_id) {
-            return Err(format!("Prompt not found: {}", name));
-        }
-
-        let args = params.get("arguments").cloned();
-
-        // Create context with session
-        let mut ctx = RequestContext::new();
-        if let Some(sid) = session_id {
-            ctx = ctx.with_session_id(sid);
-        }
-        let ctx = Arc::new(ctx);
-
-        // Get the prompt
-        let result = self.inner.get_prompt_internal(name, args, ctx).await?;
-
-        Ok(serde_json::json!({
-            "description": result.description,
-            "messages": result.messages
-        }))
+    fn on_roots_list_changed<'a>(
+        &'a self,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<()>> + MaybeSend + 'a {
+        self.inner.on_roots_list_changed(ctx)
     }
 
-    // =========================================================================
-    // Response Helpers
-    // =========================================================================
-
-    /// Create CORS headers for responses.
-    ///
-    /// SECURITY: Echoes the request Origin header instead of using wildcard `*`.
-    fn cors_headers(&self, request_origin: Option<&str>) -> Headers {
-        let headers = Headers::new();
-        // SECURITY: Echo the request origin instead of using wildcard.
-        let origin = request_origin.unwrap_or("*");
-        let _ = headers.set("Access-Control-Allow-Origin", origin);
-        if request_origin.is_some() {
-            let _ = headers.set("Vary", "Origin");
-        }
-        let _ = headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-        let _ = headers.set("Access-Control-Allow-Headers", "Content-Type");
-        let _ = headers.set("Access-Control-Max-Age", "86400");
-        headers
+    fn on_initialize(&self) -> impl Future<Output = McpResult<()>> + MaybeSend {
+        self.inner.on_initialize()
     }
 
-    fn cors_preflight_response(&self, request_origin: Option<&str>) -> worker::Result<Response> {
-        Ok(Response::empty()?
-            .with_status(204)
-            .with_headers(self.cors_headers(request_origin)))
-    }
-
-    fn json_rpc_success_response(
-        &self,
-        id: Option<serde_json::Value>,
-        result: serde_json::Value,
-        request_origin: Option<&str>,
-    ) -> worker::Result<Response> {
-        let response = JsonRpcResponse::success(id, result);
-        let json =
-            serde_json::to_string(&response).map_err(|e| worker::Error::from(e.to_string()))?;
-
-        let headers = self.cors_headers(request_origin);
-        let _ = headers.set("Content-Type", "application/json");
-
-        Ok(Response::ok(json)?.with_headers(headers))
-    }
-
-    fn json_rpc_error_response(
-        &self,
-        id: Option<serde_json::Value>,
-        code: i32,
-        message: &str,
-        request_origin: Option<&str>,
-    ) -> worker::Result<Response> {
-        let response = JsonRpcResponse::error(id, code, message);
-        let json =
-            serde_json::to_string(&response).map_err(|e| worker::Error::from(e.to_string()))?;
-
-        let headers = self.cors_headers(request_origin);
-        let _ = headers.set("Content-Type", "application/json");
-
-        Ok(Response::ok(json)?.with_headers(headers))
+    fn on_shutdown(&self) -> impl Future<Output = McpResult<()>> + MaybeSend {
+        self.inner.on_shutdown()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn route<H: McpHandler>(handler: &H, method: &str, params: Value) -> Value {
+        let request = turbomcp_core::jsonrpc::JsonRpcIncoming {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: method.into(),
+            params: Some(params),
+        };
+        let ctx = crate::wasm_server::context::new_wasm_context();
+        serde_json::to_value(super::super::endpoint::route(handler, request, &ctx, None).await)
+            .unwrap()
+    }
+
+    fn tool_names(response: &Value) -> Vec<String> {
+        response["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn hidden_tools_are_unlisted_and_indistinguishable_from_unknown() {
+        let layer = VisibilityLayer::new(create_test_server())
+            .with_tool_tags("admin_tool", ["admin"])
+            .disable_tags(["admin"]);
+
+        let listed = route(&layer, "tools/list", serde_json::json!({})).await;
+        assert_eq!(tool_names(&listed), ["public_tool"]);
+
+        let hidden = route(
+            &layer,
+            "tools/call",
+            serde_json::json!({"name": "admin_tool"}),
+        )
+        .await;
+        let unknown = route(&layer, "tools/call", serde_json::json!({"name": "no_tool"})).await;
+        assert_eq!(hidden["error"]["code"], unknown["error"]["code"]);
+        assert_eq!(hidden["error"]["code"], -32602);
+
+        // Results travel through untouched: no `isError: null`, no dropped fields.
+        let public = route(
+            &layer,
+            "tools/call",
+            serde_json::json!({"name": "public_tool"}),
+        )
+        .await;
+        let result = public["result"].as_object().unwrap();
+        assert!(!result.contains_key("isError"));
+        assert_eq!(public["result"]["content"][0]["text"], "public");
+    }
+
+    #[tokio::test]
+    async fn session_overrides_apply_to_listing_and_calls_alike() {
+        let layer = VisibilityLayer::new(create_test_server())
+            .with_tool_tags("admin_tool", ["admin"])
+            .disable_tags(["admin"]);
+        layer.enable_for_session("s1", &["admin".to_string()]);
+
+        let scoped = layer.scoped(Some("s1"));
+        let listed = route(&scoped, "tools/list", serde_json::json!({})).await;
+        assert_eq!(tool_names(&listed), ["admin_tool", "public_tool"]);
+        let called = route(
+            &scoped,
+            "tools/call",
+            serde_json::json!({"name": "admin_tool"}),
+        )
+        .await;
+        assert_eq!(called["result"]["content"][0]["text"], "admin");
+
+        let other = layer.scoped(Some("s2"));
+        let listed = route(&other, "tools/list", serde_json::json!({})).await;
+        assert_eq!(tool_names(&listed), ["public_tool"]);
+    }
+
+    #[tokio::test]
+    async fn layer_answers_the_protocol_through_core() {
+        let layer = VisibilityLayer::new(create_test_server());
+        let init = route(
+            &layer,
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "c", "version": "1"}
+            }),
+        )
+        .await;
+        assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+        assert_eq!(init["result"]["serverInfo"]["name"], "test");
+
+        let ping = route(&layer, "ping", serde_json::json!({})).await;
+        assert_eq!(ping["result"], serde_json::json!({}));
+    }
 
     fn create_test_server() -> McpServer {
         McpServer::builder("test", "1.0.0")

@@ -26,7 +26,8 @@ wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url"]
 console-log = ["browser", "console_error_panic_hook"]
 # WASM server support - MCP servers running in WASM environments (Cloudflare Workers, etc.)
 # web-sys is required because rich_context/context use `web_sys::console::*` for logging.
-wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "dep:turbomcp-protocol", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys", "web-sys"]
+# url canonicalizes `Origin` headers for DNS-rebinding protection.
+wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "dep:turbomcp-protocol", "dep:url", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys", "web-sys"]
 # Streamable HTTP support (MCP 2025-11-25 spec with SSE and session management)
 streamable = ["wasm-server", "dep:turbomcp-transport-streamable", "dep:sha2"]
 # Cloudflare Workers feature alias (same as wasm-server, for clarity)

@@ -72,6 +72,16 @@ pub fn from_worker_request(
     ctx
 }
 
+/// Share a request context with a handler that takes `Arc<RequestContext>`.
+///
+/// The handler API is `Arc` so the one signature works on native targets,
+/// where handler futures must be `Send`. On wasm32 the context is `!Send` and
+/// there is one thread, so the `Arc` is only a reference count there.
+#[allow(clippy::arc_with_non_send_sync)]
+pub(crate) fn shared_context(ctx: &RequestContext) -> std::sync::Arc<RequestContext> {
+    std::sync::Arc::new(ctx.clone())
+}
+
 /// Generate a unique request ID with cryptographic randomness.
 ///
 /// Uses the Web Crypto API on WASM (`req-{timestamp_hex}-{random_hex}`) and

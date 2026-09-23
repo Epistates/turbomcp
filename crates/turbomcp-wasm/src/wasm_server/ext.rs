@@ -7,7 +7,8 @@
 //!
 //! Uses the shared router from `turbomcp_core::router` for consistent behavior
 //! between native and WASM platforms. The only WASM-specific code is the
-//! Worker SDK integration.
+//! Worker SDK integration, which lives in the crate's shared HTTP edge so that
+//! `McpServer::handle`, the wrappers and this trait all answer identically.
 //!
 //! # Example
 //!
@@ -27,12 +28,11 @@
 //! ```
 
 use serde_json::Value;
-use turbomcp_core::context::{RequestContext, TransportType};
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
-use turbomcp_core::jsonrpc::{JsonRpcIncoming, JsonRpcOutgoing};
-use turbomcp_core::router::{RouteConfig, route_request};
 use worker::{Request, Response};
+
+use super::endpoint::{self, EndpointConfig, Inbound};
 
 /// Extension trait for running `McpHandler` in WASM environments.
 ///
@@ -54,88 +54,115 @@ pub trait WasmHandlerExt: McpHandler {
     /// Handle an incoming Cloudflare Worker request.
     ///
     /// This is the main entry point for MCP servers running in Cloudflare Workers.
-    /// It parses the JSON-RPC request, routes it to the appropriate handler, and
-    /// returns a JSON-RPC response.
+    /// It serves the stateless JSON-RPC endpoint with the default
+    /// [`EndpointConfig`]: POST only, JSON bodies up to 1 MiB, and browser
+    /// origins limited to loopback ones. Notifications are answered `202` with
+    /// no body.
     fn handle_worker_request(
         &self,
         req: Request,
     ) -> impl std::future::Future<Output = worker::Result<Response>>;
 
+    /// Handle an incoming Cloudflare Worker request with an explicit
+    /// [`EndpointConfig`] — typically to allow the browser origin a web
+    /// application calls the Worker from.
+    fn handle_worker_request_with_config(
+        &self,
+        req: Request,
+        config: &EndpointConfig,
+    ) -> impl std::future::Future<Output = worker::Result<Response>>;
+
     /// Handle a raw JSON-RPC request value.
     ///
     /// This method is useful for environments that don't use the Worker SDK
-    /// directly, such as custom HTTP handlers or testing.
+    /// directly, such as custom HTTP handlers or testing. A notification
+    /// yields `Value::Null`, since it has no response.
     fn handle_json_rpc_request(
         &self,
         request: Value,
     ) -> impl std::future::Future<Output = McpResult<Value>>;
 }
 
+#[allow(clippy::manual_async_fn)]
 impl<T: McpHandler> WasmHandlerExt for T {
     fn handle_worker_request(
         &self,
-        mut req: Request,
+        req: Request,
     ) -> impl std::future::Future<Output = worker::Result<Response>> {
-        let handler = self.clone();
         async move {
-            // Parse request body as JSON
-            let body = req.text().await?;
-            let request: JsonRpcIncoming = match serde_json::from_str(&body) {
-                Ok(r) => r,
-                Err(e) => {
-                    let response = JsonRpcOutgoing::error(
-                        None,
-                        McpError::parse_error(format!("Invalid JSON: {}", e)),
-                    );
-                    return Response::from_json(&response);
-                }
-            };
-
-            // Generate a unique request ID for context
-            let request_id = request
-                .id
-                .as_ref()
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "wasm-request".to_string());
-            let ctx = RequestContext::with_id_and_transport(request_id, TransportType::Wasm);
-
-            // Route using the shared core router
-            let config = RouteConfig::default();
-            let response = route_request(&handler, request, &ctx, &config).await;
-
-            // Only send response if it should be sent (per JSON-RPC 2.0)
-            if response.should_send() {
-                Response::from_json(&response)
-            } else {
-                // For notifications, return empty 204
-                Response::empty()
-            }
+            endpoint::serve(
+                self,
+                req,
+                &EndpointConfig::default(),
+                |ctx| ctx,
+                endpoint::admit_all,
+            )
+            .await
         }
+    }
+
+    fn handle_worker_request_with_config(
+        &self,
+        req: Request,
+        config: &EndpointConfig,
+    ) -> impl std::future::Future<Output = worker::Result<Response>> {
+        async move { endpoint::serve(self, req, config, |ctx| ctx, endpoint::admit_all).await }
     }
 
     fn handle_json_rpc_request(
         &self,
         request: Value,
     ) -> impl std::future::Future<Output = McpResult<Value>> {
-        let handler = self.clone();
         async move {
-            let request: JsonRpcIncoming = serde_json::from_value(request)
-                .map_err(|e| McpError::parse_error(format!("Invalid request: {}", e)))?;
-
-            // Generate a unique request ID for context
-            let request_id = request
-                .id
-                .as_ref()
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "wasm-request".to_string());
-            let ctx = RequestContext::with_id_and_transport(request_id, TransportType::Wasm);
-
-            // Route using the shared core router
-            let config = RouteConfig::default();
-            let response = route_request(&handler, request, &ctx, &config).await;
-
+            let response = match endpoint::parse_message(&request.to_string()) {
+                Inbound::Message(request) => {
+                    let ctx = super::context::new_wasm_context();
+                    endpoint::route(self, request, &ctx, None).await
+                }
+                Inbound::ClientResponse => return Ok(Value::Null),
+                Inbound::Invalid(error) => error,
+            };
+            if !response.should_send() {
+                return Ok(Value::Null);
+            }
             serde_json::to_value(&response)
                 .map_err(|e| McpError::internal(format!("Serialization error: {}", e)))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wasm_server::McpServer;
+
+    #[tokio::test]
+    async fn json_rpc_entry_point_routes_through_core() {
+        let server = McpServer::builder("ext", "1.0.0").build();
+
+        let ping = server
+            .handle_json_rpc_request(
+                serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "ping"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ping["result"], serde_json::json!({}));
+
+        let notification = server
+            .handle_json_rpc_request(
+                serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            )
+            .await
+            .unwrap();
+        assert!(notification.is_null());
+
+        let bad = server
+            .handle_json_rpc_request(
+                serde_json::json!({"jsonrpc": "2.0", "id": null, "method": "ping"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bad["error"]["code"], -32600);
+        assert!(bad["id"].is_null());
     }
 }
