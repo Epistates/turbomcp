@@ -9,8 +9,8 @@ use tokio::task::JoinHandle;
 use turbomcp_core::context::RequestContext as CoreRequestContext;
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_server::McpHandler;
-use turbomcp_server::ServerConfig;
 use turbomcp_server::transport::http;
+use turbomcp_server::{OriginValidationConfig, ServerConfig, ServerConfigBuilder};
 use turbomcp_types::{
     CreateMessageRequest, Prompt, PromptResult, Resource, ResourceResult, SamplingContent,
     SamplingMessage, ServerInfo, Tool, ToolResult,
@@ -132,8 +132,9 @@ impl McpHandler for SamplingHandler {
     }
 }
 
-/// The two long-running tool shapes: one that parks until cancelled, one that
-/// reports progress while it works.
+/// The long-running tool shapes: one that parks until cancelled, ones that
+/// report progress while they work, and one that asks the client something and
+/// gives up waiting.
 #[derive(Clone)]
 struct CancellableHandler;
 
@@ -146,6 +147,8 @@ impl McpHandler for CancellableHandler {
         vec![
             Tool::new("park", "Wait until cancelled"),
             Tool::new("report", "Report progress while working"),
+            Tool::new("slow_report", "Report progress, then work a while"),
+            Tool::new("abandon_sample", "Ask the client to sample, then give up"),
         ]
     }
 
@@ -177,6 +180,23 @@ impl McpHandler for CancellableHandler {
                 ctx.report_progress(1.0, Some(2.0), Some("halfway")).await?;
                 Ok(ToolResult::text("done"))
             }
+            "slow_report" => {
+                ctx.report_progress(1.0, Some(2.0), Some("halfway")).await?;
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                Ok(ToolResult::text("done"))
+            }
+            "abandon_sample" => {
+                let request = CreateMessageRequest {
+                    messages: vec![SamplingMessage::user("never answered")],
+                    max_tokens: 8,
+                    ..Default::default()
+                };
+                // Dropping the pending `sample()` is the handler giving up.
+                let _ = tokio::time::timeout(Duration::from_millis(200), ctx.sample(request)).await;
+                // Long enough for the withdrawal to go out ahead of the response.
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok(ToolResult::text("gave up"))
+            }
             _ => Err(McpError::tool_not_found(name)),
         }
     }
@@ -197,6 +217,78 @@ impl McpHandler for CancellableHandler {
     ) -> McpResult<PromptResult> {
         Err(McpError::prompt_not_found(name))
     }
+}
+
+/// A server whose notification hook panics.
+#[derive(Clone)]
+struct PanickingNotificationHandler;
+
+impl McpHandler for PanickingNotificationHandler {
+    fn server_info(&self) -> ServerInfo {
+        ServerInfo::new("panicking-notification-test", "1.0.0")
+    }
+
+    fn list_tools(&self) -> Vec<Tool> {
+        Vec::new()
+    }
+
+    fn list_resources(&self) -> Vec<Resource> {
+        Vec::new()
+    }
+
+    fn list_prompts(&self) -> Vec<Prompt> {
+        Vec::new()
+    }
+
+    async fn call_tool(
+        &self,
+        name: &str,
+        _args: serde_json::Value,
+        _ctx: &CoreRequestContext,
+    ) -> McpResult<ToolResult> {
+        Err(McpError::tool_not_found(name))
+    }
+
+    async fn read_resource(
+        &self,
+        uri: &str,
+        _ctx: &CoreRequestContext,
+    ) -> McpResult<ResourceResult> {
+        Err(McpError::resource_not_found(uri))
+    }
+
+    async fn get_prompt(
+        &self,
+        name: &str,
+        _args: Option<serde_json::Value>,
+        _ctx: &CoreRequestContext,
+    ) -> McpResult<PromptResult> {
+        Err(McpError::prompt_not_found(name))
+    }
+
+    async fn on_roots_list_changed(&self, _ctx: &CoreRequestContext) -> McpResult<()> {
+        panic!("roots hook exploded")
+    }
+}
+
+/// Serve `handler` under `config` on a free port.
+async fn spawn_handler_with_config<H: McpHandler>(
+    handler: H,
+    config: ServerConfig,
+) -> (String, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
+    let addr_string = addr.to_string();
+    let handle = tokio::spawn(async move {
+        http::run_with_config(&handler, &addr_string, &config)
+            .await
+            .unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    (format!("http://{}", addr), handle)
 }
 
 async fn spawn_cancellable_server() -> (String, JoinHandle<()>) {
@@ -1545,6 +1637,549 @@ async fn a_cancellation_cannot_reach_another_session() {
         body["result"]["content"][0]["text"], "completed",
         "another session's cancel must not touch this request, got: {body}"
     );
+
+    handle.abort();
+}
+
+/// POST one JSON-RPC message on an established session.
+async fn post_on_session(
+    client: &Client,
+    base_url: &str,
+    session_id: &str,
+    accept: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, accept)
+        .header("Mcp-Session-Id", session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// GET the session's stream, resuming from `last_event_id` if given.
+async fn get_stream(
+    client: &Client,
+    base_url: &str,
+    session_id: &str,
+    last_event_id: Option<&str>,
+) -> reqwest::Response {
+    let mut request = client
+        .get(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "text/event-stream")
+        .header("Mcp-Session-Id", session_id)
+        .header("MCP-Protocol-Version", "2025-11-25");
+    if let Some(last_event_id) = last_event_id {
+        request = request.header("Last-Event-ID", last_event_id);
+    }
+    let response = request.send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response
+}
+
+/// Read to the end of an SSE stream, failing if it carries another message or
+/// stays open.
+async fn assert_sse_ends(reader: &mut SseReader) {
+    use tokio::io::AsyncBufReadExt;
+
+    loop {
+        let mut line = String::new();
+        let n = tokio::time::timeout(Duration::from_secs(3), reader.read_line(&mut line))
+            .await
+            .expect("the stream should end, not stay open")
+            .expect("SSE read error");
+        if n == 0 {
+            return;
+        }
+        let line = line.trim_end();
+        assert!(
+            !line.starts_with("data:") || line == "data:",
+            "no further message expected, got {line:?}"
+        );
+    }
+}
+
+fn report_call(id: i64, tool: &str) -> serde_json::Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "tools/call",
+        "params": {
+            "name": tool,
+            "arguments": {},
+            "_meta": { "progressToken": format!("tok-{id}") }
+        }
+    })
+}
+
+/// §Sending Messages item 6 lets the connection drop at any time without that
+/// meaning the request was cancelled, and §Resumability is what gets the
+/// response back afterwards. The response used to be written by the POST's
+/// response body, which hyper stops polling once the client has gone — so a
+/// handler that finished after the disconnect had its response dropped, and
+/// the GET resuming the stream waited for it forever.
+#[tokio::test]
+async fn a_response_finished_after_the_client_dropped_is_replayed_then_the_stream_ends() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let response = post_on_session(
+        &client,
+        &base_url,
+        &session_id,
+        "application/json, text/event-stream",
+        report_call(7, "slow_report"),
+    )
+    .await;
+    let mut reader = sse_reader(response);
+    next_sse_record(&mut reader).await; // primer
+    let progress_id = next_sse_record(&mut reader)
+        .await
+        .id
+        .expect("progress carries an event ID");
+
+    // Gone before the handler finishes.
+    drop(reader);
+    tokio::time::sleep(Duration::from_millis(600)).await;
+
+    let resumed = get_stream(&client, &base_url, &session_id, Some(&progress_id)).await;
+    let mut reader = sse_reader(resumed);
+    let replayed = next_sse_json(&mut reader).await;
+    assert_eq!(replayed["id"], 7, "the missed response is redelivered");
+    assert_eq!(replayed["result"]["content"][0]["text"], "done");
+
+    // And that is the end of it: the request is over, so the resumed stream
+    // must close rather than hang on as an idle listener.
+    assert_sse_ends(&mut reader).await;
+
+    handle.abort();
+}
+
+/// A `Last-Event-ID` naming a POST stream whose response the client already
+/// has must not re-attach the GET to that stream. It used to: the GET sat on a
+/// finished stream that could never carry anything again, while the server
+/// believed the client was listening there.
+#[tokio::test]
+async fn resuming_a_stream_whose_response_was_delivered_ends_at_once() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let response = post_on_session(
+        &client,
+        &base_url,
+        &session_id,
+        "application/json, text/event-stream",
+        report_call(8, "report"),
+    )
+    .await;
+    let mut reader = sse_reader(response);
+    next_sse_record(&mut reader).await; // primer
+    next_sse_record(&mut reader).await; // progress
+    let answer = next_sse_record(&mut reader).await;
+    let answer_id = answer.id.expect("the response carries an event ID");
+    assert_sse_ends(&mut reader).await;
+
+    let resumed = get_stream(&client, &base_url, &session_id, Some(&answer_id)).await;
+    let mut reader = sse_reader(resumed);
+    assert_sse_ends(&mut reader).await;
+
+    handle.abort();
+}
+
+/// A POST stream that finished must not push the session's listening GET
+/// stream out of its retained slots. Every upgraded POST used to count, none
+/// was ever released, and once the cap was passed eviction took the oldest
+/// "attached" stream — the GET — so server-initiated messages had nowhere to
+/// go.
+#[tokio::test]
+async fn finished_post_streams_do_not_evict_the_listening_stream() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let listening = get_stream(&client, &base_url, &session_id, None).await;
+    let mut listener = sse_reader(listening);
+    next_sse_record(&mut listener).await; // primer
+
+    // Well past the eight-stream cap.
+    for id in 10..22 {
+        let response = post_on_session(
+            &client,
+            &base_url,
+            &session_id,
+            "application/json, text/event-stream",
+            report_call(id, "report"),
+        )
+        .await;
+        let mut reader = sse_reader(response);
+        assert_eq!(
+            next_sse_json(&mut reader).await["method"],
+            "notifications/progress"
+        );
+        assert_eq!(next_sse_json(&mut reader).await["id"], id);
+        assert_sse_ends(&mut reader).await;
+    }
+
+    // A client that takes only JSON gets no request stream, so the handler's
+    // progress falls back to the listening stream — which has to still be there.
+    let response = post_on_session(
+        &client,
+        &base_url,
+        &session_id,
+        "application/json",
+        report_call(30, "report"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let progress = next_sse_json(&mut listener).await;
+    assert_eq!(progress["method"], "notifications/progress");
+    assert_eq!(progress["params"]["progressToken"], "tok-30");
+
+    handle.abort();
+}
+
+/// §Session Management: "The server MAY terminate the session at any time,
+/// after which it MUST respond to requests containing that session ID with HTTP
+/// 404 Not Found." Sessions used to live for the life of the process, however
+/// long ago their client left.
+#[tokio::test]
+async fn an_idle_session_is_reaped_and_answers_404() {
+    let config = ServerConfig::builder()
+        .http_session_idle_timeout(Duration::from_millis(200))
+        .build();
+    let (base_url, handle) = spawn_handler_with_config(CancellableHandler, config).await;
+    let client = Client::new();
+    let idle = initialize_session(&client, &base_url).await;
+    let listening = initialize_session(&client, &base_url).await;
+
+    // A client holding its GET stream open is in use, however quiet it is.
+    let stream = get_stream(&client, &base_url, &listening, None).await;
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let list = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
+    let response =
+        post_on_session(&client, &base_url, &idle, "application/json", list.clone()).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let response = post_on_session(&client, &base_url, &listening, "application/json", list).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    drop(stream);
+    handle.abort();
+}
+
+/// Without a cap a client could create sessions until the process ran out of
+/// memory. Past it, `initialize` is refused before the handler runs.
+#[tokio::test]
+async fn initialize_past_the_session_cap_is_refused_with_503() {
+    let config = ServerConfig::builder().max_http_sessions(2).build();
+    let (base_url, handle) = spawn_handler_with_config(TestHandler, config).await;
+    let client = Client::new();
+
+    initialize_session(&client, &base_url).await;
+    initialize_session(&client, &base_url).await;
+
+    let response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .json(&initialize_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    handle.abort();
+}
+
+/// Ending a session ends the work it started. DELETE used to drop the session's
+/// bookkeeping and leave its handlers running to completion, their responses
+/// addressed to nobody.
+#[tokio::test]
+async fn deleting_a_session_cancels_its_running_handlers() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let call = tokio::spawn({
+        let client = client.clone();
+        let base_url = base_url.clone();
+        let session_id = session_id.clone();
+        async move {
+            post_on_session(
+                &client,
+                &base_url,
+                &session_id,
+                "application/json, text/event-stream",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 42,
+                    "method": "tools/call",
+                    "params": { "name": "park", "arguments": {} }
+                }),
+            )
+            .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let deleted = client
+        .delete(format!("{}/mcp", base_url))
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let body: serde_json::Value = tokio::time::timeout(Duration::from_secs(5), call)
+        .await
+        .expect("the call should end with its session")
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        body["result"]["content"][0]["text"], "cancelled",
+        "the handler must observe cancellation when its session ends, got: {body}"
+    );
+
+    handle.abort();
+}
+
+fn behind_trusted_proxy() -> ServerConfigBuilder {
+    ServerConfig::builder().origin_validation(OriginValidationConfig {
+        trusted_proxies: vec!["127.0.0.1".to_string()],
+        ..OriginValidationConfig::default()
+    })
+}
+
+async fn initialize_via_proxy(
+    client: &Client,
+    base_url: &str,
+    origin: Option<&str>,
+) -> reqwest::Response {
+    let mut request = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("X-Forwarded-For", "203.0.113.5");
+    if let Some(origin) = origin {
+        request = request.header(header::ORIGIN, origin);
+    }
+    request.json(&initialize_request()).send().await.unwrap()
+}
+
+/// `trusted_proxies` never worked: the server hands the security layer
+/// lowercased header names, as every HTTP stack does, and the proxy headers
+/// were looked up in exact case. A request relayed for a remote client was
+/// judged by the proxy's loopback address instead — which, among other things,
+/// waved it through the missing-`Origin` check meant for remote callers.
+#[tokio::test]
+async fn a_client_behind_a_trusted_proxy_is_judged_by_its_own_address() {
+    let (base_url, handle) =
+        spawn_handler_with_config(TestHandler, behind_trusted_proxy().build()).await;
+    let client = Client::new();
+
+    let response = initialize_via_proxy(&client, &base_url, None).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "a remote client with no Origin is refused by default"
+    );
+
+    handle.abort();
+}
+
+/// Non-browser clients send no `Origin`, so a server reachable over the
+/// network refused every one of them unless `allow_any` switched validation
+/// off altogether. `allow_missing_origin` admits them and still refuses a bad
+/// `Origin` when one is present — §Security Warning item 1: "If the `Origin`
+/// header is present and invalid, servers MUST respond with HTTP 403".
+#[tokio::test]
+async fn allow_missing_origin_admits_non_browser_clients_but_not_bad_origins() {
+    let config = behind_trusted_proxy()
+        .allow_missing_origin(true)
+        .allow_origin("https://app.example")
+        .build();
+    let (base_url, handle) = spawn_handler_with_config(TestHandler, config).await;
+    let client = Client::new();
+
+    let response = initialize_via_proxy(&client, &base_url, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = initialize_via_proxy(&client, &base_url, Some("https://evil.example")).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = initialize_via_proxy(&client, &base_url, Some("https://app.example")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    handle.abort();
+}
+
+/// A browser client on an allowlisted origin could not talk to the server at
+/// all: no preflight was answered, so it could not send `Mcp-Session-Id`, and
+/// nothing exposed that header, so it could not read the one it was issued.
+#[tokio::test]
+async fn cors_admits_allowlisted_browsers_and_exposes_the_session_id() {
+    let config = ServerConfig::builder()
+        .allow_origin("https://app.example")
+        .cors(true)
+        .build();
+    let (base_url, handle) = spawn_handler_with_config(TestHandler, config).await;
+    let client = Client::new();
+
+    let preflight = client
+        .request(reqwest::Method::OPTIONS, format!("{}/mcp", base_url))
+        .header(header::ORIGIN, "https://app.example")
+        .header("Access-Control-Request-Method", "POST")
+        .header(
+            "Access-Control-Request-Headers",
+            "content-type, mcp-session-id, mcp-protocol-version, last-event-id",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(preflight.status().is_success(), "{}", preflight.status());
+    let headers = preflight.headers();
+    assert_eq!(
+        headers
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok()),
+        Some("https://app.example")
+    );
+    let allowed = headers
+        .get("access-control-allow-headers")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    for name in ["mcp-session-id", "mcp-protocol-version", "last-event-id"] {
+        assert!(
+            allowed.contains(name),
+            "{name} must be allowed, got {allowed:?}"
+        );
+    }
+
+    let response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header(header::ORIGIN, "https://app.example")
+        .json(&initialize_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let exposed = response
+        .headers()
+        .get("access-control-expose-headers")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    assert!(exposed.contains("mcp-session-id"), "got {exposed:?}");
+
+    // The same policy decides both: an origin the server refuses gets no
+    // grant from the preflight either.
+    let refused = client
+        .request(reqwest::Method::OPTIONS, format!("{}/mcp", base_url))
+        .header(header::ORIGIN, "https://evil.example")
+        .header("Access-Control-Request-Method", "POST")
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        refused
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none(),
+        "a refused origin must not be granted CORS access"
+    );
+
+    handle.abort();
+}
+
+/// MCP §Cancellation: a requestor that gives up SHOULD say so. A handler that
+/// stopped waiting on `ctx.sample()` used to leave the client prompting its
+/// user regardless, and the pending entry held one of the session's slots for
+/// good — after 64 of them the session could never sample again.
+#[tokio::test]
+async fn an_abandoned_server_request_is_withdrawn_with_notifications_cancelled() {
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let client = Client::new();
+    let session_id =
+        initialize_session_with_capabilities(&client, &base_url, json!({ "sampling": {} })).await;
+
+    let response = post_on_session(
+        &client,
+        &base_url,
+        &session_id,
+        "application/json, text/event-stream",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": { "name": "abandon_sample", "arguments": {} }
+        }),
+    )
+    .await;
+    let mut reader = sse_reader(response);
+
+    let request = next_sse_json(&mut reader).await;
+    assert_eq!(request["method"], "sampling/createMessage");
+    let request_id = request["id"].clone();
+
+    let cancelled = next_sse_json(&mut reader).await;
+    assert_eq!(cancelled["method"], "notifications/cancelled");
+    assert_eq!(
+        cancelled["params"]["requestId"], request_id,
+        "the withdrawal names the request, on the stream that carried it"
+    );
+
+    let answer = next_sse_json(&mut reader).await;
+    assert_eq!(answer["id"], 9);
+
+    // Withdrawn means forgotten: a late answer matches nothing.
+    let late = post_on_session(
+        &client,
+        &base_url,
+        &session_id,
+        "application/json, text/event-stream",
+        json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": { "role": "assistant", "content": { "type": "text", "text": "late" }, "model": "m" }
+        }),
+    )
+    .await;
+    assert_eq!(late.status(), StatusCode::BAD_REQUEST);
+
+    handle.abort();
+}
+
+/// §Sending Messages item 4: an accepted notification gets 202 and no body.
+/// A panicking notification hook used to produce a JSON-RPC error — a reply to
+/// a message that takes none.
+#[tokio::test]
+async fn a_panicking_notification_hook_still_answers_202() {
+    let (base_url, handle) =
+        spawn_handler_with_config(PanickingNotificationHandler, ServerConfig::default()).await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let response = post_on_session(
+        &client,
+        &base_url,
+        &session_id,
+        "application/json, text/event-stream",
+        json!({ "jsonrpc": "2.0", "method": "notifications/roots/list_changed" }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert!(response.text().await.unwrap().is_empty());
 
     handle.abort();
 }

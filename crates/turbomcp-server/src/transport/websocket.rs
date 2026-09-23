@@ -292,6 +292,7 @@ fn websocket_origin_config(config: Option<&ServerConfig>) -> OriginConfig {
         allowed_origins: config.origin_validation.allowed_origins.clone(),
         allow_localhost: config.origin_validation.allow_localhost,
         allow_any: config.origin_validation.allow_any,
+        allow_missing: config.origin_validation.allow_missing_origin,
     }
 }
 
@@ -744,6 +745,7 @@ mod tests {
                 allow_localhost: false,
                 allow_any: false,
                 trusted_proxies: Vec::new(),
+                ..OriginValidationConfig::default()
             })
             .build();
 
@@ -762,6 +764,7 @@ mod tests {
                 allow_localhost: false,
                 allow_any: false,
                 trusted_proxies: Vec::new(),
+                ..OriginValidationConfig::default()
             })
             .build();
 

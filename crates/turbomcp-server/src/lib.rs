@@ -119,9 +119,9 @@ pub use middleware::{McpMiddleware, MiddlewareStack, Next};
 pub use builder::{McpServerExt, ServerBuilder, Transport};
 pub use config::{
     CapabilityValidation, ClientCapabilities, ConfigValidationError, ConnectionCounter,
-    ConnectionGuard, ConnectionLimits, OriginValidationConfig, ProtocolConfig, ProtocolVersion,
-    RateLimitConfig, RateLimiter, RequiredCapabilities, SUPPORTED_PROTOCOL_VERSIONS, ServerConfig,
-    ServerConfigBuilder,
+    ConnectionGuard, ConnectionLimits, HttpSessionConfig, OriginValidationConfig, ProtocolConfig,
+    ProtocolVersion, RateLimitConfig, RateLimiter, RequiredCapabilities,
+    SUPPORTED_PROTOCOL_VERSIONS, ServerConfig, ServerConfigBuilder,
 };
 pub use context::{RequestContext, TransportType};
 pub use handler::McpHandlerExt;

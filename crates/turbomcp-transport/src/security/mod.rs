@@ -38,6 +38,7 @@
 //!         allowed_origins: vec!["https://app.example.com".to_string()].into_iter().collect(),
 //!         allow_localhost: false,
 //!         allow_any: false,
+//!         allow_missing: false,
 //!     },
 //!     AuthConfig {
 //!         require_auth: true,
@@ -100,7 +101,7 @@ pub mod validator;
 pub use auth::{AuthConfig, AuthMethod, validate_authentication};
 pub use builder::{EnhancedSecurityConfigBuilder, SecurityConfigBuilder};
 pub use errors::SecurityError;
-pub use origin::{OriginConfig, validate_origin};
+pub use origin::{OriginConfig, validate_origin, validate_origin_value};
 pub use rate_limit::{RateLimitConfig, RateLimiter, check_rate_limit};
 pub use session::{SecureSessionInfo, SessionSecurityConfig, SessionSecurityManager};
 pub use utils::{

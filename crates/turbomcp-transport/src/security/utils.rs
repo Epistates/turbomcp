@@ -80,9 +80,26 @@ pub fn extract_client_ip_with_trust(
     peer_ip
 }
 
+/// Get a header value case-insensitively (HTTP headers are case-insensitive
+/// per RFC 9110 §5.1).
+///
+/// `SecurityHeaders` is a plain map, so its keys are whatever the caller
+/// copied in. HTTP stacks normalise names to lowercase — `http::HeaderMap`
+/// always does — so an exact-case lookup of `X-Forwarded-For` finds nothing
+/// against a map built from one.
+pub(crate) fn get_header_case_insensitive<'a>(
+    headers: &'a SecurityHeaders,
+    name: &str,
+) -> Option<&'a String> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value)
+}
+
 fn extract_client_ip_from_proxy_headers(headers: &SecurityHeaders) -> Option<std::net::IpAddr> {
     // Check X-Forwarded-For header first (most common)
-    if let Some(forwarded) = headers.get("X-Forwarded-For")
+    if let Some(forwarded) = get_header_case_insensitive(headers, "X-Forwarded-For")
         && let Some(first_ip) = forwarded.split(',').next()
         && let Ok(ip) = first_ip.trim().parse()
     {
@@ -90,22 +107,22 @@ fn extract_client_ip_from_proxy_headers(headers: &SecurityHeaders) -> Option<std
     }
 
     // Check X-Real-IP header
-    if let Some(real_ip) = headers.get("X-Real-IP")
-        && let Ok(ip) = real_ip.parse()
+    if let Some(real_ip) = get_header_case_insensitive(headers, "X-Real-IP")
+        && let Ok(ip) = real_ip.trim().parse()
     {
         return Some(ip);
     }
 
     // Check CF-Connecting-IP (Cloudflare)
-    if let Some(cf_ip) = headers.get("CF-Connecting-IP")
-        && let Ok(ip) = cf_ip.parse()
+    if let Some(cf_ip) = get_header_case_insensitive(headers, "CF-Connecting-IP")
+        && let Ok(ip) = cf_ip.trim().parse()
     {
         return Some(ip);
     }
 
     // Check X-Client-IP
-    if let Some(client_ip) = headers.get("X-Client-IP")
-        && let Ok(ip) = client_ip.parse()
+    if let Some(client_ip) = get_header_case_insensitive(headers, "X-Client-IP")
+        && let Ok(ip) = client_ip.trim().parse()
     {
         return Some(ip);
     }
@@ -397,6 +414,31 @@ mod tests {
         // Test no headers
         headers.clear();
         assert!(extract_client_ip(&headers).is_none());
+    }
+
+    /// Header maps built from an HTTP stack arrive lowercased — `http::HeaderMap`
+    /// normalises every name — so the proxy headers must be found in any case.
+    /// An exact-case lookup made `trusted_proxies` a no-op for every server.
+    #[test]
+    fn proxy_headers_are_found_regardless_of_case() {
+        let peer: std::net::IpAddr = "10.0.0.5".parse().unwrap();
+        let trusted = vec!["10.0.0.0/8".to_string()];
+
+        for (name, value, expected) in [
+            ("x-forwarded-for", "203.0.113.7, 10.0.0.5", "203.0.113.7"),
+            ("X-FORWARDED-FOR", "203.0.113.8", "203.0.113.8"),
+            ("x-real-ip", "203.0.113.9", "203.0.113.9"),
+            ("cf-connecting-ip", "2001:db8::1", "2001:db8::1"),
+            ("x-client-ip", "203.0.113.10", "203.0.113.10"),
+        ] {
+            let mut headers = SecurityHeaders::new();
+            headers.insert(name.to_string(), value.to_string());
+            assert_eq!(
+                extract_client_ip_with_trust(&headers, peer, &trusted).to_string(),
+                expected,
+                "{name} must be honoured from a trusted proxy"
+            );
+        }
     }
 
     #[test]
