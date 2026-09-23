@@ -202,7 +202,7 @@ mod tcp_tests {
 
         assert!(caps.supports_bidirectional);
         assert!(caps.supports_streaming);
-        assert_eq!(caps.max_message_size, Some(1024 * 1024)); // 1MB per turbomcp_protocol::MAX_MESSAGE_SIZE
+        assert_eq!(caps.max_message_size, Some(10 * 1024 * 1024)); // the server's default
     }
 
     #[test]
