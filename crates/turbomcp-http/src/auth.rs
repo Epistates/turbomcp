@@ -120,8 +120,7 @@ fn find_bearer(value: &str) -> Option<usize> {
 fn auth_params(input: &str) -> Vec<(String, String)> {
     let mut params = Vec::new();
     let mut rest = input.trim_start();
-    loop {
-        let Some(eq) = rest.find('=') else { break };
+    while let Some(eq) = rest.find('=') {
         let name = rest[..eq].trim().trim_start_matches(',').trim();
         // A bare token here is the next challenge's scheme.
         if name.is_empty() || name.contains(' ') {
