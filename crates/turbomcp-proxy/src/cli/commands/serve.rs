@@ -19,9 +19,9 @@ use turbomcp_server::{McpServerExt, ServerConfig};
 
 use crate::cli::args::BackendArgs;
 use crate::error::{ProxyError, ProxyResult};
-use crate::proxy::backends::http::{HttpBackend, HttpBackendConfig};
-use crate::proxy::frontends::stdio::{StdioFrontend, StdioFrontendConfig};
-use crate::proxy::{BackendConfig, BackendConnector, BackendTransport, ProxyService};
+use crate::proxy::{
+    BackendConfig, BackendConnector, BackendTransport, ProxyService, StdioFrontend,
+};
 
 /// Serve a proxy server to bridge MCP transports
 ///
@@ -541,48 +541,22 @@ impl ServeCommand {
         Ok(())
     }
 
-    /// Execute with STDIO frontend (Phase 3: HTTP → STDIO)
+    /// Execute with STDIO frontend
+    ///
+    /// Serves any backend (a Streamable HTTP server is the usual case) to a
+    /// local client on stdin/stdout, through the same `ProxyService` and
+    /// server stack as the HTTP frontend.
     async fn execute_stdio_frontend(&self) -> ProxyResult<()> {
-        use crate::cli::args::BackendType;
+        let backend = BackendConnector::new(self.create_backend_config()?).await?;
+        let spec = backend.introspect().await?;
+        let service = ProxyService::new(backend, spec);
 
-        // Only HTTP backend is supported for STDIO frontend
-        if self.backend.backend_type() != Some(BackendType::Http) {
-            return Err(ProxyError::configuration(
-                "STDIO frontend currently only supports HTTP backend".to_string(),
-            ));
-        }
+        let config = ServerConfig::builder()
+            .max_message_size(crate::runtime::MAX_REQUEST_SIZE)
+            .build();
 
-        let url = self
-            .backend
-            .http
-            .as_ref()
-            .ok_or_else(|| ProxyError::configuration("HTTP URL not specified".to_string()))?;
-
-        info!("Creating HTTP backend client for URL: {}", url);
-
-        // Create HTTP backend config
-        let http_config = HttpBackendConfig {
-            url: url.clone(),
-            auth_token: self.auth_token.clone().map(SecretString::from),
-            timeout_secs: Some(30),
-            client_name: self.client_name.clone(),
-            client_version: self.client_version.clone(),
-        };
-
-        // Create HTTP backend
-        let http_backend = HttpBackend::new(http_config).await?;
-        info!("HTTP backend connected successfully");
-
-        // Create STDIO frontend
-        let stdio_frontend = StdioFrontend::new(http_backend, StdioFrontendConfig::default());
-
-        info!("Starting STDIO frontend...");
-        info!("Backend: HTTP ({})", url);
         info!("Frontend: STDIO (stdin/stdout)");
-        info!("Reading JSON-RPC requests from stdin...");
-
-        // Run STDIO event loop
-        stdio_frontend.run().await?;
+        StdioFrontend::new(service, config).run().await?;
 
         info!("STDIO frontend shut down cleanly");
         Ok(())
@@ -616,7 +590,10 @@ impl ServeCommand {
                 BackendTransport::Http {
                     url: url.clone(),
                     endpoint_path: self.backend.endpoint_path.clone(),
-                    auth_token: None,
+                    // `--auth-token` used to reach only the stdio frontend's
+                    // separate HTTP client; the HTTP frontend connected to an
+                    // authenticated upstream with no credentials at all.
+                    auth_token: self.auth_token.clone().map(SecretString::from),
                 }
             }
             Some(BackendType::Tcp) => {

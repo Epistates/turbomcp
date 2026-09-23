@@ -196,7 +196,7 @@ impl OutputFormatter for HumanFormatter {
                 }
 
                 // Show input schema summary
-                if let Some(ref props) = tool.input_schema.properties {
+                if let Some(props) = tool.input_schema.properties_as_object() {
                     let keys = props
                         .keys()
                         .map(String::as_str)
@@ -285,9 +285,9 @@ impl OutputFormatter for HumanFormatter {
                 if let Some(ref desc) = prompt.description {
                     writeln!(writer, "    {}", desc.dimmed())?;
                 }
-                if !prompt.arguments.is_empty() {
-                    let args: Vec<String> = prompt
-                        .arguments
+                let arguments = prompt.arguments.as_deref().unwrap_or_default();
+                if !arguments.is_empty() {
+                    let args: Vec<String> = arguments
                         .iter()
                         .map(|a| {
                             if a.required == Some(true) {

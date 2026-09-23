@@ -33,16 +33,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, error, trace, warn};
-use turbomcp_protocol::jsonrpc::{
-    JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload,
-    ResponseId,
-};
-use turbomcp_protocol::types::RequestId;
-use turbomcp_protocol::types::{CallToolRequest, GetPromptRequest, ReadResourceRequest};
-use turbomcp_protocol::{Error as McpError, Result as McpResult};
+use tracing::{debug, warn};
 
 use crate::config::{BackendConfig, BackendValidationConfig, FrontendType, SsrfProtection};
 use crate::error::{ProxyError, ProxyResult};
@@ -1099,299 +1090,25 @@ impl RuntimeProxy {
         Ok(())
     }
 
-    /// Create error response for oversized requests
-    fn create_size_limit_error(n: usize) -> JsonRpcResponse {
-        JsonRpcResponse {
-            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            payload: JsonRpcResponsePayload::Error {
-                error: JsonRpcError {
-                    code: JsonRpcErrorCode::InvalidRequest.code(),
-                    message: format!("Request too large: {n} bytes"),
-                    data: None,
-                },
-            },
-            id: ResponseId::null(),
-        }
-    }
-
-    /// Create response for a routed request
-    fn create_response(
-        result: Result<Result<Value, McpError>, tokio::time::error::Elapsed>,
-        request_id: RequestId,
-        timeout_ms: u64,
-    ) -> JsonRpcResponse {
-        match result {
-            Ok(Ok(value)) => JsonRpcResponse::success(value, request_id),
-            Ok(Err(mcp_error)) => JsonRpcResponse::error_response(
-                JsonRpcError {
-                    code: JsonRpcErrorCode::InternalError.code(),
-                    message: mcp_error.to_string(),
-                    data: None,
-                },
-                request_id,
-            ),
-            Err(_) => JsonRpcResponse::error_response(
-                JsonRpcError {
-                    code: JsonRpcErrorCode::InternalError.code(),
-                    message: format!("Request timeout after {timeout_ms}ms"),
-                    data: None,
-                },
-                request_id,
-            ),
-        }
-    }
-
-    /// Write a response to stdout and return success/failure indicator
-    async fn write_response_to_stdout(
-        stdout: &mut tokio::io::Stdout,
-        response: &JsonRpcResponse,
-    ) -> Result<(), String> {
-        let json = serde_json::to_string(response)
-            .map_err(|e| format!("Failed to serialize response: {e}"))?;
-
-        stdout
-            .write_all(json.as_bytes())
-            .await
-            .map_err(|e| format!("Failed to write response: {e}"))?;
-
-        stdout
-            .write_all(b"\n")
-            .await
-            .map_err(|e| format!("Failed to write newline: {e}"))?;
-
-        stdout
-            .flush()
-            .await
-            .map_err(|e| format!("Failed to flush stdout: {e}"))?;
-
-        trace!("STDIO: Sent response: {json}");
-        Ok(())
-    }
-
-    /// Process a single request line from stdin
-    async fn process_request_line(
-        &mut self,
-        line: &str,
-        stdout: &mut tokio::io::Stdout,
-    ) -> Result<(), String> {
-        let request: JsonRpcRequest = serde_json::from_str(line)
-            .map_err(|e| format!("STDIO: Failed to parse JSON-RPC: {e}"))?;
-
-        let request_id = request.id.clone();
-
-        // Route request to backend with timeout
-        let timeout = Duration::from_millis(self.timeout_ms);
-        let result = tokio::time::timeout(timeout, self.route_request(&request)).await;
-
-        // Create and send response
-        let response = Self::create_response(result, request_id, self.timeout_ms);
-        Self::write_response_to_stdout(stdout, &response).await?;
-
-        // Update metrics
-        if let Some(ref metrics) = self.metrics {
-            metrics.inc_requests_forwarded();
-        }
-
-        Ok(())
-    }
-
-    /// Run STDIO frontend
+    /// Run STDIO frontend using `ProxyService` and the server's stdio transport
+    ///
+    /// Same stack as the HTTP and WebSocket frontends: the handshake, `ping`,
+    /// notifications, and framing are `turbomcp-server`'s. This used to be a
+    /// hand-written read-dispatch-write loop with no `initialize` arm at all,
+    /// so no MCP client could ever complete a handshake against it.
     async fn run_stdio(&mut self) -> ProxyResult<()> {
         debug!("Starting STDIO frontend");
 
-        let stdin = tokio::io::stdin();
-        let mut stdout = tokio::io::stdout();
-        let mut reader = BufReader::new(stdin);
-        let mut line = String::new();
+        let spec = self.backend.introspect().await?;
+        let service = ProxyService::new(self.backend.clone(), spec)
+            .with_request_timeout(Duration::from_millis(self.timeout_ms));
+        let server_config = turbomcp_server::ServerConfig::builder()
+            .max_message_size(self.request_size_limit)
+            .build();
 
-        loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => {
-                    debug!("STDIO: EOF reached, shutting down");
-                    break;
-                }
-                Ok(n) => {
-                    // Check size limit
-                    if n > self.request_size_limit {
-                        error!(
-                            "STDIO: Request size {} exceeds limit {}",
-                            n, self.request_size_limit
-                        );
-
-                        let error_response = Self::create_size_limit_error(n);
-                        if let Ok(json) = serde_json::to_string(&error_response) {
-                            let _ = stdout.write_all(json.as_bytes()).await;
-                            let _ = stdout.write_all(b"\n").await;
-                            let _ = stdout.flush().await;
-                        }
-                        continue;
-                    }
-
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-
-                    trace!("STDIO: Received request: {}", trimmed);
-
-                    // Process request and handle errors
-                    match self.process_request_line(trimmed, &mut stdout).await {
-                        Ok(()) => {}
-                        Err(e)
-                            if e.contains("Failed to write") || e.contains("Failed to flush") =>
-                        {
-                            error!("STDIO: {e}");
-                            break;
-                        }
-                        Err(e) => {
-                            error!("{e}");
-                            // Send parse error response for invalid JSON-RPC
-                            let error_response = JsonRpcResponse::parse_error(None);
-                            if let Ok(json) = serde_json::to_string(&error_response) {
-                                let _ = stdout.write_all(json.as_bytes()).await;
-                                let _ = stdout.write_all(b"\n").await;
-                                let _ = stdout.flush().await;
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("STDIO: Read error: {}", e);
-                    break;
-                }
-            }
-        }
-
-        debug!("STDIO frontend shut down");
-        Ok(())
-    }
-
-    /// Route a JSON-RPC request to the backend
-    async fn route_request(&mut self, request: &JsonRpcRequest) -> McpResult<Value> {
-        trace!("Routing request: method={}", request.method);
-
-        match request.method.as_str() {
-            // Tools
-            "tools/list" => {
-                debug!("Forwarding tools/list to backend");
-                let tools = self
-                    .backend
-                    .list_tools()
-                    .await
-                    .map_err(|e| McpError::internal(e.to_string()))?;
-
-                Ok(serde_json::json!({
-                    "tools": tools
-                }))
-            }
-
-            "tools/call" => {
-                debug!("Forwarding tools/call to backend");
-                let params = request.params.as_ref().ok_or_else(|| {
-                    McpError::invalid_params("Missing params for tools/call".to_string())
-                })?;
-
-                let call_request: CallToolRequest = serde_json::from_value(params.clone())
-                    .map_err(|e| McpError::invalid_params(e.to_string()))?;
-
-                let result = self
-                    .backend
-                    .call_tool(&call_request.name, call_request.arguments)
-                    .await
-                    .map_err(|e| McpError::internal(e.to_string()))?;
-
-                Ok(serde_json::to_value(result).map_err(|e| McpError::internal(e.to_string()))?)
-            }
-
-            // Resources
-            "resources/list" => {
-                debug!("Forwarding resources/list to backend");
-                let resources = self
-                    .backend
-                    .list_resources()
-                    .await
-                    .map_err(|e| McpError::internal(e.to_string()))?;
-
-                Ok(serde_json::json!({
-                    "resources": resources
-                }))
-            }
-
-            "resources/templates/list" => {
-                debug!("Forwarding resources/templates/list to backend");
-                let resource_templates = self
-                    .backend
-                    .list_resource_templates()
-                    .await
-                    .map_err(|e| McpError::internal(e.to_string()))?;
-
-                Ok(serde_json::json!({
-                    "resourceTemplates": resource_templates
-                }))
-            }
-
-            "resources/read" => {
-                debug!("Forwarding resources/read to backend");
-                let params = request.params.as_ref().ok_or_else(|| {
-                    McpError::invalid_params("Missing params for resources/read".to_string())
-                })?;
-
-                let read_request: ReadResourceRequest = serde_json::from_value(params.clone())
-                    .map_err(|e| McpError::invalid_params(e.to_string()))?;
-
-                let contents = self
-                    .backend
-                    .read_resource(&read_request.uri)
-                    .await
-                    .map_err(|e| McpError::internal(e.to_string()))?;
-
-                // Already a `ReadResourceResult` (`{ "contents": [...] }`) —
-                // re-wrapping made `contents` an object where the spec
-                // requires an array. See the matching note in proxy/service.rs.
-                serde_json::to_value(contents).map_err(|e| {
-                    McpError::internal(format!("Failed to serialize resource contents: {e}"))
-                })
-            }
-
-            // Prompts
-            "prompts/list" => {
-                debug!("Forwarding prompts/list to backend");
-                let prompts = self
-                    .backend
-                    .list_prompts()
-                    .await
-                    .map_err(|e| McpError::internal(e.to_string()))?;
-
-                Ok(serde_json::json!({
-                    "prompts": prompts
-                }))
-            }
-
-            "prompts/get" => {
-                debug!("Forwarding prompts/get to backend");
-                let params = request.params.as_ref().ok_or_else(|| {
-                    McpError::invalid_params("Missing params for prompts/get".to_string())
-                })?;
-
-                let get_request: GetPromptRequest = serde_json::from_value(params.clone())
-                    .map_err(|e| McpError::invalid_params(e.to_string()))?;
-
-                let result = self
-                    .backend
-                    .get_prompt(&get_request.name, get_request.arguments)
-                    .await
-                    .map_err(|e| McpError::internal(e.to_string()))?;
-
-                Ok(serde_json::to_value(result).map_err(|e| McpError::internal(e.to_string()))?)
-            }
-
-            // Unknown method
-            method => {
-                error!("Unknown method: {}", method);
-                Err(McpError::internal(format!("Method not found: {method}")))
-            }
-        }
+        crate::proxy::StdioFrontend::new(service, server_config)
+            .run()
+            .await
     }
 }
 

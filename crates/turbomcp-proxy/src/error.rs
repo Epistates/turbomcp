@@ -265,6 +265,7 @@ impl ProxyError {
     #[must_use]
     pub fn upstream_jsonrpc_code(&self) -> Option<i32> {
         match self {
+            Self::Protocol(err) => Some(err.jsonrpc_error_code()),
             Self::Backend {
                 upstream_jsonrpc_code,
                 ..

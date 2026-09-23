@@ -18,16 +18,16 @@
 //! For Unix socket:
 //!   cargo run --example schema_export -- --backend unix --unix /tmp/turbomcp-demo.sock
 
-use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 
 use serde_json::json;
-use turbomcp_proxy::MCP_PROTOCOL_VERSION;
-use turbomcp_proxy::introspection::{
-    ResourceSpec, ResourcesCapability, ServerCapabilities, ServerInfo, ServerSpec, ToolInputSchema,
-    ToolSpec, ToolsCapability,
+use turbomcp_protocol::types::{
+    Implementation, Resource, ResourcesCapabilities, ServerCapabilities, Tool, ToolInputSchema,
+    ToolsCapabilities,
 };
+use turbomcp_proxy::MCP_PROTOCOL_VERSION;
+use turbomcp_proxy::introspection::ServerSpec;
 use turbomcp_proxy::proxy::{BackendConfig, BackendConnector, BackendTransport};
 
 enum ExampleBackend {
@@ -40,6 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing for logging
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
+        .with_writer(std::io::stderr)
         .init();
 
     println!("🚀 MCP Schema Export Example");
@@ -154,71 +155,45 @@ fn invalid_input(message: impl Into<String>) -> Box<dyn Error> {
 }
 
 fn mock_spec() -> ServerSpec {
-    let echo_properties = HashMap::from([(
-        "message".to_string(),
-        json!({
-            "type": "string",
-            "description": "Message to echo back"
-        }),
-    )]);
-    let add_properties = HashMap::from([
-        ("a".to_string(), json!({"type": "number"})),
-        ("b".to_string(), json!({"type": "number"})),
-    ]);
+    let echo_schema = ToolInputSchema::from_value(json!({
+        "type": "object",
+        "properties": {
+            "message": { "type": "string", "description": "Message to echo back" }
+        },
+        "required": ["message"]
+    }));
+    let add_schema = ToolInputSchema::from_value(json!({
+        "type": "object",
+        "properties": { "a": { "type": "number" }, "b": { "type": "number" } },
+        "required": ["a", "b"]
+    }));
 
     ServerSpec {
-        server_info: ServerInfo {
-            name: "demo-mcp-server".to_string(),
-            version: "1.0.0".to_string(),
+        server_info: Implementation {
             title: Some("Demo MCP Server".to_string()),
+            ..Implementation::new("demo-mcp-server", "1.0.0")
         },
         protocol_version: MCP_PROTOCOL_VERSION.to_string(),
         capabilities: ServerCapabilities {
-            tools: Some(ToolsCapability {
-                list_changed: Some(false),
-            }),
-            resources: Some(ResourcesCapability {
-                subscribe: Some(false),
-                list_changed: Some(false),
-            }),
+            tools: Some(ToolsCapabilities::default()),
+            resources: Some(ResourcesCapabilities::default()),
             ..Default::default()
         },
         tools: vec![
-            ToolSpec {
-                name: "echo".to_string(),
+            Tool {
                 title: Some("Echo".to_string()),
-                description: Some("Echo a message back to the caller".to_string()),
-                input_schema: ToolInputSchema {
-                    schema_type: "object".to_string(),
-                    properties: Some(echo_properties),
-                    required: Some(vec!["message".to_string()]),
-                    additional: HashMap::new(),
-                },
-                output_schema: None,
-                annotations: None,
+                ..Tool::new("echo", "Echo a message back to the caller").with_schema(echo_schema)
             },
-            ToolSpec {
-                name: "add".to_string(),
+            Tool {
                 title: Some("Add".to_string()),
-                description: Some("Add two numbers".to_string()),
-                input_schema: ToolInputSchema {
-                    schema_type: "object".to_string(),
-                    properties: Some(add_properties),
-                    required: Some(vec!["a".to_string(), "b".to_string()]),
-                    additional: HashMap::new(),
-                },
-                output_schema: None,
-                annotations: None,
+                ..Tool::new("add", "Add two numbers").with_schema(add_schema)
             },
         ],
-        resources: vec![ResourceSpec {
-            uri: "demo://status".to_string(),
-            name: "status".to_string(),
+        resources: vec![Resource {
             title: Some("Status".to_string()),
-            description: Some("Current demo server status".to_string()),
-            mime_type: Some("application/json".to_string()),
-            size: None,
-            annotations: None,
+            ..Resource::new("demo://status", "status")
+                .with_description("Current demo server status")
+                .with_mime_type("application/json")
         }],
         resource_templates: vec![],
         prompts: vec![],

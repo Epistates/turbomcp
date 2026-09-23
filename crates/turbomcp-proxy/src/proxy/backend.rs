@@ -27,11 +27,7 @@ use turbomcp_transport::{
 };
 
 use crate::error::{ProxyError, ProxyResult};
-use crate::introspection::{
-    EmptyCapability, LoggingCapability, PromptSpec, PromptsCapability, ResourceSpec,
-    ResourcesCapability, ServerCapabilities, ServerInfo, ServerSpec, ToolAnnotations,
-    ToolInputSchema, ToolOutputSchema, ToolSpec, ToolsCapability,
-};
+use crate::introspection::ServerSpec;
 
 /// Type alias for async result futures used in `ProxyClient` trait (v3.0: `McpError` not boxed)
 type ClientFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>;
@@ -90,20 +86,11 @@ impl<T: Transport + 'static> ProxyClient for ConcreteProxyClient<T> {
 
     fn list_resource_templates(&self) -> ClientFuture<'_, Vec<ResourceTemplate>> {
         let client = self.client.clone();
-        Box::pin(async move {
-            let mut all_templates = Vec::new();
-            let mut cursor = None;
-            for _ in 0..1000 {
-                let result = client.list_resource_templates_paginated(cursor).await?;
-                let page_empty = result.resource_templates.is_empty();
-                all_templates.extend(result.resource_templates);
-                match result.next_cursor {
-                    Some(next_cursor) if !page_empty => cursor = Some(next_cursor),
-                    _ => break,
-                }
-            }
-            Ok(all_templates)
-        })
+        // The client's own walk stops only when `nextCursor` is absent. The
+        // loop that used to live here also stopped on an empty page, which the
+        // spec allows mid-list (a server may filter a page down to nothing),
+        // and so silently truncated the catalogue.
+        Box::pin(async move { client.list_resource_templates().await })
     }
 
     fn list_prompts(&self) -> ClientFuture<'_, Vec<Prompt>> {
@@ -517,131 +504,22 @@ impl BackendConnector {
             Vec::new()
         };
 
-        // Use the real InitializeResult captured at connect time.
-        let server_info = ServerInfo {
-            name: self.init_result.server_info.name.clone(),
-            version: self.init_result.server_info.version.clone(),
-            title: self.init_result.server_info.title.clone(),
-        };
-
+        // Everything is carried as the protocol's own types, so nothing the
+        // upstream declared (icons, `_meta`, `execution`, the server's
+        // description) is lost on the way to the frontend.
         Ok(ServerSpec {
-            server_info,
+            server_info: self.init_result.server_info.clone(),
             protocol_version: self.init_result.protocol_version.clone(),
-            capabilities: Self::convert_capabilities(&self.init_result.server_capabilities),
-            tools: Self::convert_tools(tools),
-            resources: Self::convert_resources(resources),
-            resource_templates: Self::convert_resource_templates(resource_templates),
-            prompts: Self::convert_prompts(prompts),
+            capabilities: self.init_result.server_capabilities.clone(),
+            tools,
+            resources,
+            resource_templates,
+            prompts,
             // The upstream's usage guidance is written for the model, so it has
             // to survive the hop. Dropping it made a proxied server behave
             // worse than the same server reached directly.
             instructions: self.init_result.instructions.clone(),
         })
-    }
-
-    /// Convert `turbomcp_protocol::types::ServerCapabilities` (from upstream
-    /// `InitializeResult`) into the proxy's `spec::ServerCapabilities` shape.
-    /// Mirrors the policy in `introspection::introspector::extract_capabilities`.
-    fn convert_capabilities(
-        caps: &turbomcp_protocol::types::ServerCapabilities,
-    ) -> ServerCapabilities {
-        ServerCapabilities {
-            logging: caps.logging.as_ref().map(|_| LoggingCapability {}),
-            completions: caps.completions.as_ref().map(|_| EmptyCapability {}),
-            prompts: caps.prompts.as_ref().map(|p| PromptsCapability {
-                list_changed: p.list_changed,
-            }),
-            resources: caps.resources.as_ref().map(|r| ResourcesCapability {
-                subscribe: r.subscribe,
-                list_changed: r.list_changed,
-            }),
-            tools: caps.tools.as_ref().map(|t| ToolsCapability {
-                list_changed: t.list_changed,
-            }),
-            experimental: caps.experimental.clone(),
-        }
-    }
-
-    fn convert_tools(tools: Vec<Tool>) -> Vec<ToolSpec> {
-        tools
-            .into_iter()
-            .map(|t| ToolSpec {
-                name: t.name,
-                title: t.title,
-                description: t.description,
-                input_schema: convert_input_schema(t.input_schema),
-                output_schema: t.output_schema.map(convert_output_schema),
-                annotations: t.annotations.map(|a| ToolAnnotations {
-                    title: a.title,
-                    read_only_hint: a.read_only_hint,
-                    destructive_hint: a.destructive_hint,
-                    idempotent_hint: a.idempotent_hint,
-                    open_world_hint: a.open_world_hint,
-                }),
-            })
-            .collect()
-    }
-
-    fn convert_resources(resources: Vec<Resource>) -> Vec<ResourceSpec> {
-        resources
-            .into_iter()
-            .map(|r| ResourceSpec {
-                uri: r.uri.clone(),
-                name: r.name,
-                title: r.title,
-                description: r.description,
-                mime_type: r.mime_type,
-                size: r.size,
-                annotations: r.annotations.map(|ann| crate::introspection::Annotations {
-                    fields: serde_json::from_value(serde_json::to_value(ann).unwrap_or_default())
-                        .unwrap_or_default(),
-                }),
-            })
-            .collect()
-    }
-
-    fn convert_resource_templates(
-        templates: Vec<ResourceTemplate>,
-    ) -> Vec<crate::introspection::ResourceTemplateSpec> {
-        templates
-            .into_iter()
-            .map(|t| crate::introspection::ResourceTemplateSpec {
-                uri_template: t.uri_template,
-                name: t.name,
-                title: t.title,
-                description: t.description,
-                mime_type: t.mime_type,
-                annotations: t.annotations.map(|ann| crate::introspection::Annotations {
-                    fields: serde_json::from_value(serde_json::to_value(ann).unwrap_or_default())
-                        .unwrap_or_default(),
-                }),
-            })
-            .collect()
-    }
-
-    fn convert_prompts(prompts: Vec<Prompt>) -> Vec<PromptSpec> {
-        prompts
-            .into_iter()
-            .map(|p| {
-                let arguments = p
-                    .arguments
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|a| crate::introspection::PromptArgument {
-                        name: a.name,
-                        title: None,
-                        description: a.description,
-                        required: a.required,
-                    })
-                    .collect();
-                PromptSpec {
-                    name: p.name,
-                    title: p.title,
-                    description: p.description,
-                    arguments,
-                }
-            })
-            .collect()
     }
 
     /// Get cached server spec
@@ -651,6 +529,12 @@ impl BackendConnector {
     }
 
     /// Call a tool on the backend
+    ///
+    /// This and the other forwarding methods return an upstream JSON-RPC
+    /// error as-is ([`ProxyError::Protocol`]): kind, message, and `data`.
+    /// Rewrapping it in a proxy message kept the code but lost `data`, and
+    /// some errors are nothing without it: `-32042` carries the URLs the user
+    /// has to visit in `data.elicitations`.
     ///
     /// # Errors
     ///
@@ -662,9 +546,10 @@ impl BackendConnector {
     ) -> ProxyResult<Value> {
         debug!("Calling backend tool: {}", name);
 
-        self.client.call_tool(name, arguments).await.map_err(|e| {
-            ProxyError::backend_with_code(format!("Tool call failed: {e}"), e.jsonrpc_error_code())
-        })
+        self.client
+            .call_tool(name, arguments)
+            .await
+            .map_err(ProxyError::from)
     }
 
     /// List tools from the backend
@@ -673,12 +558,7 @@ impl BackendConnector {
     ///
     /// Returns `ProxyError` if listing tools fails.
     pub async fn list_tools(&self) -> ProxyResult<Vec<Tool>> {
-        self.client.list_tools().await.map_err(|e| {
-            ProxyError::backend_with_code(
-                format!("Failed to list tools: {e}"),
-                e.jsonrpc_error_code(),
-            )
-        })
+        self.client.list_tools().await.map_err(ProxyError::from)
     }
 
     /// List resources from the backend
@@ -687,12 +567,7 @@ impl BackendConnector {
     ///
     /// Returns `ProxyError` if listing resources fails.
     pub async fn list_resources(&self) -> ProxyResult<Vec<Resource>> {
-        self.client.list_resources().await.map_err(|e| {
-            ProxyError::backend_with_code(
-                format!("Failed to list resources: {e}"),
-                e.jsonrpc_error_code(),
-            )
-        })
+        self.client.list_resources().await.map_err(ProxyError::from)
     }
 
     /// List resource templates from the backend
@@ -701,12 +576,10 @@ impl BackendConnector {
     ///
     /// Returns `ProxyError` if listing resource templates fails.
     pub async fn list_resource_templates(&self) -> ProxyResult<Vec<ResourceTemplate>> {
-        self.client.list_resource_templates().await.map_err(|e| {
-            ProxyError::backend_with_code(
-                format!("Failed to list resource templates: {e}"),
-                e.jsonrpc_error_code(),
-            )
-        })
+        self.client
+            .list_resource_templates()
+            .await
+            .map_err(ProxyError::from)
     }
 
     /// Read a resource from the backend
@@ -715,12 +588,10 @@ impl BackendConnector {
     ///
     /// Returns `ProxyError` if reading the resource fails or the resource is not found.
     pub async fn read_resource(&self, uri: &str) -> ProxyResult<ReadResourceResult> {
-        self.client.read_resource(uri).await.map_err(|e| {
-            ProxyError::backend_with_code(
-                format!("Failed to read resource: {e}"),
-                e.jsonrpc_error_code(),
-            )
-        })
+        self.client
+            .read_resource(uri)
+            .await
+            .map_err(ProxyError::from)
     }
 
     /// List prompts from the backend
@@ -729,12 +600,7 @@ impl BackendConnector {
     ///
     /// Returns `ProxyError` if listing prompts fails.
     pub async fn list_prompts(&self) -> ProxyResult<Vec<Prompt>> {
-        self.client.list_prompts().await.map_err(|e| {
-            ProxyError::backend_with_code(
-                format!("Failed to list prompts: {e}"),
-                e.jsonrpc_error_code(),
-            )
-        })
+        self.client.list_prompts().await.map_err(ProxyError::from)
     }
 
     /// Get a prompt from the backend
@@ -747,12 +613,10 @@ impl BackendConnector {
         name: &str,
         arguments: Option<HashMap<String, Value>>,
     ) -> ProxyResult<turbomcp_protocol::types::GetPromptResult> {
-        self.client.get_prompt(name, arguments).await.map_err(|e| {
-            ProxyError::backend_with_code(
-                format!("Failed to get prompt: {e}"),
-                e.jsonrpc_error_code(),
-            )
-        })
+        self.client
+            .get_prompt(name, arguments)
+            .await
+            .map_err(ProxyError::from)
     }
 }
 
@@ -763,6 +627,8 @@ struct StaticProxyClient {
     resources: Vec<Resource>,
     resource_templates: Vec<ResourceTemplate>,
     prompts: Vec<Prompt>,
+    /// What every `tools/call` fails with; method-not-found when unset.
+    call_error: Option<Error>,
 }
 
 #[cfg(test)]
@@ -792,7 +658,11 @@ impl ProxyClient for StaticProxyClient {
         _name: &str,
         _arguments: Option<HashMap<String, Value>>,
     ) -> ClientFuture<'_, Value> {
-        Box::pin(async { Err(Error::method_not_found("test backend has no tools")) })
+        let error = self
+            .call_error
+            .clone()
+            .unwrap_or_else(|| Error::method_not_found("test backend has no tools"));
+        Box::pin(async move { Err(error) })
     }
 
     fn read_resource(&self, _uri: &str) -> ClientFuture<'_, ReadResourceResult> {
@@ -816,12 +686,39 @@ impl BackendConnector {
         resource_templates: Vec<ResourceTemplate>,
         prompts: Vec<Prompt>,
     ) -> Self {
-        let client = StaticProxyClient {
+        Self::from_static_client_for_test(StaticProxyClient {
             tools,
             resources,
             resource_templates,
             prompts,
-        };
+            call_error: None,
+        })
+    }
+
+    /// A backend declaring one tool, `name`, whose every call fails with
+    /// `error`, as an upstream JSON-RPC error would arrive.
+    pub(crate) fn failing_tool_calls_for_test(name: &str, error: Error) -> Self {
+        Self::from_static_client_for_test(StaticProxyClient {
+            tools: vec![Tool {
+                name: name.to_string(),
+                ..Default::default()
+            }],
+            call_error: Some(error),
+            ..Default::default()
+        })
+    }
+
+    /// Replace the upstream's `serverInfo` as captured at connect time.
+    pub(crate) fn set_server_info_for_test(
+        &mut self,
+        server_info: turbomcp_protocol::types::Implementation,
+    ) {
+        let mut init_result = (*self.init_result).clone();
+        init_result.server_info = server_info;
+        self.init_result = Arc::new(init_result);
+    }
+
+    fn from_static_client_for_test(client: StaticProxyClient) -> Self {
         Self {
             client: Arc::new(client),
             config: Arc::new(BackendConfig {
@@ -851,58 +748,6 @@ impl BackendConnector {
                 turbomcp_protocol::PROTOCOL_VERSION,
             )),
         }
-    }
-}
-
-fn convert_input_schema(schema: turbomcp_protocol::types::ToolInputSchema) -> ToolInputSchema {
-    let schema_type = schema
-        .schema_type
-        .as_ref()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "object".to_string());
-    let properties = schema.properties_as_object().map(|obj| {
-        obj.iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect::<std::collections::HashMap<_, _>>()
-    });
-    let mut additional = HashMap::new();
-    if let Some(additional_props) = schema.additional_properties {
-        additional.insert("additionalProperties".to_string(), additional_props);
-    }
-    additional.extend(schema.extra_keywords);
-
-    ToolInputSchema {
-        schema_type,
-        properties,
-        required: schema.required,
-        additional,
-    }
-}
-
-fn convert_output_schema(schema: turbomcp_protocol::types::ToolOutputSchema) -> ToolOutputSchema {
-    let mut additional = HashMap::new();
-    if let Some(additional_props) = schema.additional_properties {
-        additional.insert("additionalProperties".to_string(), additional_props);
-    }
-    additional.extend(schema.extra_keywords);
-    let schema_type = schema
-        .schema_type
-        .as_ref()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "object".to_string());
-    let properties = schema.properties.and_then(|props| {
-        props.as_object().map(|obj| {
-            obj.iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect::<std::collections::HashMap<_, _>>()
-        })
-    });
-
-    ToolOutputSchema {
-        schema_type,
-        properties,
-        required: schema.required,
-        additional,
     }
 }
 

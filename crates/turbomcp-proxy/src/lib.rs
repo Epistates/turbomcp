@@ -85,9 +85,7 @@ pub mod prelude {
     pub use crate::error::{ProxyError, ProxyResult};
 
     #[cfg(feature = "introspection")]
-    pub use crate::introspection::{
-        McpBackend, McpIntrospector, PromptSpec, ResourceSpec, ServerSpec, StdioBackend, ToolSpec,
-    };
+    pub use crate::introspection::{McpBackend, McpIntrospector, ServerSpec, StdioBackend};
 
     #[cfg(feature = "runtime")]
     pub use crate::runtime::{RuntimeProxy, RuntimeProxyBuilder};
@@ -102,13 +100,16 @@ pub mod prelude {
     pub use crate::adapters::graphql::{GraphQLAdapter, GraphQLAdapterConfig};
 
     // Proxy components
-    pub use crate::proxy::{
-        AtomicMetrics, BackendConnector, BackendTransport, IdTranslator, ProxyMetrics, ProxyService,
-    };
+    pub use crate::proxy::{AtomicMetrics, IdTranslator, ProxyMetrics};
+    #[cfg(feature = "introspection")]
+    pub use crate::proxy::{BackendConnector, BackendTransport};
+    #[cfg(feature = "runtime")]
+    pub use crate::proxy::{ProxyService, StdioFrontend};
 
     // Frontend transports
+    #[cfg(feature = "introspection")]
     pub use crate::proxy::frontends::{TcpFrontend, TcpFrontendConfig};
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "introspection"))]
     pub use crate::proxy::frontends::{UnixFrontend, UnixFrontendConfig};
 }
 

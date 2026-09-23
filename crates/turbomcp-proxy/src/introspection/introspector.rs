@@ -3,27 +3,18 @@
 //! This module provides the core introspection logic for discovering MCP server
 //! capabilities by communicating via the MCP protocol.
 
+use serde::de::DeserializeOwned;
 use tracing::{debug, info, trace};
 use turbomcp_protocol::{
     InitializeRequest, InitializeResult, PROTOCOL_VERSION,
     types::{
-        ClientCapabilities, Cursor, ElicitationCapabilities, Implementation, RootsCapabilities,
-        SamplingCapabilities,
-        prompts::{ListPromptsRequest, ListPromptsResult},
-        resources::{
-            ListResourceTemplatesRequest, ListResourceTemplatesResult, ListResourcesRequest,
-            ListResourcesResult,
-        },
-        tools::{ListToolsRequest, ListToolsResult},
+        ClientCapabilities, Cursor, Implementation, ListPromptsResult, ListResourceTemplatesResult,
+        ListResourcesResult, ListToolsResult,
     },
 };
 
 use super::backends::McpBackend;
-use super::spec::{
-    Annotations, EmptyCapability, LoggingCapability, PromptArgument, PromptSpec, PromptsCapability,
-    ResourceSpec, ResourceTemplateSpec, ResourcesCapability, ServerCapabilities, ServerInfo,
-    ServerSpec, ToolAnnotations, ToolInputSchema, ToolOutputSchema, ToolSpec, ToolsCapability,
-};
+use super::spec::ServerSpec;
 use crate::error::{ProxyError, ProxyResult};
 
 /// Upper bound on pages walked when introspecting a backend.
@@ -95,49 +86,56 @@ impl McpIntrospector {
             "Server initialization successful"
         );
 
-        // Step 2: Extract server info and capabilities
-        let server_info = ServerInfo {
-            name: init_result.server_info.name.clone(),
-            version: init_result.server_info.version.clone(),
-            title: None, // Not provided in InitializeResult
-        };
+        let capabilities = init_result.capabilities;
 
-        let capabilities = Self::extract_capabilities(&init_result);
-
-        // Step 3: List tools (if server supports them)
+        // Step 2: List each family the server declared. MCP §Operation makes
+        // "only use capabilities that were successfully negotiated" a MUST.
         let tools = if capabilities.tools.is_some() {
-            self.list_tools(backend).await?
+            list_all(backend, "tools/list", |page: ListToolsResult| {
+                (page.tools, page.next_cursor)
+            })
+            .await?
         } else {
             debug!("Server does not support tools");
             Vec::new()
         };
 
-        // Step 4: List resources (if server supports them)
         let (resources, resource_templates) = if capabilities.resources.is_some() {
-            self.list_resources(backend).await?
+            let resources = list_all(backend, "resources/list", |page: ListResourcesResult| {
+                (page.resources, page.next_cursor)
+            })
+            .await?;
+            let templates = list_all(
+                backend,
+                "resources/templates/list",
+                |page: ListResourceTemplatesResult| (page.resource_templates, page.next_cursor),
+            )
+            .await?;
+            (resources, templates)
         } else {
             debug!("Server does not support resources");
             (Vec::new(), Vec::new())
         };
 
-        // Step 5: List prompts (if server supports them)
         let prompts = if capabilities.prompts.is_some() {
-            self.list_prompts(backend).await?
+            list_all(backend, "prompts/list", |page: ListPromptsResult| {
+                (page.prompts, page.next_cursor)
+            })
+            .await?
         } else {
             debug!("Server does not support prompts");
             Vec::new()
         };
 
-        // Build final ServerSpec
         let spec = ServerSpec {
-            server_info,
+            server_info: init_result.server_info,
             protocol_version: init_result.protocol_version.to_string(),
             capabilities,
             tools,
             resources,
             resource_templates,
             prompts,
-            instructions: init_result.instructions.clone(),
+            instructions: init_result.instructions,
         };
 
         info!(
@@ -155,14 +153,11 @@ impl McpIntrospector {
     async fn initialize(&self, backend: &mut dyn McpBackend) -> ProxyResult<InitializeResult> {
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.into(),
-            capabilities: ClientCapabilities {
-                roots: Some(RootsCapabilities {
-                    list_changed: Some(true),
-                }),
-                sampling: Some(SamplingCapabilities::default()),
-                elicitation: Some(ElicitationCapabilities::full()),
-                ..Default::default()
-            },
+            // Introspection only reads the catalogue, so it declares nothing.
+            // Declaring roots, sampling, or elicitation invites the server to
+            // send requests for them, and an introspector has no model, no
+            // user, and no filesystem to answer with.
+            capabilities: ClientCapabilities::default(),
             client_info: Implementation {
                 name: self.client_name.clone(),
                 version: self.client_version.clone(),
@@ -173,273 +168,46 @@ impl McpIntrospector {
 
         backend.initialize(request).await
     }
+}
 
-    /// Extract capabilities from `InitializeResult`
-    fn extract_capabilities(init_result: &InitializeResult) -> ServerCapabilities {
-        let caps = &init_result.capabilities;
+/// Walk every page of a list method.
+///
+/// Stops when the server omits `nextCursor`, the only end-of-results signal
+/// the spec defines, or repeats the cursor it was just given, which would
+/// otherwise spin to the page cap. An empty page that still carries a cursor
+/// is legal and is followed.
+async fn list_all<P, T>(
+    backend: &mut dyn McpBackend,
+    method: &str,
+    split: impl Fn(P) -> (Vec<T>, Option<Cursor>),
+) -> ProxyResult<Vec<T>>
+where
+    P: DeserializeOwned,
+{
+    let mut items = Vec::new();
+    let mut cursor: Option<Cursor> = None;
 
-        ServerCapabilities {
-            logging: caps.logging.as_ref().map(|_| LoggingCapability {}),
-            completions: caps.completions.as_ref().map(|_| EmptyCapability {}),
-            prompts: caps.prompts.as_ref().map(|p| PromptsCapability {
-                list_changed: p.list_changed,
-            }),
-            resources: caps.resources.as_ref().map(|r| ResourcesCapability {
-                subscribe: r.subscribe,
-                list_changed: r.list_changed,
-            }),
-            tools: caps.tools.as_ref().map(|t| ToolsCapability {
-                list_changed: t.list_changed,
-            }),
-            experimental: caps.experimental.clone(),
+    for _ in 0..MAX_PAGINATION_PAGES {
+        trace!(method, cursor = ?cursor, "Fetching page");
+
+        let params = match &cursor {
+            Some(cursor) => serde_json::json!({ "cursor": cursor }),
+            None => serde_json::json!({}),
+        };
+        let result = backend.call_method(method, params).await?;
+        let page: P = serde_json::from_value(result)
+            .map_err(|e| ProxyError::backend(format!("Failed to parse {method} response: {e}")))?;
+
+        let (page_items, next) = split(page);
+        items.extend(page_items);
+        match next {
+            Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+            _ => break,
         }
     }
 
-    /// List all tools from the server (with pagination support)
-    async fn list_tools(&self, backend: &mut dyn McpBackend) -> ProxyResult<Vec<ToolSpec>> {
-        let mut all_tools = Vec::new();
-        let mut cursor: Option<Cursor> = None;
-
-        for _ in 0..MAX_PAGINATION_PAGES {
-            trace!(cursor = ?cursor, "Fetching tools page");
-
-            let request = ListToolsRequest {
-                cursor: cursor.clone(),
-                _meta: None,
-            };
-
-            let params = serde_json::to_value(&request).map_err(|e| {
-                ProxyError::backend(format!("Failed to serialize tools/list request: {e}"))
-            })?;
-
-            let result_value = backend.call_method("tools/list", params).await?;
-
-            let result: ListToolsResult = serde_json::from_value(result_value).map_err(|e| {
-                ProxyError::backend(format!("Failed to parse tools/list response: {e}"))
-            })?;
-
-            // Convert protocol tools to spec tools
-            for tool in result.tools {
-                // Helper: extract `properties` out of a raw JSON Schema Value.
-                let extract_properties = |v: Option<&serde_json::Value>| {
-                    v.and_then(|props| props.as_object()).map(|obj| {
-                        obj.iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect::<std::collections::HashMap<_, _>>()
-                    })
-                };
-                all_tools.push(ToolSpec {
-                    name: tool.name,
-                    title: tool.title,
-                    description: tool.description,
-                    input_schema: ToolInputSchema {
-                        schema_type: "object".to_string(),
-                        properties: extract_properties(tool.input_schema.properties.as_ref()),
-                        required: tool.input_schema.required,
-                        additional: std::collections::HashMap::new(),
-                    },
-                    output_schema: tool.output_schema.map(|schema| ToolOutputSchema {
-                        schema_type: "object".to_string(),
-                        properties: extract_properties(schema.properties.as_ref()),
-                        required: schema.required,
-                        additional: std::collections::HashMap::new(),
-                    }),
-                    annotations: tool.annotations.map(|ann| ToolAnnotations {
-                        title: ann.title,
-                        read_only_hint: ann.read_only_hint,
-                        destructive_hint: ann.destructive_hint,
-                        idempotent_hint: ann.idempotent_hint,
-                        open_world_hint: ann.open_world_hint,
-                    }),
-                });
-            }
-
-            // Check for next page
-            match result.next_cursor {
-                // Stop on a repeated cursor: a backend that hands back the
-                // same one is not advancing, and following it would just burn
-                // the page budget.
-                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-                _ => break,
-            }
-        }
-
-        debug!(count = all_tools.len(), "Listed all tools");
-        Ok(all_tools)
-    }
-
-    /// List all resources from the server (with pagination support)
-    async fn list_resources(
-        &self,
-        backend: &mut dyn McpBackend,
-    ) -> ProxyResult<(Vec<ResourceSpec>, Vec<ResourceTemplateSpec>)> {
-        let mut all_resources = Vec::new();
-        let mut all_templates = Vec::new();
-        let mut cursor: Option<Cursor> = None;
-
-        for _ in 0..MAX_PAGINATION_PAGES {
-            trace!(cursor = ?cursor, "Fetching resources page");
-
-            let request = ListResourcesRequest {
-                cursor: cursor.clone(),
-                _meta: None,
-            };
-
-            let params = serde_json::to_value(&request).map_err(|e| {
-                ProxyError::backend(format!("Failed to serialize resources/list request: {e}"))
-            })?;
-
-            let result_value = backend.call_method("resources/list", params).await?;
-
-            let result: ListResourcesResult =
-                serde_json::from_value(result_value).map_err(|e| {
-                    ProxyError::backend(format!("Failed to parse resources/list response: {e}"))
-                })?;
-
-            // Convert protocol resources to spec resources
-            for resource in result.resources {
-                all_resources.push(ResourceSpec {
-                    uri: resource.uri.clone(),
-                    name: resource.name,
-                    title: resource.title,
-                    description: resource.description,
-                    mime_type: resource.mime_type,
-                    size: resource.size,
-                    annotations: resource.annotations.map(|ann| Annotations {
-                        fields: serde_json::from_value(
-                            serde_json::to_value(ann).unwrap_or_default(),
-                        )
-                        .unwrap_or_default(),
-                    }),
-                });
-            }
-
-            // Check for next page
-            match result.next_cursor {
-                // Stop on a repeated cursor: a backend that hands back the
-                // same one is not advancing, and following it would just burn
-                // the page budget.
-                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-                _ => break,
-            }
-        }
-
-        let mut cursor: Option<Cursor> = None;
-        for _ in 0..MAX_PAGINATION_PAGES {
-            trace!(cursor = ?cursor, "Fetching resource templates page");
-
-            let request = ListResourceTemplatesRequest {
-                cursor: cursor.clone(),
-                _meta: None,
-            };
-
-            let params = serde_json::to_value(&request).map_err(|e| {
-                ProxyError::backend(format!(
-                    "Failed to serialize resources/templates/list request: {e}"
-                ))
-            })?;
-
-            let result_value = backend
-                .call_method("resources/templates/list", params)
-                .await?;
-
-            let result: ListResourceTemplatesResult = serde_json::from_value(result_value)
-                .map_err(|e| {
-                    ProxyError::backend(format!(
-                        "Failed to parse resources/templates/list response: {e}"
-                    ))
-                })?;
-
-            for template in result.resource_templates {
-                all_templates.push(ResourceTemplateSpec {
-                    uri_template: template.uri_template,
-                    name: template.name,
-                    title: template.title,
-                    description: template.description,
-                    mime_type: template.mime_type,
-                    annotations: template.annotations.map(|ann| Annotations {
-                        fields: serde_json::from_value(
-                            serde_json::to_value(ann).unwrap_or_default(),
-                        )
-                        .unwrap_or_default(),
-                    }),
-                });
-            }
-
-            match result.next_cursor {
-                // Stop on a repeated cursor: a backend that hands back the
-                // same one is not advancing, and following it would just burn
-                // the page budget.
-                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-                _ => break,
-            }
-        }
-
-        debug!(
-            resources = all_resources.len(),
-            templates = all_templates.len(),
-            "Listed all resources"
-        );
-
-        Ok((all_resources, all_templates))
-    }
-
-    /// List all prompts from the server (with pagination support)
-    async fn list_prompts(&self, backend: &mut dyn McpBackend) -> ProxyResult<Vec<PromptSpec>> {
-        let mut all_prompts = Vec::new();
-        let mut cursor: Option<Cursor> = None;
-
-        for _ in 0..MAX_PAGINATION_PAGES {
-            trace!(cursor = ?cursor, "Fetching prompts page");
-
-            let request = ListPromptsRequest {
-                cursor: cursor.clone(),
-                _meta: None,
-            };
-
-            let params = serde_json::to_value(&request).map_err(|e| {
-                ProxyError::backend(format!("Failed to serialize prompts/list request: {e}"))
-            })?;
-
-            let result_value = backend.call_method("prompts/list", params).await?;
-
-            let result: ListPromptsResult = serde_json::from_value(result_value).map_err(|e| {
-                ProxyError::backend(format!("Failed to parse prompts/list response: {e}"))
-            })?;
-
-            // Convert protocol prompts to spec prompts
-            for prompt in result.prompts {
-                all_prompts.push(PromptSpec {
-                    name: prompt.name,
-                    title: prompt.title,
-                    description: prompt.description,
-                    arguments: prompt
-                        .arguments
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|arg| PromptArgument {
-                            name: arg.name,
-                            title: None,
-                            description: arg.description,
-                            required: arg.required,
-                        })
-                        .collect(),
-                });
-            }
-
-            // Check for next page
-            match result.next_cursor {
-                // Stop on a repeated cursor: a backend that hands back the
-                // same one is not advancing, and following it would just burn
-                // the page budget.
-                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-                _ => break,
-            }
-        }
-
-        debug!(count = all_prompts.len(), "Listed all prompts");
-        Ok(all_prompts)
-    }
+    debug!(method, count = items.len(), "Listed all pages");
+    Ok(items)
 }
 
 impl Default for McpIntrospector {

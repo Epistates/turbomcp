@@ -547,62 +547,45 @@ impl RustCodeGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::introspection::{
-        PromptSpec, PromptsCapability, ResourceSpec, ResourcesCapability, ServerCapabilities,
-        ServerInfo, ToolInputSchema, ToolSpec, ToolsCapability,
+    use turbomcp_protocol::types::{
+        Implementation, Prompt, PromptsCapabilities, Resource, ResourcesCapabilities,
+        ServerCapabilities, Tool, ToolInputSchema, ToolsCapabilities,
     };
-    use std::collections::HashMap;
 
     fn create_test_spec() -> ServerSpec {
         ServerSpec {
-            server_info: ServerInfo {
-                name: "test-server".to_string(),
-                version: "1.0.0".to_string(),
+            server_info: Implementation {
                 title: Some("Test Server".to_string()),
+                ..Implementation::new("test-server", "1.0.0")
             },
             protocol_version: "2025-11-25".to_string(),
             capabilities: ServerCapabilities {
-                logging: None,
-                completions: None,
-                tools: Some(ToolsCapability { list_changed: None }),
-                resources: Some(ResourcesCapability {
-                    subscribe: None,
-                    list_changed: None,
-                }),
-                prompts: Some(PromptsCapability { list_changed: None }),
-                experimental: None,
+                tools: Some(ToolsCapabilities::default()),
+                resources: Some(ResourcesCapabilities::default()),
+                prompts: Some(PromptsCapabilities::default()),
+                ..Default::default()
             },
-            tools: vec![ToolSpec {
-                name: "search".to_string(),
+            tools: vec![Tool {
                 title: Some("Search".to_string()),
-                description: Some("Search for items".to_string()),
-                input_schema: ToolInputSchema {
-                    schema_type: "object".to_string(),
-                    properties: Some(HashMap::from([(
-                        "query".to_string(),
-                        serde_json::json!({"type": "string"}),
-                    )])),
-                    required: None,
-                    additional: HashMap::new(),
-                },
-                output_schema: None,
-                annotations: None,
+                ..Tool::new("search", "Search for items").with_schema(ToolInputSchema::from_value(
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": { "query": { "type": "string" } }
+                    }),
+                ))
             }],
-            resources: vec![ResourceSpec {
-                uri: "file:///test/path".to_string(),
-                name: "test-resource".to_string(),
+            resources: vec![Resource {
                 title: Some("Test Resource".to_string()),
-                description: Some("Test resource".to_string()),
-                mime_type: Some("text/plain".to_string()),
-                size: None,
-                annotations: None,
+                ..Resource::new("file:///test/path", "test-resource")
+                    .with_description("Test resource")
+                    .with_mime_type("text/plain")
             }],
             resource_templates: vec![],
-            prompts: vec![PromptSpec {
+            prompts: vec![Prompt {
                 name: "test-prompt".to_string(),
                 title: Some("Test Prompt".to_string()),
                 description: Some("Test prompt".to_string()),
-                arguments: vec![],
+                ..Default::default()
             }],
             instructions: None,
         }
