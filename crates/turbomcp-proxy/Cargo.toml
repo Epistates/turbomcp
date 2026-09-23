@@ -47,10 +47,6 @@ tower = { workspace = true, optional = true }
 tower-service = { version = "0.3", optional = true }
 tower-http = { version = "0.7", features = ["cors", "trace"], optional = true }
 futures-util = { version = "0.3", optional = true }
-reqwest = { workspace = true, optional = true }
-
-# WebSocket (optional)
-tokio-tungstenite = { version = "0.30", optional = true, features = ["rustls-tls-native-roots"] }
 
 # REST API & OpenAPI (optional)
 utoipa = { version = "5.5", features = ["axum_extras", "macros"], optional = true }
@@ -72,7 +68,6 @@ schemars = { version = "1.2", optional = true }
 
 # Concurrency
 dashmap = "6.2"
-parking_lot = "0.12"
 
 # Utilities
 uuid = { version = "1.26", features = ["v4"] }
@@ -102,10 +97,12 @@ wiremock = { workspace = true }
 default = ["cli", "runtime", "introspection"]
 
 # Core features
+# The introspection types and the backend connector (turbomcp-client); everything
+# that talks to an upstream builds on it.
 introspection = []
-runtime = ["introspection", "dep:turbomcp-server", "axum", "dep:tower", "tower-service", "tower-http", "futures-util", "reqwest", "tokio-tungstenite", "auth"]
+runtime = ["introspection", "dep:turbomcp-server", "axum", "dep:tower", "tower-service", "tower-http", "futures-util", "auth"]
 tower = ["runtime"]  # Alias for runtime Tower integration (for consistency with other turbomcp crates)
-codegen = ["handlebars", "convert_case", "chrono", "syn", "proc-macro2"]
+codegen = ["introspection", "handlebars", "convert_case", "chrono", "syn", "proc-macro2"]
 schema = ["schemars"]
 auth = ["dep:turbomcp-auth", "dep:jsonwebtoken", "turbomcp-auth/jwt"]
 
@@ -117,7 +114,7 @@ rest = ["utoipa", "utoipa-swagger-ui", "axum", "tower", "tower-http"]
 # code is incomplete scaffolding only. Removed from `adapters` in v3.1 so users
 # don't get a false "GraphQL works" signal from `features = ["adapters"]`.
 # Tracked in .strategy/AUDIT_v3.0.13_ACTION_PLAN.md (#38) for follow-up.
-graphql = []  # placeholder — enabling alone produces no usable adapter
+graphql = ["introspection", "axum"]  # placeholder — enabling alone produces no usable adapter
 adapters = ["rest"]
 
 # Experimental features (pass-through to turbomcp-protocol)
