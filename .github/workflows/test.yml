@@ -138,6 +138,12 @@ jobs:
         cargo build -p turbomcp-wasm --target wasm32-unknown-unknown --profile wasm-release
         cargo test -p turbomcp-wasm --lib
 
+    # The default build is the browser client only. The server features —
+    # and `auth`, which compiles for wasm32 alone — are otherwise never built
+    # for the target they exist for.
+    - name: Check WASM server features
+      run: cargo check -p turbomcp-wasm --target wasm32-unknown-unknown --no-default-features --features wasm-server,streamable,auth,macros
+
     - name: Check binary size
       run: |
         SIZE=$(stat -c%s target/wasm32-unknown-unknown/wasm-release/turbomcp_wasm.wasm 2>/dev/null || stat -f%z target/wasm32-unknown-unknown/wasm-release/turbomcp_wasm.wasm)

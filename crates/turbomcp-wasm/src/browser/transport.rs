@@ -19,11 +19,17 @@ static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 type MessageHandler = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
 
 /// HTTP transport using the Fetch API
+///
+/// Speaks Streamable HTTP: it accepts JSON or SSE answers, keeps the
+/// `Mcp-Session-Id` the server issues at `initialize` and sends it — with the
+/// negotiated `MCP-Protocol-Version` — on every later request.
 #[derive(Clone)]
 pub struct FetchTransport {
     base_url: String,
     headers: Vec<(String, String)>,
     timeout_ms: u32,
+    session_id: Rc<RefCell<Option<String>>>,
+    protocol_version: Rc<RefCell<Option<String>>>,
 }
 
 impl FetchTransport {
@@ -33,7 +39,42 @@ impl FetchTransport {
             base_url: base_url.into(),
             headers: Vec::new(),
             timeout_ms: 30_000,
+            session_id: Rc::new(RefCell::new(None)),
+            protocol_version: Rc::new(RefCell::new(None)),
         }
+    }
+
+    /// Record the protocol version negotiated at `initialize`, sent as
+    /// `MCP-Protocol-Version` from then on.
+    pub fn set_protocol_version(&self, version: impl Into<String>) {
+        *self.protocol_version.borrow_mut() = Some(version.into());
+    }
+
+    /// The session id the server issued, if any.
+    pub fn session_id(&self) -> Option<String> {
+        self.session_id.borrow().clone()
+    }
+
+    /// Every header a POST carries: the protocol's own, then the caller's.
+    fn request_headers(&self) -> Vec<(String, String)> {
+        let mut headers = vec![
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Accept".to_string(), crate::client_http::ACCEPT.to_string()),
+        ];
+        if let Some(session_id) = self.session_id.borrow().as_ref() {
+            headers.push((
+                crate::client_http::SESSION_ID_HEADER.to_string(),
+                session_id.clone(),
+            ));
+        }
+        if let Some(version) = self.protocol_version.borrow().as_ref() {
+            headers.push((
+                crate::client_http::PROTOCOL_VERSION_HEADER.to_string(),
+                version.clone(),
+            ));
+        }
+        headers.extend(self.headers.iter().cloned());
+        headers
     }
 
     /// Add a header to all requests
@@ -54,56 +95,99 @@ impl FetchTransport {
         method: &str,
         params: Option<T>,
     ) -> Result<R, McpError> {
-        // JSON-RPC is method-agnostic at the transport layer — the method
-        // belongs in the body, not the URL path.
-        let url = self.base_url.clone();
-
         // Create request body with unique ID
         let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": request_id,
             "method": method,
-            "params": params,
         });
+        if let Some(params) = params {
+            body["params"] = serde_json::to_value(params).map_err(|e| {
+                McpError::serialization(format!("Failed to serialize request: {e}"))
+            })?;
+        }
 
-        let body_str = serde_json::to_string(&body)
+        let reply = self.post(&body).await?;
+        let rpc_response = crate::client_http::response_message(
+            reply.content_type.as_deref(),
+            &reply.body,
+            request_id,
+        )
+        .map_err(McpError::parse_error)?;
+
+        if let Some(error) = rpc_response.get("error") {
+            let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-32603) as i32;
+            let message = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown error");
+            return Err(McpError::from_rpc_code(code, message));
+        }
+
+        let result = rpc_response
+            .get("result")
+            .ok_or_else(|| McpError::parse_error("No result in response"))?;
+
+        serde_json::from_value(result.clone())
+            .map_err(|e| McpError::parse_error(format!("Failed to parse result: {e}")))
+    }
+
+    /// Send a JSON-RPC notification.
+    ///
+    /// A notification carries no `id`, and the server answers it `202
+    /// Accepted` with no body; there is nothing to wait for or parse.
+    pub async fn notify<T: Serialize>(
+        &self,
+        method: &str,
+        params: Option<T>,
+    ) -> Result<(), McpError> {
+        let mut body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+        });
+        if let Some(params) = params {
+            body["params"] = serde_json::to_value(params).map_err(|e| {
+                McpError::serialization(format!("Failed to serialize notification: {e}"))
+            })?;
+        }
+        self.post(&body).await.map(|_| ())
+    }
+
+    /// POST one JSON-RPC message and read the reply.
+    async fn post(&self, message: &serde_json::Value) -> Result<HttpReply, McpError> {
+        let body_str = serde_json::to_string(message)
             .map_err(|e| McpError::serialization(format!("Failed to serialize request: {e}")))?;
+
+        let window =
+            web_sys::window().ok_or_else(|| McpError::transport("No window object available"))?;
 
         // Create abort controller for timeout
         let abort_controller = AbortController::new()
             .map_err(|e| McpError::transport(format!("Failed to create AbortController: {e:?}")))?;
-
-        // Set up timeout
-        let window =
-            web_sys::window().ok_or_else(|| McpError::transport("No window object available"))?;
         let abort_signal = abort_controller.signal();
 
+        // The closure stays owned here and the timer is cleared once the
+        // fetch settles. It used to be `forget()`-ed, leaking one closure per
+        // request for the life of the page.
         let timeout_closure = Closure::once(Box::new(move || {
             abort_controller.abort();
         }) as Box<dyn FnOnce()>);
+        let timeout_handle = window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                timeout_closure.as_ref().unchecked_ref(),
+                self.timeout_ms as i32,
+            )
+            .map_err(|e| McpError::transport(format!("Failed to set timeout: {e:?}")))?;
 
-        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-            timeout_closure.as_ref().unchecked_ref(),
-            self.timeout_ms as i32,
-        );
-        timeout_closure.forget();
-
-        // Create headers
         let headers = Headers::new()
             .map_err(|e| McpError::transport(format!("Failed to create headers: {e:?}")))?;
-
-        headers
-            .set("Content-Type", "application/json")
-            .map_err(|e| McpError::transport(format!("Failed to set Content-Type: {e:?}")))?;
-
-        for (key, value) in &self.headers {
+        for (key, value) in self.request_headers() {
             headers
-                .set(key, value)
+                .set(&key, &value)
                 .map_err(|e| McpError::transport(format!("Failed to set header {key}: {e:?}")))?;
         }
 
-        // Create request init
         let init = RequestInit::new();
         init.set_method("POST");
         init.set_headers(&headers);
@@ -111,15 +195,16 @@ impl FetchTransport {
         init.set_mode(RequestMode::Cors);
         init.set_signal(Some(&abort_signal));
 
-        // Create and send request
-        let request = Request::new_with_str_and_init(&url, &init)
+        // JSON-RPC is method-agnostic at the transport layer — the method
+        // belongs in the body, not the URL path.
+        let request = Request::new_with_str_and_init(&self.base_url, &init)
             .map_err(|e| McpError::transport(format!("Failed to create request: {e:?}")))?;
 
-        let window =
-            web_sys::window().ok_or_else(|| McpError::transport("No window object available"))?;
+        let fetched = JsFuture::from(window.fetch_with_request(&request)).await;
+        window.clear_timeout_with_handle(timeout_handle);
+        drop(timeout_closure);
 
-        let response: Response = JsFuture::from(window.fetch_with_request(&request))
-            .await
+        let response: Response = fetched
             .map_err(|e| {
                 if abort_signal.aborted() {
                     McpError::timeout("Request timed out")
@@ -138,8 +223,13 @@ impl FetchTransport {
             )));
         }
 
-        // Parse response
-        let text = JsFuture::from(
+        let response_headers = response.headers();
+        if let Ok(Some(session_id)) = response_headers.get(crate::client_http::SESSION_ID_HEADER) {
+            *self.session_id.borrow_mut() = Some(session_id);
+        }
+        let content_type = response_headers.get("Content-Type").ok().flatten();
+
+        let body = JsFuture::from(
             response
                 .text()
                 .map_err(|e| McpError::transport(format!("Failed to get response text: {e:?}")))?,
@@ -149,26 +239,14 @@ impl FetchTransport {
         .as_string()
         .ok_or_else(|| McpError::transport("Response was not a string"))?;
 
-        // Parse JSON-RPC response
-        let rpc_response: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| McpError::parse_error(format!("Failed to parse response: {e}")))?;
-
-        if let Some(error) = rpc_response.get("error") {
-            let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-32603) as i32;
-            let message = error
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Unknown error");
-            return Err(McpError::from_rpc_code(code, message));
-        }
-
-        let result = rpc_response
-            .get("result")
-            .ok_or_else(|| McpError::parse_error("No result in response"))?;
-
-        serde_json::from_value(result.clone())
-            .map_err(|e| McpError::parse_error(format!("Failed to parse result: {e}")))
+        Ok(HttpReply { content_type, body })
     }
+}
+
+/// A POST's reply, as far as the JSON-RPC layer needs it.
+struct HttpReply {
+    content_type: Option<String>,
+    body: String,
 }
 
 /// Type alias for WebSocket close handler
@@ -301,5 +379,26 @@ mod tests {
         assert_eq!(transport.base_url, "https://api.example.com");
         assert_eq!(transport.headers.len(), 1);
         assert_eq!(transport.timeout_ms, 60_000);
+    }
+
+    #[test]
+    fn posts_carry_streamable_http_headers() {
+        let transport = FetchTransport::new("https://api.example.com");
+        let before: Vec<_> = transport
+            .request_headers()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(before, ["Content-Type", "Accept"]);
+
+        *transport.session_id.borrow_mut() = Some("mcp-abc".into());
+        transport.set_protocol_version("2025-06-18");
+        let after = transport.request_headers();
+        assert!(after.contains(&("Accept".into(), crate::client_http::ACCEPT.into())));
+        assert!(after.contains(&("Mcp-Session-Id".into(), "mcp-abc".into())));
+        assert!(after.contains(&("MCP-Protocol-Version".into(), "2025-06-18".into())));
+
+        // Clones share the session, so the builder-style client keeps it.
+        assert_eq!(transport.clone().session_id().as_deref(), Some("mcp-abc"));
     }
 }

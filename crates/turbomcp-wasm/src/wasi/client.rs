@@ -50,6 +50,15 @@ impl TransportKind {
         }
     }
 
+    /// Tell the transport which version was negotiated. Only HTTP carries it,
+    /// as the `MCP-Protocol-Version` header.
+    fn set_protocol_version(&self, version: &str) {
+        match self {
+            Self::Stdio(_) => {}
+            Self::Http(t) => t.set_protocol_version(version),
+        }
+    }
+
     fn close(&self) -> Result<(), TransportError> {
         match self {
             Self::Stdio(t) => t.close(),
@@ -147,10 +156,14 @@ impl McpClient {
 
         let result: InitializeResult = self.transport.request("initialize", Some(params))?;
 
+        crate::client_http::check_negotiated_version(result.protocol_version.as_str())
+            .map_err(TransportError::Protocol)?;
+
         self.initialized = true;
         self.server_info = Some(result.server_info.clone());
         self.server_capabilities = Some(result.capabilities.clone());
         self.protocol_version = result.protocol_version.to_string();
+        self.transport.set_protocol_version(&self.protocol_version);
 
         // Send initialized notification
         self.transport

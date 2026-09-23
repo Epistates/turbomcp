@@ -52,13 +52,14 @@ impl ResponseType {
 }
 
 /// PKCE code challenge methods (RFC 7636).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum CodeChallengeMethod {
     /// Plain (not recommended, only for legacy support)
     #[serde(rename = "plain")]
     Plain,
     /// SHA-256 (recommended)
     #[serde(rename = "S256")]
+    #[default]
     S256,
 }
 
@@ -72,28 +73,17 @@ impl CodeChallengeMethod {
     }
 }
 
-impl Default for CodeChallengeMethod {
-    fn default() -> Self {
-        Self::S256
-    }
-}
-
 /// Client authentication method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientAuthMethod {
     /// No authentication (public client, requires PKCE)
+    #[default]
     None,
     /// Client secret in POST body
     ClientSecretPost,
     /// Client secret in Authorization header (Basic auth)
     ClientSecretBasic,
-}
-
-impl Default for ClientAuthMethod {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Configuration for an OAuth client.
@@ -251,7 +241,7 @@ impl ClientConfig {
 /// OAuth provider configuration.
 #[derive(Debug, Clone)]
 pub struct OAuthProviderConfig {
-    /// Issuer identifier (e.g., "https://my-server.workers.dev")
+    /// Issuer identifier (e.g., `https://my-server.workers.dev`)
     pub issuer: String,
 
     /// Authorization endpoint path (default: "/oauth/authorize")
@@ -475,6 +465,17 @@ impl OAuthError {
         }
     }
 
+    /// Create an invalid_target error (RFC 8707 §2): the requested resource
+    /// is not one this server issues tokens for.
+    pub fn invalid_target(description: impl Into<String>) -> Self {
+        Self {
+            error: "invalid_target".to_string(),
+            error_description: Some(description.into()),
+            error_uri: None,
+            state: None,
+        }
+    }
+
     /// Set the state parameter.
     pub fn with_state(mut self, state: impl Into<String>) -> Self {
         self.state = Some(state.into());
@@ -566,6 +567,10 @@ pub struct IntrospectionResponse {
     /// Token type
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_type: Option<String>,
+
+    /// Audience: the RFC 8707 resource the token is bound to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aud: Option<String>,
 }
 
 impl IntrospectionResponse {
@@ -579,7 +584,14 @@ impl IntrospectionResponse {
             exp: None,
             iat: None,
             token_type: None,
+            aud: None,
         }
+    }
+
+    /// Set the audience.
+    pub fn with_audience(mut self, audience: Option<String>) -> Self {
+        self.aud = audience;
+        self
     }
 
     /// Create an active response.
@@ -602,6 +614,7 @@ impl IntrospectionResponse {
             exp: Some(expires_at),
             iat: Some(issued_at),
             token_type: Some("Bearer".to_string()),
+            aud: None,
         }
     }
 }

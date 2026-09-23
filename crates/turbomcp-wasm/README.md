@@ -46,6 +46,7 @@ This enables sharing business logic between native servers and edge deployments 
 ### Client (Browser & WASI)
 
 - **Browser Support**: Full MCP client using Fetch API and WebSocket
+- **Streamable HTTP**: Sends `Accept`, keeps the server's `Mcp-Session-Id` and the negotiated `MCP-Protocol-Version`, and reads JSON or SSE answers (browser and WASI HTTP)
 - **Type-Safe**: All MCP types available in JavaScript/TypeScript
 - **Async/Await**: Modern Promise-based API
 - **Small Binary**: Optimized for minimal bundle size (~50-200KB)
@@ -288,11 +289,18 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     // Wrap with Cloudflare Access authentication
     let auth = CloudflareAccessAuthenticator::new(&team_name, &audience);
-    let protected = server.with_auth(auth);
+    let protected = server
+        .with_auth(auth)
+        // Advertised in the 401's WWW-Authenticate so clients can find the
+        // authorization server (RFC 9728)
+        .with_resource_metadata("https://mcp.example.com/.well-known/oauth-protected-resource");
 
     protected.handle(req).await
 }
 ```
+
+The authenticated principal is attached to each request's context; read it in
+a handler with `ctx.principal()` or `ctx.subject()`.
 
 **Important**: Always use `worker::Env` to retrieve secrets at runtime. Never hardcode credentials in your code.
 
@@ -392,10 +400,38 @@ let cache = JwksCache::new("http://test-server/.well-known/jwks.json")
 
 ### Request Security
 
-- Maximum request body size: 1MB (DoS protection)
-- POST-only enforcement for JSON-RPC
-- Content-Type validation
-- Strict JSON-RPC 2.0 compliance
+Every entry point — `McpServer::handle`, `WasmHandlerExt`, `MiddlewareStack`,
+`VisibilityLayer`, `CompositeServer`, `WithAuth` and `StreamableHandler` —
+dispatches through the same core router as the native server, so they all
+answer the protocol identically:
+
+- Maximum request body size: 1MB by default (DoS protection)
+- POST-only enforcement for JSON-RPC (`405` with `Allow` otherwise)
+- `Content-Type: application/json` required (`415` otherwise)
+- Strict JSON-RPC 2.0: malformed JSON is `-32700`, a bad envelope (`id: null`,
+  a fractional id, a batch) is `-32600`, both with `id: null`
+- Notifications are answered `202 Accepted` with an empty body
+- An unsupported `MCP-Protocol-Version` header is `400`; responses are
+  stepped down to the negotiated version (2025-06-18 or 2025-11-25)
+
+### Origin Validation
+
+DNS-rebinding protection is on by default, with the same rules as the native
+HTTP transport: a request without `Origin` (curl, SDK clients, other servers)
+passes; a request whose `Origin` is present must name a loopback host
+(`localhost`, `127.0.0.1`, `[::1]`) or an allowed origin, and is refused with
+`403` before its body is read otherwise. A Worker called from a browser
+application on another origin must allow it:
+
+```rust
+let config = EndpointConfig::default().allow_origin("https://app.example.com");
+server.handle_worker_request_with_config(req, &config).await
+
+// Streamable HTTP takes its allowlist from StreamableConfig
+let streamable = server
+    .into_streamable()
+    .with_config(StreamableConfig::production().allow_origin("https://app.example.com"));
+```
 
 ### CORS Security
 
@@ -404,14 +440,10 @@ TurboMCP implements secure CORS handling to prevent credentials from being expos
 - **Origin Echo**: The request `Origin` header is echoed back in `Access-Control-Allow-Origin` instead of using `*`
 - **Vary Header**: `Vary: Origin` is automatically added when origin-specific responses are returned (required for proper caching)
 - **Non-Browser Fallback**: Only falls back to `*` when no Origin header is present (e.g., curl, Postman)
-
-This approach:
-- Prevents credentials leakage to malicious sites
-- Enables proper CORS preflight validation
-- Works correctly with CDN caching
+- **Refused origins get nothing**: a `403` for a disallowed origin carries no CORS grant
 
 ```http
-# Browser request with Origin header
+# Browser request from an allowed origin
 Request:
 Origin: https://app.example.com
 
@@ -419,7 +451,8 @@ Response:
 Access-Control-Allow-Origin: https://app.example.com
 Vary: Origin
 Access-Control-Allow-Methods: POST, OPTIONS
-Access-Control-Allow-Headers: Content-Type, Authorization, X-Request-ID
+Access-Control-Allow-Headers: Content-Type, Accept, Authorization, X-Request-ID, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID
+Access-Control-Expose-Headers: Mcp-Session-Id, WWW-Authenticate
 Access-Control-Max-Age: 86400
 
 # Non-browser request (no Origin header)
@@ -427,6 +460,15 @@ Response:
 Access-Control-Allow-Origin: *
 # (No Vary header when using wildcard)
 ```
+
+### Sessions
+
+The stateless endpoint (`handle`) issues no sessions and never takes one from
+the client: `ctx.session_id()` is `None` there, whatever `Mcp-Session-Id` or
+`X-Session-Id` the request carries. Use `into_streamable()` for sessions — it
+issues a `Mcp-Session-Id` on a successful `initialize`, requires it on every
+later request (`400` if missing, `404` once it is unknown, terminated or
+expired), and enforces the idle and absolute timeouts in `StreamableConfig`.
 
 ### OAuth and Token Protection
 
@@ -570,6 +612,7 @@ For portable code that works on both native and WASM, use `Arc<RwLock<T>>` inste
 - [ ] Store secrets using `env.secret()`, never hardcode
 - [ ] Use Cloudflare Access for production deployments
 - [ ] Configure rate limiting at the Cloudflare level
+- [ ] List the browser origins that call your server (`EndpointConfig::allow_origin` / `StreamableConfig::allow_origin`); others get `403`
 - [ ] CORS: Origin is echoed by default for security; `*` is only used for non-browser clients
 - [ ] Validate and sanitize URIs in resource handlers
 - [ ] Use allowlists for URI path components where possible

@@ -300,6 +300,22 @@ impl FetchError {
 /// force a refresh after 6 hours to ensure reasonable key freshness.
 const MAX_CACHE_AGE_MS: f64 = 6.0 * 3600.0 * 1000.0; // 6 hours
 
+/// Minimum time between forced JWKS refreshes (30 seconds).
+///
+/// A refresh is forced when a token names a `kid` the cached set lacks — the
+/// sign of a key rotation. The `kid` is attacker-chosen, so without a floor
+/// every forged token cost an outbound fetch to the identity provider: an
+/// unauthenticated amplifier aimed at someone else's endpoint, and a way to
+/// get the Worker rate-limited by it.
+const MIN_REFRESH_INTERVAL_MS: f64 = 30_000.0;
+
+/// Whether a forced refresh may go out now, given when the last one was
+/// attempted. Failed attempts count: a provider that is down is not retried
+/// faster than one that is up.
+fn refresh_due(last_attempt: Option<f64>, now: f64) -> bool {
+    last_attempt.is_none_or(|last| now - last >= MIN_REFRESH_INTERVAL_MS)
+}
+
 /// JWKS cache for efficient key lookups.
 ///
 /// Caches fetched JWKS and automatically refreshes when expired.
@@ -330,6 +346,9 @@ pub struct JwksCache {
     /// Cached JWKS entries
     cache: Rc<RefCell<Option<CacheEntry>>>,
 
+    /// When a forced refresh was last attempted
+    last_refresh_attempt: Rc<RefCell<Option<f64>>>,
+
     /// Maximum retry attempts for transient failures
     max_retries: u32,
 
@@ -357,6 +376,7 @@ impl JwksCache {
             url: url.into(),
             ttl_ms: 3600.0 * 1000.0, // 1 hour
             cache: Rc::new(RefCell::new(None)),
+            last_refresh_attempt: Rc::new(RefCell::new(None)),
             max_retries: 3,
             retry_base_delay_ms: 100.0,
             allow_insecure: false,
@@ -463,8 +483,18 @@ impl JwksCache {
         Ok(jwks)
     }
 
-    /// Force refresh the cache
+    /// Force refresh the cache.
+    ///
+    /// Rate limited: within 30 seconds of the previous forced refresh this
+    /// returns the cached set (fetching only if there is none) rather than
+    /// going to the network again.
     pub async fn refresh(&self) -> Result<JwkSet, AuthError> {
+        let now = js_sys::Date::now();
+        if !refresh_due(*self.last_refresh_attempt.borrow(), now) {
+            return self.get_jwks().await;
+        }
+        *self.last_refresh_attempt.borrow_mut() = Some(now);
+
         let jwks = self.fetch_jwks().await?;
 
         *self.cache.borrow_mut() = Some(CacheEntry {
@@ -475,11 +505,21 @@ impl JwksCache {
         Ok(jwks)
     }
 
-    /// Find a key by ID, fetching JWKS if needed
+    /// Find a key by ID, fetching JWKS if needed.
+    ///
+    /// A `kid` the cached set lacks triggers one rate-limited refresh, which
+    /// is how a key rotation is picked up before the cache expires. A `kid`
+    /// that is present never causes a fetch, whatever the token's signature
+    /// turns out to be.
     pub async fn find_key(&self, kid: &str) -> Result<Jwk, AuthError> {
         let jwks = self.get_jwks().await?;
+        if let Some(key) = jwks.find_by_kid(kid) {
+            return Ok(key.clone());
+        }
 
-        jwks.find_by_kid(kid)
+        self.refresh()
+            .await?
+            .find_by_kid(kid)
             .cloned()
             .ok_or_else(|| AuthError::KeyNotFound(kid.to_string()))
     }
@@ -521,12 +561,6 @@ impl JwksCache {
         // SECURITY: Validate URL uses HTTPS before fetching key material
         self.validate_url().map_err(FetchError::Permanent)?;
 
-        let window = web_sys::window().ok_or_else(|| {
-            FetchError::Permanent(AuthError::Internal(
-                "No window object available".to_string(),
-            ))
-        })?;
-
         // Create fetch request
         let request = web_sys::Request::new_with_str(&self.url).map_err(|_| {
             // Request creation failure is permanent (bad URL, etc.)
@@ -536,7 +570,11 @@ impl JwksCache {
         })?;
 
         // Execute fetch - network errors are transient
-        let promise = window.fetch_with_request(&request);
+        let promise = crate::wasm_server::js_global::fetch(&request).map_err(|_| {
+            FetchError::Permanent(AuthError::Internal(
+                "fetch is not available in this environment".to_string(),
+            ))
+        })?;
         let response = JsFuture::from(promise).await.map_err(|e| {
             // Log network error details for operators
             #[cfg(target_arch = "wasm32")]
@@ -647,6 +685,19 @@ pub async fn fetch_jwks(url: &str) -> Result<JwkSet, AuthError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forced_refreshes_are_spaced_out() {
+        assert!(refresh_due(None, 1_000.0));
+        assert!(!refresh_due(
+            Some(1_000.0),
+            1_000.0 + MIN_REFRESH_INTERVAL_MS - 1.0
+        ));
+        assert!(refresh_due(
+            Some(1_000.0),
+            1_000.0 + MIN_REFRESH_INTERVAL_MS
+        ));
+    }
 
     #[test]
     fn test_jwk_is_rsa() {

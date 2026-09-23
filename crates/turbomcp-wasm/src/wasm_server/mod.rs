@@ -80,8 +80,9 @@
 //!
 //! The `RequestContext` provides access to:
 //! - `request_id()` - Unique request identifier
-//! - `session_id()` - Session ID from headers
-//! - `user_id()` - User ID (set by auth middleware)
+//! - `session_id()` - The Streamable HTTP session the request belongs to
+//!   (server-issued; never taken from an unverified client header)
+//! - `principal()` / `subject()` - Identity set by the `WithAuth` wrapper
 //! - `headers()` - HTTP headers
 //! - `header(name)` - Get a specific header (case-insensitive)
 //! - `is_authenticated()` - Check authentication status
@@ -100,18 +101,19 @@
 
 mod composite;
 mod context;
+mod endpoint;
 mod ext;
-mod handler;
 mod handler_traits;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod js_global;
 pub mod middleware;
 mod response;
 mod rich_context;
 mod server;
 mod traits;
 mod types;
-mod version_negotiation;
 mod visibility;
 
 #[cfg(feature = "auth")]
@@ -128,6 +130,9 @@ pub mod durable_objects;
 // directly in WASM via .handle_worker_request()
 pub use ext::WasmHandlerExt;
 
+// HTTP-level policy (origins, body limit) for the stateless endpoint
+pub use endpoint::EndpointConfig;
+
 // Re-export the main server types
 pub use server::{McpServer, McpServerBuilder};
 
@@ -139,6 +144,7 @@ pub use visibility::{ComponentFilter, VisibilityLayer, VisibilitySessionGuard};
 
 // Re-export request context for handlers, the WASM-transport enum value, and
 // the WASM-specific factory helpers used by the macro-generated handler.
+pub(crate) use context::shared_context;
 pub use context::{
     RequestContext, TransportType, WASM_TIMESTAMP_METADATA_KEY, current_timestamp_ms,
     from_worker_request, generate_request_id, new_wasm_context,

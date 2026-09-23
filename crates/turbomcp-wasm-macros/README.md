@@ -120,7 +120,8 @@ async fn auth_tool(
 #[resource("config://app")]
 async fn config(&self, uri: String) -> ResourceResult { ... }
 
-// With URI template
+// With URI template: registered as a resource template (listed by
+// `resources/templates/list`), and `uri` is the concrete URI that was read
 #[resource("file://{path}")]
 async fn file(&self, uri: String) -> ResourceResult { ... }
 ```

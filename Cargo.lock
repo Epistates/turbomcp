@@ -6490,6 +6490,7 @@ dependencies = [
  "quote",
  "syn 3.0.5",
  "trybuild",
+ "turbomcp-core",
 ]
 
 [[package]]

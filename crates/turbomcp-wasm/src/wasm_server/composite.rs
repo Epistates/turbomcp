@@ -4,13 +4,10 @@
 //! with automatic namespacing through prefixes. This allows building modular
 //! servers from smaller, focused handlers.
 //!
-//! # Security
-//!
-//! The composite server includes secure CORS handling:
-//!
-//! - Echoes the request `Origin` header instead of using wildcard `*`
-//! - Adds `Vary: Origin` header for proper caching behavior
-//! - Falls back to `*` only for non-browser clients (no Origin header)
+//! The composite is an [`McpHandler`], so requests reach it through the core
+//! router like every other WASM entry point, and it follows the native
+//! `CompositeHandler`'s naming and prefix rules so a server composed on either
+//! side exposes the same names.
 //!
 //! # Example
 //!
@@ -36,18 +33,25 @@
 //! server.handle(req).await
 //! ```
 
+use std::future::Future;
 use std::sync::Arc;
 
-use turbomcp_core::PROTOCOL_VERSION;
+use serde_json::Value;
+use turbomcp_core::MaybeSend;
+use turbomcp_core::error::{ErrorKind, McpError, McpResult};
+use turbomcp_core::handler::McpHandler;
+use turbomcp_core::uri_template::UriTemplate;
 use turbomcp_protocol::types::{
     PromptsCapabilities, ResourcesCapabilities, ServerCapabilities, ToolsCapabilities,
 };
-use turbomcp_types::Implementation;
-use worker::{Headers, Request, Response};
+use turbomcp_types::{
+    Content, Implementation, Prompt, PromptResult, Resource, ResourceContents, ResourceResult,
+    ResourceTemplate, Tool, ToolResult,
+};
+use worker::{Request, Response};
 
-use super::context::RequestContext;
-use super::server::McpServer;
-use super::types::{JsonRpcRequest, JsonRpcResponse};
+use super::context::{RequestContext, shared_context};
+use super::server::{McpServer, into_core_tool_result};
 
 /// A composite server that mounts multiple MCP servers with prefixes.
 ///
@@ -60,6 +64,10 @@ use super::types::{JsonRpcRequest, JsonRpcResponse};
 /// - **Tools**: `{prefix}_{tool_name}` (e.g., `weather_get_forecast`)
 /// - **Resources**: `{prefix}://{original_uri}` (e.g., `weather://api/forecast`)
 /// - **Prompts**: `{prefix}_{prompt_name}` (e.g., `weather_forecast_prompt`)
+///
+/// A name is routed to the mount whose prefix it starts with — the longest
+/// one, should two qualify — rather than by splitting at the first `_`, so a
+/// prefix may itself contain `_`.
 ///
 /// # Example
 ///
@@ -77,6 +85,7 @@ pub struct CompositeServer {
     name: String,
     version: String,
     description: Option<String>,
+    instructions: Option<String>,
     mounted: Arc<Vec<MountedServer>>,
 }
 
@@ -103,6 +112,7 @@ pub struct CompositeServerBuilder {
     name: String,
     version: String,
     description: Option<String>,
+    instructions: Option<String>,
     mounted: Vec<MountedServer>,
 }
 
@@ -124,6 +134,7 @@ impl CompositeServerBuilder {
             name: name.into(),
             version: version.into(),
             description: None,
+            instructions: None,
             mounted: Vec::new(),
         }
     }
@@ -135,16 +146,77 @@ impl CompositeServerBuilder {
         self
     }
 
+    /// Set the `instructions` returned by the `initialize` handshake.
+    ///
+    /// Mounted servers' own instructions are not merged: each was written for a
+    /// standalone server and names tools the composite exposes under another
+    /// name. Describe the composed surface here instead.
+    #[must_use]
+    pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Check a prefix before mounting.
+    ///
+    /// Same rules as the native `CompositeHandler`. Beyond an exact duplicate,
+    /// prefixes that *nest* are refused: names are minted as `{prefix}_{name}`,
+    /// so mounting at `x` (exposing a tool `y_z`) next to `x_y` (exposing `z`)
+    /// produces two tools both called `x_y_z`, one of which can never be
+    /// reached. The charset keeps minted names inside the one MCP allows for
+    /// tool names.
+    fn validate_prefix(&self, prefix: &str) -> Result<(), String> {
+        if prefix.is_empty() || prefix.len() > 64 {
+            return Err(format!(
+                "prefix '{prefix}' must be between 1 and 64 characters"
+            ));
+        }
+        if !prefix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.')
+        {
+            return Err(format!(
+                "prefix '{prefix}' may contain only A-Z a-z 0-9 _ - . so that the \
+                 names it mints stay valid MCP tool names"
+            ));
+        }
+
+        for mounted in &self.mounted {
+            let other = mounted.prefix.as_str();
+            if other == prefix {
+                return Err(format!(
+                    "duplicate prefix '{prefix}' - each mounted server must have a unique prefix"
+                ));
+            }
+            let nests = prefix
+                .strip_prefix(other)
+                .is_some_and(|rest| rest.starts_with('_'))
+                || other
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('_'));
+            if nests {
+                return Err(format!(
+                    "prefix '{prefix}' nests with already-mounted '{other}'; one could mint \
+                     the same tool name as the other and silently shadow it"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Mount a server with the given prefix.
     ///
     /// All tools, resources, and prompts from the server will be namespaced
-    /// with the prefix.
+    /// with the prefix. Prefer [`try_mount`](Self::try_mount) when prefixes
+    /// come from configuration.
     ///
     /// # Panics
     ///
-    /// Panics if a server with the same prefix is already mounted. This prevents
-    /// silent shadowing of tools/resources/prompts which could lead to confusing
-    /// runtime behavior.
+    /// Panics if the prefix is empty, longer than 64 characters, contains
+    /// anything outside `A-Z a-z 0-9 _ - .`, duplicates an existing prefix or
+    /// nests with one (see [`try_mount`](Self::try_mount)). This prevents
+    /// silent shadowing of tools/resources/prompts which could lead to
+    /// confusing runtime behavior.
     ///
     /// # Example
     ///
@@ -155,53 +227,42 @@ impl CompositeServerBuilder {
     ///     .build();
     /// ```
     #[must_use]
-    pub fn mount(mut self, server: McpServer, prefix: impl Into<String>) -> Self {
-        let prefix = prefix.into();
-
-        // Validate no duplicate prefixes
-        if self.mounted.iter().any(|m| m.prefix == prefix) {
-            panic!(
-                "CompositeServer: duplicate prefix '{}' - each mounted server must have a unique prefix",
-                prefix
-            );
+    pub fn mount(self, server: McpServer, prefix: impl Into<String>) -> Self {
+        match self.try_mount(server, prefix) {
+            Ok(builder) => builder,
+            Err(error) => panic!("CompositeServer: {error}"),
         }
-
-        self.mounted.push(MountedServer { prefix, server });
-        self
     }
 
-    /// Try to mount a server with the given prefix, returning an error on duplicate.
+    /// Try to mount a server with the given prefix, returning an error when
+    /// the prefix is invalid, duplicated or nests with a mounted one.
     ///
-    /// This is the fallible version of [`mount`](Self::mount) for cases where
-    /// you want to handle duplicate prefixes gracefully rather than panicking.
+    /// This is the fallible version of [`mount`](Self::mount).
     ///
     /// # Errors
     ///
-    /// Returns an error if a server with the same prefix is already mounted.
+    /// Returns an error describing why the prefix was refused.
     pub fn try_mount(
         mut self,
         server: McpServer,
         prefix: impl Into<String>,
     ) -> Result<Self, String> {
         let prefix = prefix.into();
-
-        if self.mounted.iter().any(|m| m.prefix == prefix) {
-            return Err(format!(
-                "duplicate prefix '{}' - each mounted server must have a unique prefix",
-                prefix
-            ));
-        }
-
+        self.validate_prefix(&prefix)?;
         self.mounted.push(MountedServer { prefix, server });
         Ok(self)
     }
 
     /// Build the composite server.
+    // `Arc` so the composite is `Send + Sync` on native targets; on wasm32 the
+    // handlers are `!Send` and it is only a reference count.
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn build(self) -> CompositeServer {
         CompositeServer {
             name: self.name,
             version: self.version,
             description: self.description,
+            instructions: self.instructions,
             mounted: Arc::new(self.mounted),
         }
     }
@@ -233,300 +294,91 @@ impl CompositeServer {
 
     /// Handle an incoming Cloudflare Worker request.
     ///
-    /// This routes requests to the appropriate mounted server based on
-    /// the namespaced tool/resource/prompt names.
-    pub async fn handle(&self, mut req: Request) -> worker::Result<Response> {
-        // SECURITY: Extract Origin header early for CORS responses.
-        // We echo this back instead of using wildcard "*".
-        let request_origin = req.headers().get("origin").ok().flatten();
-        let origin_ref = request_origin.as_deref();
-
-        // Handle CORS preflight
-        if req.method() == worker::Method::Options {
-            return self.cors_preflight_response(origin_ref);
-        }
-
-        // Parse JSON-RPC request
-        let body = req.text().await?;
-        let rpc_request: JsonRpcRequest = match serde_json::from_str(&body) {
-            Ok(r) => r,
-            Err(e) => {
-                return self.json_rpc_error_response(
-                    None,
-                    -32700,
-                    &format!("Parse error: {}", e),
-                    origin_ref,
-                );
-            }
-        };
-
-        let id = rpc_request.id.clone();
-
-        // Route based on method
-        let result = match rpc_request.method.as_str() {
-            "initialize" => self.handle_initialize(&rpc_request).await,
-            "tools/list" => self.handle_list_tools(),
-            "tools/call" => self.handle_call_tool(&rpc_request).await,
-            "resources/list" => self.handle_list_resources(),
-            "resources/read" => self.handle_read_resource(&rpc_request).await,
-            "resources/templates/list" => self.handle_list_resource_templates(),
-            "prompts/list" => self.handle_list_prompts(),
-            "prompts/get" => self.handle_get_prompt(&rpc_request).await,
-            method => {
-                return self.json_rpc_error_response(
-                    id.clone(),
-                    -32601,
-                    &format!("Method not found: {}", method),
-                    origin_ref,
-                );
-            }
-        };
-
-        match result {
-            Ok(value) => self.json_rpc_success_response(id, value, origin_ref),
-            Err(e) => self.json_rpc_error_response(id, -32603, &e, origin_ref),
-        }
+    /// This routes requests to the appropriate mounted server based on the
+    /// namespaced tool/resource/prompt names, through the same stateless
+    /// endpoint (and body limit) as [`McpServer::handle`].
+    pub async fn handle(&self, req: Request) -> worker::Result<Response> {
+        super::endpoint::serve(
+            self,
+            req,
+            &super::EndpointConfig::default(),
+            |ctx| ctx,
+            super::endpoint::admit_all,
+        )
+        .await
     }
 
     // =========================================================================
     // Namespacing Helpers
     // =========================================================================
 
-    /// Prefix a tool name.
-    fn prefix_tool_name(prefix: &str, name: &str) -> String {
+    /// Prefix a tool or prompt name.
+    fn prefix_name(prefix: &str, name: &str) -> String {
         format!("{}_{}", prefix, name)
     }
 
-    /// Prefix a resource URI.
-    fn prefix_resource_uri(prefix: &str, uri: &str) -> String {
+    /// Prefix a resource URI or URI template.
+    fn prefix_uri(prefix: &str, uri: &str) -> String {
         format!("{}://{}", prefix, uri)
     }
 
-    /// Prefix a prompt name.
-    fn prefix_prompt_name(prefix: &str, name: &str) -> String {
-        format!("{}_{}", prefix, name)
+    /// Find the mount a prefixed name belongs to, returning it with the name
+    /// the mount knows. The longest matching prefix wins.
+    fn route<'a>(&self, name: &'a str, separator: &str) -> Option<(&MountedServer, &'a str)> {
+        self.mounted
+            .iter()
+            .filter_map(|mounted| {
+                name.strip_prefix(mounted.prefix.as_str())?
+                    .strip_prefix(separator)
+                    .map(|rest| (mounted, rest))
+            })
+            .max_by_key(|(mounted, _)| mounted.prefix.len())
     }
 
-    /// Parse a prefixed tool name into (prefix, original_name).
-    fn parse_prefixed_tool(name: &str) -> Option<(&str, &str)> {
-        name.split_once('_')
+    /// A mount reports "not found" for the name it knows; the client asked for
+    /// the prefixed one, so that is the one the error names. Every other error
+    /// passes through with its kind intact.
+    fn as_requested(error: McpError, not_found: ErrorKind, requested: &str) -> McpError {
+        if error.kind != not_found {
+            return error;
+        }
+        match not_found {
+            ErrorKind::ToolNotFound => McpError::tool_not_found(requested),
+            ErrorKind::PromptNotFound => McpError::prompt_not_found(requested),
+            _ => McpError::resource_not_found(requested),
+        }
     }
 
-    /// Parse a prefixed resource URI into (prefix, original_uri).
-    fn parse_prefixed_uri(uri: &str) -> Option<(&str, &str)> {
-        uri.split_once("://")
+    /// Whether `uri` is one the mounted server serves itself.
+    fn serves(server: &McpServer, uri: &str) -> bool {
+        server.resources.contains_key(uri)
+            || server
+                .resource_templates
+                .keys()
+                .any(|template| UriTemplate::parse(template).matches(uri))
     }
 
-    /// Parse a prefixed prompt name into (prefix, original_name).
-    fn parse_prefixed_prompt(name: &str) -> Option<(&str, &str)> {
-        name.split_once('_')
-    }
-
-    /// Find a mounted server by prefix.
-    fn find_server(&self, prefix: &str) -> Option<&MountedServer> {
-        self.mounted.iter().find(|m| m.prefix == prefix)
-    }
-
-    // =========================================================================
-    // Request Handlers
-    // =========================================================================
-
-    async fn handle_initialize(&self, _req: &JsonRpcRequest) -> Result<serde_json::Value, String> {
-        let capabilities = self.aggregate_capabilities();
-
-        let server_info = Implementation {
-            name: self.name.clone(),
-            title: None,
-            description: self.description.clone(),
-            version: self.version.clone(),
-            icons: None,
-            website_url: None,
-        };
-
-        Ok(serde_json::json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": capabilities,
-            "serverInfo": server_info
-        }))
-    }
-
-    fn handle_list_tools(&self) -> Result<serde_json::Value, String> {
-        let mut tools = Vec::new();
-
-        for mounted in self.mounted.iter() {
-            for tool in mounted.server.tools() {
-                let mut prefixed = tool.clone();
-                prefixed.name = Self::prefix_tool_name(&mounted.prefix, &tool.name);
-                tools.push(prefixed);
+    /// Rewrite resource URIs inside outgoing content blocks.
+    ///
+    /// Listings present a mount's URIs prefixed and `resources/read` strips the
+    /// prefix back off, so a `resource_link` or embedded resource carrying the
+    /// mount's own URI would name something the client cannot read back. Only
+    /// URIs the mount actually serves are rewritten: a link to an external
+    /// `https://` page is not a resource of the mount and is left alone.
+    fn prefix_uris_in_content(mounted: &MountedServer, blocks: &mut [Content]) {
+        for block in blocks {
+            let uri = match block {
+                Content::ResourceLink(link) => &mut link.uri,
+                Content::Resource(embedded) => match &mut embedded.resource {
+                    ResourceContents::Text(text) => &mut text.uri,
+                    ResourceContents::Blob(blob) => &mut blob.uri,
+                },
+                _ => continue,
+            };
+            if Self::serves(&mounted.server, uri) {
+                *uri = Self::prefix_uri(&mounted.prefix, uri);
             }
         }
-
-        Ok(serde_json::json!({
-            "tools": tools
-        }))
-    }
-
-    async fn handle_call_tool(&self, req: &JsonRpcRequest) -> Result<serde_json::Value, String> {
-        let params = req
-            .params
-            .as_ref()
-            .ok_or_else(|| "Missing params".to_string())?;
-
-        let name = params
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing tool name".to_string())?;
-
-        let args = params
-            .get("arguments")
-            .cloned()
-            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-        // Parse prefixed name
-        let (prefix, original_name) =
-            Self::parse_prefixed_tool(name).ok_or_else(|| format!("Tool not found: {}", name))?;
-
-        // Find the mounted server
-        let mounted = self
-            .find_server(prefix)
-            .ok_or_else(|| format!("Tool not found: {}", name))?;
-
-        // Create context
-        let ctx = Arc::new(RequestContext::new());
-
-        // Call the tool
-        let result = mounted
-            .server
-            .call_tool_internal(original_name, args, ctx)
-            .await?;
-
-        Ok(serde_json::json!({
-            "content": result.content,
-            "isError": result.is_error
-        }))
-    }
-
-    fn handle_list_resources(&self) -> Result<serde_json::Value, String> {
-        let mut resources = Vec::new();
-
-        for mounted in self.mounted.iter() {
-            for resource in mounted.server.resources() {
-                let mut prefixed = resource.clone();
-                prefixed.uri = Self::prefix_resource_uri(&mounted.prefix, &resource.uri);
-                resources.push(prefixed);
-            }
-        }
-
-        Ok(serde_json::json!({
-            "resources": resources
-        }))
-    }
-
-    fn handle_list_resource_templates(&self) -> Result<serde_json::Value, String> {
-        let mut templates = Vec::new();
-
-        for mounted in self.mounted.iter() {
-            for template in mounted.server.resource_templates() {
-                let mut prefixed = template.clone();
-                prefixed.uri_template =
-                    Self::prefix_resource_uri(&mounted.prefix, &template.uri_template);
-                templates.push(prefixed);
-            }
-        }
-
-        Ok(serde_json::json!({
-            "resourceTemplates": templates
-        }))
-    }
-
-    async fn handle_read_resource(
-        &self,
-        req: &JsonRpcRequest,
-    ) -> Result<serde_json::Value, String> {
-        let params = req
-            .params
-            .as_ref()
-            .ok_or_else(|| "Missing params".to_string())?;
-
-        let uri = params
-            .get("uri")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing resource URI".to_string())?;
-
-        // Parse prefixed URI
-        let (prefix, original_uri) =
-            Self::parse_prefixed_uri(uri).ok_or_else(|| format!("Resource not found: {}", uri))?;
-
-        // Find the mounted server
-        let mounted = self
-            .find_server(prefix)
-            .ok_or_else(|| format!("Resource not found: {}", uri))?;
-
-        // Create context
-        let ctx = Arc::new(RequestContext::new());
-
-        // Read the resource
-        let result = mounted
-            .server
-            .read_resource_internal(original_uri, ctx)
-            .await?;
-
-        Ok(serde_json::json!({
-            "contents": result.contents
-        }))
-    }
-
-    fn handle_list_prompts(&self) -> Result<serde_json::Value, String> {
-        let mut prompts = Vec::new();
-
-        for mounted in self.mounted.iter() {
-            for prompt in mounted.server.prompts() {
-                let mut prefixed = prompt.clone();
-                prefixed.name = Self::prefix_prompt_name(&mounted.prefix, &prompt.name);
-                prompts.push(prefixed);
-            }
-        }
-
-        Ok(serde_json::json!({
-            "prompts": prompts
-        }))
-    }
-
-    async fn handle_get_prompt(&self, req: &JsonRpcRequest) -> Result<serde_json::Value, String> {
-        let params = req
-            .params
-            .as_ref()
-            .ok_or_else(|| "Missing params".to_string())?;
-
-        let name = params
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing prompt name".to_string())?;
-
-        let args = params.get("arguments").cloned();
-
-        // Parse prefixed name
-        let (prefix, original_name) = Self::parse_prefixed_prompt(name)
-            .ok_or_else(|| format!("Prompt not found: {}", name))?;
-
-        // Find the mounted server
-        let mounted = self
-            .find_server(prefix)
-            .ok_or_else(|| format!("Prompt not found: {}", name))?;
-
-        // Create context
-        let ctx = Arc::new(RequestContext::new());
-
-        // Get the prompt
-        let result = mounted
-            .server
-            .get_prompt_internal(original_name, args, ctx)
-            .await?;
-
-        Ok(serde_json::json!({
-            "description": result.description,
-            "messages": result.messages
-        }))
     }
 
     // =========================================================================
@@ -547,89 +399,165 @@ impl CompositeServer {
             logging: None,
             completions: None,
             tasks: None,
-            prompts: if has_prompts {
-                Some(PromptsCapabilities {
-                    list_changed: Some(false),
-                })
-            } else {
-                None
-            },
-            resources: if has_resources {
-                Some(ResourcesCapabilities {
-                    subscribe: Some(false),
-                    list_changed: Some(false),
-                })
-            } else {
-                None
-            },
-            tools: if has_tools {
-                Some(ToolsCapabilities {
-                    list_changed: Some(false),
-                })
-            } else {
-                None
-            },
+            prompts: has_prompts.then_some(PromptsCapabilities {
+                list_changed: Some(false),
+            }),
+            resources: has_resources.then_some(ResourcesCapabilities {
+                subscribe: Some(false),
+                list_changed: Some(false),
+            }),
+            tools: has_tools.then_some(ToolsCapabilities {
+                list_changed: Some(false),
+            }),
+        }
+    }
+}
+
+#[allow(clippy::manual_async_fn)]
+impl McpHandler for CompositeServer {
+    fn server_info(&self) -> Implementation {
+        Implementation {
+            name: self.name.clone(),
+            title: None,
+            description: self.description.clone(),
+            version: self.version.clone(),
+            icons: None,
+            website_url: None,
         }
     }
 
-    // =========================================================================
-    // Response Helpers
-    // =========================================================================
+    fn instructions(&self) -> Option<String> {
+        self.instructions.clone()
+    }
 
-    /// Create CORS headers for responses.
-    ///
-    /// SECURITY: Echoes the request Origin header instead of using wildcard `*`.
-    fn cors_headers(&self, request_origin: Option<&str>) -> Headers {
-        let headers = Headers::new();
-        // SECURITY: Echo the request origin instead of using wildcard.
-        let origin = request_origin.unwrap_or("*");
-        let _ = headers.set("Access-Control-Allow-Origin", origin);
-        if request_origin.is_some() {
-            let _ = headers.set("Vary", "Origin");
+    fn server_capabilities(&self) -> ServerCapabilities {
+        self.aggregate_capabilities()
+    }
+
+    fn list_tools(&self) -> Vec<Tool> {
+        self.mounted
+            .iter()
+            .flat_map(|mounted| {
+                mounted.server.list_tools().into_iter().map(|mut tool| {
+                    tool.name = Self::prefix_name(&mounted.prefix, &tool.name);
+                    tool
+                })
+            })
+            .collect()
+    }
+
+    fn list_resources(&self) -> Vec<Resource> {
+        self.mounted
+            .iter()
+            .flat_map(|mounted| {
+                mounted
+                    .server
+                    .list_resources()
+                    .into_iter()
+                    .map(|mut resource| {
+                        resource.uri = Self::prefix_uri(&mounted.prefix, &resource.uri);
+                        resource
+                    })
+            })
+            .collect()
+    }
+
+    fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
+        self.mounted
+            .iter()
+            .flat_map(|mounted| {
+                mounted
+                    .server
+                    .list_resource_templates()
+                    .into_iter()
+                    .map(|mut template| {
+                        template.uri_template =
+                            Self::prefix_uri(&mounted.prefix, &template.uri_template);
+                        template
+                    })
+            })
+            .collect()
+    }
+
+    fn list_prompts(&self) -> Vec<Prompt> {
+        self.mounted
+            .iter()
+            .flat_map(|mounted| {
+                mounted.server.list_prompts().into_iter().map(|mut prompt| {
+                    prompt.name = Self::prefix_name(&mounted.prefix, &prompt.name);
+                    prompt
+                })
+            })
+            .collect()
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<ToolResult>> + MaybeSend + 'a {
+        async move {
+            let (mounted, original) = self
+                .route(name, "_")
+                .ok_or_else(|| McpError::tool_not_found(name))?;
+            let mut result = mounted
+                .server
+                .call_tool_internal(original, args, shared_context(ctx))
+                .await
+                .map_err(|error| Self::as_requested(error, ErrorKind::ToolNotFound, name))
+                .map(into_core_tool_result)?;
+            Self::prefix_uris_in_content(mounted, &mut result.content);
+            Ok(result)
         }
-        let _ = headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-        let _ = headers.set("Access-Control-Allow-Headers", "Content-Type");
-        let _ = headers.set("Access-Control-Max-Age", "86400");
-        headers
     }
 
-    fn cors_preflight_response(&self, request_origin: Option<&str>) -> worker::Result<Response> {
-        Ok(Response::empty()?
-            .with_status(204)
-            .with_headers(self.cors_headers(request_origin)))
+    fn read_resource<'a>(
+        &'a self,
+        uri: &'a str,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<ResourceResult>> + MaybeSend + 'a {
+        async move {
+            let (mounted, original) = self
+                .route(uri, "://")
+                .ok_or_else(|| McpError::resource_not_found(uri))?;
+            let mut result = mounted
+                .server
+                .read_resource_internal(original, shared_context(ctx))
+                .await
+                .map_err(|error| Self::as_requested(error, ErrorKind::ResourceNotFound, uri))?;
+            // Echo back the URI the client asked for, not the mount's own.
+            for entry in &mut result.contents {
+                let entry_uri = match entry {
+                    ResourceContents::Text(text) => &mut text.uri,
+                    ResourceContents::Blob(blob) => &mut blob.uri,
+                };
+                *entry_uri = Self::prefix_uri(&mounted.prefix, entry_uri);
+            }
+            Ok(result)
+        }
     }
 
-    fn json_rpc_success_response(
-        &self,
-        id: Option<serde_json::Value>,
-        result: serde_json::Value,
-        request_origin: Option<&str>,
-    ) -> worker::Result<Response> {
-        let response = JsonRpcResponse::success(id, result);
-        let json =
-            serde_json::to_string(&response).map_err(|e| worker::Error::from(e.to_string()))?;
-
-        let headers = self.cors_headers(request_origin);
-        let _ = headers.set("Content-Type", "application/json");
-
-        Ok(Response::ok(json)?.with_headers(headers))
-    }
-
-    fn json_rpc_error_response(
-        &self,
-        id: Option<serde_json::Value>,
-        code: i32,
-        message: &str,
-        request_origin: Option<&str>,
-    ) -> worker::Result<Response> {
-        let response = JsonRpcResponse::error(id, code, message);
-        let json =
-            serde_json::to_string(&response).map_err(|e| worker::Error::from(e.to_string()))?;
-
-        let headers = self.cors_headers(request_origin);
-        let _ = headers.set("Content-Type", "application/json");
-
-        Ok(Response::ok(json)?.with_headers(headers))
+    fn get_prompt<'a>(
+        &'a self,
+        name: &'a str,
+        args: Option<Value>,
+        ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<PromptResult>> + MaybeSend + 'a {
+        async move {
+            let (mounted, original) = self
+                .route(name, "_")
+                .ok_or_else(|| McpError::prompt_not_found(name))?;
+            let mut result = mounted
+                .server
+                .get_prompt_internal(original, args, shared_context(ctx))
+                .await
+                .map_err(|error| Self::as_requested(error, ErrorKind::PromptNotFound, name))?;
+            for message in &mut result.messages {
+                Self::prefix_uris_in_content(mounted, std::slice::from_mut(&mut message.content));
+            }
+            Ok(result)
+        }
     }
 }
 
@@ -643,6 +571,12 @@ mod tests {
             .tool_raw("get_forecast", "Get weather forecast", |_args| async {
                 "Sunny, 72°F".to_string()
             })
+            .resource(
+                "api/current",
+                "current",
+                "Current",
+                |uri: String| async move { Ok::<_, String>(ResourceResult::text(uri, "sunny")) },
+            )
             .build()
     }
 
@@ -655,15 +589,31 @@ mod tests {
             .build()
     }
 
+    fn composite() -> CompositeServer {
+        CompositeServer::builder("main", "1.0.0")
+            .mount(create_test_weather_server(), "weather")
+            .mount(create_test_news_server(), "news")
+            .build()
+    }
+
+    async fn route(server: &CompositeServer, method: &str, params: Value) -> Value {
+        let request = turbomcp_core::jsonrpc::JsonRpcIncoming {
+            jsonrpc: "2.0".into(),
+            id: Some(serde_json::json!(1)),
+            method: method.into(),
+            params: Some(params),
+        };
+        let ctx = crate::wasm_server::context::new_wasm_context();
+        serde_json::to_value(super::super::endpoint::route(server, request, &ctx, None).await)
+            .unwrap()
+    }
+
     #[test]
     fn test_composite_builder() {
-        let weather = create_test_weather_server();
-        let news = create_test_news_server();
-
         let composite = CompositeServer::builder("main", "1.0.0")
             .description("Main gateway")
-            .mount(weather, "weather")
-            .mount(news, "news")
+            .mount(create_test_weather_server(), "weather")
+            .mount(create_test_news_server(), "news")
             .build();
 
         assert_eq!(composite.server_count(), 2);
@@ -672,24 +622,10 @@ mod tests {
 
     #[test]
     fn test_list_tools_prefixed() {
-        let weather = create_test_weather_server();
-        let news = create_test_news_server();
+        let tools = composite().list_tools();
+        let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
-        let composite = CompositeServer::builder("main", "1.0.0")
-            .mount(weather, "weather")
-            .mount(news, "news")
-            .build();
-
-        let result = composite.handle_list_tools().unwrap();
-        let tools = result.get("tools").unwrap().as_array().unwrap();
-
-        assert_eq!(tools.len(), 2);
-
-        let tool_names: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
-            .collect();
-
+        assert_eq!(tool_names.len(), 2);
         assert!(tool_names.contains(&"weather_get_forecast"));
         assert!(tool_names.contains(&"news_get_headlines"));
     }
@@ -697,37 +633,55 @@ mod tests {
     #[test]
     #[should_panic(expected = "duplicate prefix 'weather'")]
     fn test_duplicate_prefix_panics() {
-        let weather1 = create_test_weather_server();
-        let weather2 = create_test_weather_server();
-
         let _composite = CompositeServer::builder("main", "1.0.0")
-            .mount(weather1, "weather")
-            .mount(weather2, "weather"); // Duplicate!
+            .mount(create_test_weather_server(), "weather")
+            .mount(create_test_weather_server(), "weather"); // Duplicate!
     }
 
     #[test]
     fn test_try_mount_duplicate_returns_error() {
-        let weather1 = create_test_weather_server();
-        let weather2 = create_test_weather_server();
-
         let result = CompositeServer::builder("main", "1.0.0")
-            .try_mount(weather1, "weather")
+            .try_mount(create_test_weather_server(), "weather")
             .unwrap()
-            .try_mount(weather2, "weather");
+            .try_mount(create_test_weather_server(), "weather");
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("duplicate prefix"));
     }
 
     #[test]
-    fn test_try_mount_success() {
-        let weather = create_test_weather_server();
-        let news = create_test_news_server();
+    fn prefixes_that_could_shadow_each_other_are_refused() {
+        let builder = CompositeServer::builder("main", "1.0.0")
+            .try_mount(create_test_weather_server(), "a")
+            .unwrap();
+        // `a` exposing `b_c` and `a_b` exposing `c` would both mint `a_b_c`.
+        let nested = builder.try_mount(create_test_news_server(), "a_b");
+        assert!(nested.unwrap_err().contains("nests"));
 
+        for bad in ["", "has space", "slash/es", &"x".repeat(65)] {
+            let result = CompositeServer::builder("main", "1.0.0")
+                .try_mount(create_test_weather_server(), bad);
+            assert!(result.is_err(), "{bad:?} should be refused");
+        }
+    }
+
+    #[test]
+    fn prefixes_containing_underscores_route_correctly() {
         let composite = CompositeServer::builder("main", "1.0.0")
-            .try_mount(weather, "weather")
+            .mount(create_test_weather_server(), "my_weather")
+            .build();
+        let (mounted, rest) = composite.route("my_weather_get_forecast", "_").unwrap();
+        assert_eq!(mounted.prefix, "my_weather");
+        assert_eq!(rest, "get_forecast");
+        assert!(composite.route("my_get_forecast", "_").is_none());
+    }
+
+    #[test]
+    fn test_try_mount_success() {
+        let composite = CompositeServer::builder("main", "1.0.0")
+            .try_mount(create_test_weather_server(), "weather")
             .unwrap()
-            .try_mount(news, "news")
+            .try_mount(create_test_news_server(), "news")
             .unwrap()
             .build();
 
@@ -736,121 +690,77 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_tool_routed() {
-        let weather = create_test_weather_server();
-        let news = create_test_news_server();
-
-        let composite = CompositeServer::builder("main", "1.0.0")
-            .mount(weather, "weather")
-            .mount(news, "news")
-            .build();
-
-        // Call weather tool
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".to_string(),
-            params: Some(serde_json::json!({
-                "name": "weather_get_forecast",
-                "arguments": {}
-            })),
-        };
-
-        let result = composite.handle_call_tool(&req).await.unwrap();
-        let content = result.get("content").unwrap().as_array().unwrap();
-        assert!(!content.is_empty());
-
-        // Call news tool
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!(2)),
-            method: "tools/call".to_string(),
-            params: Some(serde_json::json!({
-                "name": "news_get_headlines",
-                "arguments": {}
-            })),
-        };
-
-        let result = composite.handle_call_tool(&req).await.unwrap();
-        let content = result.get("content").unwrap().as_array().unwrap();
-        assert!(!content.is_empty());
+        let server = composite();
+        for name in ["weather_get_forecast", "news_get_headlines"] {
+            let response = route(&server, "tools/call", serde_json::json!({"name": name})).await;
+            let result = response["result"].as_object().unwrap();
+            assert!(!result["content"].as_array().unwrap().is_empty());
+            // The typed result is serialized as-is: no `isError: null`.
+            assert!(!result.contains_key("isError"), "{response}");
+        }
     }
 
     #[tokio::test]
     async fn test_call_tool_not_found() {
-        let weather = create_test_weather_server();
-
-        let composite = CompositeServer::builder("main", "1.0.0")
-            .mount(weather, "weather")
-            .build();
-
-        // Unknown prefix
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".to_string(),
-            params: Some(serde_json::json!({
-                "name": "unknown_tool",
-                "arguments": {}
-            })),
-        };
-
-        let result = composite.handle_call_tool(&req).await;
-        assert!(result.is_err());
-
-        // No underscore
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::json!(1)),
-            method: "tools/call".to_string(),
-            params: Some(serde_json::json!({
-                "name": "notool",
-                "arguments": {}
-            })),
-        };
-
-        let result = composite.handle_call_tool(&req).await;
-        assert!(result.is_err());
+        let server = composite();
+        for name in ["unknown_tool", "notool", "weather_nope"] {
+            let response = route(&server, "tools/call", serde_json::json!({"name": name})).await;
+            assert_eq!(response["error"]["code"], -32602, "{name}");
+        }
     }
 
-    #[test]
-    fn test_parse_prefixed_tool() {
+    #[tokio::test]
+    async fn resources_route_and_echo_the_prefixed_uri() {
+        let server = composite();
+        let response = route(
+            &server,
+            "resources/read",
+            serde_json::json!({"uri": "weather://api/current"}),
+        )
+        .await;
         assert_eq!(
-            CompositeServer::parse_prefixed_tool("weather_get_forecast"),
-            Some(("weather", "get_forecast"))
+            response["result"]["contents"][0]["uri"],
+            "weather://api/current"
         );
-        assert_eq!(
-            CompositeServer::parse_prefixed_tool("a_b_c"),
-            Some(("a", "b_c"))
-        );
-        assert_eq!(CompositeServer::parse_prefixed_tool("notool"), None);
+
+        let missing = route(
+            &server,
+            "resources/read",
+            serde_json::json!({"uri": "weather://api/none"}),
+        )
+        .await;
+        assert_eq!(missing["error"]["code"], -32002);
     }
 
-    #[test]
-    fn test_parse_prefixed_uri() {
-        assert_eq!(
-            CompositeServer::parse_prefixed_uri("weather://api/current"),
-            Some(("weather", "api/current"))
-        );
-        assert_eq!(
-            CompositeServer::parse_prefixed_uri("news://feed/top"),
-            Some(("news", "feed/top"))
-        );
-        assert_eq!(CompositeServer::parse_prefixed_uri("noproto"), None);
+    #[tokio::test]
+    async fn composite_answers_the_protocol_through_core() {
+        let server = composite();
+        let init = route(
+            &server,
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "c", "version": "1"}
+            }),
+        )
+        .await;
+        assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+        // A 2025-06-18 client gets no 2025-11-25 serverInfo fields.
+        assert!(init["result"]["serverInfo"].get("description").is_none());
+
+        let ping = route(&server, "ping", serde_json::json!({})).await;
+        assert_eq!(ping["result"], serde_json::json!({}));
     }
 
     #[test]
     fn test_aggregate_capabilities() {
-        let weather = create_test_weather_server();
-        let news = create_test_news_server();
-
-        let composite = CompositeServer::builder("main", "1.0.0")
-            .mount(weather, "weather")
-            .mount(news, "news")
-            .build();
-
-        let caps = composite.aggregate_capabilities();
+        let caps = CompositeServer::builder("main", "1.0.0")
+            .mount(create_test_news_server(), "news")
+            .build()
+            .server_capabilities();
         assert!(caps.tools.is_some());
-        assert!(caps.resources.is_none()); // No resources in test servers
+        assert!(caps.resources.is_none()); // No resources in the news server
         assert!(caps.prompts.is_none()); // No prompts in test servers
     }
 }

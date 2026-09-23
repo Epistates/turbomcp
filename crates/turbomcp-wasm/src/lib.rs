@@ -211,6 +211,9 @@ pub use turbomcp_types::{
     ResourceTemplate, Role, ServerCapabilities, Tool, ToolInputSchema,
 };
 
+#[cfg(any(feature = "browser", feature = "wasi"))]
+mod client_http;
+
 #[cfg(feature = "browser")]
 #[cfg_attr(docsrs, doc(cfg(feature = "browser")))]
 pub mod browser;

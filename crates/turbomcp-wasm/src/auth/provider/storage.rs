@@ -71,6 +71,9 @@ pub struct AuthorizationCodeGrant {
     pub nonce: Option<String>,
     /// State parameter
     pub state: Option<String>,
+    /// RFC 8707 resource indicator the authorization was granted for
+    #[serde(default)]
+    pub resource: Option<String>,
 }
 
 /// Access token data.
@@ -88,6 +91,9 @@ pub struct AccessTokenData {
     pub issued_at: u64,
     /// Associated refresh token hash (for revocation)
     pub refresh_token_hash: Option<String>,
+    /// RFC 8707 resource (audience) the token is bound to
+    #[serde(default)]
+    pub resource: Option<String>,
 }
 
 /// Refresh token data.
@@ -109,6 +115,9 @@ pub struct RefreshTokenData {
     pub family_id: String,
     /// Whether this token has been used (for single-use enforcement)
     pub used: bool,
+    /// RFC 8707 resource (audience) tokens refreshed from this one are bound to
+    #[serde(default)]
+    pub resource: Option<String>,
 }
 
 /// Boxed future for storage operations.
@@ -497,6 +506,7 @@ mod tests {
             expires_at: now + 300, // 5 minutes
             nonce: None,
             state: Some("state123".to_string()),
+            resource: None,
         };
 
         // Store code
@@ -534,6 +544,7 @@ mod tests {
                 generation: i,
                 family_id: "family-abc".to_string(),
                 used: false,
+                resource: None,
             };
             store
                 .store_refresh_token(&format!("token_{}", i), &data)
@@ -551,6 +562,7 @@ mod tests {
             generation: 0,
             family_id: "family-xyz".to_string(),
             used: false,
+            resource: None,
         };
         store
             .store_refresh_token("token_other", &other_data)

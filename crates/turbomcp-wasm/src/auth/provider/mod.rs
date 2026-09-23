@@ -25,7 +25,8 @@
 //!
 //! # Features
 //!
-//! - Authorization Code Grant with PKCE (RFC 7636)
+//! - Authorization Code Grant with PKCE (RFC 7636, S256 only)
+//! - Resource indicators (RFC 8707): tokens are bound to the requested resource
 //! - Token refresh with dual-token resilience
 //! - Token revocation (RFC 7009)
 //! - Token introspection (RFC 7662)
@@ -389,20 +390,20 @@ impl OAuthProvider {
 
     async fn handle_authorize(&self, req: Request) -> worker::Result<Response> {
         // Rate limit authorization requests (if rate limiter configured)
-        if let Some(ref limiter) = self.rate_limiter {
-            if let Some(ip) = self.extract_client_ip(&req) {
-                match limiter
-                    .check(&format!("oauth:authorize:{}", ip), 20, 60)
-                    .await?
-                {
-                    RateLimitResult::Exceeded { retry_after_secs } => {
-                        let headers = Headers::new();
-                        let _ = headers.set("Retry-After", &retry_after_secs.to_string());
-                        return Response::error("Too many requests", 429)
-                            .map(|r| r.with_headers(headers));
-                    }
-                    RateLimitResult::Allowed { .. } => {}
+        if let Some(ref limiter) = self.rate_limiter
+            && let Some(ip) = self.extract_client_ip(&req)
+        {
+            match limiter
+                .check(&format!("oauth:authorize:{}", ip), 20, 60)
+                .await?
+            {
+                RateLimitResult::Exceeded { retry_after_secs } => {
+                    let headers = Headers::new();
+                    let _ = headers.set("Retry-After", &retry_after_secs.to_string());
+                    return Response::error("Too many requests", 429)
+                        .map(|r| r.with_headers(headers));
                 }
+                RateLimitResult::Allowed { .. } => {}
             }
         }
 
@@ -461,6 +462,36 @@ impl OAuthProvider {
                 state.as_deref(),
             );
         }
+
+        // OAuth 2.1 and the MCP authorization spec require S256, and it is the
+        // only method the metadata advertises. `plain` used to be accepted here
+        // and then fail at the token endpoint with a 500, after the user had
+        // already been sent through the authorization flow.
+        if code_challenge_method != "S256" {
+            return self.authorization_redirect_error(
+                &redirect_uri,
+                "invalid_request",
+                "code_challenge_method must be S256",
+                state.as_deref(),
+            );
+        }
+
+        // RFC 8707: a client names the resource it wants a token for, and the
+        // token is bound to it. Only this server's own resource is accepted.
+        let resource = match params.get("resource") {
+            None => None,
+            Some(requested) => match self.accepted_resource(requested) {
+                Some(resource) => Some(resource),
+                None => {
+                    return self.authorization_redirect_error(
+                        &redirect_uri,
+                        "invalid_target",
+                        "Unknown resource",
+                        state.as_deref(),
+                    );
+                }
+            },
+        };
 
         // Parse and validate scopes
         let requested_scopes: Vec<String> = params
@@ -550,6 +581,7 @@ impl OAuthProvider {
             expires_at: now_secs() + self.config.authorization_code_lifetime,
             nonce: params.get("nonce").cloned(),
             state: state.clone(),
+            resource,
         };
 
         // Store the grant
@@ -584,20 +616,20 @@ impl OAuthProvider {
 
     async fn handle_token(&self, mut req: Request) -> worker::Result<Response> {
         // Rate limit token requests (if rate limiter configured)
-        if let Some(ref limiter) = self.rate_limiter {
-            if let Some(ip) = self.extract_client_ip(&req) {
-                match limiter
-                    .check(&format!("oauth:token:{}", ip), 10, 60)
-                    .await?
-                {
-                    RateLimitResult::Exceeded { retry_after_secs } => {
-                        let headers = Headers::new();
-                        let _ = headers.set("Retry-After", &retry_after_secs.to_string());
-                        return Response::error("Too many requests", 429)
-                            .map(|r| r.with_headers(headers));
-                    }
-                    RateLimitResult::Allowed { .. } => {}
+        if let Some(ref limiter) = self.rate_limiter
+            && let Some(ip) = self.extract_client_ip(&req)
+        {
+            match limiter
+                .check(&format!("oauth:token:{}", ip), 10, 60)
+                .await?
+            {
+                RateLimitResult::Exceeded { retry_after_secs } => {
+                    let headers = Headers::new();
+                    let _ = headers.set("Retry-After", &retry_after_secs.to_string());
+                    return Response::error("Too many requests", 429)
+                        .map(|r| r.with_headers(headers));
                 }
+                RateLimitResult::Allowed { .. } => {}
             }
         }
 
@@ -715,9 +747,59 @@ impl OAuthProvider {
                 .token_error_response(OAuthError::invalid_grant("PKCE required but not used"));
         }
 
+        let resource = match self.token_resource(params, grant.resource.as_deref()) {
+            Ok(resource) => resource,
+            Err(error) => return self.token_error_response(error),
+        };
+
         // Generate tokens
-        self.issue_tokens(&grant.subject, &client_id, &grant.scopes)
-            .await
+        self.issue_tokens(
+            &grant.subject,
+            &client_id,
+            &grant.scopes,
+            resource.as_deref(),
+        )
+        .await
+    }
+
+    /// The resource a token request is for, held to what was authorized.
+    ///
+    /// RFC 8707 §2.2: a `resource` at the token endpoint may narrow, never
+    /// widen, the grant. When the grant named one, the request must name the
+    /// same one or none; when it named none, the request may name this
+    /// server's resource.
+    fn token_resource(
+        &self,
+        params: &HashMap<String, String>,
+        granted: Option<&str>,
+    ) -> Result<Option<String>, OAuthError> {
+        let Some(requested) = params.get("resource") else {
+            return Ok(granted.map(str::to_string));
+        };
+        let requested = self
+            .accepted_resource(requested)
+            .ok_or_else(|| OAuthError::invalid_target("Unknown resource"))?;
+        match granted {
+            Some(granted) if granted != requested => Err(OAuthError::invalid_target(
+                "Resource was not part of the authorization grant",
+            )),
+            _ => Ok(Some(requested)),
+        }
+    }
+
+    /// Accept an RFC 8707 resource indicator if it names this server.
+    ///
+    /// The indicator must be an absolute URI without a fragment (§2), and the
+    /// only resource this provider issues tokens for is the one it advertises
+    /// in its Protected Resource Metadata: its issuer. A trailing `/` is not
+    /// significant. Returns the canonical form tokens are bound to.
+    fn accepted_resource(&self, requested: &str) -> Option<String> {
+        let parsed = url::Url::parse(requested).ok()?;
+        if parsed.fragment().is_some() || parsed.cannot_be_a_base() {
+            return None;
+        }
+        let issuer = self.config.issuer.trim_end_matches('/');
+        (requested.trim_end_matches('/') == issuer).then(|| issuer.to_string())
     }
 
     async fn handle_refresh_token_grant(
@@ -776,6 +858,11 @@ impl OAuthProvider {
             ));
         }
 
+        let resource = match self.token_resource(params, token_data.resource.as_deref()) {
+            Ok(resource) => resource,
+            Err(error) => return self.token_error_response(error),
+        };
+
         // Mark token as used
         if let Err(e) = self.store.mark_refresh_token_used(&token_hash).await {
             return self.internal_server_error("mark_token_used", e);
@@ -786,6 +873,7 @@ impl OAuthProvider {
             &token_data.subject,
             &client_id,
             &token_data.scopes,
+            resource.as_deref(),
             &token_data.family_id,
             token_data.generation + 1,
         )
@@ -801,13 +889,14 @@ impl OAuthProvider {
         subject: &str,
         client_id: &str,
         scopes: &[String],
+        resource: Option<&str>,
     ) -> worker::Result<Response> {
         let family_id = match generate_family_id() {
             Ok(id) => id,
             Err(e) => return self.internal_server_error("generate_family_id", e),
         };
 
-        self.issue_tokens_with_family(subject, client_id, scopes, &family_id, 0)
+        self.issue_tokens_with_family(subject, client_id, scopes, resource, &family_id, 0)
             .await
     }
 
@@ -816,6 +905,7 @@ impl OAuthProvider {
         subject: &str,
         client_id: &str,
         scopes: &[String],
+        resource: Option<&str>,
         family_id: &str,
         generation: u32,
     ) -> worker::Result<Response> {
@@ -840,6 +930,7 @@ impl OAuthProvider {
             expires_at: now + self.config.access_token_lifetime,
             issued_at: now,
             refresh_token_hash: None,
+            resource: resource.map(str::to_string),
         };
 
         if let Err(e) = self
@@ -871,6 +962,7 @@ impl OAuthProvider {
                 generation,
                 family_id: family_id.to_string(),
                 used: false,
+                resource: resource.map(str::to_string),
             };
 
             if let Err(e) = self
@@ -973,22 +1065,24 @@ impl OAuthProvider {
                 &data.scopes,
                 data.expires_at,
                 data.issued_at,
-            );
+            )
+            .with_audience(data.resource);
             return self.json_response(&response);
         }
 
         // Try as refresh token
-        if let Ok(data) = self.store.get_refresh_token(&token_hash).await {
-            if !data.used {
-                let response = IntrospectionResponse::active(
-                    &data.subject,
-                    &data.client_id,
-                    &data.scopes,
-                    data.expires_at,
-                    data.issued_at,
-                );
-                return self.json_response(&response);
-            }
+        if let Ok(data) = self.store.get_refresh_token(&token_hash).await
+            && !data.used
+        {
+            let response = IntrospectionResponse::active(
+                &data.subject,
+                &data.client_id,
+                &data.scopes,
+                data.expires_at,
+                data.issued_at,
+            )
+            .with_audience(data.resource);
+            return self.json_response(&response);
         }
 
         // Token not found or inactive
@@ -1061,12 +1155,11 @@ impl OAuthProvider {
                     return Ok(Some(client_id.clone()));
                 }
                 ClientAuthMethod::ClientSecretPost => {
-                    if let Some(secret) = params.get("client_secret") {
-                        if let Some(ref expected) = client.client_secret {
-                            if constant_time_compare(secret, expected) {
-                                return Ok(Some(client_id.clone()));
-                            }
-                        }
+                    if let Some(secret) = params.get("client_secret")
+                        && let Some(ref expected) = client.client_secret
+                        && constant_time_compare(secret, expected)
+                    {
+                        return Ok(Some(client_id.clone()));
                     }
                     return Ok(None);
                 }
@@ -1077,31 +1170,24 @@ impl OAuthProvider {
         }
 
         // Try Basic auth header
-        if let Ok(Some(auth)) = req.headers().get("Authorization") {
-            if let Some(credentials) = auth.strip_prefix("Basic ") {
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(credentials) {
-                    if let Ok(creds_str) = String::from_utf8(decoded) {
-                        if let Some((client_id, client_secret)) = creds_str.split_once(':') {
-                            if let Some(client) = self.config.get_client(client_id) {
-                                if let Some(ref expected) = client.client_secret {
-                                    if constant_time_compare(client_secret, expected) {
-                                        return Ok(Some(client_id.to_string()));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        if let Ok(Some(auth)) = req.headers().get("Authorization")
+            && let Some(credentials) = auth.strip_prefix("Basic ")
+            && let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(credentials)
+            && let Ok(creds_str) = String::from_utf8(decoded)
+            && let Some((client_id, client_secret)) = creds_str.split_once(':')
+            && let Some(client) = self.config.get_client(client_id)
+            && let Some(ref expected) = client.client_secret
+            && constant_time_compare(client_secret, expected)
+        {
+            return Ok(Some(client_id.to_string()));
         }
 
         // For public clients, just check client_id exists
-        if let Some(client_id) = params.get("client_id") {
-            if let Some(client) = self.config.get_client(client_id) {
-                if matches!(client.auth_method, ClientAuthMethod::None) {
-                    return Ok(Some(client_id.clone()));
-                }
-            }
+        if let Some(client_id) = params.get("client_id")
+            && let Some(client) = self.config.get_client(client_id)
+            && matches!(client.auth_method, ClientAuthMethod::None)
+        {
+            return Ok(Some(client_id.clone()));
         }
 
         Ok(None)
@@ -1272,5 +1358,52 @@ mod tests {
             config.jwks_endpoint_url(),
             "https://my-server.workers.dev/.well-known/jwks.json"
         );
+    }
+
+    fn provider() -> OAuthProvider {
+        OAuthProvider::with_memory_store(OAuthProviderConfig::new("https://my-server.workers.dev"))
+    }
+
+    #[test]
+    fn only_this_servers_resource_is_accepted() {
+        let provider = provider();
+        assert_eq!(
+            provider
+                .accepted_resource("https://my-server.workers.dev/")
+                .as_deref(),
+            Some("https://my-server.workers.dev")
+        );
+        for other in [
+            "https://other.example.com",
+            "https://my-server.workers.dev#frag",
+            "not a uri",
+        ] {
+            assert!(provider.accepted_resource(other).is_none(), "{other}");
+        }
+    }
+
+    #[test]
+    fn token_requests_cannot_widen_the_granted_resource() {
+        let provider = provider();
+        let ours = "https://my-server.workers.dev".to_string();
+        let with = |resource: &str| HashMap::from([("resource".to_string(), resource.to_string())]);
+
+        // The grant's resource carries over when the request names none.
+        assert_eq!(
+            provider
+                .token_resource(&HashMap::new(), Some(&ours))
+                .unwrap(),
+            Some(ours.clone())
+        );
+        // A request may name this server's resource when the grant named none.
+        assert_eq!(
+            provider.token_resource(&with(&ours), None).unwrap(),
+            Some(ours.clone())
+        );
+        // Anything else is invalid_target.
+        let error = provider
+            .token_resource(&with("https://other.example.com"), Some(&ours))
+            .unwrap_err();
+        assert_eq!(error.error, "invalid_target");
     }
 }

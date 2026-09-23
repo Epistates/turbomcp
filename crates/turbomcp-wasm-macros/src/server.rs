@@ -31,6 +31,7 @@ use syn::{
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
 };
+use turbomcp_core::uri_template::UriTemplate;
 
 /// Parsed server attributes
 pub struct ServerArgs {
@@ -718,6 +719,11 @@ fn generate_tool_registrations(tools: &[ToolMethod]) -> TokenStream2 {
 }
 
 /// Generate resource registration code
+///
+/// A URI with a variable (`file:///{path}`) registers a resource template; a
+/// concrete one registers a resource. Registering a template as a resource put
+/// it in `resources/list` under a URI no client can read, and left
+/// `resources/templates/list` empty.
 fn generate_resource_registrations(resources: &[ResourceMethod]) -> TokenStream2 {
     let registrations: Vec<_> = resources
         .iter()
@@ -726,10 +732,18 @@ fn generate_resource_registrations(resources: &[ResourceMethod]) -> TokenStream2
             let uri_template = &resource.uri_template;
             let name = method_name.to_string();
             let description = format!("Resource at {}", uri_template);
+            let is_template = !UriTemplate::parse(uri_template).is_concrete();
+
+            let register = match (is_template, resource.has_context) {
+                (false, false) => quote! { resource },
+                (false, true) => quote! { resource_with_ctx },
+                (true, false) => quote! { resource_template },
+                (true, true) => quote! { resource_template_with_ctx },
+            };
 
             if resource.has_context {
                 quote! {
-                    .resource_with_ctx(#uri_template, #name, #description, {
+                    .#register(#uri_template, #name, #description, {
                         let server = self.clone();
                         move |ctx: ::std::sync::Arc<::turbomcp_wasm::wasm_server::RequestContext>, uri: String| {
                             let server = server.clone();
@@ -741,7 +755,7 @@ fn generate_resource_registrations(resources: &[ResourceMethod]) -> TokenStream2
                 }
             } else {
                 quote! {
-                    .resource(#uri_template, #name, #description, {
+                    .#register(#uri_template, #name, #description, {
                         let server = self.clone();
                         move |uri: String| {
                             let server = server.clone();

@@ -40,11 +40,11 @@
 //! }
 //! ```
 
-use std::sync::Arc;
-
 use serde_json::Value;
 
-use crate::wasm_server::{McpServer, PromptResult, RequestContext, ResourceResult, ToolResult};
+use crate::wasm_server::{
+    McpServer, PromptResult, RequestContext, ResourceResult, ToolResult, shared_context,
+};
 use turbomcp_types::{Prompt, Resource, Tool};
 
 /// In-memory test client for WASM MCP servers.
@@ -185,8 +185,11 @@ impl McpTestClient {
     /// assert_eq!(result.first_text(), Some("3".to_string()));
     /// ```
     pub async fn call_tool(&self, name: &str, args: Value) -> Result<ToolResult, String> {
-        let ctx = Arc::new(self.create_context());
-        self.server.call_tool_internal(name, args, ctx).await
+        let ctx = shared_context(&self.create_context());
+        self.server
+            .call_tool_internal(name, args, ctx)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Call a tool with an empty arguments object.
@@ -204,8 +207,11 @@ impl McpTestClient {
     /// assert!(result.contents.first().is_some());
     /// ```
     pub async fn read_resource(&self, uri: &str) -> Result<ResourceResult, String> {
-        let ctx = Arc::new(self.create_context());
-        self.server.read_resource_internal(uri, ctx).await
+        let ctx = shared_context(&self.create_context());
+        self.server
+            .read_resource_internal(uri, ctx)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Get a prompt by name with optional arguments.
@@ -221,8 +227,11 @@ impl McpTestClient {
         name: &str,
         args: Option<Value>,
     ) -> Result<PromptResult, String> {
-        let ctx = Arc::new(self.create_context());
-        self.server.get_prompt_internal(name, args, ctx).await
+        let ctx = shared_context(&self.create_context());
+        self.server
+            .get_prompt_internal(name, args, ctx)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Get a prompt with no arguments.

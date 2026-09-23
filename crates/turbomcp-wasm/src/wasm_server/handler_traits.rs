@@ -46,6 +46,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
+use turbomcp_core::error::McpError;
 use turbomcp_core::{MaybeSend, MaybeSync};
 
 use super::context::RequestContext;
@@ -106,13 +107,13 @@ type BoxedResourceHandlerWithCtx =
 /// Boxed async prompt handler function type (no context)
 #[cfg(not(target_arch = "wasm32"))]
 type BoxedPromptHandler = Box<
-    dyn Fn(Option<serde_json::Value>) -> BoxedFuture<Result<PromptResult, String>> + Send + Sync,
+    dyn Fn(Option<serde_json::Value>) -> BoxedFuture<Result<PromptResult, McpError>> + Send + Sync,
 >;
 
 /// Boxed async prompt handler function type (no context)
 #[cfg(target_arch = "wasm32")]
 type BoxedPromptHandler =
-    Box<dyn Fn(Option<serde_json::Value>) -> BoxedFuture<Result<PromptResult, String>>>;
+    Box<dyn Fn(Option<serde_json::Value>) -> BoxedFuture<Result<PromptResult, McpError>>>;
 
 /// Boxed async prompt handler function type with context
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,7 +121,7 @@ type BoxedPromptHandlerWithCtx = Box<
     dyn Fn(
             Arc<RequestContext>,
             Option<serde_json::Value>,
-        ) -> BoxedFuture<Result<PromptResult, String>>
+        ) -> BoxedFuture<Result<PromptResult, McpError>>
         + Send
         + Sync,
 >;
@@ -131,7 +132,7 @@ type BoxedPromptHandlerWithCtx = Box<
     dyn Fn(
         Arc<RequestContext>,
         Option<serde_json::Value>,
-    ) -> BoxedFuture<Result<PromptResult, String>>,
+    ) -> BoxedFuture<Result<PromptResult, McpError>>,
 >;
 
 // ============================================================================
@@ -415,6 +416,12 @@ pub trait IntoPromptHandler<T, M>: Clone + MaybeSend + MaybeSync + 'static {
     fn arguments() -> Vec<turbomcp_types::PromptArgument>;
 }
 
+/// Arguments that do not fit the prompt's argument type are the client's
+/// mistake, so they are invalid params (`-32602`) rather than an internal error.
+fn invalid_prompt_arguments(error: serde_json::Error) -> McpError {
+    McpError::invalid_params(format!("Invalid arguments: {error}"))
+}
+
 /// Marker for typed prompt arguments
 pub struct PromptWithArgs<A>(PhantomData<A>);
 
@@ -430,12 +437,13 @@ where
             let handler = self.clone();
             Box::pin(async move {
                 let parsed_args: Option<A> = match args {
-                    Some(v) => Some(
-                        serde_json::from_value(v).map_err(|e| format!("Invalid arguments: {e}"))?,
-                    ),
+                    Some(v) => Some(serde_json::from_value(v).map_err(invalid_prompt_arguments)?),
                     None => None,
                 };
-                handler(parsed_args).await.into_prompt_response()
+                handler(parsed_args)
+                    .await
+                    .into_prompt_response()
+                    .map_err(McpError::internal)
             })
         })
     }
@@ -489,7 +497,12 @@ where
     fn into_handler(self) -> BoxedPromptHandler {
         Box::new(move |_args: Option<serde_json::Value>| {
             let handler = self.clone();
-            Box::pin(async move { handler().await.into_prompt_response() })
+            Box::pin(async move {
+                handler()
+                    .await
+                    .into_prompt_response()
+                    .map_err(McpError::internal)
+            })
         })
     }
 
@@ -532,13 +545,15 @@ where
                 let handler = self.clone();
                 Box::pin(async move {
                     let parsed_args: Option<A> = match args {
-                        Some(v) => Some(
-                            serde_json::from_value(v)
-                                .map_err(|e| format!("Invalid arguments: {e}"))?,
-                        ),
+                        Some(v) => {
+                            Some(serde_json::from_value(v).map_err(invalid_prompt_arguments)?)
+                        }
                         None => None,
                     };
-                    handler(ctx, parsed_args).await.into_prompt_response()
+                    handler(ctx, parsed_args)
+                        .await
+                        .into_prompt_response()
+                        .map_err(McpError::internal)
                 })
             },
         )
@@ -594,7 +609,12 @@ where
         Box::new(
             move |ctx: Arc<RequestContext>, _args: Option<serde_json::Value>| {
                 let handler = self.clone();
-                Box::pin(async move { handler(ctx).await.into_prompt_response() })
+                Box::pin(async move {
+                    handler(ctx)
+                        .await
+                        .into_prompt_response()
+                        .map_err(McpError::internal)
+                })
             },
         )
     }
