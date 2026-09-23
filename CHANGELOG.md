@@ -811,6 +811,14 @@ handlers; and the browser and WASI clients speak Streamable HTTP.
   records duration and status on spans and stops exporting resource URIs by
   default.
 
+#### Documentation
+
+Every code sample in the READMEs and the documentation site now compiles
+against 3.5 and describes current behaviour. Many showed APIs that never
+existed — an `McpServer` builder, injected logger and cache parameters,
+`#[validate]`, `McpError` enum variants — or handler signatures the macros
+reject.
+
 ### Changed
 
 - **`RichContextExt::report_progress` and `report_progress_with_token` are
