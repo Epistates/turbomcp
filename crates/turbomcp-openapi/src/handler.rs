@@ -11,7 +11,7 @@ use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 use turbomcp_types::{
     Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool, ToolInputSchema,
-    ToolOutputSchema, ToolResult,
+    ToolOutputSchema, ToolResult, structured_content_if_object,
 };
 
 use crate::error::{OpenApiError, Result};
@@ -184,6 +184,41 @@ impl OpenApiHandler {
                 .insert("$defs".to_string(), Value::Object(defs));
         }
         schema
+    }
+
+    /// The operation's response schema, if it can be the tool's `outputSchema`.
+    ///
+    /// MCP types `outputSchema` as `type: "object"`, and a tool that declares
+    /// one MUST return `structuredContent` conforming to it, which is itself
+    /// always an object. An array, scalar or nullable response has no place
+    /// there, so such a tool declares no output schema and returns text alone:
+    /// wrapping the value in an object would describe a result the upstream
+    /// API never sends.
+    fn output_schema(op: &ExtractedOperation) -> Option<&Value> {
+        op.response_schema
+            .as_ref()
+            .filter(|schema| schema.get("type").and_then(Value::as_str) == Some("object"))
+    }
+
+    /// The tool result for a 2xx response body.
+    ///
+    /// The body is always the text content. A tool with an `outputSchema`
+    /// also returns it as `structuredContent`; if the upstream answered with
+    /// something other than a JSON object, the result the schema promises
+    /// cannot be produced, and that is reported as a tool error with the body
+    /// attached rather than as a success clients would reject.
+    fn tool_result(op: &ExtractedOperation, body: String) -> ToolResult {
+        let (text, json) = render_body(body);
+        if Self::output_schema(op).is_none() {
+            return ToolResult::text(text);
+        }
+        match json.and_then(structured_content_if_object) {
+            Some(structured) => ToolResult::text(text).with_structured(&structured),
+            None => McpError::external_service(format!(
+                "upstream response is not the JSON object this tool's outputSchema declares: {text}"
+            ))
+            .to_tool_result(),
+        }
     }
 
     /// Find operation by tool name.
@@ -426,11 +461,9 @@ impl McpHandler for OpenApiHandler {
                 annotations: None,
                 execution: None,
                 // MCP 2025-11-25 outputSchema: pulled from the operation's
-                // first 2xx `application/json` response with `$ref`s
-                // inlined. `None` for operations with no JSON response.
-                output_schema: op
-                    .response_schema
-                    .as_ref()
+                // first 2xx `application/json` response, when that is an
+                // object; see `output_schema`.
+                output_schema: Self::output_schema(op)
                     .map(|v| ToolOutputSchema::from_value(v.clone())),
                 meta: Some(self.build_operation_meta(op)),
             })
@@ -482,7 +515,7 @@ impl McpHandler for OpenApiHandler {
             };
 
             match self.execute_operation(op, args_map).await {
-                Ok(body) => Ok(ToolResult::text(render_body(body).0)),
+                Ok(body) => Ok(Self::tool_result(op, body)),
                 // Without a base URL no call can work, whatever the model
                 // sends: that is the server's fault, not a tool failure.
                 Err(e @ OpenApiError::NoBaseUrl) => Err(to_mcp_error(e)),
@@ -907,6 +940,90 @@ mod tests {
             assert!(!result.is_error(), "{result:?}");
             // A non-JSON body comes back as sent, not as a quoted JSON string.
             assert_eq!(result.first_text(), Some("done"));
+        }
+
+        /// `makePet` answers with an object, `listPets` with an array.
+        const OUTPUT_SPEC: &str = r#"{
+            "openapi": "3.0.0",
+            "info": { "title": "T", "version": "1.0" },
+            "paths": {
+                "/pets": {
+                    "post": {
+                        "operationId": "makePet",
+                        "responses": { "201": { "description": "ok", "content": { "application/json": {
+                            "schema": { "type": "object", "properties": { "name": { "type": "string" } } }
+                        } } } }
+                    },
+                    "put": {
+                        "operationId": "listPets",
+                        "responses": { "200": { "description": "ok", "content": { "application/json": {
+                            "schema": { "type": "array", "items": { "type": "string" } }
+                        } } } }
+                    }
+                }
+            }
+        }"#;
+
+        #[tokio::test]
+        async fn test_output_schema_is_only_declared_for_objects() {
+            let server = MockServer::start().await;
+            let tools = handler_for(OUTPUT_SPEC, &server).list_tools();
+            let make = tools.iter().find(|t| t.name == "makePet").unwrap();
+            let list = tools.iter().find(|t| t.name == "listPets").unwrap();
+
+            let schema = serde_json::to_value(make.output_schema.as_ref().unwrap()).unwrap();
+            assert_eq!(schema["type"], "object");
+            // An array can never be `structuredContent`, so it is not declared.
+            assert!(list.output_schema.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_declared_output_schema_comes_with_structured_content() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/pets"))
+                .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "name": "Rex" })))
+                .mount(&server)
+                .await;
+            Mock::given(method("PUT"))
+                .and(path("/pets"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!(["Rex"])))
+                .mount(&server)
+                .await;
+            let handler = handler_for(OUTPUT_SPEC, &server);
+
+            let made = handler
+                .call_tool("makePet", json!({}), &RequestContext::new())
+                .await
+                .unwrap();
+            assert!(!made.is_error());
+            assert_eq!(made.structured_content, Some(json!({ "name": "Rex" })));
+            assert!(made.first_text().unwrap().contains("Rex"));
+
+            let listed = handler
+                .call_tool("listPets", json!({}), &RequestContext::new())
+                .await
+                .unwrap();
+            assert!(!listed.is_error());
+            assert_eq!(listed.structured_content, None);
+            assert!(listed.first_text().unwrap().contains("Rex"));
+        }
+
+        #[tokio::test]
+        async fn test_non_object_answer_to_an_object_schema_is_a_tool_error() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/pets"))
+                .respond_with(ResponseTemplate::new(201).set_body_string("created"))
+                .mount(&server)
+                .await;
+
+            let result = handler_for(OUTPUT_SPEC, &server)
+                .call_tool("makePet", json!({}), &RequestContext::new())
+                .await
+                .unwrap();
+            assert!(result.is_error());
+            assert!(result.first_text().unwrap().contains("created"));
         }
 
         #[tokio::test]
