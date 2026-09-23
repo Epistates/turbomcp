@@ -13,7 +13,6 @@ use turbomcp_types::{
 };
 
 use crate::provider::{ExtractedOperation, OpenApiProvider, param_value};
-use crate::security::validate_url_for_ssrf;
 
 /// MCP handler that exposes OpenAPI operations as tools and resources.
 #[derive(Clone)]
@@ -169,7 +168,11 @@ impl OpenApiHandler {
             .map_err(|e| McpError::internal(e.to_string()))?;
 
         // SSRF protection: validate URL before making request
-        validate_url_for_ssrf(&url).map_err(|e| McpError::internal(e.to_string()))?;
+        self.provider
+            .ssrf()
+            .check_request_target(&url)
+            .await
+            .map_err(|e| McpError::internal(e.to_string()))?;
 
         let client = self.provider.client();
 
@@ -213,7 +216,7 @@ impl OpenApiHandler {
         let response = request
             .send()
             .await
-            .map_err(|e| McpError::internal(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| McpError::internal(format!("HTTP request failed: {}", error_chain(&e))))?;
 
         let status = response.status();
         let body = response
@@ -234,6 +237,22 @@ impl OpenApiHandler {
             Err(_) => Ok(json!(body)),
         }
     }
+}
+
+/// Render an error with its sources.
+///
+/// reqwest's own `Display` stops at "error sending request for url (…)"; the
+/// reason, such as the SSRF guard refusing a redirect or a resolved address,
+/// is further down the chain.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut rendered = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        rendered.push_str(": ");
+        rendered.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    rendered
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -416,5 +435,82 @@ mod tests {
 
         assert_eq!(OpenApiHandler::tool_name(&op_with_id), "createUser");
         assert_eq!(OpenApiHandler::tool_name(&op_without_id), "delete_users_id");
+    }
+
+    mod upstream {
+        //! Calls that reach an upstream API, served by a local mock.
+
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        use super::*;
+
+        /// One tool, `fetch`, which POSTs to `/fetch`.
+        const FETCH_SPEC: &str = r#"{
+            "openapi": "3.0.0",
+            "info": { "title": "T", "version": "1.0" },
+            "paths": {
+                "/fetch": {
+                    "post": { "operationId": "fetch", "responses": { "200": { "description": "ok" } } }
+                }
+            }
+        }"#;
+
+        fn handler_for(spec: &str, server: &MockServer) -> OpenApiHandler {
+            OpenApiProvider::from_string(spec)
+                .unwrap()
+                .allowing_loopback()
+                .with_base_url(&server.uri())
+                .unwrap()
+                .into_handler()
+        }
+
+        #[tokio::test]
+        async fn test_redirect_to_blocked_address_is_not_followed() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/fetch"))
+                .respond_with(
+                    ResponseTemplate::new(302)
+                        .insert_header("location", "http://169.254.169.254/latest/meta-data/"),
+                )
+                .mount(&server)
+                .await;
+
+            let err = handler_for(FETCH_SPEC, &server)
+                .call_tool("fetch", json!({}), &RequestContext::new())
+                .await
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("blocked range 169.254.0.0/16"),
+                "{err}"
+            );
+        }
+
+        #[tokio::test]
+        async fn test_redirect_to_allowed_address_is_followed() {
+            let target = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/moved"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "ok": true })))
+                .mount(&target)
+                .await;
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/fetch"))
+                .respond_with(
+                    ResponseTemplate::new(302)
+                        .insert_header("location", format!("{}/moved", target.uri())),
+                )
+                .mount(&server)
+                .await;
+
+            let result = handler_for(FETCH_SPEC, &server)
+                .call_tool("fetch", json!({}), &RequestContext::new())
+                .await
+                .unwrap();
+            assert!(!result.is_error(), "{result:?}");
+            assert!(result.first_text().unwrap().contains("\"ok\""));
+        }
     }
 }

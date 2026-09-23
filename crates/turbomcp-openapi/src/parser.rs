@@ -7,7 +7,7 @@ use openapiv3::OpenAPI;
 use url::Url;
 
 use crate::error::{OpenApiError, Result};
-use crate::security::validate_url_for_ssrf;
+use crate::security::SsrfGuard;
 
 const DEFAULT_SPEC_FETCH_TIMEOUT_SECS: u64 = 30;
 
@@ -43,9 +43,11 @@ pub fn load_from_file(path: &Path) -> Result<OpenAPI> {
 /// Fetch an OpenAPI specification from a URL.
 pub async fn fetch_from_url(url: &str) -> Result<OpenAPI> {
     let url = Url::parse(url)?;
-    validate_url_for_ssrf(&url)?;
+    let ssrf = SsrfGuard::default();
+    ssrf.check_request_target(&url).await?;
 
-    let client = reqwest::Client::builder()
+    let client = ssrf
+        .client_builder()
         .timeout(Duration::from_secs(DEFAULT_SPEC_FETCH_TIMEOUT_SECS))
         .build()?;
     let response = client.get(url).send().await?;

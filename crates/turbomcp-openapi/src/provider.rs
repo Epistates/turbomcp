@@ -16,6 +16,7 @@ use crate::error::{OpenApiError, Result};
 use crate::handler::OpenApiHandler;
 use crate::mapping::{McpType, RouteMapping};
 use crate::parser::{fetch_from_url, load_from_file, parse_spec};
+use crate::security::SsrfGuard;
 
 /// An operation extracted from an OpenAPI spec.
 #[derive(Debug, Clone)]
@@ -136,6 +137,11 @@ pub trait AuthProvider: Send + Sync + std::fmt::Debug {
 /// - Link-local addresses (169.254.0.0/16) including cloud metadata endpoints
 /// - Other reserved ranges
 ///
+/// A hostname is refused if it fails to resolve or if any of its addresses is
+/// blocked. The built-in client connects only to the addresses it validated,
+/// so a name cannot answer differently the second time (DNS rebinding), and it
+/// re-checks every redirect before following it.
+///
 /// Requests have a default timeout of 30 seconds to prevent slowloris attacks.
 #[derive(Debug)]
 pub struct OpenApiProvider {
@@ -145,6 +151,8 @@ pub struct OpenApiProvider {
     base_url: Option<Url>,
     /// Route mapping configuration
     mapping: RouteMapping,
+    /// Where outbound requests may go.
+    ssrf: SsrfGuard,
     /// HTTP client for making API calls
     client: reqwest::Client,
     /// Extracted operations
@@ -168,14 +176,8 @@ impl OpenApiProvider {
     pub fn from_spec(spec: OpenAPI) -> Self {
         let mapping = RouteMapping::default_rules();
         let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
-        // `Client::builder().build()` only fails on egregious config (e.g.
-        // a missing TLS backend) — not silently downgrading to
-        // `Client::new()` (which would lose the configured timeout) is the
-        // correct stance: the user asked for a timeout, surface the error.
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .expect("reqwest::Client::builder() failed; check TLS backend / build features");
+        let ssrf = SsrfGuard::default();
+        let client = Self::build_client(ssrf, timeout);
 
         let base_url = spec
             .servers
@@ -187,6 +189,7 @@ impl OpenApiProvider {
             spec,
             base_url,
             mapping,
+            ssrf,
             client,
             operations: Vec::new(),
             security_schemes,
@@ -195,6 +198,27 @@ impl OpenApiProvider {
         };
         provider.extract_operations();
         provider
+    }
+
+    /// Build the SSRF-guarded client with a timeout.
+    fn build_client(ssrf: SsrfGuard, timeout: std::time::Duration) -> reqwest::Client {
+        // `Client::builder().build()` only fails on egregious config (e.g.
+        // a missing TLS backend) — not silently downgrading to
+        // `Client::new()` (which would lose the configured timeout and the
+        // SSRF guard) is the correct stance: surface the error.
+        ssrf.client_builder()
+            .timeout(timeout)
+            .build()
+            .expect("reqwest::Client::builder() failed; check TLS backend / build features")
+    }
+
+    /// Let requests reach loopback addresses, so tests can use a local mock
+    /// server. Everything else stays blocked.
+    #[cfg(test)]
+    pub(crate) fn allowing_loopback(mut self) -> Self {
+        self.ssrf = SsrfGuard::allowing_loopback();
+        self.client = Self::build_client(self.ssrf, self.timeout);
+        self
     }
 
     /// Substitute the default values for any `{var}` placeholders in a server URL,
@@ -267,6 +291,12 @@ impl OpenApiProvider {
     ///
     /// When using a custom client, ensure it has appropriate timeout settings.
     /// The default client uses a 30-second timeout.
+    ///
+    /// A custom client also gives up part of the SSRF protection. Every URL is
+    /// still checked, and its hostname resolved and checked, before the
+    /// request is sent; but the custom client resolves the name again to
+    /// connect and follows redirects by its own policy, so neither DNS
+    /// rebinding nor a redirect to an internal address is caught.
     #[must_use]
     pub fn with_client(mut self, client: reqwest::Client) -> Self {
         self.client = client;
@@ -297,18 +327,12 @@ impl OpenApiProvider {
 
     /// Set a custom request timeout.
     ///
-    /// This rebuilds the HTTP client with the new timeout. The default timeout
-    /// is 30 seconds.
+    /// This rebuilds the HTTP client with the new timeout, replacing any client
+    /// set with [`Self::with_client`]. The default timeout is 30 seconds.
     #[must_use]
     pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.timeout = timeout;
-        // See `from_spec`: rebuilding without the configured timeout would
-        // silently regress to reqwest's default; expect on builder failure
-        // instead so the caller's intent isn't lost.
-        self.client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .expect("reqwest::Client::builder() failed in with_timeout");
+        self.client = Self::build_client(self.ssrf, timeout);
         self
     }
 
@@ -659,6 +683,11 @@ impl OpenApiProvider {
     /// Get the HTTP client.
     pub(crate) fn client(&self) -> &reqwest::Client {
         &self.client
+    }
+
+    /// Get the SSRF guard outbound requests are held to.
+    pub(crate) fn ssrf(&self) -> SsrfGuard {
+        self.ssrf
     }
 }
 
