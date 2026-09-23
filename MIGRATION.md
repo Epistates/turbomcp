@@ -5,14 +5,134 @@ This guide helps you migrate between major TurboMCP versions.
 Current v3 policy:
 - TurboMCP targets MCP `2025-11-25`.
 - As of v3.1.0, the default `ProtocolConfig` accepts every stable version (with
-  per-version adapters); use `ProtocolConfig::strict(...)` for exact-match.
+  per-version adapters). `ProtocolConfig::strict(v)` speaks only `v`, and as of
+  v3.5.0 offers it to a client asking for another version rather than refusing.
 - Older version notes below are historical migration reference, not active compatibility guidance.
 
 ## Table of Contents
 
+- [v3.5.0 Migration (v3.4.x → v3.5.0)](#v350-migration-v34x--v350)
 - [v3.1.0 Migration (v3.0.x → v3.1.0)](#v310-migration-v30x--v310)
 - [v3.0.0 Migration (v2.x → v3.x)](#v300-migration-v2x--v3x)
 - [v2.0.0 Migration (v1.x → v2.x)](#v200-migration-v1x--v2x)
+
+---
+
+# v3.5.0 Migration (v3.4.x → v3.5.0)
+
+3.5.0 is a conformance release: most changes fix behaviour the MCP
+specification requires, and most code upgrades without edits. What follows is
+what can stop a build, or change what a working program does. The reasons are
+in the 3.5.0 entry of `CHANGELOG.md`.
+
+## Builds that may need edits
+
+**Server and macros**
+
+- `#[subscribe]` now requires `#[unsubscribe]` in the same `#[server]` block.
+- `#[tool]`, `#[resource]` and `#[prompt]` reject unknown or malformed
+  attribute keys that used to be ignored — a typo like `descriptio = "…"` is
+  now a compile error naming the valid keys.
+- `ServerConfig` gained `http_sessions` and (with `http`) `authorization`;
+  `OriginValidationConfig` gained `allow_missing_origin` and `cors`. Build
+  these with the builder or `..Default::default()`.
+- `McpHandler` gained defaulted methods (`list_tools_for` and friends). Nothing
+  to do unless you implement a wrapper, which should forward them.
+
+**Client**
+
+- `InitializeResult` is `#[non_exhaustive]`: build it with
+  `InitializeResult::new()` / `with_instructions()`.
+- `Client::call_tool_task` returns `CallToolResponse` (a server may answer a
+  task-augmented call normally), and `call_tool_response_with_progress` takes a
+  `ProgressToken` rather than a `serde_json::Value`.
+- `StreamableHttpClientConfig` gained `auth_provider`; `ChildProcessConfig`
+  gained `sigterm_grace`. Use `..Default::default()`.
+
+**Progress**
+
+- `RichContextExt::report_progress` / `report_progress_with_token` are gone.
+  Use `ctx.report_progress(progress, Some(total), Some("message"))`; it sends
+  the client's own progress token, and nothing when the client asked for none.
+  In `turbomcp-wasm` the console helper is now `log_progress`.
+
+**Types**
+
+- `PrimitiveSchemaDefinition` has an `Array` variant and a `one_of` field on
+  `String`; `EnumSchema` has `LegacyTitledSingleSelect`. An exhaustive `match`
+  needs the new arms.
+- `ClientRequest`, `ServerRequest`, `ClientNotification` and
+  `ServerNotification` are deprecated: they are not the wire shape. Route on
+  the JSON-RPC `method` and deserialize `params` into the matching type.
+
+**Auth and DPoP**
+
+- `turbomcp_dpop::DpopValidator` is removed; it checked neither signature nor
+  HTTP binding. Use `DpopProofGenerator::validate_proof`.
+- `ProtectedResourceMetadata.authorization_server: String` is now
+  `authorization_servers: Vec<String>` (RFC 9728).
+- `OAuth2Config` gained `allow_custom_scheme_redirect` (serde-defaulted).
+- The duplicate registration types in `turbomcp_auth::config`
+  (`ClientRegistrationRequest`, `DynamicClientRegistration`, …) and
+  `oauth2::validate_canonical_resource_uri` are removed; use `oauth2::dcr` and
+  `oauth2::resource`.
+- `JwtValidator::new`, `new_unchecked` and `new_with_ssrf` (and the matching
+  `MultiIssuerValidator::add_issuer*`) require the `mcp-oidc-discovery`
+  feature; `with_jwks_uri` does not. `FetcherError::AllEndpointsFailed` now
+  lists every attempt.
+
+**WASM**
+
+- `VisibilityLayer`, `StreamableHandler` and `WithAuth` take the wrapped
+  handler as a type parameter (defaulting to `McpServer`, so most spellings
+  still compile). `WithAuth::principal()` is gone: read `ctx.principal()` in
+  the handler. Middleware operation results use `McpError` instead of `String`.
+
+**Companion crates**
+
+- `turbomcp-proxy`: the snake_case introspection types are replaced by the
+  protocol types (`ServerSpec` holds `Tool`, `Resource`, … directly); the
+  `proxy::backends` module is removed; `StdioFrontend::new` takes a
+  `ProxyService` and a `ServerConfig`.
+- `turbomcp-telemetry`: the `tracing-json` and `tracing-pretty` features are
+  removed (they gated nothing); `propagate_context` needs `opentelemetry`.
+- `turbomcp-grpc`: the `health` and `reflection` features are removed (they
+  gated nothing); `tls` is on by default.
+- `turbomcp-openapi`: `ExtractedOperation` gained `request_body_required`.
+
+## Behaviour that changed
+
+- **Every server declares `logging`,** and `logging/setLevel` succeeds without
+  `#[set_level]` — the router records and applies the level on every transport.
+  `#[server(logging)]` is accepted and does nothing.
+- **`ProtocolConfig::strict(v)` offers `v`** to a client asking for another
+  version instead of refusing it; refusing is not an answer the lifecycle spec
+  allows. Only a hand-set `allow_fallback: false` still refuses (-32602).
+- **Tool calls with arguments the tool does not declare are refused** as a tool
+  error, as its advertised `additionalProperties: false` says.
+- **Tool error text no longer includes** the `(operation: …) (component: …)`
+  diagnostics; they stay in server logs.
+- **Form elicitation is validated:** `ctx.elicit_form` refuses a schema that is
+  not a flat object of primitives, and an accepted answer that does not match
+  it, with -32602.
+- **Streamable HTTP sessions expire** after an hour idle by default
+  (`ServerConfigBuilder::http_session_idle_timeout`), and are capped at 10,000
+  (`max_http_sessions`).
+- **The HTTP client's `timeout` no longer bounds SSE streams;**
+  `sse_read_timeout` does, per chunk.
+- **stdio, TCP and Unix client transports accept messages up to 10 MiB** (was
+  1 MiB) and skip an oversized line instead of closing.
+- **`OAuth2Provider::validate_token` checks the token's audience** against the
+  configured resource URI, and fails closed without one.
+- **OAuth redirect URIs must be HTTPS or loopback** unless
+  `allow_custom_scheme_redirect` is set.
+- **`turbomcp-proxy serve --jwt-secret` requires `--jwt-audience`.**
+- **`turbomcp-cli` includes HTTP and WebSocket by default,** and `--url` is used
+  exactly as given.
+- **`turbomcp-telemetry` redacts resource URIs by default.**
+- **`turbomcp-wasm` validates `Origin` by default** (loopback, or the
+  configured allowlist), and its stateless endpoint no longer takes a session
+  id from request headers.
 
 ---
 
@@ -120,7 +240,8 @@ the OIDC discovery fetch. For tests against private OIDC providers, switch to
 
 The default now accepts all `ProtocolVersion::STABLE` versions instead of
 `[LATEST]` only. Older clients are routed through the existing version
-adapters. To restore exact-match behavior:
+adapters. To speak only the latest version (as of v3.5.0 a client asking for
+another is offered it rather than refused):
 
 ```rust
 let cfg = ServerConfig::builder()
@@ -270,7 +391,8 @@ use turbomcp_protocol::versioning::ProtocolVersion;
 // Default (v3.1.0+): accepts all ProtocolVersion::STABLE versions
 let config = ServerConfig::builder().build();
 
-// Strict mode: only accept the latest version
+// Speak only the latest version (a client asking for another is offered
+// this one, as the lifecycle spec requires)
 let config = ServerConfig::builder()
     .protocol(ProtocolConfig::strict(ProtocolVersion::LATEST.clone()))
     .build();

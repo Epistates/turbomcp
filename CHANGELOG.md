@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.5.0] - 2026-09-14
+## [3.5.0] - 2026-09-23
 
 A downstream team reported that a long-running handler could not report progress
 on any transport we ship. Validating that claim found it half-right, and found
@@ -34,9 +34,10 @@ That prompted a sweep of the rest of the protocol surface — elicitation,
 sampling, roots, resources, prompts, completions, logging, ping, cancellation.
 Most of it held up. Elicitation capability negotiation is correct down to the
 backwards-compatibility rule that an empty `elicitation: {}` means form mode
-only; sampling is current through 2025-11-25 including `tools`, `toolChoice`,
-and task augmentation; and the default `server_capabilities()` was scrupulously
-honest, advertising nothing it could not serve.
+only; sampling is current through 2025-11-25 including `tools` and
+`toolChoice`; and the default `server_capabilities()` was scrupulously honest,
+advertising nothing it could not serve. (Task-augmented sampling is refused; see
+*Sampling*.)
 
 But the sweep surfaced something structural. `#[server]` generated a *complete*
 `impl McpHandler` with a fixed method set and no override hook, and no second
@@ -67,21 +68,26 @@ impossible. This release opens them.
   `notifications/roots/list_changed`, which the router previously dropped — so a
   server that caches roots can now invalidate that cache.
 
-- **Four markers that open `#[server]`'s sealed extension points**:
+- **Five markers that open `#[server]`'s sealed extension points**:
 
   | Marker | Serves | Capability advertised |
   |---|---|---|
   | `#[completion]` | `completion/complete` | `completions` |
   | `#[subscribe]` | `resources/subscribe` | `resources.subscribe` |
-  | `#[unsubscribe]` | `resources/unsubscribe` | — |
-  | `#[set_level]` | `logging/setLevel` | `logging` |
+  | `#[unsubscribe]` | `resources/unsubscribe` | — (required with `#[subscribe]`) |
+  | `#[set_level]` | observes `logging/setLevel` | — (`logging` is always declared) |
   | `#[roots_changed]` | `notifications/roots/list_changed` | — (`roots` is a *client* capability) |
 
   Declaring one generates the override *and* flips the matching capability;
   omitting it keeps the trait default, which answers `capability_not_supported`,
   and leaves the capability unadvertised. The two move together by construction,
-  so a server can never claim a capability it would then refuse to serve. A
-  trailing `ctx: &RequestContext` is optional on all four.
+  so a server can never claim a capability it would then refuse to serve.
+  `#[subscribe]` without `#[unsubscribe]` is a compile error: only the author
+  knows how to undo a subscription, and a generated no-op would leave the
+  server sending updates the client asked to stop. `logging` is declared by
+  every server, since every server can log through its context; the router
+  records the level, and `#[set_level]` is only for observing changes. A
+  trailing `ctx: &RequestContext` is optional on all five.
 
 - **WebSocket is bidirectional.** A per-connection session handle, mirroring the
   one in `line.rs`: handler tasks push onto a channel that the connection loop
@@ -127,12 +133,6 @@ impossible. This release opens them.
   derived the token from the request id rather than from the client's
   `_meta.progressToken`, violating the progress utility's central requirement
   and producing notifications a conforming client discards. See *Changed*.
-
-- **The client could not answer `ping`.** It handled `sampling/createMessage`,
-  `roots/list`, and `elicitation/create`, then fell through to
-  `-32601 Method not found`. Ping is the liveness check, so this made a healthy
-  client look dead to any server that used it. It now replies with an empty
-  result, as the specification requires of the receiver.
 
 - **Notifications emitted during a request could arrive after its response.**
   The transport loops polled completed responses ahead of outgoing session
@@ -218,8 +218,9 @@ The rest, briefly:
   utility forbids outright — and a slow handshake is exactly when that fires.
 - A server emitting `notifications/message` could not declare the `logging`
   capability, because it was gated solely on `#[set_level]`. Logging means "this
-  server emits log messages", which is independent of letting clients set a
-  level; `#[server(..., logging)]` now declares it.
+  server emits log messages", which every server can do through its context,
+  so every server now declares it (see *Release audit*); `#[server(logging)]`
+  is still accepted and now has no effect.
 - The client advertised `roots.listChanged: true` with no API able to send the
   notification, so a server that cached roots on that promise was never told
   they changed. `Client::notify_roots_list_changed` closes it.
@@ -403,9 +404,10 @@ where the gap was visible on the wire.
   `notifications/elicitation/complete` was forwarded for any id at all; the
   spec requires ignoring unknown or already-completed ones, since otherwise
   anything able to inject a notification can drive a client's retry logic with
-  an id it invented. Ids are now tracked from the originating request and
-  consumed on completion. `ElicitationResponse::accept_without_content` also
-  expresses the URL-mode consent shape, where `content` is omitted by design.
+  an id it invented. Ids are now tracked — from URL-mode requests and from the
+  `data` of a -32042 error — and consumed on completion.
+  `ElicitationResponse::accept_without_content` also expresses the URL-mode
+  consent shape, where `content` is omitted by design.
 
 - **The client rejects prompt arguments the schema forbids.**
   `GetPromptRequestParams.arguments` is typed `{ [key: string]: string }`;
@@ -579,12 +581,12 @@ built, and none of it was.
   task was orphaned until its TTL expired.
 
 - **`includeContext: "thisServer"/"allServers"` is gated.** Both values are
-  soft-deprecated and a server SHOULD only use them against a client declaring
-  `sampling.context`. The refusal applies only to a client that declared
-  `sampling.tools` but not `context` — a deliberate opt-out on the 11-25 wire —
-  so the 06-18 wire, where `sampling.context` does not exist and both values are
-  fully legal, is untouched. `RequestContext::client_supports_sampling_context`
-  lets a handler branch rather than discover this from a refusal.
+  soft-deprecated and a server SHOULD NOT use them against a client that did
+  not declare `sampling.context`. The refusal applies on 2025-11-25 sessions,
+  judged by the negotiated version, so the 06-18 wire, where
+  `sampling.context` does not exist and both values are fully legal, is
+  untouched. `RequestContext::client_supports_sampling_context` lets a handler
+  branch rather than discover this from a refusal.
 
 ### Streamable HTTP
 
@@ -634,6 +636,181 @@ emitted advertised a resumability that did not exist.
   asks for: "Disconnection SHOULD NOT be interpreted as the client cancelling its
   request."
 
+### Release audit
+
+Before release, the whole of 3.5.0 was audited again, end to end and crate by
+crate, against the 2025-06-18 and 2025-11-25 specifications — including the
+work above. It found that several fixes had reached one transport, one
+dispatcher or one wrapper and not the others, that two of this release's own
+fixes had introduced bugs, and that whole areas — MCP authorization, the WASM
+server, the proxy's stdio side — had never been conformant. Everything below
+is fixed here.
+
+#### Wire compatibility
+
+- **The client failed the handshake with every TypeScript-SDK server.** It sent
+  `"params": null` on parameterless notifications, including
+  `notifications/initialized`. JSON-RPC requires `params` to be a structured
+  value when present, and the TypeScript SDK's schema rejects `null`: an HTTP
+  server answered 400, and a stdio server silently dropped the notification, so
+  its `oninitialized` never ran. `params` is now omitted.
+- **A `#[tool]` could not return `-32042`.** The macro folded every `McpError`
+  into an `isError` result, so the one error the spec defines as a JSON-RPC
+  error for the client to act on never reached it. It now propagates, and its
+  `data.elicitations` entries carry the required `"mode": "url"`.
+- **URL-mode elicitation could not work end to end.** There was no way to
+  declare `elicitation.url` (now `Client::enable_elicitation_url()`), no public
+  way to register the completion handler (now `set_elicitation_complete_handler`),
+  and the client dropped a JSON-RPC error's `data` — for -32042, the URLs.
+  Incoming requests are also checked against the capabilities the client
+  actually sent, not against what its handlers imply.
+- **The routing enums were not the wire shape.** `ClientRequest`,
+  `ServerRequest`, `ClientNotification` and `ServerNotification` put a
+  variant's params beside `method` rather than under `params`; they are
+  deprecated.
+
+#### Streamable HTTP
+
+- **The TurboMCP client and server broke each other.** The client kept one
+  `Last-Event-ID` for every stream and sent it on POSTs, so its GET reconnect
+  re-attached to a finished POST stream and the standalone channel was lost for
+  good. The GET also sent the configured rather than the negotiated protocol
+  version, which the server answers 400 on a downgraded session. Each stream now
+  keeps its own cursor, and POST, GET and DELETE share one header builder — the
+  DELETE had been sent with no credentials, version or custom headers at all.
+- **Every SSE stream was cut at 30 seconds.** The client's request timeout was
+  reqwest's whole-request timeout, which runs until the body ends; a slow tool
+  call's result was lost and the call hung. Streams are now bounded per chunk,
+  a cut POST stream is resumed from its own last event id, and the SSE `retry`
+  field — a MUST in 2025-11-25 — is honoured.
+- **A result finished after the client dropped was lost**, and the resuming
+  GET hung, because the response was only ever written by the dropped body.
+  It is now kept, replayed on resume, and the stream then ends. Stream
+  eviction no longer takes the listening GET stream or an unanswered POST.
+- **Sessions never expired** and had no cap; idle sessions are now reaped
+  (default one hour) and `initialize` past `max_http_sessions` gets 503.
+- **After a 404 the client re-initializes.** The transport reports
+  `TransportError::SessionExpired`, and `Client` re-runs the handshake once
+  with its original `initialize` request and retries the call.
+- `trusted_proxies` never took effect (proxy headers were matched
+  case-sensitively); `allow_missing_origin` admits non-browser clients without
+  weakening the Origin check; opt-in CORS; a cross-origin SSE `endpoint` event
+  is refused rather than followed with the bearer token.
+
+#### MCP authorization
+
+The native server had none. `turbomcp-auth` shipped the pieces and no
+transport called them.
+
+- **`ServerConfig::authorization(HttpAuthorization)`** makes the Streamable
+  HTTP server an OAuth 2.1 protected resource: RFC 9728 metadata at
+  `/.well-known/oauth-protected-resource` (path-inserted and root), `401` with a
+  `WWW-Authenticate` challenge carrying `resource_metadata` and the supported
+  scopes, `403 insufficient_scope`, tokens from the header only, the principal
+  on the request context, and each session bound to the principal that created
+  it. `turbomcp_auth::server::JwtBearerValidator` validates JWTs for it,
+  including the audience check the spec requires.
+- **The HTTP client answers challenges.** `StreamableHttpClientConfig::auth_provider`
+  is handed the parsed `AuthChallenge` on a 401/403 and the request is retried
+  once; `turbomcp_auth::discovery::ClientDiscovery` goes from the challenge to
+  the authorization server's endpoints in the 2025-11-25 discovery order, and
+  refuses a server that does not advertise S256 PKCE.
+- **Security fixes in `turbomcp-auth` and `turbomcp-dpop`:** `OAuth2Provider`
+  now validates token audience (it accepted any token its userinfo endpoint
+  did); the RFC 8707 `resource` parameter is sent on authorization, token and
+  refresh requests; `nbf` is enforced; SSRF checks are pinned to the
+  connection, cover the JWKS URI, and no longer let IPv4-mapped IPv6 addresses
+  through; JWKS fetches follow no redirects and coalesce; redirect URIs must be
+  HTTPS or loopback unless custom schemes are opted into; Protected Resource
+  Metadata carries `authorization_servers` as an array. `DpopValidator` is
+  removed: it verified neither the proof's signature nor its HTTP binding.
+
+#### Connection transports
+
+The stdio/TCP/Unix, WebSocket and channel transports now share one session
+implementation, so these land in all of them:
+
+- **Abandoned server requests leaked their slot** — a regression from this
+  release's own 60-second timeout. After 64 unanswered samples or elicitations
+  a connection could never make another. Slots are reclaimed, and the client is
+  sent `notifications/cancelled` for requests the server stops waiting on.
+- **A disconnect could hang the server.** A handler emitting progress after the
+  client left blocked forever on an undrained queue, so `on_shutdown` never ran
+  on stdio and TCP/Unix connection slots were never released.
+- **Any TCP or Unix peer could exhaust memory** by never sending a newline;
+  lines are now bounded as they arrive, honouring `max_message_size`, which was
+  ignored. The client transports (stdio, TCP, Unix, child process) are bounded
+  too and survive an oversized line instead of dying.
+- **`logging/setLevel` and log rate limiting did nothing outside HTTP**, since
+  only HTTP had a session id to key them by. Every connection has one now.
+- **The client reordered notifications** — progress could arrive out of order
+  and after the call returned — and ignored a server's cancellation of the
+  requests it had sent. Notifications are delivered in order, and a cancelled
+  sampling/elicitation/roots handler is aborted without answering.
+
+#### Server features
+
+- **Wrappers advertised what they did not serve.** `MiddlewareStack` forwarded
+  capabilities but not `complete`, `set_log_level`, `subscribe`, the tasks
+  methods, `instructions` or `page_size`, so each answered "not supported".
+  All are forwarded; `CompositeHandler` stops advertising `tasks` it cannot
+  route.
+- **Per-session visibility now applies to listings.** It gated calls but not
+  `tools/list`, so after `enable_for_session` a client re-listed and saw
+  nothing new. `McpHandler::list_tools_for` and friends pass the caller's
+  context.
+- **Every server declares `logging`**, which the spec requires of any server
+  that emits log messages, and `ctx.log()` is available to every handler.
+- A mounted server's `notifications/resources/updated` carries the composite
+  URI; external links in its content are left alone. URI template variables
+  are percent-decoded before the traversal check, so RFC 6570-expanded URIs
+  route. `execution.taskSupport` is enforced on servers declaring task
+  augmentation. Progress that does not increase is not sent. Non-string
+  cursors are -32602; resource-not-found carries `data.uri`.
+- **Form elicitation is checked both ways**: the schema must be a flat object
+  of primitives (and 2025-06-18-representable on that wire), and accepted
+  content must match it. `modelPreferences` priorities must lie in `0..=1`.
+- `ProtocolConfig::strict` offers its one version instead of refusing a
+  client, and `initialize` no longer refuses schema-valid `clientInfo`.
+- Macros: raw identifiers, and parameters named `args` or `ctx`, no longer
+  break `#[server]`; unknown attribute keys are errors; unknown tool arguments
+  are refused as the advertised schema says; new `#[resource(audience, priority,
+  last_modified, size)]` and `#[tool(task_support)]`.
+
+#### WASM
+
+`turbomcp-wasm` had six JSON-RPC dispatchers, and most of this release's fixes
+had reached one of them. Every entry point now goes through the core router and
+the 2025-06-18 adapter, which fixes notifications (202, never a response),
+version negotiation, `ping`, error codes, pagination and template matching in
+one place. Also: auth, JWKS and crypto work on Cloudflare Workers (they called
+`window()`, which Workers lack); Durable Object stores no longer fail every
+write; tool schemas keep `$defs`; `#[resource("x://{var}")]` registers a
+template; Streamable HTTP validates `MCP-Protocol-Version`, requires sessions,
+and bounds its store; Origin is validated by default; the principal reaches
+handlers; and the browser and WASI clients speak Streamable HTTP.
+
+#### Proxy, CLI and companion crates
+
+- **`turbomcp-proxy`'s stdio frontends are rebuilt on `ProxyService`**, so
+  they complete a real handshake (they answered `initialize` with bare
+  capabilities, or not at all), no longer write logs to stdout or answer
+  notifications, and work with every backend. Upstream errors pass through
+  unchanged, icons and `_meta` survive, `generate` produces crates that compile,
+  the REST adapter starts, and SSRF checks cover every spelling of an internal
+  address. `--jwt-secret` now requires `--jwt-audience`.
+- **`turbomcp-cli`** reaches HTTP servers by default at the URL given (it
+  posted to `/mcp/mcp`), and its `full` template logs to stderr.
+- **`turbomcp-openapi`** encodes path parameters (a value could rewrite the
+  host and take the operation's credentials with it), re-validates redirects
+  for SSRF, returns `structuredContent` for the `outputSchema` it declares,
+  emits valid 2020-12 schemas, and exposes templated GETs as resource
+  templates.
+- **`turbomcp-grpc`** negotiates the protocol version and carries tool hints,
+  output schemas and structured content; **`turbomcp-telemetry`** actually
+  records duration and status on spans and stops exporting resource URIs by
+  default.
+
 ### Changed
 
 - **`RichContextExt::report_progress` and `report_progress_with_token` are
@@ -663,6 +840,10 @@ emitted advertised a resumability that did not exist.
   on `turbomcp-protocol`. Both are re-exported from `turbomcp_protocol::types`,
   with their fields unchanged, so existing paths keep resolving.
 
+- **The release audit's breaking changes** — removed unsafe or wrong APIs,
+  fields added for authorization and session policy, the WASM and proxy
+  rebuilds — are listed with upgrade steps in `MIGRATION.md`.
+
 - **`#[server]` now generates `server_capabilities()`** rather than relying on
   the trait default. For a macro server the result is identical for tools,
   resources, and prompts — the lists are static — and it is what lets the four
@@ -670,60 +851,37 @@ emitted advertised a resumability that did not exist.
 
 ### What `cargo semver-checks` says
 
-Five of the twenty-five crates fail the check against the 3.4.0 baseline; the
-other twenty are clean. Since 3.x is maintained for backwards support, here is
-exactly what breaks and why each was judged acceptable.
+Thirteen of the twenty-three checked crates fail against the 3.4.0 baseline;
+ten are clean (`turbomcp`, `-core`, `-cli`, `-stdio`, `-tcp`, `-unix`,
+`-websocket`, `-wire`, `-transport-traits`, `-transport-streamable`). Almost every
+failure is one of three things: a public field added to a struct that could be
+built by literal, a type or function removed because it was wrong, or a
+feature removed because it gated nothing. Upgrade notes for each are in
+`MIGRATION.md`.
 
-- **`turbomcp-protocol`** (2 major) — the two removed `RichContextExt` progress
-  methods, covered above, plus `ProgressNotification._meta` and
-  `ListTasksRequest._meta`. The method removal is unfixable in place: an
-  inherent method of the same name wins over a trait method, so adding the
-  correct `report_progress` would have broken those call sites whatever we did
-  with the trait. The removed behaviour was a specification violation, and the
-  trait was never reachable from the `turbomcp` facade. The two `_meta` fields
-  are wire fields the schema has always allowed and we were not carrying;
-  `ListTasksRequest` is additionally behind the non-default `experimental-tasks`
-  feature.
+| Crate | What breaks | Why |
+|---|---|---|
+| `turbomcp-auth` | duplicate DCR types and `validate_canonical_resource_uri` removed; `ProtectedResourceMetadata.authorization_servers` (RFC 9728 array); `OAuth2Config.allow_custom_scheme_redirect`; `FetcherError::AllEndpointsFailed` fields | wrong wire shape, dead duplicates, and the redirect-URI MUST |
+| `turbomcp-dpop` | `DpopValidator`, `ValidatedDpopClaims` removed | it verified neither signature nor HTTP binding |
+| `turbomcp-client` | `InitializeResult` `#[non_exhaustive]`; `HandlerRegistry.elicitation_complete` | handshake fields; the completion handler had nowhere to live |
+| `turbomcp-http` | `StreamableHttpClientConfig.auth_provider`; the config is no longer `UnwindSafe` | answering authorization challenges |
+| `turbomcp-server` | `ServerConfig.http_sessions` / `.authorization`, `OriginValidationConfig` fields | session expiry, MCP authorization, missing-Origin policy |
+| `turbomcp-transport` | `ChildProcessConfig.sigterm_grace`, `OriginConfig.allow_missing` | graceful child shutdown; missing-Origin policy |
+| `turbomcp-types` | `PrimitiveSchemaDefinition::Array` and `one_of`; `EnumSchema::LegacyTitledSingleSelect`; `URLElicitationRequiredError` reshaped | elicitation schemas the spec permits; the -32042 shape the spec requires |
+| `turbomcp-protocol` | `RichContextExt::report_progress*` removed; `_meta` on three types | the removed methods were the progress-token violation; the fields are wire fields |
+| `turbomcp-wasm` | handler type parameters, `WithAuth::principal`, `StreamableExt`/`AuthExt` now blanket over `McpHandler`; browser client no longer `Send` | the consolidation onto the core router |
+| `turbomcp-proxy` | introspection types replaced by protocol types; `proxy::backends` removed; codegen context fields; dead `reqwest`/`tokio-tungstenite` features | lossless relay; the stdio rebuild |
+| `turbomcp-openapi` | `ExtractedOperation.request_body_required` | `body` was marked required when it was not |
+| `turbomcp-grpc` | proto structs gained fields; `health`/`reflection` features removed | carrying hints, schemas and `_meta`; the features gated nothing |
+| `turbomcp-telemetry` | `tracing-json`/`tracing-pretty` features removed | they gated nothing |
 
-- **`turbomcp-wasm`** (2 major) — the `report_progress` → `log_progress` rename,
-  which registers as one method removed and one added. Same root cause: the old
-  name had to be freed for the inherent method. The console-logging behaviour is
-  unchanged and available under the new name.
+`turbomcp-protocol`'s report also lists `types::Root` and `ListRootsResult` as
+removed. They are not: they moved to `turbomcp-types` and are re-exported at
+the same paths, and the checker does not follow re-exports across crates.
 
-- **`turbomcp-client`** (2 major) —
-  `constructible_struct_adds_field` on `HandlerRegistry.elicitation_complete`,
-  and `InitializeResult` becoming `#[non_exhaustive]`.
-
-  The first is the same lint 3.4.0 hit with `ErrorContext`, and the same
-  reasoning applies: the handler has to live somewhere, every existing field is
-  public, so no addition can be non-breaking. The struct derives `Default`,
-  in-tree construction goes through `HandlerRegistry::new()`, and the documented
-  path has always been the `set_*_handler` methods.
-
-  The second is deliberate and is the point: `InitializeResult` grows with the
-  handshake, and this release adds two fields it should have carried from the
-  start. Marking it `#[non_exhaustive]` now, with `new()` and
-  `with_instructions()` constructors replacing struct-literal construction,
-  makes this the last time that shape breaks.
-
-- **`turbomcp-types`** (major) — `PrimitiveSchemaDefinition` gains a `one_of`
-  field on its `String` variant and a new `Array` variant, which an exhaustive
-  `match` without a `..` arm will notice. Both are required to represent
-  elicitation schemas the spec permits and we were silently failing to parse.
-  `URLElicitationRequiredError` also reshaped to the spec's required
-  `elicitations` array.
-
-- **`turbomcp-transport`** (major) — `ChildProcessConfig.sigterm_grace`, the same
-  exhaustive-literal lint. Build the config with `..Default::default()`; the new
-  field is what gives a child MCP server a window to shut down cleanly rather
-  than being SIGKILLed.
-
-Everything else is additive. Notably `turbomcp-core` is clean despite carrying
-most of this release's behaviour: the progress token lives in the existing
-`RequestContext::metadata` map behind `progress_token()` rather than in a new
-struct field, specifically to avoid repeating the `ErrorContext` argument on a
-far more widely constructed type, and `McpSession::protocol_version` is a
-defaulted trait method so existing implementations keep compiling.
+`turbomcp-core` stays clean despite carrying much of this release: new
+behaviour went into defaulted trait methods and existing maps rather than new
+struct fields, deliberately.
 
 ## [3.4.0] - 2026-09-14
 
