@@ -521,12 +521,6 @@ impl JwksCache {
         // SECURITY: Validate URL uses HTTPS before fetching key material
         self.validate_url().map_err(FetchError::Permanent)?;
 
-        let window = web_sys::window().ok_or_else(|| {
-            FetchError::Permanent(AuthError::Internal(
-                "No window object available".to_string(),
-            ))
-        })?;
-
         // Create fetch request
         let request = web_sys::Request::new_with_str(&self.url).map_err(|_| {
             // Request creation failure is permanent (bad URL, etc.)
@@ -536,7 +530,11 @@ impl JwksCache {
         })?;
 
         // Execute fetch - network errors are transient
-        let promise = window.fetch_with_request(&request);
+        let promise = crate::wasm_server::js_global::fetch(&request).map_err(|_| {
+            FetchError::Permanent(AuthError::Internal(
+                "fetch is not available in this environment".to_string(),
+            ))
+        })?;
         let response = JsFuture::from(promise).await.map_err(|e| {
             // Log network error details for operators
             #[cfg(target_arch = "wasm32")]

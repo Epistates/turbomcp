@@ -106,6 +106,8 @@ mod ext;
 mod handler_traits;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod js_global;
 pub mod middleware;
 mod response;
 mod rich_context;

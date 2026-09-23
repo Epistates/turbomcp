@@ -100,12 +100,8 @@ impl WasmJwtAuthenticator {
         // in the JWT header (e.g., RS256 → HS256) and uses the RSA public key as the HMAC secret.
         jwk.validate_algorithm_compatibility(algorithm)?;
 
-        let window = web_sys::window()
-            .ok_or_else(|| AuthError::Internal("No window object available".to_string()))?;
-
-        let crypto = window
-            .crypto()
-            .map_err(|_| AuthError::Internal("No crypto object available".to_string()))?;
+        let crypto = crate::wasm_server::js_global::crypto()
+            .ok_or_else(|| AuthError::Internal("No crypto object available".to_string()))?;
 
         let subtle = crypto.subtle();
 

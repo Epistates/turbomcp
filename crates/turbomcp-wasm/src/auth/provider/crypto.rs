@@ -44,14 +44,18 @@ impl std::error::Error for CryptoError {
 /// Result type for crypto operations.
 pub type CryptoResult<T> = Result<T, CryptoError>;
 
+/// The Web Crypto object from the global scope, which on Workers is not a
+/// `Window`.
+fn web_crypto() -> CryptoResult<web_sys::Crypto> {
+    crate::wasm_server::js_global::crypto()
+        .ok_or_else(|| CryptoError::CryptoUnavailable("No crypto object".to_string()))
+}
+
 /// Generate cryptographically secure random bytes.
 ///
 /// Uses Web Crypto API's `getRandomValues`.
 pub fn generate_random_bytes(length: usize) -> CryptoResult<Vec<u8>> {
-    let crypto = web_sys::window()
-        .ok_or_else(|| CryptoError::CryptoUnavailable("No window object".to_string()))?
-        .crypto()
-        .map_err(|_| CryptoError::CryptoUnavailable("No crypto object".to_string()))?;
+    let crypto = web_crypto()?;
 
     let mut bytes = vec![0u8; length];
     let array = js_sys::Uint8Array::new_with_length(length as u32);
@@ -101,10 +105,7 @@ pub fn generate_family_id() -> CryptoResult<String> {
 ///
 /// Returns the URL-safe base64 encoded hash.
 pub async fn hash_token(token: &str) -> CryptoResult<String> {
-    let crypto = web_sys::window()
-        .ok_or_else(|| CryptoError::CryptoUnavailable("No window object".to_string()))?
-        .crypto()
-        .map_err(|_| CryptoError::CryptoUnavailable("No crypto object".to_string()))?;
+    let crypto = web_crypto()?;
 
     let subtle = crypto.subtle();
 
@@ -164,10 +165,7 @@ pub async fn verify_pkce(
 ///
 /// This is the operation: `BASE64URL(SHA256(code_verifier))`
 pub async fn generate_code_challenge(code_verifier: &str) -> CryptoResult<String> {
-    let crypto = web_sys::window()
-        .ok_or_else(|| CryptoError::CryptoUnavailable("No window object".to_string()))?
-        .crypto()
-        .map_err(|_| CryptoError::CryptoUnavailable("No crypto object".to_string()))?;
+    let crypto = web_crypto()?;
 
     let subtle = crypto.subtle();
 

@@ -111,9 +111,7 @@ pub fn current_timestamp_ms() -> u64 {
 /// Get cryptographically secure random `u64`.
 #[cfg(target_arch = "wasm32")]
 fn get_random_u64() -> u64 {
-    if let Some(window) = web_sys::window()
-        && let Ok(crypto) = window.crypto()
-    {
+    if let Some(crypto) = super::js_global::crypto() {
         let mut bytes = [0u8; 8];
         if crypto.get_random_values_with_u8_array(&mut bytes).is_ok() {
             return u64::from_le_bytes(bytes);
