@@ -19,7 +19,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     MyServer.serve().await.unwrap();
+//!     MyServer.run_stdio().await.unwrap();
 //! }
 //! ```
 //!
@@ -47,6 +47,7 @@
 //! ## Full Configuration
 //!
 //! ```rust,ignore
+//! use std::time::Duration;
 //! use turbomcp::prelude::*;
 //!
 //! #[tokio::main]
@@ -65,22 +66,23 @@
 //! ## Bring Your Own Server (Axum Integration)
 //!
 //! ```rust,ignore
-//! use axum::Router;
+//! use axum::{Router, routing::get};
 //! use turbomcp::prelude::*;
 //!
 //! #[tokio::main]
-//! async fn main() {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Get MCP routes as an Axum router
 //!     let mcp_router = MyServer.builder().into_axum_router();
 //!
 //!     // Merge with your existing routes
 //!     let app = Router::new()
-//!         .route("/health", get(health_check))
+//!         .route("/health", get(|| async { "OK" }))
 //!         .merge(mcp_router);
 //!
 //!     // Use your own server
 //!     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 //!     axum::serve(listener, app).await?;
+//!     Ok(())
 //! }
 //! ```
 

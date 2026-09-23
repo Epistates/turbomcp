@@ -411,6 +411,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "https://auth.example.com",
             JwtBearerValidator::new(jwt).with_required_scopes(["mcp:tools"]),
         ))
+        // Non-browser clients send no Origin header, and a server reachable
+        // over the network refuses them unless told otherwise
+        .allow_missing_origin(true)
         .build();
 
     turbomcp_server::transport::http::run_with_config(&MyServer, "0.0.0.0:8080", &config).await?;
