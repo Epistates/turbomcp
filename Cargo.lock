@@ -5976,6 +5976,7 @@ dependencies = [
  "turbomcp-client",
  "turbomcp-protocol",
  "turbomcp-transport",
+ "url",
  "which",
 ]
 
