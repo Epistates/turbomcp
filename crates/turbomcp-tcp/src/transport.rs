@@ -1,6 +1,6 @@
 //! TCP transport implementation for MCP
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
-use tokio_util::codec::{Framed, LinesCodec};
+use tokio_util::codec::{Decoder, Encoder, Framed, LinesCodec, LinesCodecError};
 use tracing::{debug, error, info, warn};
 
 use turbomcp_protocol::MessageId;
@@ -20,6 +20,67 @@ use turbomcp_transport_traits::{
     AtomicMetrics, Transport, TransportCapabilities, TransportError, TransportMessage,
     TransportMetrics, TransportResult, TransportState, TransportType,
 };
+
+/// Default cap on one newline-delimited message, in bytes.
+///
+/// Matches the server's `DEFAULT_MAX_MESSAGE_SIZE`: a client that accepted
+/// less than its server may send would drop legal responses.
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
+/// One newline-delimited frame from the peer.
+#[derive(Debug)]
+enum Line {
+    /// A complete line within the size limit.
+    Message(String),
+    /// A line past the size limit, already discarded up to its newline.
+    Oversized,
+}
+
+/// `LinesCodec` that reports an oversized line as a frame, not an error.
+///
+/// `LinesCodec::new_with_max_length` discards a line past the limit and
+/// resynchronises at the next newline, but says so with an error, and
+/// `Framed` treats every decoder error as the end of the stream. Surfacing it
+/// as a frame is what lets one oversized message be skipped instead of
+/// costing the connection.
+#[derive(Debug)]
+struct BoundedLines(LinesCodec);
+
+impl BoundedLines {
+    fn new(max_length: usize) -> Self {
+        Self(LinesCodec::new_with_max_length(max_length))
+    }
+
+    fn lift(
+        decoded: Result<Option<String>, LinesCodecError>,
+    ) -> Result<Option<Line>, LinesCodecError> {
+        match decoded {
+            Err(LinesCodecError::MaxLineLengthExceeded) => Ok(Some(Line::Oversized)),
+            other => other.map(|line| line.map(Line::Message)),
+        }
+    }
+}
+
+impl Decoder for BoundedLines {
+    type Item = Line;
+    type Error = LinesCodecError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
+        Self::lift(self.0.decode(src))
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
+        Self::lift(self.0.decode_eof(src))
+    }
+}
+
+impl Encoder<String> for BoundedLines {
+    type Error = LinesCodecError;
+
+    fn encode(&mut self, line: String, dst: &mut BytesMut) -> Result<(), LinesCodecError> {
+        self.0.encode(line, dst)
+    }
+}
 
 /// TCP transport implementation
 pub struct TcpTransport {
@@ -49,6 +110,8 @@ pub struct TcpTransport {
     idle_timeout: std::time::Duration,
     /// Strict mode: disconnect on invalid JSON (default: false, log and continue)
     strict_mode: bool,
+    /// Longest newline-delimited message accepted, in bytes
+    max_message_size: usize,
 }
 
 // Manual Debug implementation since broadcast::Sender doesn't implement Debug
@@ -78,7 +141,7 @@ impl TcpTransport {
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
+                max_message_size: Some(DEFAULT_MAX_MESSAGE_SIZE),
                 ..Default::default()
             },
             state: Arc::new(Mutex::new(TransportState::Disconnected)),
@@ -88,6 +151,7 @@ impl TcpTransport {
             max_connections: 256,
             idle_timeout: std::time::Duration::from_secs(300),
             strict_mode: false,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -104,7 +168,7 @@ impl TcpTransport {
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
+                max_message_size: Some(DEFAULT_MAX_MESSAGE_SIZE),
                 ..Default::default()
             },
             state: Arc::new(Mutex::new(TransportState::Disconnected)),
@@ -114,6 +178,7 @@ impl TcpTransport {
             max_connections: 256,
             idle_timeout: std::time::Duration::from_secs(300),
             strict_mode: false,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -141,6 +206,7 @@ impl TcpTransport {
         let max_connections = self.max_connections;
         let idle_timeout = self.idle_timeout;
         let strict_mode = self.strict_mode;
+        let max_message_size = self.max_message_size;
 
         // Spawn accept loop and store handle
         task_handles.lock().await.spawn(async move {
@@ -191,6 +257,7 @@ impl TcpTransport {
                                         connections_ref,
                                         idle_timeout,
                                         strict_mode,
+                                        max_message_size,
                                     )
                                     .await
                                     {
@@ -252,6 +319,7 @@ impl TcpTransport {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let idle_timeout = self.idle_timeout;
         let strict_mode = self.strict_mode;
+        let max_message_size = self.max_message_size;
 
         // Generate UUID-based connection ID for client
         let conn_id = format!("tcp-client-{}-{}", remote_addr, uuid::Uuid::new_v4());
@@ -261,7 +329,7 @@ impl TcpTransport {
                 _ = shutdown_rx.recv() => {
                     info!("TCP client connection received shutdown signal");
                 }
-                result = handle_tcp_connection_framed(stream, remote_addr, conn_id, tx, connections, idle_timeout, strict_mode) => {
+                result = handle_tcp_connection_framed(stream, remote_addr, conn_id, tx, connections, idle_timeout, strict_mode, max_message_size) => {
                     if let Err(e) = result {
                         error!("TCP client connection handler failed: {}", e);
                     }
@@ -275,6 +343,7 @@ impl TcpTransport {
 
 /// Handle a TCP connection using tokio-util::codec::Framed with LinesCodec
 /// This provides proven newline-delimited JSON framing with proper bidirectional communication
+#[allow(clippy::too_many_arguments)]
 async fn handle_tcp_connection_framed(
     stream: TcpStream,
     addr: SocketAddr,
@@ -283,14 +352,16 @@ async fn handle_tcp_connection_framed(
     connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
     idle_timeout: std::time::Duration,
     strict_mode: bool,
+    max_message_size: usize,
 ) -> TransportResult<()> {
     debug!(
         "Handling TCP connection from {} (ID: {}) using Framed<TcpStream, LinesCodec>",
         addr, conn_id
     );
 
-    // Create framed transport using LinesCodec for newline-delimited messages
-    let framed = Framed::new(stream, LinesCodec::new());
+    // Bounded: an unbounded `LinesCodec` buffers a peer's line in full before
+    // anything can look at its length, so a newline-free stream was an OOM.
+    let framed = Framed::new(stream, BoundedLines::new(max_message_size));
     let (mut sink, mut stream) = framed.split();
 
     // Channel for outgoing messages to this specific connection (bounded for backpressure)
@@ -328,22 +399,18 @@ async fn handle_tcp_connection_framed(
         match tokio::time::timeout(idle_timeout, stream.next()).await {
             Ok(Some(result)) => {
                 match result {
-                    Ok(line) => {
+                    Ok(Line::Oversized) => {
+                        // The codec has already skipped to the next newline,
+                        // so one oversized message costs only itself — not
+                        // the connection and every request still in flight.
+                        warn!(
+                            "Discarded a message over {} bytes from {} (ID: {})",
+                            max_message_size, addr, conn_id
+                        );
+                    }
+                    Ok(Line::Message(line)) => {
                         if line.is_empty() {
                             continue;
-                        }
-
-                        // Validate message size (1MB limit for security)
-                        let max_size = turbomcp_protocol::MAX_MESSAGE_SIZE;
-                        if line.len() > max_size {
-                            error!(
-                                "Message size {} exceeds limit {} from {} (ID: {})",
-                                line.len(),
-                                max_size,
-                                addr,
-                                conn_id
-                            );
-                            break;
                         }
 
                         debug!("Received message from {} (ID: {}): {}", addr, conn_id, line);
@@ -672,6 +739,7 @@ impl Default for TcpConfig {
 #[derive(Debug)]
 pub struct TcpTransportBuilder {
     config: TcpConfig,
+    max_message_size: usize,
 }
 
 impl TcpTransportBuilder {
@@ -680,6 +748,7 @@ impl TcpTransportBuilder {
     pub fn new() -> Self {
         Self {
             config: TcpConfig::default(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -739,6 +808,16 @@ impl TcpTransportBuilder {
         self
     }
 
+    /// Set the longest newline-delimited message accepted, in bytes
+    /// (default: 10 MiB, the server's default).
+    ///
+    /// A longer message is discarded and logged; the connection stays open.
+    #[must_use]
+    pub const fn max_message_size(mut self, bytes: usize) -> Self {
+        self.max_message_size = bytes;
+        self
+    }
+
     /// Build the TCP transport
     #[must_use]
     pub fn build(self) -> TcpTransport {
@@ -751,6 +830,8 @@ impl TcpTransportBuilder {
         transport.max_connections = self.config.max_connections;
         transport.idle_timeout = std::time::Duration::from_secs(self.config.idle_timeout_secs);
         transport.strict_mode = self.config.strict_mode;
+        transport.max_message_size = self.max_message_size;
+        transport.capabilities.max_message_size = Some(self.max_message_size);
         transport
     }
 }
@@ -801,6 +882,55 @@ mod tests {
             .build();
 
         assert_eq!(transport.remote_addr, Some(remote_addr));
+    }
+
+    /// An oversized line is skipped; the connection and the messages after it
+    /// survive. The codec used to be unbounded, and the length check after it
+    /// closed the connection — failing every request still in flight.
+    #[tokio::test]
+    async fn an_oversized_line_is_skipped_and_the_connection_survives() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = listener.local_addr().unwrap();
+        let transport = TcpTransportBuilder::new()
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .remote_addr(server_addr)
+            .max_message_size(256)
+            .build();
+        transport.connect().await.unwrap();
+        let (peer, _) = listener.accept().await.unwrap();
+        let (peer_read, mut peer_write) = peer.into_split();
+
+        let oversized = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"pad":"{}"}}}}"#,
+            "x".repeat(1024)
+        );
+        let next = r#"{"jsonrpc":"2.0","id":2,"result":{}}"#;
+        peer_write
+            .write_all(format!("{oversized}\n{next}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let received = tokio::time::timeout(std::time::Duration::from_secs(2), transport.receive())
+            .await
+            .expect("the reader must survive the oversized line")
+            .unwrap()
+            .expect("a message");
+        assert_eq!(received.payload.as_ref(), next.as_bytes());
+
+        // And the connection still carries traffic the other way.
+        let ping = r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#;
+        transport
+            .send(TransportMessage::new(MessageId::from(3), Bytes::from(ping)))
+            .await
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(peer_read)
+            .read_line(&mut line)
+            .await
+            .unwrap();
+        assert_eq!(line.trim_end(), ping);
     }
 
     #[tokio::test]
