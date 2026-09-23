@@ -10,10 +10,16 @@
 //! - **MCP 2025-11-25 Specification Compliance**: Full implementation of the streamable HTTP spec
 //! - **Single Endpoint Design**: All communication through one MCP endpoint
 //! - **SSE Support**: Server-Sent Events for server-to-client streaming
-//! - **Legacy SSE Compatibility**: Optional support for older `endpoint` SSE events
-//! - **Session Management**: Mcp-Session-Id header support for session tracking
-//! - **Auto-Reconnect**: Configurable retry policies with exponential backoff
-//! - **Last-Event-ID Resumability**: Resume SSE streams from last received event
+//! - **Session Management**: Mcp-Session-Id header support for session tracking; a 404 for
+//!   the session surfaces as [`TransportError::SessionExpired`] and clears it, so the next
+//!   `initialize` starts a new one
+//! - **Auto-Reconnect**: Configurable retry policies with exponential backoff, honouring the
+//!   server's SSE `retry`
+//! - **Last-Event-ID Resumability**: Each stream resumes from its own last event, including a
+//!   POST's stream cut off before its response arrived
+//!
+//! This crate implements Streamable HTTP only. It does not fall back to the 2024-11-05 HTTP+SSE
+//! transport; an `endpoint` event on a stream is honoured only for the MCP endpoint's own origin.
 //! - **TLS 1.3**: Minimum TLS version enforcement for security
 //! - **Size Limits**: Configurable request/response size validation
 //!
