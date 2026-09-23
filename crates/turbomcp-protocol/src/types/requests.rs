@@ -3,6 +3,9 @@
 //! This module contains the top-level enums that route different types of
 //! MCP requests and notifications between clients and servers.
 
+// The enums below are deprecated; their own derives and impls still use them.
+#![allow(deprecated)]
+
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -26,6 +29,18 @@ use super::{
 };
 
 /// Client-initiated request
+///
+/// # Deprecated: not the wire shape
+///
+/// Internally tagged, so a variant's params sit beside `method` rather than
+/// under `params`: `CallTool` serializes as `{"method":"tools/call","name":..}`
+/// and a real `tools/call` request fails to parse. Route on the JSON-RPC
+/// `method` and deserialize `params` into the variant's type instead. Kept
+/// only so existing code compiles; it will be removed in 4.0.
+#[deprecated(
+    since = "3.5.0",
+    note = "not the JSON-RPC wire shape; route on `method` and deserialize `params` into the matching type"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method")]
 #[allow(clippy::large_enum_variant)] // InitializeRequest is the MCP handshake payload; boxing would change wire API.
@@ -101,6 +116,18 @@ pub enum ClientRequest {
 }
 
 /// Server-initiated request
+///
+/// # Deprecated: not the wire shape
+///
+/// Internally tagged, so a variant's params sit beside `method` rather than
+/// under `params`: `CallTool` serializes as `{"method":"tools/call","name":..}`
+/// and a real `tools/call` request fails to parse. Route on the JSON-RPC
+/// `method` and deserialize `params` into the variant's type instead. Kept
+/// only so existing code compiles; it will be removed in 4.0.
+#[deprecated(
+    since = "3.5.0",
+    note = "not the JSON-RPC wire shape; route on `method` and deserialize `params` into the matching type"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ServerRequest {
@@ -126,6 +153,18 @@ pub enum ServerRequest {
 /// Per MCP 2025-11-25 (`schema.ts:2535`), `CancelledNotification` and
 /// `TaskStatusNotification` are bidirectional — they appear in both
 /// `ClientNotification` and `ServerNotification`.
+///
+/// # Deprecated: not the wire shape
+///
+/// Internally tagged, so a variant's params sit beside `method` rather than
+/// under `params`: `CallTool` serializes as `{"method":"tools/call","name":..}`
+/// and a real `tools/call` request fails to parse. Route on the JSON-RPC
+/// `method` and deserialize `params` into the variant's type instead. Kept
+/// only so existing code compiles; it will be removed in 4.0.
+#[deprecated(
+    since = "3.5.0",
+    note = "not the JSON-RPC wire shape; route on `method` and deserialize `params` into the matching type"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ClientNotification {
@@ -147,6 +186,18 @@ pub enum ClientNotification {
 }
 
 /// Server-sent notification
+///
+/// # Deprecated: not the wire shape
+///
+/// Internally tagged, so a variant's params sit beside `method` rather than
+/// under `params`: `CallTool` serializes as `{"method":"tools/call","name":..}`
+/// and a real `tools/call` request fails to parse. Route on the JSON-RPC
+/// `method` and deserialize `params` into the variant's type instead. Kept
+/// only so existing code compiles; it will be removed in 4.0.
+#[deprecated(
+    since = "3.5.0",
+    note = "not the JSON-RPC wire shape; route on `method` and deserialize `params` into the matching type"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ServerNotification {
