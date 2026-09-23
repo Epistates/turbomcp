@@ -102,6 +102,7 @@ let prompt = Prompt::new("greeting", "A greeting prompt")
 ```rust
 use turbomcp_core::Content;
 
+let base64_data = "iVBORw0KGgo="; // image bytes, base64-encoded
 let text = Content::text("Hello, world!");
 let image = Content::image(base64_data, "image/png");
 let embedded = Content::resource("file:///example.txt", "file contents");
