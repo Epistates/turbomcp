@@ -3,7 +3,8 @@
 //! Convert OpenAPI specifications to MCP tools and resources at runtime.
 //!
 //! This crate enables automatic exposure of REST APIs as MCP components:
-//! - GET endpoints become MCP resources
+//! - GET endpoints become MCP resources, or resource templates when they
+//!   have path parameters
 //! - POST/PUT/DELETE endpoints become MCP tools
 //! - Configurable route mapping patterns
 //!
@@ -15,11 +16,11 @@
 //! // Load from URL
 //! let provider = OpenApiProvider::from_url("https://api.example.com/openapi.json")
 //!     .await?
-//!     .with_base_url("https://api.example.com")
+//!     .with_base_url("https://api.example.com")?
 //!     .with_route_mapping(RouteMapping::new()
 //!         .map_method("GET", McpType::Resource)
 //!         .map_method("POST", McpType::Tool)
-//!         .map_pattern(r"/admin/.*", McpType::Tool));
+//!         .map_pattern(r"/admin/.*", McpType::Tool)?);
 //!
 //! // Use with TurboMCP server
 //! let handler = provider.into_handler();
