@@ -79,6 +79,11 @@ pub struct JwksClient {
     last_refresh: Arc<RwLock<Option<SystemTime>>>,
     /// Optional SSRF validator applied before fetching the JWKS URI
     ssrf_validator: Option<Arc<crate::ssrf::SsrfValidator>>,
+    /// Serializes network fetches so concurrent callers coalesce onto one
+    /// request instead of stampeding the JWKS endpoint (single-flight), and
+    /// so the rate-limit check-then-set in `refresh()` is atomic rather than
+    /// a TOCTOU race between the read of `last_refresh` and the write of it.
+    fetch_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl JwksClient {
@@ -106,12 +111,19 @@ impl JwksClient {
             cache: Arc::new(RwLock::new(None)),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
+                // A JWKS URI can be attacker-influenced (multi-issuer setups,
+                // JWT-driven discovery). Following redirects would let a
+                // malicious or compromised endpoint hand back keys from an
+                // arbitrary host, defeating both the HTTPS check below and any
+                // SSRF policy applied to the original URI.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("Failed to create HTTP client"),
             cache_ttl: Duration::from_secs(600), // 10 minutes (industry standard)
             min_refresh_interval: Duration::from_secs(5), // Rate limiting
             last_refresh: Arc::new(RwLock::new(None)),
             ssrf_validator: None,
+            fetch_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -171,7 +183,26 @@ impl JwksClient {
             }
         }
 
-        // Cache expired or missing, fetch fresh JWKS
+        // Cache expired or missing. Serialize the fetch: hold `fetch_lock` for
+        // the whole "decide, then maybe fetch" sequence so concurrent callers
+        // that all missed the cache coalesce onto one network request
+        // (single-flight) instead of each firing their own — the previous
+        // version had no such coordination, so N concurrent callers with a
+        // cold cache made N requests.
+        let _fetch_guard = self.fetch_lock.lock().await;
+
+        // Re-check the cache: whoever held the lock ahead of us may already
+        // have refreshed it.
+        {
+            let cache = self.cache.read().await;
+            if let Some(cached) = cache.as_ref()
+                && cached.is_valid()
+            {
+                debug!(jwks_uri = %self.jwks_uri, "Using cached JWKS (filled while waiting on fetch lock)");
+                return Ok(cached.jwks.clone());
+            }
+        }
+
         self.fetch_and_cache().await
     }
 
@@ -185,7 +216,14 @@ impl JwksClient {
     /// on the authorization server. If called too frequently, it returns the
     /// cached value (if available) or errors.
     pub async fn refresh(&self) -> McpResult<JwkSet> {
-        // Check rate limiting
+        // Hold `fetch_lock` across the "check last_refresh, then maybe fetch
+        // and update last_refresh" sequence. The previous version read
+        // `last_refresh` and wrote it back in two separate, unguarded steps —
+        // concurrent callers could both pass the rate-limit check before
+        // either updated the timestamp, each firing a request within the
+        // window the check exists to prevent (TOCTOU).
+        let _fetch_guard = self.fetch_lock.lock().await;
+
         {
             let last_refresh = self.last_refresh.read().await;
             if let Some(last) = *last_refresh
@@ -197,7 +235,13 @@ impl JwksClient {
                     since_last_ms = since_last.as_millis(),
                     "JWKS refresh rate limited, using cache"
                 );
-                return self.get_jwks().await;
+                let cache = self.cache.read().await;
+                return match cache.as_ref() {
+                    Some(cached) => Ok(cached.jwks.clone()),
+                    None => Err(McpError::internal(
+                        "JWKS refresh rate limited and no cached JWKS available".to_string(),
+                    )),
+                };
             }
         }
 
@@ -205,6 +249,10 @@ impl JwksClient {
     }
 
     /// Fetch JWKS from endpoint and update cache
+    ///
+    /// Callers MUST hold `fetch_lock` before calling this — it does not
+    /// acquire it itself so `get_jwks`/`refresh` can share one critical
+    /// section that covers both the cache/rate-limit check and the fetch.
     async fn fetch_and_cache(&self) -> McpResult<JwkSet> {
         info!(jwks_uri = %self.jwks_uri, "Fetching JWKS from endpoint");
 
