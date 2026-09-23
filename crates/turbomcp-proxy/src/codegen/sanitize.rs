@@ -304,12 +304,80 @@ pub fn sanitize_uri(uri: &str) -> ProxyResult<String> {
     Ok(uri.to_string())
 }
 
+/// Derive a Rust identifier for an upstream name, unique among `taken`.
+///
+/// Upstream names are free text: dashes, dots, spaces, a leading digit, or a
+/// keyword are all legal in an MCP tool name or a JSON property. The
+/// upstream's own spelling is still what goes on the wire; this is only the
+/// Rust-side handle for it, so it never has to be rejected, only adjusted.
+/// Collisions (`get-user` and `get_user` both want `get_user`) are resolved
+/// by numbering, in the order names are seen.
+pub(crate) fn unique_identifier(
+    name: &str,
+    case: convert_case::Case,
+    taken: &mut std::collections::HashSet<String>,
+) -> String {
+    use convert_case::Casing;
+
+    // Type-like cases join words with nothing; the others with `_`.
+    let separator = if matches!(
+        case,
+        convert_case::Case::Pascal | convert_case::Case::UpperCamel
+    ) {
+        ""
+    } else {
+        "_"
+    };
+
+    let cased = name.to_case(case);
+    let mut base: String = cased
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_string()
+            } else {
+                separator.to_string()
+            }
+        })
+        .collect();
+    // `say "hi"` would otherwise become `say__hi_`.
+    base = base
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    if base.is_empty() {
+        base = "unnamed".to_case(case);
+    }
+    if base.starts_with(|c: char| c.is_ascii_digit()) {
+        base.insert(0, '_');
+    }
+    if sanitize_identifier(&base).is_err() {
+        // A keyword, or `_` alone.
+        base.push('_');
+    }
+
+    let mut candidate = base.clone();
+    let mut n = 2;
+    while !taken.insert(candidate.clone()) {
+        candidate = format!("{base}{separator}{n}");
+        n += 1;
+    }
+    candidate
+}
+
+/// Collapse text onto one line for a `///` doc comment.
+pub(crate) fn doc_line(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Truncate a string for safe display in error messages
 fn truncate_for_display(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
+    // By characters: slicing at a byte offset panicked whenever the cut fell
+    // inside a multi-byte character.
+    match s.char_indices().nth(max_len) {
+        None => s.to_string(),
+        Some((end, _)) => format!("{}...", &s[..end]),
     }
 }
 
@@ -399,6 +467,14 @@ mod tests {
     fn test_reject_too_long() {
         // Should reject identifiers that are too long
         let too_long = "a".repeat(MAX_IDENTIFIER_LENGTH + 1);
+        assert!(sanitize_identifier(&too_long).is_err());
+    }
+
+    /// The error message truncates the name, and used to slice it at a byte
+    /// offset, which panicked when the cut fell inside a character.
+    #[test]
+    fn test_reject_too_long_multibyte() {
+        let too_long = "日".repeat(MAX_IDENTIFIER_LENGTH);
         assert!(sanitize_identifier(&too_long).is_err());
     }
 

@@ -8,7 +8,9 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 use super::context::{FieldDefinition, ParamDefinition, TypeDefinition};
-use super::sanitize::{sanitize_identifier, sanitize_string_literal, sanitize_type};
+use super::sanitize::{
+    doc_line, sanitize_identifier, sanitize_string_literal, sanitize_type, unique_identifier,
+};
 use crate::error::{ProxyError, ProxyResult};
 
 /// Type generator for converting JSON Schemas to Rust types
@@ -28,7 +30,9 @@ impl TypeGenerator {
 
     /// Convert a JSON Schema to a Rust type name
     ///
-    /// Returns the Rust type string (e.g., "String", "`Vec<i64>`", "`CustomType`")
+    /// Returns the Rust type string (e.g., "String", "`Vec<i64>`",
+    /// "`serde_json::Value`"). Objects and references map to
+    /// `serde_json::Value`; the hint is accepted for compatibility and unused.
     ///
     /// # Errors
     ///
@@ -36,17 +40,13 @@ impl TypeGenerator {
     pub fn schema_to_rust_type(
         &self,
         schema: &Value,
-        type_name_hint: Option<&str>,
+        _type_name_hint: Option<&str>,
     ) -> ProxyResult<String> {
-        // Handle references
-        if let Some(ref_str) = schema.get("$ref").and_then(|v| v.as_str()) {
-            // Extract type name from $ref (e.g., "#/definitions/MyType" -> "MyType")
-            let type_name = ref_str
-                .split('/')
-                .next_back()
-                .unwrap_or("Value")
-                .to_case(Case::Pascal);
-            return sanitize_type(&type_name);
+        // Only the top-level argument struct of each tool is generated, so a
+        // reference or a nested object has no Rust type to name. Naming one
+        // anyway (the old behaviour) produced a crate that didn't compile.
+        if schema.get("$ref").is_some() {
+            return Ok("serde_json::Value".to_string());
         }
 
         // Handle type field
@@ -61,14 +61,6 @@ impl TypeGenerator {
             "integer" => Self::handle_integer_type(schema),
             "boolean" => "bool".to_string(),
             "array" => self.handle_array_type(schema)?,
-            "object" => {
-                // For object types, we either reference a named type or use Value
-                if let Some(name) = type_name_hint {
-                    name.to_case(Case::Pascal)
-                } else {
-                    "serde_json::Value".to_string()
-                }
-            }
             "null" => "()".to_string(),
             _ => "serde_json::Value".to_string(),
         };
@@ -120,21 +112,9 @@ impl TypeGenerator {
 
         // Generate fields
         let mut fields = Vec::new();
+        let mut field_names = HashSet::new();
         for (field_name, field_schema) in properties {
-            // Sanitize field name
-            let snake_case_name = field_name.to_case(Case::Snake);
-            let sanitized_field_name = match sanitize_identifier(&snake_case_name) {
-                Ok(name) => name,
-                Err(e) => {
-                    tracing::warn!(
-                        "Skipping field '{}' in type '{}': {}",
-                        field_name,
-                        sanitized_type_name,
-                        e
-                    );
-                    continue;
-                }
-            };
+            let rust_field_name = unique_identifier(field_name, Case::Snake, &mut field_names);
 
             let rust_type = self.schema_to_rust_type(
                 field_schema,
@@ -145,10 +125,12 @@ impl TypeGenerator {
             let field_description = field_schema
                 .get("description")
                 .and_then(|v| v.as_str())
-                .map(sanitize_string_literal);
+                .map(doc_line);
 
             fields.push(FieldDefinition {
-                name: sanitized_field_name,
+                rename: (rust_field_name != *field_name)
+                    .then(|| sanitize_string_literal(field_name)),
+                name: rust_field_name,
                 rust_type,
                 optional: !required.contains(field_name),
                 description: field_description,

@@ -3,6 +3,8 @@
 //! This module provides the main `RustCodeGenerator` that converts a `ServerSpec`
 //! into a complete Rust project with Cargo.toml and source files.
 
+use std::collections::HashSet;
+
 use chrono::Utc;
 use convert_case::{Case, Casing};
 
@@ -13,7 +15,7 @@ use super::context::{
     CargoContext, MainContext, PromptDefinition, PromptEnumVariant, ProxyContext,
     ResourceDefinition, ResourceEnumVariant, ToolDefinition, ToolEnumVariant, TypesContext,
 };
-use super::sanitize::{sanitize_identifier, sanitize_string_literal, sanitize_uri};
+use super::sanitize::{doc_line, sanitize_string_literal, sanitize_uri, unique_identifier};
 use super::template_engine::TemplateEngine;
 use super::type_generator::TypeGenerator;
 
@@ -174,57 +176,43 @@ impl RustCodeGenerator {
     /// Build main.rs context
     fn build_main_context(&self, config: &GenConfig) -> MainContext {
         MainContext {
-            server_name: self.spec.server_info.name.clone(),
-            server_version: self.spec.server_info.version.clone(),
+            server_name: doc_line(&self.spec.server_info.name),
+            server_version: doc_line(&self.spec.server_info.version),
             generation_date: Utc::now().to_rfc3339(),
             frontend_type: config.frontend_type.to_string(),
             backend_type: config.backend_type.to_string(),
             has_http: config.frontend_type == FrontendType::Http,
             has_stdio: config.backend_type == BackendType::Stdio,
+            has_websocket: config.frontend_type == FrontendType::WebSocket,
         }
     }
 
     /// Build proxy.rs context
-    #[allow(clippy::too_many_lines)]
-    fn build_proxy_context(&mut self, config: &GenConfig) -> ProxyContext {
+    ///
+    /// Each tool and prompt keeps two names. `name` is the upstream's, and is
+    /// what the generated proxy lists and sends upstream; `ident` is only the
+    /// Rust handler's. The generator used to route on a `snake_case` copy of
+    /// the name, so every tool whose name wasn't already `snake_case`
+    /// (`get-user`, `getUser`) reached the upstream under a name it didn't
+    /// have, and tools whose names didn't survive the conversion were dropped.
+    fn build_proxy_context(&self, config: &GenConfig) -> ProxyContext {
+        let mut tool_idents = HashSet::new();
         let tools = self
             .spec
             .tools
             .iter()
-            .filter_map(|tool| {
-                // Convert to snake_case first (handles dashes, spaces, etc.)
-                let snake_case_name = tool.name.to_case(Case::Snake);
-
-                // Sanitize tool name - skip tools with invalid names
-                let sanitized_name = match sanitize_identifier(&snake_case_name) {
-                    Ok(name) => name,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Skipping tool '{}': Invalid converted name '{}': {}",
-                            tool.name,
-                            snake_case_name,
-                            e
-                        );
-                        return None;
-                    }
-                };
-
-                // Generate type names for input/output
-                let input_type_name = format!("{}Input", sanitized_name.to_case(Case::Pascal));
-                let output_type_name = format!("{}Output", sanitized_name.to_case(Case::Pascal));
-
-                // Sanitize description
-                let description = tool
-                    .description
-                    .as_ref()
-                    .map(|d| sanitize_string_literal(d));
-
-                Some(ToolDefinition {
-                    name: sanitized_name,
-                    description,
-                    input_type: Some(input_type_name),
-                    output_type: tool.output_schema.as_ref().map(|_| output_type_name),
-                })
+            .map(|tool| {
+                let ident = unique_identifier(&tool.name, Case::Snake, &mut tool_idents);
+                ToolDefinition {
+                    name: sanitize_string_literal(&tool.name),
+                    input_type: Some(format!("{}Input", ident.to_case(Case::Pascal))),
+                    output_type: tool
+                        .output_schema
+                        .as_ref()
+                        .map(|_| format!("{}Output", ident.to_case(Case::Pascal))),
+                    ident,
+                    description: tool.description.as_deref().map(doc_line),
+                }
             })
             .collect();
 
@@ -233,94 +221,37 @@ impl RustCodeGenerator {
             .resources
             .iter()
             .filter_map(|resource| {
-                // Sanitize URI first
-                let sanitized_uri = match sanitize_uri(&resource.uri) {
+                let uri = match sanitize_uri(&resource.uri) {
                     Ok(uri) => uri,
                     Err(e) => {
                         tracing::warn!("Skipping resource '{}': {}", resource.uri, e);
                         return None;
                     }
                 };
-
-                // Derive name from URI (last segment)
-                let derived_name = resource
-                    .uri
-                    .split('/')
-                    .next_back()
-                    .unwrap_or(&resource.uri)
-                    .to_case(Case::Snake);
-
-                // Sanitize derived name
-                let sanitized_name = match sanitize_identifier(&derived_name) {
-                    Ok(name) => name,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Skipping resource '{}': Invalid derived name '{}': {}",
-                            resource.uri,
-                            derived_name,
-                            e
-                        );
-                        return None;
-                    }
-                };
-
-                // Sanitize description and MIME type
-                let description = resource
-                    .description
-                    .as_ref()
-                    .map(|d| sanitize_string_literal(d));
-                let mime_type = resource
-                    .mime_type
-                    .as_ref()
-                    .map(|m| sanitize_string_literal(m));
-
                 Some(ResourceDefinition {
-                    name: sanitized_name,
-                    uri: sanitized_uri,
-                    description,
-                    mime_type,
+                    name: sanitize_string_literal(&resource.name),
+                    uri,
+                    description: resource.description.as_deref().map(doc_line),
+                    mime_type: resource.mime_type.as_deref().map(sanitize_string_literal),
                 })
             })
             .collect();
 
+        let mut prompt_idents = HashSet::new();
         let prompts = self
             .spec
             .prompts
             .iter()
-            .filter_map(|prompt| {
-                // Convert to snake_case first (handles dashes, spaces, etc.)
-                let snake_case_name = prompt.name.to_case(Case::Snake);
-
-                // Sanitize prompt name
-                let sanitized_name = match sanitize_identifier(&snake_case_name) {
-                    Ok(name) => name,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Skipping prompt '{}': Invalid converted name '{}': {}",
-                            prompt.name,
-                            snake_case_name,
-                            e
-                        );
-                        return None;
-                    }
-                };
-
-                // Sanitize description
-                let description = prompt
-                    .description
-                    .as_ref()
-                    .map(|d| sanitize_string_literal(d));
-
-                Some(PromptDefinition {
-                    name: sanitized_name,
-                    description,
-                    arguments: None, // NOTE: Phase 2 - extract prompt arguments from schema
-                })
+            .map(|prompt| PromptDefinition {
+                name: sanitize_string_literal(&prompt.name),
+                ident: unique_identifier(&prompt.name, Case::Snake, &mut prompt_idents),
+                description: prompt.description.as_deref().map(doc_line),
+                arguments: None,
             })
             .collect();
 
         ProxyContext {
-            server_name: self.spec.server_info.name.clone(),
+            server_name: doc_line(&self.spec.server_info.name),
             frontend_type: config.frontend_type.to_string(),
             backend_type: config.backend_type.to_string(),
             tools,
@@ -330,109 +261,48 @@ impl RustCodeGenerator {
     }
 
     /// Build types.rs context
-    #[allow(clippy::too_many_lines)]
     fn build_types_context(&mut self) -> TypesContext {
-        // Generate type definitions from tool schemas
         let mut type_definitions = Vec::new();
+        let mut tool_idents = HashSet::new();
+        let mut tool_enums = Vec::new();
 
         for tool in &self.spec.tools {
-            // Convert to snake_case first (handles dashes, spaces, etc.)
-            let snake_case_name = tool.name.to_case(Case::Snake);
+            let ident = unique_identifier(&tool.name, Case::Pascal, &mut tool_idents);
 
-            // Sanitize tool name - skip tools with invalid names
-            let sanitized_name = match sanitize_identifier(&snake_case_name) {
-                Ok(name) => name,
-                Err(e) => {
-                    tracing::warn!(
-                        "Skipping type generation for tool '{}': Invalid converted name '{}': {}",
-                        tool.name,
-                        snake_case_name,
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            // Generate input type
-            let input_type_name = format!("{}Input", sanitized_name.to_case(Case::Pascal));
-
-            // Convert input_schema to serde_json::Value for type generation
-            let input_schema_value = serde_json::to_value(&tool.input_schema)
-                .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
-
-            // Sanitize description
-            let sanitized_description = tool
-                .description
-                .as_ref()
-                .map(|d| sanitize_string_literal(d));
-
+            let input_schema = serde_json::to_value(&tool.input_schema)
+                .unwrap_or_else(|_| serde_json::json!({"type": "object", "properties": {}}));
             if let Ok(type_def) = self.type_generator.generate_type_from_schema(
-                &input_type_name,
-                &input_schema_value,
-                sanitized_description,
+                &format!("{ident}Input"),
+                &input_schema,
+                tool.description.as_deref().map(doc_line),
             ) {
                 type_definitions.push(type_def);
             }
 
-            // Generate output type if schema exists
-            if let Some(ref output_schema) = tool.output_schema {
-                let output_type_name = format!("{}Output", sanitized_name.to_case(Case::Pascal));
-                let output_schema_value = serde_json::to_value(output_schema)
-                    .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
-
-                if let Ok(type_def) = self.type_generator.generate_type_from_schema(
-                    &output_type_name,
-                    &output_schema_value,
+            if let Some(output_schema) = &tool.output_schema
+                && let Ok(output_schema) = serde_json::to_value(output_schema)
+                && let Ok(type_def) = self.type_generator.generate_type_from_schema(
+                    &format!("{ident}Output"),
+                    &output_schema,
                     None,
-                ) {
-                    type_definitions.push(type_def);
-                }
+                )
+            {
+                type_definitions.push(type_def);
             }
+
+            tool_enums.push(ToolEnumVariant {
+                name: sanitize_string_literal(&tool.name),
+                ident,
+            });
         }
 
-        // Build tool enum variants with actual parameters from schemas
-        let tool_enums = self
-            .spec
-            .tools
-            .iter()
-            .filter_map(|tool| {
-                // Convert to snake_case first (handles dashes, spaces, etc.)
-                let snake_case_name = tool.name.to_case(Case::Snake);
-
-                // Sanitize tool name - skip tools with invalid names
-                let sanitized_name = match sanitize_identifier(&snake_case_name) {
-                    Ok(name) => name,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Skipping enum variant for tool '{}': Invalid converted name '{}': {}",
-                            tool.name,
-                            snake_case_name,
-                            e
-                        );
-                        return None;
-                    }
-                };
-
-                let input_schema_value = serde_json::to_value(&tool.input_schema)
-                    .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
-
-                Some(ToolEnumVariant {
-                    name: sanitized_name,
-                    params: self
-                        .type_generator
-                        .generate_params_from_schema(&input_schema_value),
-                })
-            })
-            .collect();
-
-        // Build resource enum variants
+        let mut resource_idents = HashSet::new();
         let resource_enums = self
             .spec
             .resources
             .iter()
             .filter_map(|resource| {
-                // Sanitize URI first
-                let sanitized_uri = match sanitize_uri(&resource.uri) {
+                let uri = match sanitize_uri(&resource.uri) {
                     Ok(uri) => uri,
                     Err(e) => {
                         tracing::warn!(
@@ -443,67 +313,26 @@ impl RustCodeGenerator {
                         return None;
                     }
                 };
-
-                // Derive name from URI (last segment)
-                let derived_name = resource
-                    .uri
-                    .split('/')
-                    .next_back()
-                    .unwrap_or(&resource.uri)
-                    .to_case(Case::Snake);
-
-                // Sanitize derived name
-                let sanitized_name = match sanitize_identifier(&derived_name) {
-                    Ok(name) => name,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Skipping enum variant for resource '{}': Invalid derived name '{}': {}",
-                            resource.uri,
-                            derived_name,
-                            e
-                        );
-                        return None;
-                    }
-                };
-
                 Some(ResourceEnumVariant {
-                    name: sanitized_name,
-                    uri: sanitized_uri,
+                    name: unique_identifier(&resource.name, Case::Pascal, &mut resource_idents),
+                    uri,
                 })
             })
             .collect();
 
-        // Build prompt enum variants
+        let mut prompt_idents = HashSet::new();
         let prompt_enums = self
             .spec
             .prompts
             .iter()
-            .filter_map(|prompt| {
-                // Convert to snake_case first (handles dashes, spaces, etc.)
-                let snake_case_name = prompt.name.to_case(Case::Snake);
-
-                // Sanitize prompt name
-                let sanitized_name = match sanitize_identifier(&snake_case_name) {
-                    Ok(name) => name,
-                    Err(e) => {
-                        tracing::warn!(
-                            "Skipping enum variant for prompt '{}': Invalid converted name '{}': {}",
-                            prompt.name,
-                            snake_case_name,
-                            e
-                        );
-                        return None;
-                    }
-                };
-
-                Some(PromptEnumVariant {
-                    name: sanitized_name,
-                })
+            .map(|prompt| PromptEnumVariant {
+                name: sanitize_string_literal(&prompt.name),
+                ident: unique_identifier(&prompt.name, Case::Pascal, &mut prompt_idents),
             })
             .collect();
 
         TypesContext {
-            server_name: self.spec.server_info.name.clone(),
+            server_name: doc_line(&self.spec.server_info.name),
             type_definitions,
             tool_enums,
             resource_enums,
@@ -513,29 +342,30 @@ impl RustCodeGenerator {
 
     /// Build Cargo.toml context
     fn build_cargo_context(&self, config: &GenConfig) -> CargoContext {
-        let package_name = config
-            .package_name
-            .clone()
-            .unwrap_or_else(|| self.spec.server_info.name.to_case(Case::Kebab));
+        let package_name = config.package_name.clone().unwrap_or_else(|| {
+            let mut taken = HashSet::new();
+            unique_identifier(&self.spec.server_info.name, Case::Kebab, &mut taken)
+                .replace('_', "-")
+                .trim_matches('-')
+                .to_string()
+        });
 
         let version = config
             .version
             .clone()
             .unwrap_or_else(|| "0.1.0".to_string());
 
-        // Determine transport features needed
-        let mut transport_features = Vec::new();
-        if config.frontend_type == FrontendType::Http || config.backend_type == BackendType::Http {
-            transport_features.push("http".to_string());
-        }
-        if config.backend_type == BackendType::Stdio {
-            transport_features.push("stdio".to_string());
-        }
+        // turbomcp-server features for the frontend; stdio is its default.
+        let transport_features = match config.frontend_type {
+            FrontendType::Http => vec!["http".to_string()],
+            FrontendType::WebSocket => vec!["websocket".to_string()],
+            FrontendType::Stdio => vec!["stdio".to_string()],
+        };
 
         CargoContext {
             package_name,
             version,
-            server_name: self.spec.server_info.name.clone(),
+            server_name: sanitize_string_literal(&self.spec.server_info.name),
             turbomcp_version: config.turbomcp_version.clone(),
             frontend_type: config.frontend_type.to_string(),
             transport_features,
@@ -660,7 +490,65 @@ mod tests {
 
         let cargo_ctx = generator.build_cargo_context(&config);
         assert_eq!(cargo_ctx.package_name, "test-server");
-        assert!(cargo_ctx.transport_features.contains(&"http".to_string()));
-        assert!(cargo_ctx.transport_features.contains(&"stdio".to_string()));
+        assert_eq!(cargo_ctx.transport_features, ["http"]);
+    }
+
+    /// PX-V11: the upstream's tool name is what the proxy lists and sends.
+    /// Routing used a `snake_case` copy, so `get-user` went upstream as
+    /// `get_user` and failed, and names that didn't convert to an identifier
+    /// dropped the tool. Colliding identifiers are numbered instead.
+    #[test]
+    fn tools_keep_their_upstream_names() {
+        let mut spec = create_test_spec();
+        spec.tools = [
+            "get-user",
+            "get_user",
+            "getUser",
+            "type",
+            "2fa",
+            "say \"hi\"",
+        ]
+        .into_iter()
+        .map(|name| Tool::new(name, "a tool"))
+        .collect();
+        let generator = RustCodeGenerator::new(spec).unwrap();
+        let context = generator.build_proxy_context(&GenConfig::default());
+
+        let names: Vec<&str> = context.tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "get-user",
+                "get_user",
+                "getUser",
+                "type",
+                "2fa",
+                "say \\\"hi\\\""
+            ]
+        );
+        let idents: Vec<&str> = context.tools.iter().map(|t| t.ident.as_str()).collect();
+        assert_eq!(
+            idents,
+            [
+                "get_user",
+                "get_user_2",
+                "get_user_3",
+                "type_",
+                "_2_fa",
+                "say_hi"
+            ]
+        );
+
+        let project = generator.generate(&GenConfig::default()).unwrap();
+        assert!(
+            project
+                .proxy_rs
+                .contains("\"get-user\" => self.call_get_user(arguments)")
+        );
+        assert!(
+            project
+                .proxy_rs
+                .contains("call_tool(\"get-user\", arguments, None)")
+        );
     }
 }

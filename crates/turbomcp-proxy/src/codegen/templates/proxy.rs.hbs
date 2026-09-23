@@ -1,238 +1,224 @@
 //! Proxy implementation for {{server_name}}
 //!
-//! This module provides the proxy logic for forwarding requests between
-//! the {{frontend_type}} frontend and {{backend_type}} backend.
+//! `ProxyRouter` is an MCP server (`McpHandler`) whose tools and prompts are
+//! the upstream's, fixed at generation time. The handshake, `ping`,
+//! pagination and framing are `turbomcp-server`'s; this module only relays.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use turbomcp_client::Client;
+use turbomcp_protocol::types::{
+    PromptsCapabilities, ResourcesCapabilities, ServerCapabilities, ToolsCapabilities,
+};
+use turbomcp_server::prelude::*;
 use turbomcp_transport::ChildProcessTransport;
 
-/// Proxy router that forwards MCP requests to the backend server
+type Backend = Client<ChildProcessTransport>;
+
+/// Upstream tools this proxy was generated for, spelled as the upstream
+/// spells them.
+pub const TOOLS: &[&str] = &[
+{{#each tools}}
+    "{{name}}",
+{{/each}}
+];
+
+/// Upstream prompts this proxy was generated for.
+pub const PROMPTS: &[&str] = &[
+{{#each prompts}}
+    "{{name}}",
+{{/each}}
+];
+
+/// The upstream's catalogue, fetched once at startup.
+struct Catalogue {
+    server_info: ServerInfo,
+    instructions: Option<String>,
+    capabilities: ServerCapabilities,
+    tools: Vec<Tool>,
+    resources: Vec<Resource>,
+    resource_templates: Vec<ResourceTemplate>,
+    prompts: Vec<Prompt>,
+}
+
+/// MCP server that forwards to the upstream {{server_name}}.
+#[derive(Clone)]
 pub struct ProxyRouter {
-    /// Backend MCP client
-    backend: Arc<Client<ChildProcessTransport>>,
+    backend: Arc<Backend>,
+    catalogue: Arc<Catalogue>,
 }
 
 impl ProxyRouter {
-    /// Create a new proxy router
+    /// Initialize the upstream and fetch its catalogue.
     ///
-    /// # Arguments
-    ///
-    /// * `backend` - The backend MCP client (must be initialized)
-    pub fn new(backend: Arc<Client<ChildProcessTransport>>) -> Self {
-        Self { backend }
-    }
+    /// Tools and prompts are narrowed to the ones this proxy was generated
+    /// for; anything the upstream added since is not routed, so it is not
+    /// listed either.
+    pub async fn connect(backend: Backend) -> McpResult<Self> {
+        let init = backend.initialize().await?;
+        let declared = &init.server_capabilities;
 
-    /// Get a reference to the backend client
-    pub fn backend(&self) -> &Arc<Client<ChildProcessTransport>> {
-        &self.backend
-    }
+        let tools = if declared.tools.is_some() {
+            let mut tools = backend.list_tools().await?;
+            tools.retain(|tool| TOOLS.contains(&tool.name.as_str()));
+            tools
+        } else {
+            Vec::new()
+        };
+        let (resources, resource_templates) = if declared.resources.is_some() {
+            (
+                backend.list_resources().await?,
+                backend.list_resource_templates().await?,
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let prompts = if declared.prompts.is_some() {
+            let mut prompts = backend.list_prompts().await?;
+            prompts.retain(|prompt| PROMPTS.contains(&prompt.name.as_str()));
+            prompts
+        } else {
+            Vec::new()
+        };
 
-    /// Route a tool call to the appropriate handler
-    ///
-    /// # Arguments
-    ///
-    /// * `tool_name` - The name of the tool to call
-    /// * `arguments` - The arguments for the tool
-    ///
-    /// # Returns
-    ///
-    /// Returns the tool result as JSON value
-    pub async fn route_tool(
+        // Only what this proxy relays: no list-changed or resource-updated
+        // notifications, subscriptions, logging, or completions.
+        let capabilities = ServerCapabilities {
+            tools: declared
+                .tools
+                .as_ref()
+                .map(|_| ToolsCapabilities { list_changed: None }),
+            resources: declared.resources.as_ref().map(|_| ResourcesCapabilities {
+                subscribe: None,
+                list_changed: None,
+            }),
+            prompts: declared
+                .prompts
+                .as_ref()
+                .map(|_| PromptsCapabilities { list_changed: None }),
+            ..Default::default()
+        };
+
+        let upstream = init.server_info.clone();
+        let catalogue = Catalogue {
+            server_info: ServerInfo {
+                name: format!("{}-proxy", upstream.name),
+                ..upstream
+            },
+            instructions: init.instructions.clone(),
+            capabilities,
+            tools,
+            resources,
+            resource_templates,
+            prompts,
+        };
+
+        Ok(Self {
+            backend: Arc::new(backend),
+            catalogue: Arc::new(catalogue),
+        })
+    }
+{{#each tools}}
+
+    /// `{{name}}`{{#if description}}: {{description}}{{/if}}
+    async fn call_{{ident}}(
         &self,
-        tool_name: &str,
         arguments: Option<HashMap<String, Value>>,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        tracing::debug!(tool = tool_name, "Routing tool call");
-
-        match tool_name {
-            {{#each tools}}
-            "{{this.name}}" => self.handle_{{snake_case this.name}}(arguments).await,
-            {{/each}}
-            _ => Err(format!("Unknown tool: {}", tool_name).into()),
-        }
+    ) -> McpResult<ToolResult> {
+        relay(self.backend.call_tool("{{name}}", arguments, None).await?)
     }
+{{/each}}
+{{#each prompts}}
 
-    {{#each tools}}
-    /// Handle {{this.name}} tool
-    ///
-    /// Description: {{this.description}}
-    {{#if this.input_type}}
-    ///
-    /// # Input Type
-    /// `{{this.input_type}}`
-    {{/if}}
-    async fn handle_{{snake_case this.name}}(
+    /// `{{name}}`{{#if description}}: {{description}}{{/if}}
+    async fn get_{{ident}}(
         &self,
         arguments: Option<HashMap<String, Value>>,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        tracing::debug!(tool = "{{this.name}}", "Handling tool call");
+    ) -> McpResult<PromptResult> {
+        relay(self.backend.get_prompt("{{name}}", arguments).await?)
+    }
+{{/each}}
+}
 
-        // Forward to backend and return result
-        let result = self.backend.call_tool("{{this.name}}", arguments).await
-            .map_err(|e| format!("Backend call failed for {{this.name}}: {}", e))?;
+/// Convert an upstream result into the server's type for the same wire shape.
+fn relay<T: Serialize, U: DeserializeOwned>(value: T) -> McpResult<U> {
+    serde_json::to_value(value)
+        .and_then(serde_json::from_value)
+        .map_err(|e| McpError::internal(e.to_string()))
+}
 
-        // Convert result to JSON
-        let result_json = serde_json::to_value(&result)
-            .map_err(|e| format!("Failed to serialize tool result: {}", e))?;
+/// MCP arguments are a JSON object, or absent.
+fn argument_map(args: Option<Value>) -> McpResult<Option<HashMap<String, Value>>> {
+    match args {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Object(map)) => Ok(Some(map.into_iter().collect())),
+        Some(_) => Err(McpError::invalid_params("arguments must be an object")),
+    }
+}
 
-        tracing::debug!(tool = "{{this.name}}", "Tool call successful");
-        Ok(result_json)
+impl McpHandler for ProxyRouter {
+    fn server_info(&self) -> ServerInfo {
+        self.catalogue.server_info.clone()
     }
 
-    {{/each}}
-
-    /// Route a resource read request to the appropriate handler
-    ///
-    /// # Arguments
-    ///
-    /// * `uri` - The URI of the resource to read
-    ///
-    /// # Returns
-    ///
-    /// Returns the resource content as JSON value
-    pub async fn route_resource(
-        &self,
-        uri: &str,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        tracing::debug!(resource_uri = uri, "Routing resource read");
-
-        match uri {
-            {{#each resources}}
-            "{{this.uri}}" => self.read_{{snake_case this.name}}().await,
-            {{/each}}
-            _ => Err(format!("Unknown resource: {}", uri).into()),
-        }
+    fn instructions(&self) -> Option<String> {
+        self.catalogue.instructions.clone()
     }
 
-    {{#each resources}}
-    /// Read {{this.name}} resource
-    ///
-    /// URI: {{this.uri}}
-    /// Description: {{this.description}}
-    async fn read_{{snake_case this.name}}(&self) -> Result<Value, Box<dyn std::error::Error>> {
-        tracing::debug!(resource = "{{this.uri}}", "Reading resource");
-
-        // Forward to backend
-        let result = self.backend.read_resource("{{this.uri}}").await
-            .map_err(|e| format!("Backend read failed for {{this.uri}}: {}", e))?;
-
-        // Convert result to JSON
-        let result_json = serde_json::to_value(&result)
-            .map_err(|e| format!("Failed to serialize resource result: {}", e))?;
-
-        tracing::debug!(resource = "{{this.uri}}", "Resource read successful");
-        Ok(result_json)
+    fn server_capabilities(&self) -> ServerCapabilities {
+        self.catalogue.capabilities.clone()
     }
 
-    {{/each}}
+    fn list_tools(&self) -> Vec<Tool> {
+        self.catalogue.tools.clone()
+    }
 
-    /// Route a prompt request to the appropriate handler
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the prompt
-    /// * `arguments` - Optional arguments for the prompt
-    ///
-    /// # Returns
-    ///
-    /// Returns the prompt result as JSON value
-    pub async fn route_prompt(
+    fn list_resources(&self) -> Vec<Resource> {
+        self.catalogue.resources.clone()
+    }
+
+    fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
+        self.catalogue.resource_templates.clone()
+    }
+
+    fn list_prompts(&self) -> Vec<Prompt> {
+        self.catalogue.prompts.clone()
+    }
+
+    async fn call_tool(
         &self,
         name: &str,
-        arguments: Option<HashMap<String, Value>>,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        tracing::debug!(prompt = name, "Routing prompt request");
-
+        args: Value,
+        _ctx: &RequestContext,
+    ) -> McpResult<ToolResult> {
+        let arguments = argument_map(Some(args))?;
         match name {
-            {{#each prompts}}
-            "{{this.name}}" => self.get_{{snake_case this.name}}(arguments).await,
-            {{/each}}
-            _ => Err(format!("Unknown prompt: {}", name).into()),
+{{#each tools}}
+            "{{name}}" => self.call_{{ident}}(arguments).await,
+{{/each}}
+            _ => Err(McpError::tool_not_found(name)),
         }
     }
 
-    {{#each prompts}}
-    /// Get {{this.name}} prompt
-    ///
-    /// Description: {{this.description}}
-    async fn get_{{snake_case this.name}}(
+    async fn read_resource(&self, uri: &str, _ctx: &RequestContext) -> McpResult<ResourceResult> {
+        relay(self.backend.read_resource(uri).await?)
+    }
+
+    async fn get_prompt(
         &self,
-        arguments: Option<HashMap<String, Value>>,
-    ) -> Result<Value, Box<dyn std::error::Error>> {
-        tracing::debug!(prompt = "{{this.name}}", "Getting prompt");
-
-        // Forward to backend
-        let result = self.backend.get_prompt("{{this.name}}", arguments).await
-            .map_err(|e| format!("Backend prompt failed for {{this.name}}: {}", e))?;
-
-        // Convert result to JSON
-        let result_json = serde_json::to_value(&result)
-            .map_err(|e| format!("Failed to serialize prompt result: {}", e))?;
-
-        tracing::debug!(prompt = "{{this.name}}", "Prompt successful");
-        Ok(result_json)
-    }
-
-    {{/each}}
-}
-
-/// Helper function to list all available tools
-pub async fn list_tools(backend: &Client<ChildProcessTransport>) -> Result<Value, Box<dyn std::error::Error>> {
-    tracing::debug!("Listing all tools");
-
-    let tools = backend.list_tools().await
-        .map_err(|e| format!("Failed to list tools: {}", e))?;
-
-    Ok(serde_json::json!({
-        "tools": tools
-    }))
-}
-
-/// Helper function to list all available resources
-pub async fn list_resources(backend: &Client<ChildProcessTransport>) -> Result<Value, Box<dyn std::error::Error>> {
-    tracing::debug!("Listing all resources");
-
-    let resources = backend.list_resources().await
-        .map_err(|e| format!("Failed to list resources: {}", e))?;
-
-    Ok(serde_json::json!({
-        "resources": resources
-    }))
-}
-
-/// Helper function to list all available resource templates
-pub async fn list_resource_templates(backend: &Client<ChildProcessTransport>) -> Result<Value, Box<dyn std::error::Error>> {
-    tracing::debug!("Listing all resource templates");
-
-    let mut resource_templates = Vec::new();
-    let mut cursor = None;
-    for _ in 0..1000 {
-        let result = backend.list_resource_templates_paginated(cursor).await
-            .map_err(|e| format!("Failed to list resource templates: {}", e))?;
-        let page_empty = result.resource_templates.is_empty();
-        resource_templates.extend(result.resource_templates);
-        match result.next_cursor {
-            Some(next_cursor) if !page_empty => cursor = Some(next_cursor),
-            _ => break,
+        name: &str,
+        args: Option<Value>,
+        _ctx: &RequestContext,
+    ) -> McpResult<PromptResult> {
+        let arguments = argument_map(args)?;
+        match name {
+{{#each prompts}}
+            "{{name}}" => self.get_{{ident}}(arguments).await,
+{{/each}}
+            _ => Err(McpError::prompt_not_found(name)),
         }
     }
-
-    Ok(serde_json::json!({
-        "resourceTemplates": resource_templates
-    }))
-}
-
-/// Helper function to list all available prompts
-pub async fn list_prompts(backend: &Client<ChildProcessTransport>) -> Result<Value, Box<dyn std::error::Error>> {
-    tracing::debug!("Listing all prompts");
-
-    let prompts = backend.list_prompts().await
-        .map_err(|e| format!("Failed to list prompts: {}", e))?;
-
-    Ok(serde_json::json!({
-        "prompts": prompts
-    }))
 }
