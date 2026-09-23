@@ -92,6 +92,8 @@
 // to improve API documentation quality for enterprise adoption
 
 // Core modules
+#[cfg(feature = "http")]
+mod authorization;
 mod builder;
 mod composite;
 mod config;
@@ -107,6 +109,12 @@ pub mod transport;
 /// Progressive disclosure through component visibility control.
 pub use visibility::{
     ComponentVisibilityRules, VisibilityConfig, VisibilityLayer, VisibilitySessionGuard,
+};
+
+/// MCP authorization (OAuth 2.1 protected resource) for Streamable HTTP.
+#[cfg(feature = "http")]
+pub use authorization::{
+    BearerRejection, BearerTokenValidator, HttpAuthorization, ValidationFuture,
 };
 
 /// Server composition through handler mounting.

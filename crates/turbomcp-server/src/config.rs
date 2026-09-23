@@ -134,6 +134,10 @@ pub struct ServerConfig {
     pub origin_validation: OriginValidationConfig,
     /// Streamable HTTP session lifetime policy.
     pub http_sessions: HttpSessionConfig,
+    /// MCP authorization for the Streamable HTTP transport. `None` serves
+    /// every request unauthenticated.
+    #[cfg(feature = "http")]
+    pub authorization: Option<crate::HttpAuthorization>,
 }
 
 impl Default for ServerConfig {
@@ -146,6 +150,8 @@ impl Default for ServerConfig {
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
             origin_validation: OriginValidationConfig::default(),
             http_sessions: HttpSessionConfig::default(),
+            #[cfg(feature = "http")]
+            authorization: None,
         }
     }
 }
@@ -174,6 +180,8 @@ pub struct ServerConfigBuilder {
     max_message_size: Option<usize>,
     origin_validation: Option<OriginValidationConfig>,
     http_sessions: Option<HttpSessionConfig>,
+    #[cfg(feature = "http")]
+    authorization: Option<crate::HttpAuthorization>,
 }
 
 impl ServerConfigBuilder {
@@ -289,6 +297,18 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Require MCP authorization on the Streamable HTTP transport.
+    ///
+    /// See [`HttpAuthorization`](crate::HttpAuthorization): the server
+    /// publishes its protected-resource metadata, and every MCP request must
+    /// carry a bearer token the configured validator accepts.
+    #[cfg(feature = "http")]
+    #[must_use]
+    pub fn authorization(mut self, authorization: crate::HttpAuthorization) -> Self {
+        self.authorization = Some(authorization);
+        self
+    }
+
     /// Set the Streamable HTTP session policy.
     #[must_use]
     pub fn http_sessions(mut self, config: HttpSessionConfig) -> Self {
@@ -332,6 +352,8 @@ impl ServerConfigBuilder {
             max_message_size: self.max_message_size.unwrap_or(DEFAULT_MAX_MESSAGE_SIZE),
             origin_validation: self.origin_validation.unwrap_or_default(),
             http_sessions: self.http_sessions.unwrap_or_default(),
+            #[cfg(feature = "http")]
+            authorization: self.authorization,
         }
     }
 
@@ -413,6 +435,8 @@ impl ServerConfigBuilder {
             max_message_size,
             origin_validation: self.origin_validation.unwrap_or_default(),
             http_sessions,
+            #[cfg(feature = "http")]
+            authorization: self.authorization,
         })
     }
 }

@@ -5946,6 +5946,7 @@ dependencies = [
  "tracing",
  "turbomcp-dpop",
  "turbomcp-protocol",
+ "turbomcp-server",
  "url",
  "urlencoding",
  "uuid",

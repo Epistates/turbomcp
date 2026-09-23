@@ -153,6 +153,8 @@ http = [
     "turbomcp-server/http",
     "turbomcp-macros/http",
     "dep:axum",
+    # With `auth` too, a JWT validator for the HTTP transport's authorization.
+    "turbomcp-auth?/mcp-http-server",
 ]
 
 # WebSocket bidirectional transport with full-duplex communication

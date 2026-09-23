@@ -81,6 +81,7 @@ use uuid::Uuid;
 use crate::config::{HttpSessionConfig, RateLimiter, ServerConfig};
 use crate::context::{Cancellable, McpSession, RequestContext, SessionFuture};
 use crate::router::{self, JsonRpcIncoming, JsonRpcOutgoing};
+use turbomcp_core::auth::Principal;
 
 use super::{PendingHandlerGuard, jsonrpc_id_key};
 
@@ -322,6 +323,13 @@ struct SessionData {
     pending_handlers: Arc<DashMap<String, CancellationToken>>,
     /// When the session was last in use.
     idle: IdleClock,
+    /// Subject of the principal that created the session, when the server
+    /// requires authorization.
+    ///
+    /// The security best practices say a session must not stand in for
+    /// authentication, and bind it to the user: a session id obtained by
+    /// someone else is useless without that user's token.
+    owner: Option<String>,
 }
 
 impl SessionData {
@@ -447,6 +455,7 @@ impl SessionManager {
                 next_server_request_id: 1,
                 pending_handlers: Arc::new(DashMap::new()),
                 idle: IdleClock::new(),
+                owner: None,
             },
         );
 
@@ -481,11 +490,18 @@ impl SessionManager {
     /// `false` for an unknown session, and for one that sat idle past its
     /// timeout — which is reaped here, so the request gets the 404 that
     /// §Session Management prescribes for a terminated session.
-    async fn touch_session(&self, session_id: &str) -> bool {
+    ///
+    /// Also `false` for a session bound to a different principal than
+    /// `owner` — answered as unknown, so a session id reveals nothing to
+    /// anyone but its owner.
+    async fn touch_session(&self, session_id: &str, owner: Option<&str>) -> bool {
         let mut sessions = self.sessions.write().await;
         let Some(data) = sessions.get(session_id) else {
             return false;
         };
+        if data.owner.as_deref() != owner {
+            return false;
+        }
         if data.is_expired(Instant::now(), self.limits.idle_timeout) {
             if let Some(data) = sessions.remove(session_id) {
                 tracing::debug!(session_id, "Reaped idle HTTP session");
@@ -495,6 +511,13 @@ impl SessionManager {
         }
         data.idle.reset();
         true
+    }
+
+    /// Bind a new session to the principal that created it.
+    async fn bind_owner(&self, session_id: &str, owner: Option<String>) {
+        if let Some(data) = self.sessions.write().await.get_mut(session_id) {
+            data.owner = owner;
+        }
     }
 
     /// The session's idle clock, for a stream body to reset when it ends.
@@ -1447,7 +1470,29 @@ pub(crate) fn build_router<H: McpHandler>(
                 .get(handle_sse::<H>)
                 .delete(handle_delete_session::<H>),
         )
-        .route("/sse", get(handle_sse::<H>))
+        .route("/sse", get(handle_sse::<H>));
+
+    // RFC 9728: the path-inserted location for this resource, and the root
+    // location a client falls back to.
+    let router = match state
+        .config
+        .as_ref()
+        .and_then(|config| config.authorization.as_ref())
+    {
+        Some(authorization) => {
+            let root = "/.well-known/oauth-protected-resource";
+            let path = authorization.metadata_path();
+            let router = router.route(root, get(protected_resource_metadata::<H>));
+            if path == root {
+                router
+            } else {
+                router.route(&path, get(protected_resource_metadata::<H>))
+            }
+        }
+        None => router,
+    };
+
+    let router = router
         // DefaultBodyLimit sets the extractor hint for Json<T>/Bytes, while
         // RequestBodyLimitLayer enforces the cap at the middleware layer so
         // oversized bodies are rejected with 413 Payload Too Large before
@@ -1520,6 +1565,7 @@ async fn route_with_version_tracking<H: McpHandler>(
     config: Option<&ServerConfig>,
     session_id: Option<&str>,
     request_stream: Option<String>,
+    principal: Option<Principal>,
 ) -> router::JsonRpcOutgoing {
     // Held for the life of the dispatch: dropping it de-registers the
     // cancellation token so a late `notifications/cancelled` matches nothing.
@@ -1528,6 +1574,7 @@ async fn route_with_version_tracking<H: McpHandler>(
         session_id,
         request.id.as_ref(),
         request_stream,
+        principal,
     )
     .await;
 
@@ -1575,9 +1622,16 @@ async fn http_request_context(
     session_id: Option<&str>,
     request_id: Option<&serde_json::Value>,
     request_stream: Option<String>,
+    principal: Option<Principal>,
 ) -> (RequestContext, Option<PendingHandlerGuard>) {
     let mut ctx = RequestContext::http();
     let key = request_id.map(jsonrpc_id_key);
+
+    if let Some(principal) = principal {
+        ctx = ctx
+            .with_user_id(principal.subject.clone())
+            .with_principal(principal);
+    }
 
     if let Some(ref key) = key {
         ctx = ctx.with_request_id(key.clone());
@@ -1816,6 +1870,7 @@ async fn resolve_session_for_request<H: McpHandler>(
     state: &SseState<H>,
     headers: &HeaderMap,
     method: &str,
+    owner: Option<&str>,
 ) -> Result<Option<String>, StatusCode> {
     let session_id = parse_session_id(headers);
 
@@ -1843,7 +1898,11 @@ async fn resolve_session_for_request<H: McpHandler>(
         return Err(StatusCode::BAD_REQUEST);
     };
 
-    if !state.session_manager.touch_session(&session_id).await {
+    if !state
+        .session_manager
+        .touch_session(&session_id, owner)
+        .await
+    {
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -1859,12 +1918,17 @@ async fn resolve_session_for_request<H: McpHandler>(
 async fn resolve_session_for_response<H: McpHandler>(
     state: &SseState<H>,
     headers: &HeaderMap,
+    owner: Option<&str>,
 ) -> Result<String, StatusCode> {
     let Some(session_id) = parse_session_id(headers) else {
         return Err(StatusCode::BAD_REQUEST);
     };
 
-    if !state.session_manager.touch_session(&session_id).await {
+    if !state
+        .session_manager
+        .touch_session(&session_id, owner)
+        .await
+    {
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -1881,8 +1945,9 @@ async fn handle_client_json_rpc_response<H: McpHandler>(
     state: &SseState<H>,
     headers: &HeaderMap,
     response: CoreJsonRpcResponse,
+    owner: Option<&str>,
 ) -> Response {
-    let session_id = match resolve_session_for_response(state, headers).await {
+    let session_id = match resolve_session_for_response(state, headers, owner).await {
         Ok(session_id) => session_id,
         Err(status) => return empty_response(status),
     };
@@ -1933,6 +1998,7 @@ fn dispatch_request<H: McpHandler>(
     request: JsonRpcIncoming,
     session_id: Option<String>,
     request_stream: Option<String>,
+    principal: Option<Principal>,
 ) -> tokio::task::JoinHandle<JsonRpcOutgoing> {
     let handler = state.handler.clone();
     let session_manager = state.session_manager.clone();
@@ -1946,6 +2012,7 @@ fn dispatch_request<H: McpHandler>(
             config.as_ref(),
             session_id.as_deref(),
             request_stream,
+            principal,
         )
         .await;
 
@@ -2043,6 +2110,7 @@ async fn stream_json_rpc<H: McpHandler>(
     state: SseState<H>,
     request: JsonRpcIncoming,
     session_id: String,
+    principal: Option<Principal>,
 ) -> Response {
     let method = request.method.clone();
     let request_id = request.id.clone();
@@ -2062,6 +2130,7 @@ async fn stream_json_rpc<H: McpHandler>(
         request,
         Some(session_id.clone()),
         Some(stream_id.clone()),
+        principal,
     );
     let (unstreamed_tx, mut unstreamed_rx) = oneshot::channel();
     let session_manager = state.session_manager.clone();
@@ -2134,6 +2203,64 @@ fn admit_request<H: McpHandler>(
     Ok(client_ip)
 }
 
+/// Apply MCP authorization, when the server requires it.
+///
+/// `Ok(None)` when it does not. A refusal is the finished response: `401`
+/// for a missing or invalid token, `403` for a missing scope, each with the
+/// `WWW-Authenticate` challenge that tells the client where to get a token.
+async fn authorize_request<H: McpHandler>(
+    state: &SseState<H>,
+    headers: &HeaderMap,
+) -> Result<Option<Principal>, Box<Response>> {
+    let Some(authorization) = state
+        .config
+        .as_ref()
+        .and_then(|config| config.authorization.as_ref())
+    else {
+        return Ok(None);
+    };
+
+    let credentials = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    match authorization.authorize(credentials).await {
+        Ok(principal) => Ok(Some(principal)),
+        Err(rejection) => {
+            let status = match rejection {
+                crate::BearerRejection::InsufficientScope { .. } => StatusCode::FORBIDDEN,
+                crate::BearerRejection::InvalidToken(_) => StatusCode::UNAUTHORIZED,
+            };
+            tracing::debug!(%rejection, "Refused an HTTP request");
+            let mut response = empty_response(status);
+            if let Ok(challenge) =
+                HeaderValue::from_str(&authorization.challenge(&rejection, credentials.is_some()))
+            {
+                response
+                    .headers_mut()
+                    .insert(header::WWW_AUTHENTICATE, challenge);
+            }
+            Err(Box::new(response))
+        }
+    }
+}
+
+/// The RFC 9728 Protected Resource Metadata document.
+///
+/// Served without authentication, and outside the Origin check: it is public
+/// metadata, and a client needs it precisely because it has no token yet.
+async fn protected_resource_metadata<H: McpHandler>(
+    axum::extract::State(state): axum::extract::State<SseState<H>>,
+) -> Response {
+    match state
+        .config
+        .as_ref()
+        .and_then(|config| config.authorization.as_ref())
+    {
+        Some(authorization) => axum::Json(authorization.metadata_document()).into_response(),
+        None => empty_response(StatusCode::NOT_FOUND),
+    }
+}
+
 /// Axum handler for JSON-RPC requests (simple mode).
 async fn handle_json_rpc<H: McpHandler>(
     axum::extract::State(state): axum::extract::State<SseState<H>>,
@@ -2144,6 +2271,11 @@ async fn handle_json_rpc<H: McpHandler>(
         Ok(client_ip) => client_ip,
         Err(status) => return empty_response(status),
     };
+    let principal = match authorize_request(&state, &parts.headers).await {
+        Ok(principal) => principal,
+        Err(response) => return *response,
+    };
+    let owner = principal.as_ref().map(|p| p.subject.clone());
     let headers = parts.headers;
 
     if let Some(ref limiter) = state.rate_limiter {
@@ -2187,7 +2319,7 @@ async fn handle_json_rpc<H: McpHandler>(
     };
 
     if let Ok(response) = serde_json::from_value::<CoreJsonRpcResponse>(payload.clone()) {
-        return handle_client_json_rpc_response(&state, &headers, response).await;
+        return handle_client_json_rpc_response(&state, &headers, response, owner.as_deref()).await;
     }
 
     let request = match serde_json::from_value::<JsonRpcIncoming>(payload) {
@@ -2202,7 +2334,14 @@ async fn handle_json_rpc<H: McpHandler>(
     } else {
         None
     };
-    let session_id = match resolve_session_for_request(&state, &headers, &request.method).await {
+    let session_id = match resolve_session_for_request(
+        &state,
+        &headers,
+        &request.method,
+        owner.as_deref(),
+    )
+    .await
+    {
         Ok(session_id) => session_id,
         Err(status) => return empty_response(status),
     };
@@ -2269,14 +2408,14 @@ async fn handle_json_rpc<H: McpHandler>(
         && let Some(session_id) = session_id.clone()
         && accepts_event_stream(&headers)
     {
-        return stream_json_rpc(state, request, session_id).await;
+        return stream_json_rpc(state, request, session_id, principal).await;
     }
 
     let initialize_request_id = request.id.clone();
     let method = request.method.clone();
     let request_id = request.id.clone();
     let response = dispatch_outcome(
-        dispatch_request(&state, request, session_id.clone(), None).await,
+        dispatch_request(&state, request, session_id.clone(), None, principal).await,
         request_id,
         &method,
     );
@@ -2293,6 +2432,7 @@ async fn handle_json_rpc<H: McpHandler>(
             .session_manager
             .create_session(initialize_request_id.as_ref())
             .await;
+        state.session_manager.bind_owner(&session_id, owner).await;
         state
             .session_manager
             .set_initialized(
@@ -2326,13 +2466,21 @@ async fn handle_sse<H: McpHandler>(
     if let Err(status) = admit_request(&state, &parts) {
         return empty_response(status);
     }
+    let owner = match authorize_request(&state, &parts.headers).await {
+        Ok(principal) => principal.map(|p| p.subject),
+        Err(response) => return *response,
+    };
     let headers = parts.headers;
 
     let session_id = match parse_session_id(&headers) {
         Some(session_id) => session_id,
         None => return empty_response(StatusCode::BAD_REQUEST),
     };
-    if !state.session_manager.touch_session(&session_id).await {
+    if !state
+        .session_manager
+        .touch_session(&session_id, owner.as_deref())
+        .await
+    {
         return empty_response(StatusCode::NOT_FOUND);
     }
     let expected = state
@@ -2411,13 +2559,21 @@ async fn handle_delete_session<H: McpHandler>(
     if let Err(status) = admit_request(&state, &parts) {
         return empty_response(status);
     }
+    let owner = match authorize_request(&state, &parts.headers).await {
+        Ok(principal) => principal.map(|p| p.subject),
+        Err(response) => return *response,
+    };
     let headers = parts.headers;
 
     let Some(session_id) = parse_session_id(&headers) else {
         return empty_response(StatusCode::BAD_REQUEST);
     };
 
-    if !state.session_manager.touch_session(&session_id).await {
+    if !state
+        .session_manager
+        .touch_session(&session_id, owner.as_deref())
+        .await
+    {
         return empty_response(StatusCode::NOT_FOUND);
     }
 

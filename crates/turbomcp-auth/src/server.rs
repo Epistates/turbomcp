@@ -259,6 +259,94 @@ impl BearerTokenValidator {
     }
 }
 
+/// Validates bearer tokens for `turbomcp-server`'s Streamable HTTP
+/// authorization with a [`crate::jwt::JwtValidator`].
+///
+/// The validator checks signature, issuer, expiry and — required by MCP's
+/// authorization spec — audience: construct it with this server's canonical
+/// URL as the expected audience, the same URL given to
+/// `HttpAuthorization::new`. Required scopes are checked on top, and a token
+/// missing one is refused with `403 insufficient_scope`.
+///
+/// ```no_run
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// use turbomcp_auth::jwt::JwtValidator;
+/// use turbomcp_auth::server::JwtBearerValidator;
+/// use turbomcp_server::{HttpAuthorization, ServerConfig};
+///
+/// let resource = "https://mcp.example.com/mcp";
+/// let validator = JwtValidator::with_jwks_uri(
+///     "https://auth.example.com".to_string(),
+///     resource.to_string(),
+///     "https://auth.example.com/.well-known/jwks.json".to_string(),
+/// );
+/// let config = ServerConfig::builder()
+///     .authorization(HttpAuthorization::new(
+///         resource,
+///         "https://auth.example.com",
+///         JwtBearerValidator::new(validator).with_required_scopes(["mcp:tools"]),
+///     ))
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(feature = "mcp-http-server")]
+pub struct JwtBearerValidator {
+    validator: crate::jwt::JwtValidator,
+    required_scopes: Vec<String>,
+}
+
+#[cfg(feature = "mcp-http-server")]
+impl JwtBearerValidator {
+    /// Accept tokens `validator` accepts.
+    pub fn new(validator: crate::jwt::JwtValidator) -> Self {
+        Self {
+            validator,
+            required_scopes: Vec::new(),
+        }
+    }
+
+    /// Also require every one of `scopes` on the token.
+    #[must_use]
+    pub fn with_required_scopes<I, S>(mut self, scopes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.required_scopes = scopes.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+#[cfg(feature = "mcp-http-server")]
+impl turbomcp_server::BearerTokenValidator for JwtBearerValidator {
+    fn validate<'a>(&'a self, token: &'a str) -> turbomcp_server::ValidationFuture<'a> {
+        Box::pin(async move {
+            let required: Vec<&str> = self.required_scopes.iter().map(String::as_str).collect();
+            match validate_bearer_token(&self.validator, token, &required).await {
+                Ok(context) => {
+                    let mut principal =
+                        turbomcp_protocol::mcp_core::auth::Principal::new(context.sub);
+                    principal.issuer = context.iss;
+                    principal.audience = context.aud;
+                    principal.expires_at = context.exp;
+                    if !context.scopes.is_empty() {
+                        principal =
+                            principal.with_claim("scope", Value::String(context.scopes.join(" ")));
+                    }
+                    Ok(principal)
+                }
+                Err(TokenValidationError::InvalidToken(error)) => Err(
+                    turbomcp_server::BearerRejection::InvalidToken(error.to_string()),
+                ),
+                Err(TokenValidationError::InsufficientScope { required, .. }) => {
+                    Err(turbomcp_server::BearerRejection::InsufficientScope { required })
+                }
+            }
+        })
+    }
+}
+
 /// Outcome of a failed [`validate_bearer_token`] call, already distinguishing
 /// the two HTTP statuses RFC 6750 §3.1 requires a resource server to choose
 /// between: an invalid token gets 401, a valid token missing a required

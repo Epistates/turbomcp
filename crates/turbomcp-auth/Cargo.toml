@@ -78,6 +78,7 @@ reqwest = { workspace = true }
 
 # Internal dependencies
 turbomcp-protocol = { workspace = true }
+turbomcp-server = { version = "3.5.0", path = "../turbomcp-server", optional = true, default-features = false, features = ["http"] }
 turbomcp-dpop = { workspace = true, optional = true }
 
 # Observability (optional)
@@ -121,6 +122,7 @@ mcp-ssrf = []                               # SSRF protection for HTTP fetching 
 mcp-cimd = ["mcp-ssrf"]                     # Client ID Metadata Documents (SEP-991)
 mcp-oidc-discovery = ["mcp-ssrf"]           # OpenID Connect Discovery 1.0 support (RFC 8414 + OIDC)
 mcp-incremental-consent = []                # Incremental scope consent via WWW-Authenticate (SEP-835)
+mcp-http-server = ["dep:turbomcp-server"]   # JwtBearerValidator for turbomcp-server's HTTP authorization
 
 # Batteries-included
 full = [
