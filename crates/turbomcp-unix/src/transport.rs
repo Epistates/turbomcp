@@ -1,6 +1,6 @@
 //! Unix domain socket transport implementation for MCP
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
-use tokio_util::codec::{Framed, LinesCodec};
+use tokio_util::codec::{Decoder, Encoder, Framed, LinesCodec, LinesCodecError};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -21,6 +21,67 @@ use turbomcp_transport_traits::{
     AtomicMetrics, Transport, TransportCapabilities, TransportError, TransportMessage,
     TransportMetrics, TransportResult, TransportState, TransportType,
 };
+
+/// Default cap on one newline-delimited message, in bytes.
+///
+/// Matches the server's `DEFAULT_MAX_MESSAGE_SIZE`: a client that accepted
+/// less than its server may send would drop legal responses.
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
+/// One newline-delimited frame from the peer.
+#[derive(Debug)]
+enum Line {
+    /// A complete line within the size limit.
+    Message(String),
+    /// A line past the size limit, already discarded up to its newline.
+    Oversized,
+}
+
+/// `LinesCodec` that reports an oversized line as a frame, not an error.
+///
+/// `LinesCodec::new_with_max_length` discards a line past the limit and
+/// resynchronises at the next newline, but says so with an error, and
+/// `Framed` treats every decoder error as the end of the stream. Surfacing it
+/// as a frame is what lets one oversized message be skipped instead of
+/// costing the connection.
+#[derive(Debug)]
+struct BoundedLines(LinesCodec);
+
+impl BoundedLines {
+    fn new(max_length: usize) -> Self {
+        Self(LinesCodec::new_with_max_length(max_length))
+    }
+
+    fn lift(
+        decoded: Result<Option<String>, LinesCodecError>,
+    ) -> Result<Option<Line>, LinesCodecError> {
+        match decoded {
+            Err(LinesCodecError::MaxLineLengthExceeded) => Ok(Some(Line::Oversized)),
+            other => other.map(|line| line.map(Line::Message)),
+        }
+    }
+}
+
+impl Decoder for BoundedLines {
+    type Item = Line;
+    type Error = LinesCodecError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
+        Self::lift(self.0.decode(src))
+    }
+
+    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
+        Self::lift(self.0.decode_eof(src))
+    }
+}
+
+impl Encoder<String> for BoundedLines {
+    type Error = LinesCodecError;
+
+    fn encode(&mut self, line: String, dst: &mut BytesMut) -> Result<(), LinesCodecError> {
+        self.0.encode(line, dst)
+    }
+}
 
 /// Unix domain socket transport implementation with integrated security
 pub struct UnixTransport {
@@ -46,6 +107,8 @@ pub struct UnixTransport {
     task_handles: Arc<tokio::sync::Mutex<JoinSet<()>>>,
     /// Shutdown signal broadcaster
     shutdown_tx: broadcast::Sender<()>,
+    /// Longest newline-delimited message accepted, in bytes
+    max_message_size: usize,
 }
 
 // Manual Debug implementation since broadcast::Sender doesn't implement Debug
@@ -88,13 +151,14 @@ impl UnixTransport {
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
+                max_message_size: Some(DEFAULT_MAX_MESSAGE_SIZE),
                 ..Default::default()
             },
             state: Arc::new(Mutex::new(TransportState::Disconnected)),
             metrics: Arc::new(AtomicMetrics::default()),
             task_handles: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
             shutdown_tx,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -112,13 +176,14 @@ impl UnixTransport {
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
+                max_message_size: Some(DEFAULT_MAX_MESSAGE_SIZE),
                 ..Default::default()
             },
             state: Arc::new(Mutex::new(TransportState::Disconnected)),
             metrics: Arc::new(AtomicMetrics::default()),
             task_handles: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
             shutdown_tx,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -172,6 +237,7 @@ impl UnixTransport {
         let connections = self.connections.clone();
         let task_handles = Arc::clone(&self.task_handles);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let max_message_size = self.max_message_size;
 
         // Spawn accept loop and store handle
         task_handles.lock().await.spawn(async move {
@@ -200,6 +266,7 @@ impl UnixTransport {
                                         stream,
                                         incoming_sender,
                                         connections_ref,
+                                        max_message_size,
                                     )
                                     .await
                                     {
@@ -251,6 +318,7 @@ impl UnixTransport {
         // This ensures the client gets registered in the connections HashMap
         let incoming_sender = tx.clone();
         let connections = self.connections.clone();
+        let max_message_size = self.max_message_size;
 
         // Use oneshot channel to wait for connection registration
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
@@ -260,6 +328,7 @@ impl UnixTransport {
                 stream,
                 incoming_sender,
                 connections,
+                max_message_size,
                 ready_tx,
             )
             .await
@@ -286,8 +355,16 @@ async fn handle_unix_connection_framed(
     stream: UnixStream,
     incoming_sender: mpsc::Sender<TransportMessage>,
     connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
+    max_message_size: usize,
 ) -> TransportResult<()> {
-    handle_unix_connection_framed_with_signal(stream, incoming_sender, connections, None).await
+    handle_unix_connection_framed_with_signal(
+        stream,
+        incoming_sender,
+        connections,
+        max_message_size,
+        None,
+    )
+    .await
 }
 
 /// Handle a Unix socket connection with optional ready signal
@@ -296,13 +373,15 @@ async fn handle_unix_connection_framed_with_signal(
     stream: UnixStream,
     incoming_sender: mpsc::Sender<TransportMessage>,
     connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
+    max_message_size: usize,
     ready_tx: impl Into<Option<tokio::sync::oneshot::Sender<()>>>,
 ) -> TransportResult<()> {
     let ready_tx = ready_tx.into();
     debug!("Handling Unix socket connection using Framed<UnixStream, LinesCodec>");
 
-    // Create framed transport using LinesCodec for newline-delimited messages
-    let framed = Framed::new(stream, LinesCodec::new());
+    // Bounded: an unbounded `LinesCodec` buffers a peer's line in full before
+    // anything can look at its length, so a newline-free stream was an OOM.
+    let framed = Framed::new(stream, BoundedLines::new(max_message_size));
     let (mut sink, mut stream) = framed.split();
 
     // Channel for outgoing messages to this specific connection (bounded for backpressure)
@@ -345,20 +424,18 @@ async fn handle_unix_connection_framed_with_signal(
     // Handle incoming messages using StreamExt
     while let Some(result) = stream.next().await {
         match result {
-            Ok(line) => {
+            Ok(Line::Oversized) => {
+                // The codec has already skipped to the next newline, so one
+                // oversized message costs only itself — not the connection and
+                // every request still in flight.
+                warn!(
+                    "Discarded a message over {} bytes from Unix socket",
+                    max_message_size
+                );
+            }
+            Ok(Line::Message(line)) => {
                 if line.is_empty() {
                     continue;
-                }
-
-                // Validate message size (1MB limit for security)
-                let max_size = turbomcp_protocol::MAX_MESSAGE_SIZE;
-                if line.len() > max_size {
-                    error!(
-                        "Message size {} exceeds limit {} from Unix socket",
-                        line.len(),
-                        max_size
-                    );
-                    break;
                 }
 
                 debug!("Received message from Unix socket: {}", line);
@@ -668,6 +745,7 @@ impl Default for UnixConfig {
 pub struct UnixTransportBuilder {
     config: UnixConfig,
     is_server: bool,
+    max_message_size: usize,
 }
 
 impl UnixTransportBuilder {
@@ -677,6 +755,7 @@ impl UnixTransportBuilder {
         Self {
             config: UnixConfig::default(),
             is_server: true,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -686,6 +765,7 @@ impl UnixTransportBuilder {
         Self {
             config: UnixConfig::default(),
             is_server: false,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -716,17 +796,30 @@ impl UnixTransportBuilder {
         self
     }
 
+    /// Set the longest newline-delimited message accepted, in bytes
+    /// (default: 10 MiB, the server's default).
+    ///
+    /// A longer message is discarded and logged; the connection stays open.
+    #[must_use]
+    pub const fn max_message_size(mut self, bytes: usize) -> Self {
+        self.max_message_size = bytes;
+        self
+    }
+
     /// Build the Unix socket transport
     #[must_use]
     pub fn build(self) -> UnixTransport {
-        if self.is_server {
+        let mut transport = if self.is_server {
             let mode = self.config.permissions.unwrap_or(DEFAULT_UNIX_SOCKET_MODE);
             UnixTransport::new_server_with_permissions(self.config.socket_path, mode)
         } else {
             // Permissions are a server-only concern (they're applied to the
             // listening socket file). Clients ignore `UnixConfig::permissions`.
             UnixTransport::new_client(self.config.socket_path)
-        }
+        };
+        transport.max_message_size = self.max_message_size;
+        transport.capabilities.max_message_size = Some(self.max_message_size);
+        transport
     }
 }
 
@@ -788,6 +881,58 @@ mod tests {
 
         assert_eq!(transport.state().await, TransportState::Disconnected);
         assert_eq!(transport.transport_type(), TransportType::Unix);
+    }
+
+    /// An oversized line is skipped; the connection and the messages after it
+    /// survive. The codec used to be unbounded, and the length check after it
+    /// closed the connection — failing every request still in flight.
+    #[tokio::test]
+    async fn an_oversized_line_is_skipped_and_the_connection_survives() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        // Short on purpose: macOS caps a socket path at 104 bytes.
+        let socket =
+            std::env::temp_dir().join(format!("tmcp-{}.sock", &Uuid::new_v4().to_string()[..8]));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let transport = UnixTransportBuilder::new_client()
+            .socket_path(&socket)
+            .max_message_size(256)
+            .build();
+        transport.connect().await.unwrap();
+        let (peer, _) = listener.accept().await.unwrap();
+        let (peer_read, mut peer_write) = peer.into_split();
+
+        let oversized = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"pad":"{}"}}}}"#,
+            "x".repeat(1024)
+        );
+        let next = r#"{"jsonrpc":"2.0","id":2,"result":{}}"#;
+        peer_write
+            .write_all(format!("{oversized}\n{next}\n").as_bytes())
+            .await
+            .unwrap();
+
+        let received = tokio::time::timeout(std::time::Duration::from_secs(2), transport.receive())
+            .await
+            .expect("the reader must survive the oversized line")
+            .unwrap()
+            .expect("a message");
+        assert_eq!(received.payload.as_ref(), next.as_bytes());
+
+        // And the connection still carries traffic the other way.
+        let ping = r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#;
+        transport
+            .send(TransportMessage::new(MessageId::from(3), Bytes::from(ping)))
+            .await
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(peer_read)
+            .read_line(&mut line)
+            .await
+            .unwrap();
+        assert_eq!(line.trim_end(), ping);
+
+        let _ = std::fs::remove_file(&socket);
     }
 
     #[test]

@@ -8,9 +8,11 @@ use std::sync::atomic::Ordering;
 
 use turbomcp_protocol::types::{
     CallToolRequest, CallToolResult, CreateTaskResult, Cursor, ListToolsRequest, ListToolsResult,
-    TaskMetadata, Tool,
+    ProgressToken, TaskMetadata, Tool,
 };
 use turbomcp_protocol::{Error, Result};
+
+use super::super::protocol::RequestOptions;
 
 /// Maximum number of pagination pages to prevent infinite loops from misbehaving servers.
 const MAX_PAGINATION_PAGES: usize = 1000;
@@ -99,7 +101,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         } else {
             None
         };
-        self.inner.protocol.request("tools/list", params).await
+        self.request("tools/list", params).await
     }
 
     /// List available tool names from the MCP server
@@ -220,19 +222,41 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// [`ProgressHandler`](crate::handlers::ProgressHandler) to see them.
     ///
     /// The token must be unique across this client's in-flight requests — it
-    /// is what correlates a notification back to the call that produced it.
+    /// is what correlates a notification back to the call that produced it —
+    /// and a token already in use is refused. The client tracks it while the
+    /// call runs: each notification for it restarts the request timeout, the
+    /// handler has seen every notification sent before the result by the time
+    /// this returns, and notifications for a token no call is waiting on are
+    /// ignored. For a task-augmented call the token stays live until the
+    /// client sees the task reach a terminal status, as progress.mdx requires.
     pub async fn call_tool_response_with_progress(
         &self,
         name: &str,
         arguments: Option<HashMap<String, serde_json::Value>>,
         task: Option<TaskMetadata>,
-        progress_token: Option<serde_json::Value>,
+        progress_token: Option<ProgressToken>,
     ) -> Result<CallToolResponse> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::invalid_request("Client not initialized"));
         }
 
-        let is_task_augmented = task.is_some();
+        let task_augmented = task.is_some();
+        if task_augmented {
+            // tasks.mdx: without `tasks.requests.tools.call` a client "MUST
+            // NOT attempt to use task augmentation on that server's tools".
+            self.require_server_capability(
+                |caps| {
+                    caps.tasks
+                        .as_ref()
+                        .and_then(|tasks| tasks.requests.as_ref())
+                        .and_then(|requests| requests.tools.as_ref())
+                        .and_then(|tools| tools.call.as_ref())
+                        .is_some()
+                },
+                "tasks.requests.tools.call",
+            )?;
+        }
+
         let request_data = CallToolRequest {
             name: name.to_string(),
             arguments: Some(arguments.unwrap_or_default()),
@@ -241,18 +265,27 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         };
 
         let mut params = serde_json::to_value(&request_data)?;
-        if let Some(token) = progress_token {
+        if let Some(token) = &progress_token {
             // `_meta.progressToken` is where the spec puts it, on any request.
             params["_meta"] = serde_json::json!({ "progressToken": token });
         }
 
         let raw_result: serde_json::Value = self
-            .inner
-            .protocol
-            .request("tools/call", Some(params))
+            .request_with(
+                "tools/call",
+                Some(params),
+                RequestOptions {
+                    deadline: self.deadline(),
+                    progress_token,
+                    task_augmented,
+                },
+            )
             .await?;
 
-        if is_task_augmented {
+        // By shape, not by what was asked: a server that does not do tasks
+        // for this tool answers a task-augmented call with a plain result,
+        // and that result — the tool has run — must not be thrown away.
+        if raw_result.get("task").is_some() {
             serde_json::from_value(raw_result)
                 .map(CallToolResponse::Task)
                 .map_err(|e| {
@@ -267,19 +300,20 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
 
     /// Call a tool using MCP task-augmented execution.
     ///
-    /// Returns the created task handle. Retrieve the final result with the
-    /// Tasks API once the server reports completion.
+    /// Usually returns [`CallToolResponse::Task`]: retrieve the final result
+    /// with the Tasks API once the server reports completion. A server may
+    /// instead run the tool at once and answer with
+    /// [`CallToolResponse::Result`] — the tool has run, so that result is
+    /// returned rather than discarded.
+    ///
+    /// Refused locally, without a request, unless the server declared the
+    /// `tasks.requests.tools.call` capability.
     pub async fn call_tool_task(
         &self,
         name: &str,
         arguments: Option<HashMap<String, serde_json::Value>>,
         task: TaskMetadata,
-    ) -> Result<CreateTaskResult> {
-        match self.call_tool_response(name, arguments, Some(task)).await? {
-            CallToolResponse::Task(result) => Ok(result),
-            CallToolResponse::Result(_) => Err(Error::invalid_request(
-                "task-augmented tools/call returned CallToolResult instead of CreateTaskResult",
-            )),
-        }
+    ) -> Result<CallToolResponse> {
+        self.call_tool_response(name, arguments, Some(task)).await
     }
 }

@@ -290,10 +290,11 @@ pub struct ClientCapabilities {
     /// Whether the client supports sampling
     pub sampling: bool,
 
-    /// Maximum concurrent request/notification handlers (default: 100)
+    /// Maximum concurrent server-request handlers (default: 100)
     ///
-    /// This limits how many server-initiated requests/notifications can be processed simultaneously.
-    /// Provides automatic backpressure when the limit is reached.
+    /// This limits how many server-initiated requests can be processed simultaneously.
+    /// Provides automatic backpressure when the limit is reached. Notifications are not
+    /// counted: they are handled one at a time, in the order they arrive.
     ///
     /// **Tuning Guide:**
     /// - Low-resource clients: 50
@@ -703,10 +704,11 @@ impl ClientBuilder {
         self
     }
 
-    /// Set maximum concurrent request/notification handlers
+    /// Set maximum concurrent server-request handlers
     ///
-    /// This limits how many server-initiated requests/notifications can be processed simultaneously.
-    /// Provides automatic backpressure when the limit is reached.
+    /// This limits how many server-initiated requests can be processed simultaneously.
+    /// Provides automatic backpressure when the limit is reached. Notifications are not
+    /// counted: they are handled one at a time, in the order they arrive.
     ///
     /// # Arguments
     ///

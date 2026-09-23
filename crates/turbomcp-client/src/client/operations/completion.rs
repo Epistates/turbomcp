@@ -35,8 +35,6 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         let serialized_params = serde_json::to_value(&request_params)?;
 
         let result: CompleteResult = self
-            .inner
-            .protocol
             .request("completion/complete", Some(serialized_params))
             .await?;
 

@@ -252,9 +252,18 @@ impl ChildProcessTransport {
                 while let Ok(Some(line)) = lines.next_line().await {
                     if line.len() > max_size {
                         warn!(
-                            "Received oversized message from child process: {} bytes",
-                            line.len()
+                            "Discarded a {} byte message from the child process (limit {} bytes)",
+                            line.len(),
+                            max_size
                         );
+                        // Dropping a response leaves the request that asked
+                        // for it waiting until its timeout, or forever without
+                        // one. Answer it with an error instead.
+                        if let Some(error) = oversize_error_response(&line, max_size)
+                            && stdout_tx.send(error).await.is_err()
+                        {
+                            break;
+                        }
                         continue;
                     }
                     trace!("Received message from child process: {}", line);
@@ -445,6 +454,41 @@ impl ChildProcessTransport {
     }
 }
 
+/// A JSON-RPC error standing in for a response too large to deliver.
+///
+/// Only a *response* is answered this way — a line with an `id` and no
+/// `method`. An oversized request from the child carries an id in the child's
+/// id space, and fabricating a response to it here would resolve whichever of
+/// our own requests happened to share that id.
+fn oversize_error_response(line: &str, max_size: usize) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Envelope {
+        id: Option<serde_json::Value>,
+        method: Option<serde::de::IgnoredAny>,
+    }
+
+    let envelope: Envelope = serde_json::from_str(line).ok()?;
+    let id = envelope.id.filter(|id| id.is_string() || id.is_number())?;
+    if envelope.method.is_some() {
+        return None;
+    }
+
+    Some(
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32603,
+                "message": format!(
+                    "response of {} bytes exceeds the transport's max_message_size of {max_size} bytes",
+                    line.len()
+                ),
+            },
+        })
+        .to_string(),
+    )
+}
+
 impl Transport for ChildProcessTransport {
     fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
         Box::pin(async move {
@@ -491,6 +535,16 @@ impl Transport for ChildProcessTransport {
                     "Invalid UTF-8 in message payload: {e}"
                 ))
             })?;
+
+            // stdio frames by newline and messages "MUST NOT contain embedded
+            // newlines": one would split this message in two on the child's
+            // side, and it would reject both halves.
+            if payload_str.contains(['\n', '\r']) {
+                return Err(TransportError::ProtocolError(
+                    "Message contains embedded newlines (forbidden by MCP stdio specification)"
+                        .to_string(),
+                ));
+            }
 
             // Send through stdin channel
             let stdin_sender = self.stdin_sender.lock().await;
@@ -689,6 +743,80 @@ mod tests {
         }
         // Note: This test may fail in some CI environments where 'cat' is not available
         // or process spawning is restricted. That's expected.
+    }
+
+    /// An oversized response is answered with an error for its id rather than
+    /// dropped: before, the request it answered simply never completed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_oversized_response_fails_its_request_instead_of_vanishing() {
+        // Emits an oversized response to id "7", an oversized *request* with
+        // id "9" (which must not be answered on the child's behalf), then a
+        // normal response to id "8"; then stays alive until stdin closes.
+        let script = r#"pad=$(printf '%0200d' 0)
+printf '{"jsonrpc":"2.0","id":"7","result":{"pad":"%s"}}\n' "$pad"
+printf '{"jsonrpc":"2.0","id":"9","method":"sampling/createMessage","params":{"pad":"%s"}}\n' "$pad"
+printf '{"jsonrpc":"2.0","id":"8","result":{}}\n'
+cat >/dev/null"#;
+        let config = ChildProcessConfig {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), script.to_string()],
+            startup_timeout: Duration::from_secs(5),
+            max_message_size: 128,
+            ..Default::default()
+        };
+
+        let transport = ChildProcessTransport::new(config);
+        if transport.connect().await.is_err() {
+            return;
+        }
+
+        let mut received = Vec::new();
+        for _ in 0..2 {
+            let message = tokio::time::timeout(Duration::from_secs(5), transport.receive())
+                .await
+                .expect("a message within the timeout")
+                .expect("receive")
+                .expect("the child is still running");
+            let value: serde_json::Value = serde_json::from_slice(&message.payload).unwrap();
+            received.push(value);
+        }
+
+        assert_eq!(received[0]["id"], "7", "{received:?}");
+        assert_eq!(received[0]["error"]["code"], -32603, "{received:?}");
+        assert_eq!(received[1]["id"], "8", "{received:?}");
+        assert!(received[1].get("result").is_some(), "{received:?}");
+
+        let _ = transport.disconnect().await;
+    }
+
+    /// stdio messages "MUST NOT contain embedded newlines"; one would reach
+    /// the child as two broken frames.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_message_with_an_embedded_newline_is_refused() {
+        let config = ChildProcessConfig {
+            command: "cat".to_string(),
+            startup_timeout: Duration::from_secs(5),
+            ..Default::default()
+        };
+        let transport = ChildProcessTransport::new(config);
+        if transport.connect().await.is_err() {
+            return;
+        }
+
+        let result = transport
+            .send(TransportMessage::new(
+                MessageId::from("x"),
+                Bytes::from("{\"jsonrpc\":\"2.0\",\n\"method\":\"ping\"}"),
+            ))
+            .await;
+        assert!(
+            matches!(result, Err(TransportError::ProtocolError(_))),
+            "{result:?}"
+        );
+
+        let _ = transport.disconnect().await;
     }
 
     /// MCP §Shutdown > stdio: close the input stream, then wait. A child that

@@ -101,7 +101,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         } else {
             None
         };
-        self.inner.protocol.request("resources/list", params).await
+        self.request("resources/list", params).await
     }
 
     /// Read the content of a specific resource by URI
@@ -157,8 +157,6 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         };
 
         let response: ReadResourceResult = self
-            .inner
-            .protocol
             .request("resources/read", Some(serde_json::to_value(request)?))
             .await?;
         Ok(response)
@@ -249,10 +247,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         } else {
             None
         };
-        self.inner
-            .protocol
-            .request("resources/templates/list", params)
-            .await
+        self.request("resources/templates/list", params).await
     }
 }
 

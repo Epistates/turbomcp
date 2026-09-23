@@ -45,7 +45,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         }
 
         // Send ping request (no parameters needed)
-        let response: PingResult = self.inner.protocol.request("ping", None).await?;
+        let response: PingResult = self.request("ping", None).await?;
         Ok(response)
     }
 
@@ -94,8 +94,6 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         let request = SetLevelRequest { level };
 
         let response: SetLevelResult = self
-            .inner
-            .protocol
             .request("logging/setLevel", Some(serde_json::to_value(request)?))
             .await?;
         Ok(response)
