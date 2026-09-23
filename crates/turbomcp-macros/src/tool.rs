@@ -577,19 +577,35 @@ pub fn ctx_ident() -> syn::Ident {
 ///
 /// Reads the arguments map bound as [`args_ident`].
 pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStream) -> TokenStream {
-    if parameters.is_empty() {
-        return quote! {};
-    }
-
     let args = args_ident();
 
-    // Add parameter count validation at the start
-    let param_count = parameters.len();
+    // The generated input schema declares `additionalProperties: false`
+    // (`ToolInputSchema::empty()` included), so an argument the tool does not
+    // take is invalid input, not something to drop. Dropping it silently ran a
+    // tool without a misspelt optional argument and reported success, and it
+    // left a validating client and this dispatcher disagreeing about the same
+    // call. The check also bounds how many keys reach extraction, which the
+    // old "no more than N + 10 parameters" guard existed for.
+    let names = parameters.iter().map(|param| &param.name);
+    let unknown_message = if parameters.is_empty() {
+        quote! { format!("Unknown argument '{}': this tool takes no arguments", unknown) }
+    } else {
+        quote! {
+            format!(
+                "Unknown argument '{}'; expected one of: {}",
+                unknown,
+                __TURBOMCP_PARAMETERS.join(", ")
+            )
+        }
+    };
     let mut extraction = quote! {
-        // Validate parameter count (defense against parameter pollution)
-        if #args.len() > #param_count + 10 {
+        const __TURBOMCP_PARAMETERS: &[&str] = &[#(#names),*];
+        if let Some(unknown) = #args
+            .keys()
+            .find(|key| !__TURBOMCP_PARAMETERS.contains(&key.as_str()))
+        {
             return Err(#krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
-                format!("Too many parameters: got {}, expected at most {}", #args.len(), #param_count)
+                #unknown_message
             ));
         }
     };

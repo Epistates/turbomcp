@@ -249,6 +249,13 @@ pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
 ///
 /// An unknown key is a compile error that lists the accepted ones.
 ///
+/// # Arguments
+///
+/// The generated input schema declares `additionalProperties: false`, and the
+/// dispatcher enforces it: an argument the tool does not take is reported as a
+/// tool execution error (`isError: true`, classified `invalid_params` in
+/// `_meta`), like a missing or mistyped one, rather than silently dropped.
+///
 /// # Cancellation
 ///
 /// Per MCP §Cancellation, a client may send `notifications/cancelled` to
