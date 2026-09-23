@@ -7,10 +7,12 @@ use crate::proto::{self, mcp_service_client::McpServiceClient};
 use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{debug, info, instrument};
+use turbomcp_core::McpError;
 use turbomcp_protocol::types::{
     CallToolResult, ClientCapabilities, GetPromptResult, InitializeResult, ResourceContent,
     ServerCapabilities,
 };
+use turbomcp_protocol::{PROTOCOL_VERSION, SUPPORTED_VERSIONS};
 use turbomcp_types::{Implementation, Prompt, Resource, ResourceTemplate, Tool};
 
 /// gRPC client for MCP servers
@@ -26,7 +28,7 @@ pub struct McpGrpcClient {
     server_info: Option<Implementation>,
     /// Server capabilities after initialization
     server_capabilities: Option<ServerCapabilities>,
-    /// Protocol version
+    /// Requested protocol version, replaced by the negotiated one on initialize
     protocol_version: String,
 }
 
@@ -52,7 +54,7 @@ impl Default for McpGrpcClientConfig {
         Self {
             name: "turbomcp-grpc-client".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            protocol_version: "2025-11-25".to_string(),
+            protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: ClientCapabilities::default(),
             connect_timeout: Duration::from_secs(10),
             request_timeout: Duration::from_secs(30),
@@ -134,6 +136,18 @@ impl McpGrpcClient {
             .map_err(|s| GrpcError::Mcp(status_to_mcp_error(&s)))?;
 
         let result = response.into_inner();
+
+        // The server may answer with a different version than we asked for.
+        // Lifecycle: "If the client does not support the version in the
+        // server's response, it SHOULD disconnect." Otherwise the answer is the
+        // session's version, not the one we requested.
+        if !SUPPORTED_VERSIONS.contains(&result.protocol_version.as_str()) {
+            return Err(GrpcError::Mcp(McpError::protocol_version_mismatch(
+                self.protocol_version.clone(),
+                result.protocol_version,
+            )));
+        }
+        self.protocol_version.clone_from(&result.protocol_version);
 
         // Store server info
         if let Some(ref info) = result.server_info {
@@ -358,6 +372,9 @@ impl McpGrpcClient {
     }
 
     /// Get the protocol version
+    ///
+    /// Before [`initialize`](Self::initialize) this is the version the client
+    /// will request; afterwards it is the version the server negotiated.
     #[must_use]
     pub fn protocol_version(&self) -> &str {
         &self.protocol_version
