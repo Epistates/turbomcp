@@ -17,7 +17,7 @@
 //!     // Initialize telemetry with OTLP export
 //!     let config = TelemetryConfig::builder()
 //!         .service_name("my-mcp-server")
-//!         .otlp_endpoint("http://localhost:4317")
+//!         .otlp_endpoint("http://localhost:4318/v1/traces")
 //!         .build();
 //!
 //!     let _guard = config.init()?;

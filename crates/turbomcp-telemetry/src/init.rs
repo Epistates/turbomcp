@@ -414,7 +414,8 @@ fn init_tracer_provider(
         .build()
         .map_err(|e| TelemetryError::OpenTelemetryError(e.to_string()))?;
 
-    // Build the tracer provider (0.31 API - no runtime argument needed)
+    // Build the tracer provider (the batch exporter runs on its own thread,
+    // so no async runtime argument is needed)
     let provider = SdkTracerProvider::builder()
         .with_sampler(sampler)
         .with_id_generator(RandomIdGenerator::default())

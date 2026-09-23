@@ -16,6 +16,7 @@
 
 use crate::error::{GrpcError, GrpcResult};
 use crate::proto;
+use std::collections::HashMap;
 use turbomcp_protocol::types::{
     CallToolResult, ClientCapabilities, ClientTasksCapabilities, ClientTasksRequestsCapabilities,
     CompletionCapabilities, ElicitationCapabilities, GetPromptResult, InitializeRequest,
@@ -25,38 +26,62 @@ use turbomcp_protocol::types::{
     TasksToolsCapabilities, ToolsCapabilities,
 };
 use turbomcp_types::{
-    Annotations, AudioContent, BlobResourceContents, Content, Icon, ImageContent, Implementation,
-    Prompt, PromptArgument, PromptMessage, Resource, ResourceAnnotations, ResourceContents,
-    ResourceTemplate, Role, TextContent, TextResourceContents, Tool, ToolInputSchema,
+    Annotations, AudioContent, BlobResourceContents, Content, Icon, IconTheme, ImageContent,
+    Implementation, Prompt, PromptArgument, PromptMessage, Resource, ResourceAnnotations,
+    ResourceContents, ResourceLink, ResourceTemplate, Role, TextContent, TextResourceContents,
+    Tool, ToolAnnotations, ToolInputSchema,
 };
 
 /// Historical alias for module-local clarity; `ResourceContent` === `ResourceContents`.
 type ResourceContent = ResourceContents;
 
-fn encode_json_map(
-    map: std::collections::HashMap<String, serde_json::Value>,
-) -> std::collections::HashMap<String, Vec<u8>> {
+/// `_meta` as the MCP types carry it.
+type Meta = HashMap<String, serde_json::Value>;
+
+/// Serialize free-form JSON (`_meta`, schemas, capability data) to the JSON
+/// bytes the proto carries it as.
+fn encode_json<T: serde::Serialize>(value: &T) -> Vec<u8> {
+    // serde_json::to_vec on a serde_json::Value is infallible in practice
+    // (non-finite floats are the only realistic failure, and Value cannot
+    // hold them). On the off chance it fails, fall back to "null" so the
+    // message stays decodable rather than panicking the hot path.
+    serde_json::to_vec(value).unwrap_or_else(|err| {
+        tracing::warn!(error = %err, "encode_json: serializing failed; substituting null");
+        b"null".to_vec()
+    })
+}
+
+fn encode_json_map(map: HashMap<String, serde_json::Value>) -> HashMap<String, Vec<u8>> {
     map.into_iter()
-        .map(|(key, value)| {
-            // serde_json::to_vec on a serde_json::Value is infallible in practice
-            // (non-finite floats are the only realistic failure, and Value cannot
-            // hold them). On the off chance it fails, fall back to "null" so the
-            // gRPC capability map stays decodable rather than panicking the hot path.
-            let bytes = serde_json::to_vec(&value).unwrap_or_else(|err| {
-                tracing::warn!(
-                    error = %err,
-                    "encode_json_map: serializing Value failed; substituting null"
-                );
-                b"null".to_vec()
-            });
-            (key, bytes)
-        })
+        .map(|(key, value)| (key, encode_json(&value)))
         .collect()
 }
 
-fn decode_json_map(
-    map: std::collections::HashMap<String, Vec<u8>>,
-) -> std::collections::HashMap<String, serde_json::Value> {
+fn meta_to_proto(meta: Option<Meta>) -> Option<Vec<u8>> {
+    meta.map(|meta| encode_json(&meta))
+}
+
+/// `_meta` is advisory, so a peer sending something that is not a JSON object
+/// costs it the metadata, not the whole message.
+fn meta_from_proto(bytes: Option<Vec<u8>>) -> Option<Meta> {
+    let bytes = bytes?;
+    serde_json::from_slice(&bytes)
+        .inspect_err(|err| tracing::warn!(error = %err, "dropping undecodable _meta"))
+        .ok()
+}
+
+/// Decode a JSON-bytes field that the receiving type cannot do without being
+/// wrong (schemas, structured content): a malformed value is an error.
+fn json_from_proto<T: serde::de::DeserializeOwned>(
+    bytes: Option<Vec<u8>>,
+) -> GrpcResult<Option<T>> {
+    bytes
+        .map(|bytes| serde_json::from_slice(&bytes))
+        .transpose()
+        .map_err(Into::into)
+}
+
+fn decode_json_map(map: HashMap<String, Vec<u8>>) -> HashMap<String, serde_json::Value> {
     map.into_iter()
         .filter_map(|(key, value)| {
             serde_json::from_slice(&value)
@@ -374,11 +399,8 @@ impl From<proto::ServerCapabilities> for ServerCapabilities {
 // Annotations (base type - for Resource, ResourceTemplate, Content)
 // =============================================================================
 //
-// Note: proto::Annotations only has audience and priority. The MCP Annotations
-// type also has last_modified and custom fields which are lost in conversion.
-// ToolAnnotations (destructive_hint, read_only_hint, etc.) is a separate type
-// that doesn't have a direct proto representation - tool hints are not preserved
-// in gRPC transport.
+// Tool hints are a different type (`ToolAnnotations`) with their own proto
+// message; see the Tool section.
 
 fn role_to_wire(role: Role) -> String {
     match role {
@@ -402,7 +424,8 @@ impl From<Annotations> for proto::Annotations {
                 .audience
                 .map(|roles| roles.into_iter().map(role_to_wire).collect())
                 .unwrap_or_default(),
-            priority: annotations.priority.unwrap_or(0.0),
+            priority: annotations.priority,
+            last_modified: annotations.last_modified,
         }
     }
 }
@@ -421,12 +444,8 @@ impl From<proto::Annotations> for Annotations {
         };
         Self {
             audience,
-            priority: if annotations.priority == 0.0 {
-                None
-            } else {
-                Some(annotations.priority)
-            },
-            last_modified: None,
+            priority: annotations.priority,
+            last_modified: annotations.last_modified,
         }
     }
 }
@@ -462,7 +481,12 @@ impl From<Icon> for proto::Icon {
         } else {
             proto::icon::Icon::Uri(icon.src)
         };
-        Self { icon: Some(inner) }
+        Self {
+            icon: Some(inner),
+            mime_type: icon.mime_type,
+            sizes: icon.sizes.unwrap_or_default(),
+            theme: icon.theme.map(|theme| theme.to_string()),
+        }
     }
 }
 
@@ -477,9 +501,18 @@ impl TryFrom<proto::Icon> for Icon {
         };
         Ok(Icon {
             src,
-            mime_type: None,
-            sizes: None,
-            theme: None,
+            mime_type: icon.mime_type,
+            sizes: if icon.sizes.is_empty() {
+                None
+            } else {
+                Some(icon.sizes)
+            },
+            // An unrecognised theme leaves the icon usable for either.
+            theme: match icon.theme.as_deref() {
+                Some("light") => Some(IconTheme::Light),
+                Some("dark") => Some(IconTheme::Dark),
+                _ => None,
+            },
         })
     }
 }
@@ -488,18 +521,47 @@ impl TryFrom<proto::Icon> for Icon {
 // Tool
 // =============================================================================
 //
-// Note: ToolAnnotations (destructive_hint, read_only_hint, etc.) doesn't map to
-// proto::Annotations (which only has audience, priority). Tool hints are not
-// preserved in gRPC transport - they would need a dedicated proto message to
-// support them properly.
+// Tool hints ride in their own `proto::ToolAnnotations` message; the older
+// `annotations` field is the audience/priority shape, which tools do not have,
+// and stays unset.
+
+impl From<ToolAnnotations> for proto::ToolAnnotations {
+    fn from(annotations: ToolAnnotations) -> Self {
+        Self {
+            title: annotations.title,
+            read_only_hint: annotations.read_only_hint,
+            destructive_hint: annotations.destructive_hint,
+            idempotent_hint: annotations.idempotent_hint,
+            open_world_hint: annotations.open_world_hint,
+        }
+    }
+}
+
+impl From<proto::ToolAnnotations> for ToolAnnotations {
+    fn from(annotations: proto::ToolAnnotations) -> Self {
+        Self {
+            read_only_hint: annotations.read_only_hint,
+            destructive_hint: annotations.destructive_hint,
+            idempotent_hint: annotations.idempotent_hint,
+            open_world_hint: annotations.open_world_hint,
+            title: annotations.title,
+        }
+    }
+}
 
 impl TryFrom<Tool> for proto::Tool {
     type Error = GrpcError;
 
     fn try_from(tool: Tool) -> GrpcResult<Self> {
         let input_schema = serde_json::to_vec(&tool.input_schema)?;
-        // Tool hints (destructive_hint, etc.) and extra Tool fields
-        // (execution, output_schema, meta) are lost in gRPC transport.
+        let output_schema = tool
+            .output_schema
+            .map(|schema| serde_json::to_vec(&schema))
+            .transpose()?;
+        let execution = tool
+            .execution
+            .map(|execution| serde_json::to_vec(&execution))
+            .transpose()?;
         Ok(Self {
             name: tool.name,
             description: tool.description,
@@ -507,6 +569,10 @@ impl TryFrom<Tool> for proto::Tool {
             annotations: None,
             icons: icons_to_proto(tool.icons),
             title: tool.title,
+            tool_annotations: tool.annotations.map(Into::into),
+            output_schema,
+            execution,
+            meta: meta_to_proto(tool.meta),
         })
     }
 }
@@ -527,10 +593,10 @@ impl TryFrom<proto::Tool> for Tool {
             input_schema,
             title: tool.title,
             icons: proto_icons_to_option(tool.icons),
-            annotations: None,
-            execution: None,
-            output_schema: None,
-            meta: None,
+            annotations: tool.tool_annotations.map(Into::into),
+            execution: json_from_proto(tool.execution)?,
+            output_schema: json_from_proto(tool.output_schema)?,
+            meta: meta_from_proto(tool.meta),
         })
     }
 }
@@ -550,6 +616,7 @@ impl From<Resource> for proto::Resource {
             annotations: resource.annotations.map(|a| res_ann_to_base(a).into()),
             icons: icons_to_proto(resource.icons),
             size: resource.size,
+            meta: meta_to_proto(resource.meta),
         }
     }
 }
@@ -565,8 +632,40 @@ impl From<proto::Resource> for Resource {
             mime_type: resource.mime_type.map(Into::into),
             size: resource.size,
             annotations: resource.annotations.map(|a| base_to_res_ann(a.into())),
-            meta: None,
+            meta: meta_from_proto(resource.meta),
         }
+    }
+}
+
+// A resource link is a `Resource` with a content-block tag, so it travels as
+// the `Resource` message and reuses its conversions.
+fn resource_link_to_proto(link: ResourceLink) -> proto::Resource {
+    Resource {
+        uri: link.uri,
+        name: link.name,
+        description: link.description,
+        title: link.title,
+        icons: link.icons,
+        mime_type: link.mime_type,
+        size: link.size,
+        annotations: link.annotations,
+        meta: link.meta,
+    }
+    .into()
+}
+
+fn resource_link_from_proto(resource: proto::Resource) -> ResourceLink {
+    let resource = Resource::from(resource);
+    ResourceLink {
+        uri: resource.uri,
+        name: resource.name,
+        description: resource.description,
+        title: resource.title,
+        icons: resource.icons,
+        mime_type: resource.mime_type,
+        annotations: resource.annotations,
+        size: resource.size,
+        meta: resource.meta,
     }
 }
 
@@ -580,6 +679,7 @@ impl From<ResourceTemplate> for proto::ResourceTemplate {
             mime_type: template.mime_type.map(Into::into),
             annotations: template.annotations.map(|a| res_ann_to_base(a).into()),
             icons: icons_to_proto(template.icons),
+            meta: meta_to_proto(template.meta),
         }
     }
 }
@@ -594,7 +694,7 @@ impl From<proto::ResourceTemplate> for ResourceTemplate {
             icons: proto_icons_to_option(template.icons),
             mime_type: template.mime_type.map(Into::into),
             annotations: template.annotations.map(|a| base_to_res_ann(a.into())),
-            meta: None,
+            meta: meta_from_proto(template.meta),
         }
     }
 }
@@ -612,11 +712,13 @@ impl TryFrom<ResourceContent> for proto::ResourceContent {
                 uri: t.uri.to_string(),
                 mime_type: t.mime_type.map(Into::into),
                 content: Some(proto::resource_content::Content::Text(t.text)),
+                meta: meta_to_proto(t.meta),
             }),
             ResourceContents::Blob(b) => Ok(Self {
                 uri: b.uri.to_string(),
                 mime_type: b.mime_type.map(Into::into),
                 content: Some(proto::resource_content::Content::Blob(b.blob.into_bytes())),
+                meta: meta_to_proto(b.meta),
             }),
         }
     }
@@ -624,13 +726,14 @@ impl TryFrom<ResourceContent> for proto::ResourceContent {
 
 impl From<proto::ResourceContent> for ResourceContent {
     fn from(content: proto::ResourceContent) -> Self {
+        let meta = meta_from_proto(content.meta);
         match content.content {
             Some(proto::resource_content::Content::Text(text)) => {
                 ResourceContents::Text(TextResourceContents {
                     uri: content.uri.into(),
                     mime_type: content.mime_type.map(Into::into),
                     text,
-                    meta: None,
+                    meta,
                 })
             }
             Some(proto::resource_content::Content::Blob(blob)) => {
@@ -638,14 +741,14 @@ impl From<proto::ResourceContent> for ResourceContent {
                     uri: content.uri.into(),
                     mime_type: content.mime_type.map(Into::into),
                     blob: String::from_utf8_lossy(&blob).into_owned(),
-                    meta: None,
+                    meta,
                 })
             }
             None => ResourceContents::Text(TextResourceContents {
                 uri: content.uri.into(),
                 mime_type: None,
                 text: String::new(),
-                meta: None,
+                meta,
             }),
         }
     }
@@ -668,6 +771,7 @@ impl From<Prompt> for proto::Prompt {
                 .map(Into::into)
                 .collect(),
             icons: icons_to_proto(prompt.icons),
+            meta: meta_to_proto(prompt.meta),
         }
     }
 }
@@ -684,7 +788,7 @@ impl From<proto::Prompt> for Prompt {
             } else {
                 Some(prompt.arguments.into_iter().map(Into::into).collect())
             },
-            meta: None,
+            meta: meta_from_proto(prompt.meta),
         }
     }
 }
@@ -695,6 +799,7 @@ impl From<PromptArgument> for proto::PromptArgument {
             name: arg.name,
             description: arg.description,
             required: arg.required,
+            title: arg.title,
         }
     }
 }
@@ -703,7 +808,7 @@ impl From<proto::PromptArgument> for PromptArgument {
     fn from(arg: proto::PromptArgument) -> Self {
         Self {
             name: arg.name,
-            title: None,
+            title: arg.title,
             description: arg.description,
             required: arg.required,
         }
@@ -720,6 +825,7 @@ impl TryFrom<GetPromptResult> for proto::GetPromptResult {
         Ok(Self {
             description: result.description,
             messages: messages?,
+            meta: meta_to_proto(result.meta),
         })
     }
 }
@@ -734,7 +840,7 @@ impl TryFrom<proto::GetPromptResult> for GetPromptResult {
         Ok(Self {
             description: result.description,
             messages: messages?,
-            meta: None,
+            meta: meta_from_proto(result.meta),
         })
     }
 }
@@ -774,10 +880,11 @@ impl TryFrom<Content> for proto::Content {
     type Error = GrpcError;
 
     fn try_from(content: Content) -> GrpcResult<Self> {
-        let (content_type, annotations) = match content {
+        let (content_type, annotations, meta) = match content {
             Content::Text(t) => (
                 proto::content::Content::Text(proto::TextContent { text: t.text }),
                 t.annotations,
+                t.meta,
             ),
             Content::Image(i) => (
                 proto::content::Content::Image(proto::ImageContent {
@@ -785,6 +892,7 @@ impl TryFrom<Content> for proto::Content {
                     mime_type: i.mime_type,
                 }),
                 i.annotations,
+                i.meta,
             ),
             Content::Audio(a) => (
                 proto::content::Content::Audio(proto::AudioContent {
@@ -792,21 +900,25 @@ impl TryFrom<Content> for proto::Content {
                     mime_type: a.mime_type,
                 }),
                 a.annotations,
+                a.meta,
             ),
-            Content::ResourceLink(_) => {
-                return Err(GrpcError::invalid_request(
-                    "ResourceLink content not yet supported over gRPC",
-                ));
-            }
+            // Annotations and `_meta` travel inside the link's own message.
+            Content::ResourceLink(link) => (
+                proto::content::Content::ResourceLink(resource_link_to_proto(link)),
+                None,
+                None,
+            ),
             Content::Resource(r) => (
                 proto::content::Content::Resource(r.resource.try_into()?),
                 r.annotations,
+                r.meta,
             ),
         };
 
         Ok(Self {
             content: Some(content_type),
             annotations: annotations.map(Into::into),
+            meta: meta_to_proto(meta),
         })
     }
 }
@@ -816,31 +928,35 @@ impl TryFrom<proto::Content> for Content {
 
     fn try_from(content: proto::Content) -> GrpcResult<Self> {
         let annotations = content.annotations.map(Into::into);
+        let meta = meta_from_proto(content.meta);
 
         match content.content {
             Some(proto::content::Content::Text(t)) => Ok(Content::Text(TextContent {
                 text: t.text,
                 annotations,
-                meta: None,
+                meta,
             })),
             Some(proto::content::Content::Image(i)) => Ok(Content::Image(ImageContent {
                 data: i.data,
                 mime_type: i.mime_type,
                 annotations,
-                meta: None,
+                meta,
             })),
             Some(proto::content::Content::Audio(a)) => Ok(Content::Audio(AudioContent {
                 data: a.data,
                 mime_type: a.mime_type,
                 annotations,
-                meta: None,
+                meta,
             })),
             Some(proto::content::Content::Resource(r)) => {
                 Ok(Content::Resource(turbomcp_types::EmbeddedResource {
                     resource: r.into(),
                     annotations,
-                    meta: None,
+                    meta,
                 }))
+            }
+            Some(proto::content::Content::ResourceLink(link)) => {
+                Ok(Content::ResourceLink(resource_link_from_proto(link)))
             }
             None => Err(GrpcError::invalid_request("Missing content")),
         }
@@ -855,14 +971,17 @@ impl TryFrom<CallToolResult> for proto::CallToolResult {
     type Error = GrpcError;
 
     fn try_from(result: CallToolResult) -> GrpcResult<Self> {
-        // Note: structured_content and _meta are protocol-only fields
-        // that don't round-trip through proto (no wire slot for them).
         let content: Result<Vec<_>, _> =
             result.content.into_iter().map(TryInto::try_into).collect();
 
         Ok(Self {
             content: content?,
             is_error: result.is_error,
+            structured_content: result
+                .structured_content
+                .map(|value| serde_json::to_vec(&value))
+                .transpose()?,
+            meta: meta_to_proto(result.meta),
         })
     }
 }
@@ -877,8 +996,8 @@ impl TryFrom<proto::CallToolResult> for CallToolResult {
         Ok(Self {
             content: content?,
             is_error: result.is_error,
-            structured_content: None,
-            meta: None,
+            structured_content: json_from_proto(result.structured_content)?,
+            meta: meta_from_proto(result.meta),
         })
     }
 }
@@ -1041,5 +1160,178 @@ mod tests {
                 .and_then(|t| t.call.as_ref())
                 .is_some()
         );
+    }
+
+    #[allow(clippy::unnecessary_wraps)] // shaped like the `meta` fields it fills
+    fn meta(key: &str) -> Option<Meta> {
+        Some([(key.to_string(), serde_json::json!({"trace": key}))].into())
+    }
+
+    fn full_icon() -> Icon {
+        Icon {
+            src: "https://example.com/icon.png".into(),
+            mime_type: Some("image/png".into()),
+            sizes: Some(vec!["48x48".into(), "any".into()]),
+            theme: Some(IconTheme::Dark),
+        }
+    }
+
+    fn full_annotations() -> Annotations {
+        Annotations {
+            audience: Some(vec![Role::Assistant]),
+            // 0.0 is a real priority ("least important"), not "unset".
+            priority: Some(0.0),
+            last_modified: Some("2025-01-12T15:00:58Z".into()),
+        }
+    }
+
+    #[test]
+    fn tool_round_trip_keeps_hints_output_schema_execution_and_meta() {
+        let tool = Tool {
+            name: "search".into(),
+            description: Some("Searches".into()),
+            input_schema: ToolInputSchema::default(),
+            title: Some("Search".into()),
+            icons: Some(vec![full_icon()]),
+            annotations: Some(ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+                title: Some("Search the index".into()),
+            }),
+            execution: Some(turbomcp_types::ToolExecution {
+                task_support: Some(turbomcp_types::TaskSupportLevel::Optional),
+            }),
+            output_schema: Some(
+                serde_json::from_value(serde_json::json!({
+                    "type": "object",
+                    "properties": {"hits": {"type": "integer"}},
+                    "required": ["hits"]
+                }))
+                .unwrap(),
+            ),
+            meta: meta("tool"),
+        };
+
+        let wire: proto::Tool = tool.clone().try_into().unwrap();
+        let back: Tool = wire.try_into().unwrap();
+
+        assert_eq!(back, tool);
+    }
+
+    #[test]
+    fn tool_with_a_malformed_output_schema_is_rejected() {
+        let wire = proto::Tool {
+            name: "broken".into(),
+            output_schema: Some(b"{not json".to_vec()),
+            ..Default::default()
+        };
+
+        assert!(Tool::try_from(wire).is_err());
+    }
+
+    #[test]
+    fn undecodable_meta_is_dropped_not_fatal() {
+        let wire = proto::Tool {
+            name: "t".into(),
+            meta: Some(b"[1, 2]".to_vec()),
+            ..Default::default()
+        };
+
+        let tool = Tool::try_from(wire).unwrap();
+        assert_eq!(tool.name, "t");
+        assert!(tool.meta.is_none());
+    }
+
+    #[test]
+    fn call_tool_result_round_trip_keeps_structured_content_meta_and_content_detail() {
+        let result = CallToolResult {
+            content: vec![
+                Content::Text(TextContent {
+                    text: "3 hits".into(),
+                    annotations: Some(full_annotations()),
+                    meta: meta("text"),
+                }),
+                Content::ResourceLink(ResourceLink {
+                    uri: "file:///hits.json".into(),
+                    name: "hits".into(),
+                    description: Some("All hits".into()),
+                    title: Some("Hits".into()),
+                    icons: Some(vec![full_icon()]),
+                    mime_type: Some("application/json".into()),
+                    annotations: Some(base_to_res_ann(full_annotations())),
+                    size: Some(42),
+                    meta: meta("link"),
+                }),
+                Content::Resource(turbomcp_types::EmbeddedResource {
+                    resource: ResourceContents::Text(TextResourceContents {
+                        uri: "file:///a.txt".into(),
+                        mime_type: Some("text/plain".into()),
+                        text: "a".into(),
+                        meta: meta("contents"),
+                    }),
+                    annotations: None,
+                    meta: meta("embedded"),
+                }),
+            ],
+            is_error: Some(false),
+            structured_content: Some(serde_json::json!({"hits": 3})),
+            meta: meta("result"),
+        };
+
+        let wire: proto::CallToolResult = result.clone().try_into().unwrap();
+        let back: CallToolResult = wire.try_into().unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&back).unwrap(),
+            serde_json::to_value(&result).unwrap()
+        );
+    }
+
+    #[test]
+    fn listing_metadata_round_trips() {
+        let resource = Resource {
+            uri: "file:///a.txt".into(),
+            name: "a".into(),
+            icons: Some(vec![full_icon()]),
+            annotations: Some(base_to_res_ann(full_annotations())),
+            meta: meta("resource"),
+            ..Default::default()
+        };
+        let back: Resource = proto::Resource::from(resource.clone()).into();
+        assert_eq!(back, resource);
+
+        let template = ResourceTemplate {
+            uri_template: "file:///{name}".into(),
+            name: "files".into(),
+            meta: meta("template"),
+            ..Default::default()
+        };
+        let back: ResourceTemplate = proto::ResourceTemplate::from(template.clone()).into();
+        assert_eq!(back, template);
+
+        let prompt = Prompt {
+            name: "greet".into(),
+            arguments: Some(vec![PromptArgument {
+                name: "who".into(),
+                title: Some("Who to greet".into()),
+                description: None,
+                required: Some(true),
+            }]),
+            meta: meta("prompt"),
+            ..Default::default()
+        };
+        let back: Prompt = proto::Prompt::from(prompt.clone()).into();
+        assert_eq!(back, prompt);
+
+        let rendered = GetPromptResult {
+            description: None,
+            messages: vec![PromptMessage::user("hi")],
+            meta: meta("rendered"),
+        };
+        let wire: proto::GetPromptResult = rendered.clone().try_into().unwrap();
+        let back: GetPromptResult = wire.try_into().unwrap();
+        assert_eq!(back.meta, rendered.meta);
     }
 }

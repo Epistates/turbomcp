@@ -24,6 +24,12 @@ impl TemplateEngine {
     /// Returns `ProxyError` if any template fails to register.
     pub fn new() -> ProxyResult<Self> {
         let mut hb = Handlebars::new();
+        // The output is Rust, not HTML. Handlebars' default escaping turned a
+        // `"` into `&quot;` and `&` into `&amp;` inside string literals and doc
+        // comments; values are escaped for Rust by the generator instead.
+        hb.register_escape_fn(handlebars::no_escape);
+        // A typo in a template should fail generation, not emit empty code.
+        hb.set_strict_mode(true);
 
         // Register templates (embedded in binary)
         hb.register_template_string("main", include_str!("templates/main.rs.hbs"))
@@ -242,14 +248,7 @@ fn eq_helper(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::Serialize;
-
-    #[derive(Serialize)]
-    struct TestContext {
-        server_name: String,
-        server_version: String,
-        generation_date: String,
-    }
+    use crate::codegen::MainContext;
 
     #[test]
     fn test_template_engine_creation() {
@@ -263,10 +262,15 @@ mod tests {
     #[test]
     fn test_render_main_template() {
         let engine = TemplateEngine::new().unwrap();
-        let context = TestContext {
+        let context = MainContext {
             server_name: "test-server".to_string(),
             server_version: "1.0.0".to_string(),
             generation_date: "2025-01-01".to_string(),
+            frontend_type: "STDIO".to_string(),
+            backend_type: "STDIO".to_string(),
+            has_http: false,
+            has_stdio: true,
+            has_websocket: false,
         };
 
         let result = engine.render_main(&context);

@@ -123,48 +123,90 @@ impl StdioBackend {
 
         trace!(method = %method, id = %id, "Sending introspection request");
 
-        // Serialize request
-        let request_json = serde_json::to_string(&request)
+        let request_json = serde_json::to_vec(&request)
             .map_err(|e| ProxyError::backend(format!("Failed to serialize request: {e}")))?;
+        self.send_raw(request_json).await?;
 
-        // Send via transport
+        // The next message on the wire is not necessarily the answer. A server
+        // may log, report progress, or ping in between, and taking whatever
+        // arrived first as the response parsed a notification as the result
+        // (or failed on it) depending on timing. Read until our id comes back.
+        let expected = Value::from(id);
+        loop {
+            let message = self
+                .transport
+                .receive()
+                .await
+                .map_err(|e| ProxyError::backend(format!("Failed to receive response: {e}")))?
+                .ok_or_else(|| {
+                    ProxyError::backend("No response received (transport closed)".to_string())
+                })?;
+
+            let message: Value = serde_json::from_slice(&message.payload)
+                .map_err(|e| ProxyError::backend(format!("Failed to parse message: {e}")))?;
+            trace!(message = %message, "Received introspection message");
+
+            if message.get("method").is_some() {
+                self.answer_server_message(&message).await?;
+                continue;
+            }
+            if message.get("id") != Some(&expected) {
+                debug!(message = %message, "Ignoring response to an unknown request");
+                continue;
+            }
+
+            let response: JsonRpcResponse = serde_json::from_value(message)
+                .map_err(|e| ProxyError::backend(format!("Failed to parse response: {e}")))?;
+            return match response.payload {
+                JsonRpcResponsePayload::Success { result } => Ok(result),
+                JsonRpcResponsePayload::Error { error } => {
+                    let mut err =
+                        turbomcp_protocol::Error::from_rpc_code(error.code, error.message);
+                    if let Some(data) = error.data {
+                        err = err.with_data(data);
+                    }
+                    Err(err.into())
+                }
+            };
+        }
+    }
+
+    /// Handle a message the server originated while we wait for a response.
+    ///
+    /// Notifications need nothing. A request needs an answer, or the server
+    /// is left waiting on us: `ping` is answered with the empty result the
+    /// spec requires, and anything else with method-not-found, since the
+    /// introspector declares no client capabilities.
+    async fn answer_server_message(&self, message: &Value) -> ProxyResult<()> {
+        let Some(id) = message.get("id") else {
+            return Ok(());
+        };
+        let reply = if message.get("method").and_then(Value::as_str) == Some("ping") {
+            serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": {} })
+        } else {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": "Method not found" }
+            })
+        };
+        let reply = serde_json::to_vec(&reply)
+            .map_err(|e| ProxyError::backend(format!("Failed to serialize reply: {e}")))?;
+        self.send_raw(reply).await
+    }
+
+    /// Write one JSON-RPC message to the subprocess.
+    async fn send_raw(&self, payload: Vec<u8>) -> ProxyResult<()> {
         let message = TransportMessage {
             id: turbomcp_protocol::MessageId::String(Uuid::new_v4().to_string()),
-            payload: Bytes::from(request_json.into_bytes()),
+            payload: Bytes::from(payload),
             metadata: TransportMessageMetadata::default(),
         };
 
         self.transport
             .send(message)
             .await
-            .map_err(|e| ProxyError::backend(format!("Failed to send message: {e}")))?;
-
-        // Receive response
-        let response_message = self
-            .transport
-            .receive()
-            .await
-            .map_err(|e| ProxyError::backend(format!("Failed to receive response: {e}")))?
-            .ok_or_else(|| {
-                ProxyError::backend("No response received (transport closed)".to_string())
-            })?;
-
-        let response_str = String::from_utf8(response_message.payload.to_vec())
-            .map_err(|e| ProxyError::backend(format!("Invalid UTF-8 in response: {e}")))?;
-
-        trace!(response = %response_str, "Received introspection response");
-
-        // Parse response
-        let response: JsonRpcResponse = serde_json::from_str(&response_str)
-            .map_err(|e| ProxyError::backend(format!("Failed to parse response: {e}")))?;
-
-        // Extract result from response payload
-        match response.payload {
-            JsonRpcResponsePayload::Success { result } => Ok(result),
-            JsonRpcResponsePayload::Error { error } => Err(ProxyError::backend(format!(
-                "Server returned error: {error:?}"
-            ))),
-        }
+            .map_err(|e| ProxyError::backend(format!("Failed to send message: {e}")))
     }
 }
 
@@ -221,24 +263,12 @@ impl McpBackend for StdioBackend {
                 params: Some(params),
             };
 
-            let notification_json = serde_json::to_string(&notification).map_err(|e| {
+            let notification_json = serde_json::to_vec(&notification).map_err(|e| {
                 ProxyError::backend(format!("Failed to serialize notification: {e}"))
             })?;
 
             trace!(method = %method, "Sending notification");
-
-            let message = TransportMessage {
-                id: turbomcp_protocol::MessageId::String(Uuid::new_v4().to_string()),
-                payload: Bytes::from(notification_json.into_bytes()),
-                metadata: TransportMessageMetadata::default(),
-            };
-
-            self.transport
-                .send(message)
-                .await
-                .map_err(|e| ProxyError::backend(format!("Failed to send notification: {e}")))?;
-
-            Ok(())
+            self.send_raw(notification_json).await
         })
     }
 
@@ -279,5 +309,44 @@ mod tests {
         let backend =
             StdioBackend::with_working_dir(TEST_SUBPROCESS, Vec::new(), "/tmp".to_string()).await;
         assert!(backend.is_ok(), "backend should spawn: {:?}", backend.err());
+    }
+
+    /// A server may log or ping before it answers. The introspector used to
+    /// take whatever line came next as the response, so a server that logged
+    /// during `initialize` failed introspection outright. The scripted server
+    /// here sends a log notification and a ping ahead of its answers, and
+    /// only lists its tools if the ping was replied to first.
+    #[tokio::test]
+    async fn responses_are_matched_by_id_not_arrival_order() {
+        use crate::introspection::McpIntrospector;
+
+        let script = r#"
+            log='{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"warming up"}}'
+            read -r _init
+            printf '%s\n' "$log" '{"jsonrpc":"2.0","id":"srv-1","method":"ping"}'
+            printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"chatty","version":"1.0.0"}}}'
+            read -r pong
+            read -r _initialized
+            read -r _list
+            case "$pong" in
+              *'"srv-1"'*'"result"'*|*'"result"'*'"srv-1"'*)
+                printf '%s\n' "$log" '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}}' ;;
+              *)
+                printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"ping went unanswered"}}' ;;
+            esac
+            read -r _
+        "#;
+
+        let mut backend = StdioBackend::new("sh", vec!["-c".to_string(), script.to_string()])
+            .await
+            .expect("scripted server spawns");
+        let spec = McpIntrospector::new()
+            .introspect(&mut backend)
+            .await
+            .expect("interleaved notifications and pings do not derail introspection");
+
+        assert_eq!(spec.server_info.name, "chatty");
+        assert_eq!(spec.tools.len(), 1);
+        assert_eq!(spec.tools[0].name, "echo");
     }
 }

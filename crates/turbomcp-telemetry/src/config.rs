@@ -33,7 +33,9 @@ pub struct TelemetryConfig {
     /// Output logs to stderr (required for STDIO transport)
     pub stderr_output: bool,
 
-    /// OpenTelemetry OTLP endpoint (e.g., `<http://localhost:4317>`)
+    /// OpenTelemetry OTLP/HTTP traces endpoint, used verbatim (e.g.,
+    /// `http://localhost:4318/v1/traces`). The exporter does not append the
+    /// `/v1/traces` path to an endpoint set here, so include it.
     #[cfg(feature = "opentelemetry")]
     pub otlp_endpoint: Option<String>,
     /// OTLP protocol (grpc or http)
@@ -197,7 +199,8 @@ impl TelemetryConfigBuilder {
         self
     }
 
-    /// Set the OTLP endpoint for trace/metrics export
+    /// Set the OTLP/HTTP endpoint for trace export, including the signal path
+    /// (e.g., `http://localhost:4318/v1/traces`); it is used verbatim.
     #[cfg(feature = "opentelemetry")]
     #[cfg_attr(docsrs, doc(cfg(feature = "opentelemetry")))]
     #[must_use]

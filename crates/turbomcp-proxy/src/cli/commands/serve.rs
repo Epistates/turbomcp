@@ -15,13 +15,14 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{info, warn};
 use turbomcp_auth::jwt::{JwtValidator, StandardClaims};
+use turbomcp_auth::server::WwwAuthenticateBuilder;
 use turbomcp_server::{McpServerExt, ServerConfig};
 
 use crate::cli::args::BackendArgs;
 use crate::error::{ProxyError, ProxyResult};
-use crate::proxy::backends::http::{HttpBackend, HttpBackendConfig};
-use crate::proxy::frontends::stdio::{StdioFrontend, StdioFrontendConfig};
-use crate::proxy::{BackendConfig, BackendConnector, BackendTransport, ProxyService};
+use crate::proxy::{
+    BackendConfig, BackendConnector, BackendTransport, ProxyService, StdioFrontend,
+};
 
 /// Serve a proxy server to bridge MCP transports
 ///
@@ -82,7 +83,8 @@ pub struct ServeCommand {
     ///
     /// When provided, the HTTP/SSE frontend will require valid JWT tokens.
     /// Tokens must be provided in the Authorization header: `Bearer <token>`
-    /// Use this for symmetric algorithms (HS256, HS384, HS512).
+    /// Use this for symmetric algorithms (HS256, HS384, HS512). Requires at
+    /// least one --jwt-audience.
     #[arg(long, env = "TURBOMCP_JWT_SECRET", value_name = "SECRET")]
     pub jwt_secret: Option<String>,
 
@@ -105,6 +107,10 @@ pub struct ServeCommand {
     /// JWT audience claim validation (aud)
     ///
     /// Require token to have this audience. Can be specified multiple times.
+    /// Required with any JWT validation. When the first audience is this
+    /// proxy's `https://` URL and an --jwt-issuer is an `https://` URL, the
+    /// proxy publishes RFC 9728 protected-resource metadata for it and points
+    /// clients at it from 401 responses.
     /// Example: --jwt-audience "<https://api.example.com>"
     #[arg(long, value_name = "AUD")]
     pub jwt_audience: Vec<String>,
@@ -156,7 +162,66 @@ enum FrontendAuth {
         header: HeaderName,
         expected: SecretString,
     },
-    Jwt(Arc<FrontendJwtAuth>),
+    Jwt {
+        validator: Arc<FrontendJwtAuth>,
+        metadata: Option<Arc<ResourceMetadata>>,
+    },
+}
+
+/// RFC 9728 protected-resource metadata for the frontend.
+///
+/// MCP clients discover where to get a token from this document, which they
+/// find through the `resource_metadata` parameter of a 401's
+/// `WWW-Authenticate` challenge. A bare `Bearer` challenge left them nowhere
+/// to go.
+#[derive(Debug)]
+struct ResourceMetadata {
+    /// Where the document is served on this proxy
+    path: String,
+    /// The document's absolute URL, as advertised in challenges
+    url: String,
+    document: serde_json::Value,
+}
+
+impl ResourceMetadata {
+    /// Build the metadata when the configuration says enough to: the
+    /// resource is the first audience, which must be this proxy's own
+    /// `http(s)` URL, and the authorization servers are the `http(s)`
+    /// issuers.
+    fn from_config(audiences: &[String], issuers: &[String]) -> Option<Self> {
+        let is_web_url = |value: &str| {
+            url::Url::parse(value)
+                .ok()
+                .filter(|url| matches!(url.scheme(), "http" | "https"))
+        };
+
+        let resource = audiences.first()?;
+        let resource_url = is_web_url(resource)?;
+        let authorization_servers: Vec<&String> = issuers
+            .iter()
+            .filter(|issuer| is_web_url(issuer).is_some())
+            .collect();
+        if authorization_servers.is_empty() {
+            return None;
+        }
+
+        // RFC 9728 §3.1: the well-known segment goes between the host and
+        // the resource's path.
+        let path = format!(
+            "/.well-known/oauth-protected-resource{}",
+            resource_url.path().trim_end_matches('/')
+        );
+        let url = format!("{}{path}", resource_url.origin().ascii_serialization());
+        Some(Self {
+            path,
+            url,
+            document: serde_json::json!({
+                "resource": resource,
+                "authorization_servers": authorization_servers,
+                "bearer_methods_supported": ["header"],
+            }),
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -179,7 +244,7 @@ async fn frontend_auth_middleware(
         Ok(()) => next.run(request).await,
         Err(reason) => {
             warn!(reason = %reason, "Rejecting unauthenticated frontend request");
-            unauthorized_response(&auth)
+            unauthorized_response(&auth, reason)
         }
     }
 }
@@ -201,17 +266,15 @@ impl FrontendAuth {
                     Err("invalid API key")
                 }
             }
-            Self::Jwt(jwt) => {
-                let token = bearer_token(headers).ok_or("missing bearer token")?;
-                jwt.validate(token).await
+            Self::Jwt { validator, .. } => {
+                let token = bearer_token(headers).ok_or(MISSING_BEARER_TOKEN)?;
+                validator.validate(token).await
             }
         }
     }
-
-    const fn is_jwt(&self) -> bool {
-        matches!(self, Self::Jwt(_))
-    }
 }
+
+const MISSING_BEARER_TOKEN: &str = "missing bearer token";
 
 impl FrontendJwtAuth {
     async fn validate(&self, token: &str) -> Result<(), &'static str> {
@@ -257,20 +320,45 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
 }
 
-fn unauthorized_response(auth: &FrontendAuth) -> Response {
+fn unauthorized_response(auth: &FrontendAuth, reason: &str) -> Response {
     let mut response = (
         StatusCode::UNAUTHORIZED,
         [(header::CONTENT_TYPE, "application/json")],
         r#"{"error":"unauthorized"}"#,
     )
         .into_response();
-    if auth.is_jwt() {
-        response.headers_mut().insert(
-            header::WWW_AUTHENTICATE,
-            axum::http::HeaderValue::from_static("Bearer"),
-        );
+    if let FrontendAuth::Jwt { metadata, .. } = auth {
+        // RFC 6750 §3.1: a request that carried a token learns why it was
+        // refused; one that carried none gets the bare challenge.
+        let error = (reason != MISSING_BEARER_TOKEN).then(|| "invalid_token".to_string());
+        let challenge = match metadata {
+            Some(metadata) => {
+                let mut builder = WwwAuthenticateBuilder::new(metadata.url.clone());
+                if let Some(error) = error {
+                    builder = builder.with_error(error, None);
+                }
+                builder.build()
+            }
+            None => error.map_or_else(
+                || "Bearer".to_string(),
+                |error| format!("Bearer error=\"{error}\""),
+            ),
+        };
+        if let Ok(value) = axum::http::HeaderValue::from_str(&challenge) {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, value);
+        }
     }
     response
+}
+
+fn resource_metadata_router(metadata: Arc<ResourceMetadata>) -> axum::Router {
+    let path = metadata.path.clone();
+    axum::Router::new().route(
+        &path,
+        axum::routing::get(move || async move { axum::Json(metadata.document.clone()) }),
+    )
 }
 
 fn parse_jwt_algorithm(value: &str) -> ProxyResult<Algorithm> {
@@ -370,22 +458,30 @@ impl ServeCommand {
                     "--jwt-secret requires HS256, HS384, or HS512; got {algorithm:?}"
                 )));
             }
+            // Without an audience, any token signed with the shared secret
+            // passes, including one minted for a different service that
+            // happens to share it. MCP requires the server to check that a
+            // token was issued for it.
+            if self.jwt_audience.is_empty() {
+                return Err(ProxyError::configuration(
+                    "--jwt-secret requires at least one --jwt-audience naming this proxy",
+                ));
+            }
             info!("Enabling JWT authentication for frontend");
             info!("   Method: Symmetric ({:?})", algorithm);
-            if !self.jwt_audience.is_empty() {
-                info!("   Audience: {}", self.jwt_audience.join(", "));
-            }
+            info!("   Audience: {}", self.jwt_audience.join(", "));
             if !self.jwt_issuer.is_empty() {
                 info!("   Issuer: {}", self.jwt_issuer.join(", "));
             }
-            return Ok(Some(FrontendAuth::Jwt(Arc::new(
-                FrontendJwtAuth::Symmetric {
+            return Ok(Some(FrontendAuth::Jwt {
+                validator: Arc::new(FrontendJwtAuth::Symmetric {
                     algorithm,
                     secret: SecretString::from(secret.clone()),
                     audiences: self.jwt_audience.clone(),
                     issuers: self.jwt_issuer.clone(),
-                },
-            ))));
+                }),
+                metadata: self.resource_metadata(),
+            }));
         }
 
         if let Some(jwks_uri) = &self.jwt_jwks_uri {
@@ -412,9 +508,10 @@ impl ServeCommand {
                 jwks_uri.clone(),
             )
             .with_algorithms(vec![algorithm]);
-            return Ok(Some(FrontendAuth::Jwt(Arc::new(FrontendJwtAuth::Jwks(
-                validator,
-            )))));
+            return Ok(Some(FrontendAuth::Jwt {
+                validator: Arc::new(FrontendJwtAuth::Jwks(validator)),
+                metadata: self.resource_metadata(),
+            }));
         }
 
         let api_key = self.api_key.as_ref().ok_or_else(|| {
@@ -432,6 +529,12 @@ impl ServeCommand {
             header,
             expected: SecretString::from(api_key.clone()),
         }))
+    }
+
+    fn resource_metadata(&self) -> Option<Arc<ResourceMetadata>> {
+        let metadata = ResourceMetadata::from_config(&self.jwt_audience, &self.jwt_issuer)?;
+        info!("   Protected resource metadata: {}", metadata.url);
+        Some(Arc::new(metadata))
     }
 
     /// Execute with HTTP frontend
@@ -502,10 +605,19 @@ impl ServeCommand {
             crate::runtime::origin_guard,
         ));
         if let Some(auth) = frontend_auth {
+            let metadata = match &auth {
+                FrontendAuth::Jwt { metadata, .. } => metadata.clone(),
+                FrontendAuth::ApiKey { .. } => None,
+            };
             app = app.layer(middleware::from_fn_with_state(
                 auth,
                 frontend_auth_middleware,
             ));
+            // Merged after the auth layer: the metadata is how an
+            // unauthenticated client finds out how to authenticate.
+            if let Some(metadata) = metadata {
+                app = app.merge(resource_metadata_router(metadata));
+            }
         }
         if let Some(cors) = crate::runtime::build_cors_layer(&allowlist) {
             app = app.layer(cors);
@@ -541,48 +653,22 @@ impl ServeCommand {
         Ok(())
     }
 
-    /// Execute with STDIO frontend (Phase 3: HTTP → STDIO)
+    /// Execute with STDIO frontend
+    ///
+    /// Serves any backend (a Streamable HTTP server is the usual case) to a
+    /// local client on stdin/stdout, through the same `ProxyService` and
+    /// server stack as the HTTP frontend.
     async fn execute_stdio_frontend(&self) -> ProxyResult<()> {
-        use crate::cli::args::BackendType;
+        let backend = BackendConnector::new(self.create_backend_config()?).await?;
+        let spec = backend.introspect().await?;
+        let service = ProxyService::new(backend, spec);
 
-        // Only HTTP backend is supported for STDIO frontend
-        if self.backend.backend_type() != Some(BackendType::Http) {
-            return Err(ProxyError::configuration(
-                "STDIO frontend currently only supports HTTP backend".to_string(),
-            ));
-        }
+        let config = ServerConfig::builder()
+            .max_message_size(crate::runtime::MAX_REQUEST_SIZE)
+            .build();
 
-        let url = self
-            .backend
-            .http
-            .as_ref()
-            .ok_or_else(|| ProxyError::configuration("HTTP URL not specified".to_string()))?;
-
-        info!("Creating HTTP backend client for URL: {}", url);
-
-        // Create HTTP backend config
-        let http_config = HttpBackendConfig {
-            url: url.clone(),
-            auth_token: self.auth_token.clone().map(SecretString::from),
-            timeout_secs: Some(30),
-            client_name: self.client_name.clone(),
-            client_version: self.client_version.clone(),
-        };
-
-        // Create HTTP backend
-        let http_backend = HttpBackend::new(http_config).await?;
-        info!("HTTP backend connected successfully");
-
-        // Create STDIO frontend
-        let stdio_frontend = StdioFrontend::new(http_backend, StdioFrontendConfig::default());
-
-        info!("Starting STDIO frontend...");
-        info!("Backend: HTTP ({})", url);
         info!("Frontend: STDIO (stdin/stdout)");
-        info!("Reading JSON-RPC requests from stdin...");
-
-        // Run STDIO event loop
-        stdio_frontend.run().await?;
+        StdioFrontend::new(service, config).run().await?;
 
         info!("STDIO frontend shut down cleanly");
         Ok(())
@@ -616,7 +702,10 @@ impl ServeCommand {
                 BackendTransport::Http {
                     url: url.clone(),
                     endpoint_path: self.backend.endpoint_path.clone(),
-                    auth_token: None,
+                    // `--auth-token` used to reach only the stdio frontend's
+                    // separate HTTP client; the HTTP frontend connected to an
+                    // authenticated upstream with no credentials at all.
+                    auth_token: self.auth_token.clone().map(SecretString::from),
                 }
             }
             Some(BackendType::Tcp) => {
@@ -802,7 +891,7 @@ mod tests {
             FrontendAuth::ApiKey { header, .. } => {
                 assert_eq!(header, HeaderName::from_static("x-api-key"));
             }
-            FrontendAuth::Jwt(_) => panic!("expected API key auth"),
+            FrontendAuth::Jwt { .. } => panic!("expected API key auth"),
         }
     }
 
@@ -814,6 +903,86 @@ mod tests {
 
         let err = cmd.build_frontend_auth().unwrap_err();
         assert!(err.to_string().contains("--jwt-secret requires"));
+    }
+
+    /// AU-7: a shared-secret JWT without an audience check accepts any token
+    /// signed with that secret, whoever it was minted for.
+    #[test]
+    fn jwt_secret_requires_an_audience() {
+        let mut cmd = base_command();
+        cmd.jwt_secret = Some("secret".to_string());
+
+        let err = cmd.build_frontend_auth().unwrap_err();
+        assert!(err.to_string().contains("--jwt-audience"), "{err}");
+
+        cmd.jwt_audience = vec!["https://proxy.example.com/mcp".to_string()];
+        assert!(cmd.build_frontend_auth().unwrap().is_some());
+    }
+
+    /// PX-V12: a 401 names the protected-resource metadata (RFC 9728 §5.1)
+    /// when the proxy knows its resource URL and authorization server, and
+    /// the metadata is served, unauthenticated, where the challenge says.
+    #[tokio::test]
+    async fn unauthorized_responses_point_at_resource_metadata() {
+        use tower::ServiceExt;
+
+        let mut cmd = base_command();
+        cmd.jwt_secret = Some("secret".to_string());
+        cmd.jwt_audience = vec!["https://proxy.example.com/mcp".to_string()];
+        cmd.jwt_issuer = vec!["https://auth.example.com".to_string()];
+        let auth = cmd.build_frontend_auth().unwrap().unwrap();
+
+        let rejected = unauthorized_response(&auth, MISSING_BEARER_TOKEN);
+        assert_eq!(
+            rejected.headers()[header::WWW_AUTHENTICATE],
+            "Bearer resource_metadata=\"https://proxy.example.com/.well-known/oauth-protected-resource/mcp\""
+        );
+        let invalid = unauthorized_response(&auth, "invalid bearer token");
+        assert!(
+            invalid.headers()[header::WWW_AUTHENTICATE]
+                .to_str()
+                .unwrap()
+                .contains("error=\"invalid_token\"")
+        );
+
+        let FrontendAuth::Jwt {
+            metadata: Some(metadata),
+            ..
+        } = auth
+        else {
+            panic!("metadata expected");
+        };
+        let response = resource_metadata_router(metadata)
+            .oneshot(
+                axum::http::Request::get("/.well-known/oauth-protected-resource/mcp")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(document["resource"], "https://proxy.example.com/mcp");
+        assert_eq!(
+            document["authorization_servers"],
+            serde_json::json!(["https://auth.example.com"])
+        );
+    }
+
+    /// Without a URL-shaped resource and issuer there is nothing to publish,
+    /// so the challenge stays a plain `Bearer`.
+    #[test]
+    fn no_resource_metadata_without_urls() {
+        let mut cmd = base_command();
+        cmd.jwt_secret = Some("secret".to_string());
+        cmd.jwt_audience = vec!["my-proxy".to_string()];
+        let auth = cmd.build_frontend_auth().unwrap().unwrap();
+
+        let rejected = unauthorized_response(&auth, MISSING_BEARER_TOKEN);
+        assert_eq!(rejected.headers()[header::WWW_AUTHENTICATE], "Bearer");
     }
 
     #[test]

@@ -34,12 +34,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `tracing-json` | yes | JSON-formatted log output (enabled by default) |
-| `tracing-pretty` | no | Human-readable pretty log output |
-| `opentelemetry` | no | Full OpenTelemetry integration with OTLP export (gRPC or HTTP/protobuf) |
+| `opentelemetry` | no | OpenTelemetry tracing with OTLP export over HTTP/protobuf, plus W3C trace-context propagation in the tower middleware |
 | `prometheus` | no | Standalone Prometheus metrics via `metrics` + `metrics-exporter-prometheus` |
 | `tower` | no | Tower middleware for automatic request instrumentation |
 | `full` | no | Enables `opentelemetry`, `prometheus`, and `tower` |
+
+Log format is a runtime setting, not a feature: `.json_logs(true)` (the
+default) emits JSON, `.json_logs(false)` emits human-readable output.
 
 ## OpenTelemetry Integration
 
@@ -50,7 +51,8 @@ use turbomcp_telemetry::TelemetryConfig;
 
 let config = TelemetryConfig::builder()
     .service_name("my-server")
-    .otlp_endpoint("http://localhost:4317")
+    // OTLP over HTTP/protobuf; the URL is used as-is, so include /v1/traces
+    .otlp_endpoint("http://localhost:4318/v1/traces")
     .sampling_ratio(1.0)
     .build();
 
@@ -90,6 +92,11 @@ let service = ServiceBuilder::new()
     .service(my_mcp_handler);
 ```
 
+With the `opentelemetry` feature also enabled, the middleware continues the
+caller's trace: W3C `traceparent`/`tracestate` from a JSON-RPC request's
+`params._meta`, or from HTTP request headers, becomes the parent of the
+`mcp.request` span. Turn it off with `.propagate_context(false)`.
+
 ## MCP Span Attributes
 
 The telemetry system records MCP-specific attributes on spans:
@@ -98,13 +105,15 @@ The telemetry system records MCP-specific attributes on spans:
 |-----------|-------------|
 | `mcp.method` | MCP method name (e.g., "tools/call") |
 | `mcp.tool.name` | Tool name for tools/call requests |
-| `mcp.resource.uri` | Resource URI for resources/read |
+| `mcp.resource.uri` | Resource URI for resources/read. Off by default in the tower middleware, since URIs can carry credentials or personal data; opt in with `.redact_resource_uri(false)` |
 | `mcp.prompt.name` | Prompt name for prompts/get |
 | `mcp.request.id` | JSON-RPC request ID |
 | `mcp.session.id` | MCP session ID |
 | `mcp.transport` | Transport type (stdio, http, websocket, tcp, unix) |
 | `mcp.duration_ms` | Request duration in milliseconds |
 | `mcp.status` | Request status (success/error) |
+| `mcp.error.code` | JSON-RPC error code, when the response is an error |
+| `mcp.error.message` | JSON-RPC error message, truncated to `error_message_max_len` (512 bytes by default) |
 
 ## Pre-defined Metrics
 

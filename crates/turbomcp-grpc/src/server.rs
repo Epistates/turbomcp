@@ -14,10 +14,11 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status};
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn};
 use turbomcp_protocol::types::{
     CallToolResult, GetPromptResult, ResourceContent, ServerCapabilities,
 };
+use turbomcp_protocol::{PROTOCOL_VERSION, SUPPORTED_VERSIONS};
 use turbomcp_types::{Implementation, Prompt, Resource, ResourceTemplate, Tool};
 
 /// Notification sender type
@@ -29,7 +30,7 @@ pub struct McpGrpcServer {
     server_info: Implementation,
     /// Server capabilities
     capabilities: ServerCapabilities,
-    /// Protocol version
+    /// Protocol version answered when the client requests an unsupported one
     protocol_version: String,
     /// Server instructions
     instructions: Option<String>,
@@ -207,7 +208,7 @@ impl McpGrpcServerBuilder {
                 website_url: None,
             },
             capabilities: ServerCapabilities::default(),
-            protocol_version: "2025-11-25".to_string(),
+            protocol_version: PROTOCOL_VERSION.to_string(),
             instructions: None,
             tools: Vec::new(),
             resources: Vec::new(),
@@ -240,7 +241,12 @@ impl McpGrpcServerBuilder {
         self
     }
 
-    /// Set protocol version
+    /// Set the protocol version offered to a client that requests one this
+    /// server does not support
+    ///
+    /// A client requesting any version in [`SUPPORTED_VERSIONS`] gets that
+    /// version echoed back, as the MCP lifecycle requires; this value is only
+    /// the fallback. Defaults to [`PROTOCOL_VERSION`].
     #[must_use]
     pub fn protocol_version(mut self, version: impl Into<String>) -> Self {
         self.protocol_version = version.into();
@@ -335,8 +341,6 @@ impl McpGrpcServerBuilder {
 
     /// Validate that registered capabilities have matching handlers
     fn validate_capabilities(&self) {
-        use tracing::warn;
-
         // Check tools capability vs handler
         if let Some(ref tools_cap) = self.capabilities.tools {
             if !self.tools.is_empty() && self.tool_handler.is_none() {
@@ -394,6 +398,28 @@ impl Default for McpGrpcServerBuilder {
     }
 }
 
+/// Relay broadcast notifications to one subscriber until the server goes away.
+///
+/// A subscriber that falls more than the channel's capacity behind gets
+/// `Lagged` from the receiver. That is lost history, not a dead channel: the
+/// receiver has already skipped ahead and the next `recv` succeeds. Ending the
+/// stream there silently cut a slow client off from every later notification.
+fn notification_stream(
+    mut rx: broadcast::Receiver<proto::Notification>,
+) -> impl Stream<Item = Result<proto::Notification, Status>> + Send {
+    async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(notification) => yield Ok(notification),
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!(skipped, "Notification subscriber lagged; dropped notifications");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    }
+}
+
 #[tonic::async_trait]
 impl McpService for McpGrpcServer {
     #[instrument(skip(self, request), fields(method = "Initialize"))]
@@ -408,8 +434,19 @@ impl McpService for McpGrpcServer {
             "Initialize request"
         );
 
+        // Lifecycle: "If the server supports the requested protocol version,
+        // it MUST respond with the same version. Otherwise, the server MUST
+        // respond with another protocol version it supports." Answering with
+        // the configured version unconditionally told a 2025-06-18 client it
+        // had to speak 2025-11-25.
+        let protocol_version = if SUPPORTED_VERSIONS.contains(&req.protocol_version.as_str()) {
+            req.protocol_version
+        } else {
+            self.protocol_version.clone()
+        };
+
         let result = proto::InitializeResult {
-            protocol_version: self.protocol_version.clone(),
+            protocol_version,
             capabilities: Some(self.capabilities.clone().into()),
             server_info: Some(self.server_info.clone().into()),
             instructions: self.instructions.clone(),
@@ -607,15 +644,8 @@ impl McpService for McpGrpcServer {
         let _req = request.into_inner();
         info!("Client subscribing to notifications");
 
-        let mut rx = self.notification_tx.subscribe();
-
-        let stream = async_stream::stream! {
-            while let Ok(notification) = rx.recv().await {
-                yield Ok(notification);
-            }
-        };
-
-        Ok(Response::new(Box::pin(stream)))
+        let rx = self.notification_tx.subscribe();
+        Ok(Response::new(Box::pin(notification_stream(rx))))
     }
 
     #[instrument(skip(self, request), fields(method = "SetLoggingLevel"))]
@@ -670,6 +700,51 @@ impl McpService for McpGrpcServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_stream::StreamExt;
+
+    fn resource_updated(uri: &str) -> proto::Notification {
+        proto::Notification {
+            notification: Some(proto::notification::Notification::ResourceUpdated(
+                proto::ResourceUpdatedNotification {
+                    uri: uri.to_string(),
+                },
+            )),
+        }
+    }
+
+    fn uri_of(item: Option<Result<proto::Notification, Status>>) -> String {
+        match item
+            .expect("stream ended")
+            .expect("stream yielded an error")
+        {
+            proto::Notification {
+                notification: Some(proto::notification::Notification::ResourceUpdated(n)),
+            } => n.uri,
+            other => panic!("unexpected notification: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn notification_stream_survives_a_lagging_subscriber() {
+        let (tx, rx) = broadcast::channel(2);
+        let mut stream = std::pin::pin!(notification_stream(rx));
+
+        // Overrun the channel before the subscriber reads anything, so its
+        // first `recv` reports `Lagged` for the three it missed.
+        for i in 0..5 {
+            tx.send(resource_updated(&format!("n{i}"))).unwrap();
+        }
+
+        assert_eq!(uri_of(stream.next().await), "n3");
+        assert_eq!(uri_of(stream.next().await), "n4");
+
+        tx.send(resource_updated("after")).unwrap();
+        assert_eq!(uri_of(stream.next().await), "after");
+
+        // Only the server going away ends the subscription.
+        drop(tx);
+        assert!(stream.next().await.is_none());
+    }
 
     #[test]
     fn test_server_builder() {

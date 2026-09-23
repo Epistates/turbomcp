@@ -70,17 +70,14 @@ impl OutputFormatter for JsonFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::introspection::*;
+    use crate::introspection::ServerSpec;
+    use turbomcp_protocol::types::{Implementation, ServerCapabilities};
 
     #[test]
     fn test_json_formatter() {
         let formatter = JsonFormatter::new(false);
         let spec = ServerSpec {
-            server_info: ServerInfo {
-                name: "test".to_string(),
-                version: "1.0.0".to_string(),
-                title: None,
-            },
+            server_info: Implementation::new("test", "1.0.0"),
             protocol_version: "2025-11-25".to_string(),
             capabilities: ServerCapabilities::default(),
             tools: vec![],

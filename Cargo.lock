@@ -5607,6 +5607,7 @@ dependencies = [
  "hyper-util",
  "percent-encoding",
  "pin-project",
+ "rustls-native-certs",
  "socket2",
  "sync_wrapper",
  "tokio",
@@ -5976,6 +5977,7 @@ dependencies = [
  "turbomcp-client",
  "turbomcp-protocol",
  "turbomcp-transport",
+ "url",
  "which",
 ]
 
@@ -6141,6 +6143,7 @@ version = "3.5.0"
 dependencies = [
  "ipnetwork",
  "openapiv3",
+ "percent-encoding",
  "regex",
  "reqwest",
  "serde",
@@ -6218,11 +6221,9 @@ dependencies = [
  "handlebars",
  "ipnetwork",
  "jsonwebtoken",
- "parking_lot",
  "pretty_assertions",
  "proc-macro2",
  "proptest",
- "reqwest",
  "schemars 1.2.2",
  "secrecy",
  "serde",
@@ -6232,7 +6233,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-test",
- "tokio-tungstenite 0.30.0",
  "tower",
  "tower-http 0.7.1",
  "tower-service",
@@ -6330,19 +6330,14 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "pin-project-lite",
- "proptest",
- "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
- "tokio-test",
  "tower",
  "tower-service",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "turbomcp-protocol",
 ]
 
 [[package]]

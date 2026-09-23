@@ -1,6 +1,11 @@
 //! Build script for compiling Protocol Buffer definitions
 //!
 //! This script uses tonic-prost-build to generate Rust code from the MCP proto definitions.
+//!
+//! It needs the `protoc` compiler: on `PATH`, or named by the `PROTOC`
+//! environment variable. When it is missing, prost-build fails with an error
+//! that says so and how to install it for the host OS, so there is no wrapper
+//! here.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Tell Cargo to rerun this build script if the proto file changes

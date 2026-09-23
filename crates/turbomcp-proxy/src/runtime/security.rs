@@ -27,6 +27,9 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 const MCP_SESSION_ID_HEADER: HeaderName = HeaderName::from_static("mcp-session-id");
 /// Header used by browser SSE clients to resume an event stream.
 const LAST_EVENT_ID_HEADER: HeaderName = HeaderName::from_static("last-event-id");
+/// Negotiated protocol version, which Streamable HTTP clients send on every
+/// request after `initialize`.
+const MCP_PROTOCOL_VERSION_HEADER: HeaderName = HeaderName::from_static("mcp-protocol-version");
 
 /// Shared state for the origin-validation middleware.
 ///
@@ -117,18 +120,23 @@ pub fn build_cors_layer(allowlist: &OriginAllowlist) -> Option<CorsLayer> {
         return None;
     }
     let origins = allowlist.header_values().cloned().collect::<Vec<_>>();
+    // Streamable HTTP needs all of it from a browser: `MCP-Protocol-Version`
+    // rides on every post-initialize request, and `DELETE` is how a client
+    // ends its session. Leaving either out of the preflight answer made the
+    // browser refuse the request before it was sent.
     Some(
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
             .allow_headers([
                 header::CONTENT_TYPE,
                 header::AUTHORIZATION,
                 header::ACCEPT,
                 MCP_SESSION_ID_HEADER,
+                MCP_PROTOCOL_VERSION_HEADER,
                 LAST_EVENT_ID_HEADER,
             ])
-            .expose_headers([MCP_SESSION_ID_HEADER]),
+            .expose_headers([MCP_SESSION_ID_HEADER, MCP_PROTOCOL_VERSION_HEADER]),
     )
 }
 
@@ -164,5 +172,42 @@ mod tests {
     fn cors_layer_built_when_allowlist_non_empty() {
         let allowlist = OriginAllowlist::new(["https://app.example.com"]);
         assert!(build_cors_layer(&allowlist).is_some());
+    }
+
+    /// A browser preflights a post-initialize request because it carries
+    /// `MCP-Protocol-Version`, and preflights `DELETE` because it isn't a
+    /// simple method. Both have to be allowed or the browser never sends them.
+    #[tokio::test]
+    async fn preflight_allows_the_streamable_http_surface() {
+        use tower::ServiceExt;
+
+        let allowlist = OriginAllowlist::new(["https://app.example.com"]);
+        let app = axum::Router::new()
+            .route("/mcp", axum::routing::any(|| async { "ok" }))
+            .layer(build_cors_layer(&allowlist).expect("cors layer"));
+
+        let preflight = axum::http::Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/mcp")
+            .header(header::ORIGIN, "https://app.example.com")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "DELETE")
+            .header(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "mcp-protocol-version,mcp-session-id",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = app.oneshot(preflight).await.unwrap();
+
+        let allowed = |name| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+        };
+        assert!(allowed(header::ACCESS_CONTROL_ALLOW_METHODS).contains("delete"));
+        assert!(allowed(header::ACCESS_CONTROL_ALLOW_HEADERS).contains("mcp-protocol-version"));
     }
 }

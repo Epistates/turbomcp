@@ -87,28 +87,44 @@ impl AdapterCommand {
 
         // Start adapter based on protocol
         match &self.protocol {
-            AdapterProtocol::Rest { openapi_ui } => self.start_rest_adapter(*openapi_ui)?,
-            AdapterProtocol::GraphQL { playground } => self.start_graphql_adapter(*playground)?,
+            AdapterProtocol::Rest { openapi_ui } => {
+                self.run_rest_adapter(backend, spec, *openapi_ui).await
+            }
+            AdapterProtocol::GraphQL { playground } => self.start_graphql_adapter(*playground),
         }
-
-        Ok(())
     }
 
-    /// Start REST API adapter
-    fn start_rest_adapter(&self, enable_openapi_ui: bool) -> ProxyResult<()> {
-        tracing::info!("Starting REST API adapter on {}", self.bind);
+    /// Run the REST API adapter until it stops
+    #[cfg(feature = "rest")]
+    async fn run_rest_adapter(
+        &self,
+        backend: BackendConnector,
+        spec: crate::introspection::ServerSpec,
+        enable_openapi_ui: bool,
+    ) -> ProxyResult<()> {
+        use crate::adapters::rest::{RestAdapter, RestAdapterConfig};
 
-        if enable_openapi_ui {
-            tracing::info!("  OpenAPI UI: http://{}/docs", self.bind);
-        }
         tracing::info!("  API base: http://{}/api", self.bind);
+        RestAdapter::new(
+            RestAdapterConfig::new(self.bind.clone(), enable_openapi_ui),
+            backend,
+            spec,
+        )
+        .run()
+        .await
+    }
 
-        // NOTE: Phase 2 - REST adapter using Axum
-        // - Create REST endpoint handlers for tools and resources
-        // - Integrate OpenAPI schema generation
-        // - Add Swagger UI if enabled
+    /// The REST adapter is compiled only with the `rest` feature.
+    #[cfg(not(feature = "rest"))]
+    #[allow(clippy::unused_async)]
+    async fn run_rest_adapter(
+        &self,
+        _backend: BackendConnector,
+        _spec: crate::introspection::ServerSpec,
+        _enable_openapi_ui: bool,
+    ) -> ProxyResult<()> {
         Err(crate::error::ProxyError::configuration(
-            "REST adapter not yet fully implemented",
+            "this turbomcp-proxy was built without the `rest` feature; rebuild with --features rest",
         ))
     }
 

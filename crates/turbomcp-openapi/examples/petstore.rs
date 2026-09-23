@@ -154,6 +154,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
+    // GET operations with path parameters are templates the client fills in
+    println!("MCP Resource Templates (parameterized reads):");
+    println!("---------------------------------");
+    for template in handler.list_resource_templates() {
+        println!("  Template: {} ({})", template.name, template.uri_template);
+        if let Some(ref desc) = template.description {
+            println!("    Description: {}", desc);
+        }
+        println!();
+    }
+
     // Demonstrate custom route mapping
     println!("=== Custom Route Mapping Demo ===\n");
 

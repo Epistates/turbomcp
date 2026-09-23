@@ -1,8 +1,22 @@
 //! Transport factory and auto-detection
 
+// A build with no transport features compiles every client method down to an
+// empty match; the parameters and imports those methods use go unused.
+#![cfg_attr(
+    not(any(
+        feature = "stdio",
+        feature = "tcp",
+        all(feature = "unix", unix),
+        feature = "http",
+        feature = "websocket"
+    )),
+    allow(unused, unreachable_code)
+)]
+
 use crate::cli::{Connection, TransportKind};
 use crate::error::{CliError, CliResult};
 use std::collections::HashMap;
+#[cfg(any(feature = "stdio", feature = "http"))]
 use std::time::Duration;
 use turbomcp_client::Client;
 use turbomcp_protocol::types::Tool;
@@ -29,6 +43,14 @@ pub struct UnifiedClient {
     inner: ClientInner,
 }
 
+/// One variant per compiled-in transport.
+///
+/// With no transport features this enum is empty, and every `match` on it
+/// has no arms. The matches are on the place (`match self.inner`, binding
+/// `ref client`) rather than on `&self.inner`, because Rust accepts an
+/// arm-less match on an uninhabited place but not on a reference to one. A
+/// transport-less build still compiles, and `create_client` reports which
+/// feature to enable.
 enum ClientInner {
     #[cfg(feature = "stdio")]
     Stdio(Client<ChildProcessTransport>),
@@ -44,32 +66,32 @@ enum ClientInner {
 
 impl UnifiedClient {
     pub async fn initialize(&self) -> CliResult<turbomcp_client::InitializeResult> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.initialize().await?),
+            ClientInner::Stdio(ref client) => Ok(client.initialize().await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.initialize().await?),
+            ClientInner::Tcp(ref client) => Ok(client.initialize().await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.initialize().await?),
+            ClientInner::Unix(ref client) => Ok(client.initialize().await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.initialize().await?),
+            ClientInner::Http(ref client) => Ok(client.initialize().await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.initialize().await?),
+            ClientInner::WebSocket(ref client) => Ok(client.initialize().await?),
         }
     }
 
     pub async fn list_tools(&self) -> CliResult<Vec<Tool>> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.list_tools().await?),
+            ClientInner::Stdio(ref client) => Ok(client.list_tools().await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.list_tools().await?),
+            ClientInner::Tcp(ref client) => Ok(client.list_tools().await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.list_tools().await?),
+            ClientInner::Unix(ref client) => Ok(client.list_tools().await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.list_tools().await?),
+            ClientInner::Http(ref client) => Ok(client.list_tools().await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.list_tools().await?),
+            ClientInner::WebSocket(ref client) => Ok(client.list_tools().await?),
         }
     }
 
@@ -78,17 +100,17 @@ impl UnifiedClient {
         name: &str,
         arguments: Option<HashMap<String, serde_json::Value>>,
     ) -> CliResult<serde_json::Value> {
-        let result = match &self.inner {
+        let result: turbomcp_protocol::types::CallToolResult = match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => client.call_tool(name, arguments, None).await?,
+            ClientInner::Stdio(ref client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => client.call_tool(name, arguments, None).await?,
+            ClientInner::Tcp(ref client) => client.call_tool(name, arguments, None).await?,
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => client.call_tool(name, arguments, None).await?,
+            ClientInner::Unix(ref client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => client.call_tool(name, arguments, None).await?,
+            ClientInner::Http(ref client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => client.call_tool(name, arguments, None).await?,
+            ClientInner::WebSocket(ref client) => client.call_tool(name, arguments, None).await?,
         };
 
         // Serialize CallToolResult to JSON for CLI display
@@ -96,17 +118,17 @@ impl UnifiedClient {
     }
 
     pub async fn list_resources(&self) -> CliResult<Vec<turbomcp_protocol::types::Resource>> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.list_resources().await?),
+            ClientInner::Stdio(ref client) => Ok(client.list_resources().await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.list_resources().await?),
+            ClientInner::Tcp(ref client) => Ok(client.list_resources().await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.list_resources().await?),
+            ClientInner::Unix(ref client) => Ok(client.list_resources().await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.list_resources().await?),
+            ClientInner::Http(ref client) => Ok(client.list_resources().await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.list_resources().await?),
+            ClientInner::WebSocket(ref client) => Ok(client.list_resources().await?),
         }
     }
 
@@ -114,79 +136,79 @@ impl UnifiedClient {
         &self,
         uri: &str,
     ) -> CliResult<turbomcp_protocol::types::ReadResourceResult> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.read_resource(uri).await?),
+            ClientInner::Stdio(ref client) => Ok(client.read_resource(uri).await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.read_resource(uri).await?),
+            ClientInner::Tcp(ref client) => Ok(client.read_resource(uri).await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.read_resource(uri).await?),
+            ClientInner::Unix(ref client) => Ok(client.read_resource(uri).await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.read_resource(uri).await?),
+            ClientInner::Http(ref client) => Ok(client.read_resource(uri).await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.read_resource(uri).await?),
+            ClientInner::WebSocket(ref client) => Ok(client.read_resource(uri).await?),
         }
     }
 
     pub async fn list_resource_templates(
         &self,
     ) -> CliResult<Vec<turbomcp_protocol::types::ResourceTemplate>> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.list_resource_templates().await?),
+            ClientInner::Stdio(ref client) => Ok(client.list_resource_templates().await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.list_resource_templates().await?),
+            ClientInner::Tcp(ref client) => Ok(client.list_resource_templates().await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.list_resource_templates().await?),
+            ClientInner::Unix(ref client) => Ok(client.list_resource_templates().await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.list_resource_templates().await?),
+            ClientInner::Http(ref client) => Ok(client.list_resource_templates().await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.list_resource_templates().await?),
+            ClientInner::WebSocket(ref client) => Ok(client.list_resource_templates().await?),
         }
     }
 
     pub async fn subscribe(&self, uri: &str) -> CliResult<turbomcp_protocol::types::EmptyResult> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.subscribe(uri).await?),
+            ClientInner::Stdio(ref client) => Ok(client.subscribe(uri).await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.subscribe(uri).await?),
+            ClientInner::Tcp(ref client) => Ok(client.subscribe(uri).await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.subscribe(uri).await?),
+            ClientInner::Unix(ref client) => Ok(client.subscribe(uri).await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.subscribe(uri).await?),
+            ClientInner::Http(ref client) => Ok(client.subscribe(uri).await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.subscribe(uri).await?),
+            ClientInner::WebSocket(ref client) => Ok(client.subscribe(uri).await?),
         }
     }
 
     pub async fn unsubscribe(&self, uri: &str) -> CliResult<turbomcp_protocol::types::EmptyResult> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.unsubscribe(uri).await?),
+            ClientInner::Stdio(ref client) => Ok(client.unsubscribe(uri).await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.unsubscribe(uri).await?),
+            ClientInner::Tcp(ref client) => Ok(client.unsubscribe(uri).await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.unsubscribe(uri).await?),
+            ClientInner::Unix(ref client) => Ok(client.unsubscribe(uri).await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.unsubscribe(uri).await?),
+            ClientInner::Http(ref client) => Ok(client.unsubscribe(uri).await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.unsubscribe(uri).await?),
+            ClientInner::WebSocket(ref client) => Ok(client.unsubscribe(uri).await?),
         }
     }
 
     pub async fn list_prompts(&self) -> CliResult<Vec<turbomcp_protocol::types::Prompt>> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.list_prompts().await?),
+            ClientInner::Stdio(ref client) => Ok(client.list_prompts().await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.list_prompts().await?),
+            ClientInner::Tcp(ref client) => Ok(client.list_prompts().await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.list_prompts().await?),
+            ClientInner::Unix(ref client) => Ok(client.list_prompts().await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.list_prompts().await?),
+            ClientInner::Http(ref client) => Ok(client.list_prompts().await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.list_prompts().await?),
+            ClientInner::WebSocket(ref client) => Ok(client.list_prompts().await?),
         }
     }
 
@@ -195,17 +217,17 @@ impl UnifiedClient {
         name: &str,
         arguments: Option<HashMap<String, serde_json::Value>>,
     ) -> CliResult<turbomcp_protocol::types::GetPromptResult> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.get_prompt(name, arguments).await?),
+            ClientInner::Stdio(ref client) => Ok(client.get_prompt(name, arguments).await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.get_prompt(name, arguments).await?),
+            ClientInner::Tcp(ref client) => Ok(client.get_prompt(name, arguments).await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client.get_prompt(name, arguments).await?),
+            ClientInner::Unix(ref client) => Ok(client.get_prompt(name, arguments).await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.get_prompt(name, arguments).await?),
+            ClientInner::Http(ref client) => Ok(client.get_prompt(name, arguments).await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.get_prompt(name, arguments).await?),
+            ClientInner::WebSocket(ref client) => Ok(client.get_prompt(name, arguments).await?),
         }
     }
 
@@ -216,25 +238,25 @@ impl UnifiedClient {
         argument_value: &str,
         context: Option<turbomcp_protocol::types::CompletionContext>,
     ) -> CliResult<turbomcp_protocol::types::CompletionResponse> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client
+            ClientInner::Stdio(ref client) => Ok(client
                 .complete_prompt(prompt_name, argument_name, argument_value, context)
                 .await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client
+            ClientInner::Tcp(ref client) => Ok(client
                 .complete_prompt(prompt_name, argument_name, argument_value, context)
                 .await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client
+            ClientInner::Unix(ref client) => Ok(client
                 .complete_prompt(prompt_name, argument_name, argument_value, context)
                 .await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client
+            ClientInner::Http(ref client) => Ok(client
                 .complete_prompt(prompt_name, argument_name, argument_value, context)
                 .await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client
+            ClientInner::WebSocket(ref client) => Ok(client
                 .complete_prompt(prompt_name, argument_name, argument_value, context)
                 .await?),
         }
@@ -247,54 +269,54 @@ impl UnifiedClient {
         argument_value: &str,
         context: Option<turbomcp_protocol::types::CompletionContext>,
     ) -> CliResult<turbomcp_protocol::types::CompletionResponse> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client
+            ClientInner::Stdio(ref client) => Ok(client
                 .complete_resource(resource_uri, argument_name, argument_value, context)
                 .await?),
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client
+            ClientInner::Tcp(ref client) => Ok(client
                 .complete_resource(resource_uri, argument_name, argument_value, context)
                 .await?),
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => Ok(client
+            ClientInner::Unix(ref client) => Ok(client
                 .complete_resource(resource_uri, argument_name, argument_value, context)
                 .await?),
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client
+            ClientInner::Http(ref client) => Ok(client
                 .complete_resource(resource_uri, argument_name, argument_value, context)
                 .await?),
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client
+            ClientInner::WebSocket(ref client) => Ok(client
                 .complete_resource(resource_uri, argument_name, argument_value, context)
                 .await?),
         }
     }
 
     pub async fn ping(&self) -> CliResult<()> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => {
+            ClientInner::Stdio(ref client) => {
                 client.ping().await?;
                 Ok(())
             }
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => {
+            ClientInner::Tcp(ref client) => {
                 client.ping().await?;
                 Ok(())
             }
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => {
+            ClientInner::Unix(ref client) => {
                 client.ping().await?;
                 Ok(())
             }
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => {
+            ClientInner::Http(ref client) => {
                 client.ping().await?;
                 Ok(())
             }
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => {
+            ClientInner::WebSocket(ref client) => {
                 client.ping().await?;
                 Ok(())
             }
@@ -302,29 +324,29 @@ impl UnifiedClient {
     }
 
     pub async fn set_log_level(&self, level: turbomcp_protocol::types::LogLevel) -> CliResult<()> {
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => {
+            ClientInner::Stdio(ref client) => {
                 client.set_log_level(level).await?;
                 Ok(())
             }
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => {
+            ClientInner::Tcp(ref client) => {
                 client.set_log_level(level).await?;
                 Ok(())
             }
             #[cfg(all(feature = "unix", unix))]
-            ClientInner::Unix(client) => {
+            ClientInner::Unix(ref client) => {
                 client.set_log_level(level).await?;
                 Ok(())
             }
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => {
+            ClientInner::Http(ref client) => {
                 client.set_log_level(level).await?;
                 Ok(())
             }
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => {
+            ClientInner::WebSocket(ref client) => {
                 client.set_log_level(level).await?;
                 Ok(())
             }
@@ -525,20 +547,11 @@ async fn create_unix_transport(
 /// Create HTTP transport from connection
 #[cfg(feature = "http")]
 async fn create_http_transport(conn: &Connection) -> CliResult<StreamableHttpClientTransport> {
-    let url = &conn.url;
-
-    // Parse HTTP URL (remove http:// or https://)
-    let base_url = if let Some(stripped) = url.strip_prefix("https://") {
-        format!("https://{}", stripped)
-    } else if let Some(stripped) = url.strip_prefix("http://") {
-        format!("http://{}", stripped)
-    } else {
-        url.clone()
-    };
+    let (base_url, endpoint_path) = split_http_endpoint(&conn.url)?;
 
     let config = StreamableHttpClientConfig {
         base_url,
-        endpoint_path: "/mcp".to_string(),
+        endpoint_path,
         timeout: Duration::from_secs(conn.timeout),
         auth_token: conn.auth.clone(),
         ..Default::default()
@@ -549,6 +562,33 @@ async fn create_http_transport(conn: &Connection) -> CliResult<StreamableHttpCli
             "Failed to build HTTP transport: {e}"
         )))
     })
+}
+
+/// Split an MCP endpoint URL into the transport's base URL and endpoint path.
+///
+/// The transport requests `base_url + endpoint_path`. `--url` is the whole
+/// endpoint (`http://localhost:8080/mcp` is the default), and passing it as
+/// the base with a fixed `/mcp` path posted every request to `/mcp/mcp`. A URL
+/// with no path gets the conventional `/mcp`.
+#[cfg(feature = "http")]
+fn split_http_endpoint(url: &str) -> CliResult<(String, String)> {
+    let parsed = url::Url::parse(url)
+        .map_err(|e| CliError::InvalidArguments(format!("Invalid HTTP URL '{url}': {e}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(CliError::InvalidArguments(format!(
+            "Invalid HTTP URL '{url}': must start with http:// or https://"
+        )));
+    }
+
+    let mut endpoint_path = match parsed.path() {
+        "" | "/" => "/mcp".to_string(),
+        path => path.to_string(),
+    };
+    if let Some(query) = parsed.query() {
+        endpoint_path.push('?');
+        endpoint_path.push_str(query);
+    }
+    Ok((parsed.origin().ascii_serialization(), endpoint_path))
 }
 
 /// Create WebSocket transport from connection
@@ -628,5 +668,29 @@ mod tests {
             timeout: 30,
         };
         assert_eq!(determine_transport(&conn), TransportKind::Tcp);
+    }
+
+    /// PX-R7: `--url` names the whole endpoint, so its path is the endpoint
+    /// path. Appending a fixed `/mcp` to it posted to `/mcp/mcp`.
+    #[cfg(feature = "http")]
+    #[test]
+    fn http_url_is_the_endpoint_not_its_base() {
+        let split = |url| split_http_endpoint(url).unwrap();
+        assert_eq!(
+            split("http://localhost:8080/mcp"),
+            ("http://localhost:8080".to_string(), "/mcp".to_string())
+        );
+        assert_eq!(
+            split("https://api.example.com/v1/mcp?tenant=a"),
+            (
+                "https://api.example.com".to_string(),
+                "/v1/mcp?tenant=a".to_string()
+            )
+        );
+        assert_eq!(
+            split("http://localhost:8080"),
+            ("http://localhost:8080".to_string(), "/mcp".to_string())
+        );
+        assert!(split_http_endpoint("ftp://example.com/mcp").is_err());
     }
 }

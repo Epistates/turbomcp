@@ -1,403 +1,262 @@
-//! STDIO Frontend for exposing proxy via stdin/stdout
+//! STDIO frontend: serve a proxied MCP server over stdin/stdout.
 //!
-//! This frontend reads JSON-RPC requests from stdin and writes responses to stdout,
-//! making the proxy accessible to CLI tools and shell scripts.
+//! The frontend is `turbomcp-server`'s own stdio transport serving a
+//! [`ProxyService`]. It used to be a hand-written read-dispatch-write loop,
+//! and that loop was an MCP server in name only: `initialize` answered with a
+//! bare capabilities object (no `protocolVersion`, no `serverInfo`), `ping`
+//! was an unknown method, and every notification got a reply. Serving through
+//! the server stack makes the handshake, version negotiation, `ping`,
+//! notifications, cancellation, and framing identical to any other `TurboMCP`
+//! server, and leaves the proxy with only its own job: forwarding.
 
-use serde_json::Value;
-use std::io::Write;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tracing::{debug, error, trace, warn};
-use turbomcp_protocol::jsonrpc::{
-    JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload, ResponseId,
-};
+use tokio::io::BufReader;
+use tracing::debug;
+use turbomcp_server::transport::{LineReader, LineTransportRunner, LineWriter};
+use turbomcp_server::{McpHandler, RequestContext, ServerConfig};
 
 use crate::error::{ProxyError, ProxyResult};
-use crate::proxy::backends::HttpBackend;
-
-/// Maximum line size in bytes (10 MB) - matches `MAX_REQUEST_SIZE` from runtime module
-const MAX_LINE_SIZE: usize = 10 * 1024 * 1024;
-
-/// STDIO frontend configuration
-#[derive(Debug, Clone)]
-pub struct StdioFrontendConfig {
-    /// Whether to flush stdout after each message (default: true)
-    pub flush_after_message: bool,
-}
-
-impl Default for StdioFrontendConfig {
-    fn default() -> Self {
-        Self {
-            flush_after_message: true,
-        }
-    }
-}
+use crate::proxy::ProxyService;
 
 /// STDIO frontend for CLI-friendly access
 ///
-/// Reads JSON-RPC requests from stdin line by line and writes responses to stdout.
-/// Logs and diagnostics go to stderr to keep stdout clean for protocol messages.
+/// Reads newline-delimited JSON-RPC from stdin and writes responses to stdout.
+/// Logs and diagnostics must go to stderr to keep stdout clean for protocol
+/// messages.
 pub struct StdioFrontend {
-    /// HTTP backend to forward requests to
-    backend: HttpBackend,
+    /// The proxied server
+    service: ProxyService,
 
-    /// Configuration
-    config: StdioFrontendConfig,
+    /// Server configuration (protocol versions, message size limit)
+    config: ServerConfig,
 }
 
 impl StdioFrontend {
     /// Create a new STDIO frontend
     ///
     /// # Arguments
-    /// * `backend` - HTTP backend to forward requests to
-    /// * `config` - Frontend configuration
-    pub fn new(backend: HttpBackend, config: StdioFrontendConfig) -> Self {
-        debug!("Created STDIO frontend");
-        Self { backend, config }
+    /// * `service` - The proxy service to serve (backend already introspected)
+    /// * `config` - Server configuration for the frontend
+    #[must_use]
+    pub fn new(service: ProxyService, config: ServerConfig) -> Self {
+        Self { service, config }
     }
 
-    /// Run the STDIO frontend event loop
-    ///
-    /// Reads JSON-RPC requests from stdin, forwards to backend, writes responses to stdout.
-    /// Runs until EOF on stdin or error.
+    /// Serve on stdin/stdout until stdin reaches EOF.
     ///
     /// # Errors
     ///
-    /// Returns `ProxyError` if reading from stdin fails, parsing JSON-RPC requests fails, or forwarding to backend fails.
+    /// Returns `ProxyError` if the transport fails.
     pub async fn run(self) -> ProxyResult<()> {
-        debug!("Starting STDIO frontend event loop");
-
-        let stdin = tokio::io::stdin();
-        let mut reader = BufReader::new(stdin);
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-
-            // Read line from stdin
-            match reader.read_line(&mut line).await {
-                Ok(0) => {
-                    // EOF - clean shutdown
-                    debug!("STDIO frontend received EOF, shutting down");
-                    break;
-                }
-                Ok(_) => {
-                    // Check size limit before processing
-                    if line.len() > MAX_LINE_SIZE {
-                        error!(
-                            "Line exceeds maximum size of {} bytes (got {} bytes)",
-                            MAX_LINE_SIZE,
-                            line.len()
-                        );
-                        // Send error response for oversized request
-                        self.write_error_response(
-                            None,
-                            -32700,
-                            "Request too large",
-                            Some(format!(
-                                "Request size {} bytes exceeds maximum {} bytes",
-                                line.len(),
-                                MAX_LINE_SIZE
-                            )),
-                        )
-                        .await?;
-                        continue;
-                    }
-
-                    // Process the line
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-
-                    trace!("Received STDIO input: {}", trimmed);
-
-                    // Parse as JSON-RPC request
-                    match serde_json::from_str::<JsonRpcRequest>(trimmed) {
-                        Ok(request) => {
-                            // Handle the request
-                            if let Err(e) = self.handle_request(request).await {
-                                error!("Error handling request: {}", e);
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse JSON-RPC request: {}", e);
-                            // Send parse error response
-                            self.write_error_response(None, -32700, "Parse error", None)
-                                .await?;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Error reading from stdin: {}", e);
-                    return Err(ProxyError::backend(format!("STDIO read error: {e}")));
-                }
-            }
-        }
-
-        debug!("STDIO frontend event loop completed");
-        Ok(())
+        debug!("Starting STDIO frontend");
+        turbomcp_server::transport::stdio::run_with_config(&self.service, &self.config)
+            .await
+            .map_err(|e| ProxyError::backend(format!("STDIO frontend error: {e}")))
     }
 
-    /// Handle a JSON-RPC request
-    async fn handle_request(&self, request: JsonRpcRequest) -> ProxyResult<()> {
-        trace!(
-            "Handling request: method={}, id={:?}",
-            request.method, request.id
-        );
-
-        // Route the request to the appropriate backend method
-        let result = match request.method.as_str() {
-            "initialize" => {
-                // Initialize is already handled by backend, just return capabilities
-                Ok(self
-                    .backend
-                    .capabilities()
-                    .ok_or_else(|| turbomcp_protocol::Error::internal("Backend not initialized"))?)
-            }
-            // Forwarded verbatim rather than through the backend's argument-less
-            // `list_*` helpers, so the client's `cursor` reaches the upstream
-            // server. The result relay below already passes `nextCursor` back
-            // down untouched; without the cursor going the other way the proxy
-            // was handing out a cursor it could not honour, and a client
-            // walking pages got page one forever. `_meta`/`progressToken` ride
-            // along for the same reason.
-            //
-            // JSON-RPC 2.0 §4 wants params to be an object or array when
-            // present, so an absent or null params becomes `{}`.
-            "tools/list" | "resources/list" | "resources/templates/list" | "prompts/list" => {
-                let params = request
-                    .params
-                    .clone()
-                    .filter(|params| !params.is_null())
-                    .unwrap_or_else(|| serde_json::json!({}));
-                self.backend.send_request(&request.method, params).await
-            }
-            "tools/call" => {
-                let params = request.params.ok_or_else(|| {
-                    turbomcp_protocol::Error::invalid_params("Missing params for tools/call")
-                })?;
-                let name = params.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                    turbomcp_protocol::Error::invalid_params("Missing 'name' in tools/call")
-                })?;
-                let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-                self.backend.call_tool(name, arguments).await
-            }
-            "resources/read" => {
-                let params = request.params.ok_or_else(|| {
-                    turbomcp_protocol::Error::invalid_params("Missing params for resources/read")
-                })?;
-                let uri = params.get("uri").and_then(|v| v.as_str()).ok_or_else(|| {
-                    turbomcp_protocol::Error::invalid_params("Missing 'uri' in resources/read")
-                })?;
-                self.backend.read_resource(uri).await
-            }
-            "prompts/get" => {
-                let params = request.params.ok_or_else(|| {
-                    turbomcp_protocol::Error::invalid_params("Missing params for prompts/get")
-                })?;
-                let name = params.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                    turbomcp_protocol::Error::invalid_params("Missing 'name' in prompts/get")
-                })?;
-                let arguments = params.get("arguments").cloned();
-                self.backend.get_prompt(name, arguments).await
-            }
-            _ => {
-                // Unknown method
-                return self
-                    .write_error_response(
-                        Some(&request.id),
-                        -32601,
-                        "Method not found",
-                        Some(format!("Unknown method: {}", request.method)),
-                    )
-                    .await;
-            }
-        };
-
-        // Write response
-        match result {
-            Ok(result) => self.write_success_response(&request.id, result).await,
-            Err(e) => {
-                self.write_error_response(
-                    Some(&request.id),
-                    -32603,
-                    "Internal error",
-                    Some(e.to_string()),
-                )
-                .await
-            }
-        }
-    }
-
-    /// Write a success response to stdout
-    async fn write_success_response(
-        &self,
-        id: &turbomcp_protocol::MessageId,
-        result: Value,
-    ) -> ProxyResult<()> {
-        let response = JsonRpcResponse {
-            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            id: ResponseId(Some(id.clone())),
-            payload: JsonRpcResponsePayload::Success { result },
-        };
-
-        self.write_response(&response).await
-    }
-
-    /// Write an error response to stdout
-    async fn write_error_response(
-        &self,
-        id: Option<&turbomcp_protocol::MessageId>,
-        code: i32,
-        message: &str,
-        data: Option<String>,
-    ) -> ProxyResult<()> {
-        let error = turbomcp_protocol::jsonrpc::JsonRpcError {
-            code,
-            message: message.to_string(),
-            data: data.map(Value::String),
-        };
-
-        let response = JsonRpcResponse {
-            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            id: ResponseId(id.cloned()),
-            payload: JsonRpcResponsePayload::Error { error },
-        };
-
-        self.write_response(&response).await
-    }
-
-    /// Write a JSON-RPC response to stdout
-    // Genuinely synchronous, but the trait it implements is async. Clippy 1.98
-    // split a dedicated lint out for the trait-impl case, so both names are
-    // needed until the MSRV clears 1.98.
-    #[allow(clippy::unused_async)]
-    #[allow(unknown_lints, clippy::unused_async_trait_impl)]
-    async fn write_response(&self, response: &JsonRpcResponse) -> ProxyResult<()> {
-        let json = serde_json::to_string(response)?;
-
-        trace!("Writing response to stdout: {}", json);
-
-        // Write to stdout (blocking, but fast enough for line-based output)
-        let mut stdout = std::io::stdout();
-        writeln!(stdout, "{json}")
-            .map_err(|e| ProxyError::backend(format!("Failed to write to stdout: {e}")))?;
-
-        if self.config.flush_after_message {
-            stdout
-                .flush()
-                .map_err(|e| ProxyError::backend(format!("Failed to flush stdout: {e}")))?;
-        }
-
-        Ok(())
+    /// Serve on an arbitrary line-oriented reader/writer pair.
+    ///
+    /// This is [`Self::run`] with the pipes supplied by the caller: useful for
+    /// embedding the proxy behind something other than the process's own
+    /// stdio, and for testing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the transport fails.
+    pub async fn serve<R, W>(self, reader: R, writer: W) -> ProxyResult<()>
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+        BufReader<R>: LineReader,
+        W: LineWriter,
+    {
+        self.service
+            .on_initialize()
+            .await
+            .map_err(ProxyError::from)?;
+        let runner = LineTransportRunner::with_config(self.service.clone(), self.config);
+        let result = runner
+            .run(BufReader::new(reader), writer, RequestContext::stdio)
+            .await
+            .map_err(|e| ProxyError::backend(format!("STDIO frontend error: {e}")));
+        self.service.on_shutdown().await.map_err(ProxyError::from)?;
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
     use super::*;
+    use crate::proxy::BackendConnector;
 
-    // Note: These are basic unit tests. Integration tests are in tests/ directory.
-
-    #[test]
-    fn test_stdio_frontend_config_default() {
-        let config = StdioFrontendConfig::default();
-        assert!(config.flush_after_message, "Should flush by default");
+    /// A client speaking to a [`StdioFrontend`] over an in-memory pipe.
+    struct Wire {
+        to_proxy: tokio::io::DuplexStream,
+        from_proxy: tokio::io::Lines<BufReader<tokio::io::DuplexStream>>,
     }
 
-    #[test]
-    fn test_stdio_frontend_creation() {
-        // This test just verifies that the structure compiles and can be created
-        // Actual functionality requires integration tests with a running HTTP server
-    }
+    impl Wire {
+        async fn over(backend: BackendConnector) -> Self {
+            let spec = backend.introspect().await.expect("introspection");
+            let frontend = StdioFrontend::new(
+                ProxyService::new(backend, spec),
+                ServerConfig::builder().build(),
+            );
 
-    /// MCP §Pagination: a `cursor` the client sends means "return results
-    /// starting after this". The stdio frontend used to route `tools/list`
-    /// through an argument-less backend helper, so the cursor never left the
-    /// proxy — while the upstream's `nextCursor` was relayed down verbatim.
-    /// A client walking pages therefore got page one, forever: rmcp's
-    /// `list_all_tools` never terminates against it, and this SDK's own client
-    /// returns a thousand duplicate copies of page one.
-    ///
-    /// Asserted upstream rather than downstream because that is precisely where
-    /// the cursor went missing.
-    #[tokio::test]
-    async fn a_list_cursor_reaches_the_upstream_server() {
-        use crate::proxy::backends::http::HttpBackendConfig;
-        use wiremock::matchers::{body_partial_json, method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+            let (to_proxy, proxy_in) = tokio::io::duplex(64 * 1024);
+            let (proxy_out, from_proxy) = tokio::io::duplex(64 * 1024);
+            tokio::spawn(frontend.serve(proxy_in, proxy_out));
 
-        let upstream = MockServer::start().await;
+            Self {
+                to_proxy,
+                from_proxy: BufReader::new(from_proxy).lines(),
+            }
+        }
 
-        Mock::given(method("POST"))
-            .and(path("/mcp"))
-            .and(body_partial_json(
-                serde_json::json!({"method": "initialize"}),
-            ))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        async fn send(&mut self, message: Value) {
+            let mut line = serde_json::to_vec(&message).expect("serializes");
+            line.push(b'\n');
+            self.to_proxy.write_all(&line).await.expect("proxy reads");
+        }
+
+        async fn recv(&mut self) -> Value {
+            let line = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                self.from_proxy.next_line(),
+            )
+            .await
+            .expect("the proxy answers")
+            .expect("readable")
+            .expect("a line");
+            serde_json::from_str(&line).expect("the proxy writes JSON")
+        }
+
+        async fn initialize(&mut self, version: &str) -> Value {
+            self.send(json!({
                 "jsonrpc": "2.0",
-                "id": 1,
-                "result": {
-                    "protocolVersion": turbomcp_protocol::PROTOCOL_VERSION,
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": version,
                     "capabilities": {},
-                    "serverInfo": { "name": "paged-upstream", "version": "1.0.0" }
+                    "clientInfo": { "name": "wire-test", "version": "1.0.0" }
                 }
-            })))
-            .mount(&upstream)
+            }))
             .await;
+            let response = self.recv().await;
+            self.send(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
+                .await;
+            response
+        }
+    }
 
-        // Only matches a tools/list that actually carries the cursor. An
-        // unmatched request 404s, so the assertion is the mock itself.
-        Mock::given(method("POST"))
-            .and(path("/mcp"))
-            .and(body_partial_json(serde_json::json!({
-                "method": "tools/list",
-                "params": { "cursor": "page-2" }
-            })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "result": { "tools": [{ "name": "second_page", "description": "" }] }
-            })))
-            .expect(1)
-            .mount(&upstream)
-            .await;
+    fn catalogue_backend() -> BackendConnector {
+        BackendConnector::from_static_data_for_test(
+            vec![turbomcp_protocol::types::Tool {
+                name: "echo".to_string(),
+                ..Default::default()
+            }],
+            vec![],
+            vec![],
+            vec![],
+        )
+    }
 
-        let backend = HttpBackend::new(HttpBackendConfig {
-            url: format!("{}/mcp", upstream.uri()),
-            auth_token: None,
-            timeout_secs: Some(5),
-            client_name: "test-proxy".to_string(),
-            client_version: "1.0.0".to_string(),
-        })
-        .await
-        .expect("backend connects");
+    /// MCP §Lifecycle: the `initialize` result carries `protocolVersion`,
+    /// `capabilities`, and `serverInfo`, and the version is the client's own
+    /// when the server supports it. The old loop answered with the upstream's
+    /// bare capabilities object, which no client could complete a handshake
+    /// against.
+    #[tokio::test]
+    async fn initialize_is_a_real_handshake() {
+        for version in ["2025-11-25", "2025-06-18"] {
+            let mut wire = Wire::over(catalogue_backend()).await;
+            let response = wire.initialize(version).await;
 
-        let frontend = StdioFrontend::new(backend, StdioFrontendConfig::default());
-        let request: JsonRpcRequest = serde_json::from_value(serde_json::json!({
+            assert_eq!(response["id"], 0);
+            let result = &response["result"];
+            assert_eq!(result["protocolVersion"], version);
+            assert_eq!(result["serverInfo"]["name"], "test-backend-proxy");
+            assert_eq!(result["capabilities"]["tools"], json!({}));
+        }
+    }
+
+    /// `ping` must be answered with an empty result, and a notification must
+    /// never be answered at all. The old loop parsed every line as a request,
+    /// so `notifications/initialized` drew a `-32700` with `id: null`, and
+    /// `ping` came back "method not found".
+    #[tokio::test]
+    async fn ping_is_answered_and_notifications_are_not() {
+        let mut wire = Wire::over(catalogue_backend()).await;
+        wire.initialize("2025-11-25").await;
+
+        // `initialize` above already sent `notifications/initialized`; send
+        // one more notification, then a ping. If either notification had
+        // been answered, that answer would be the next line instead.
+        wire.send(json!({
             "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": { "cursor": "page-2" }
+            "method": "notifications/cancelled",
+            "params": { "requestId": 99 }
         }))
-        .expect("request parses");
+        .await;
+        wire.send(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
+            .await;
 
-        frontend
-            .handle_request(request)
-            .await
-            .expect("the request is served");
-
-        // `.expect(1)` is verified on drop; make the failure explicit here too.
-        let cursored = upstream
-            .received_requests()
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
-            .any(|body| body["params"]["cursor"] == "page-2");
-        assert!(
-            cursored,
-            "the client's cursor must reach the upstream server"
+        assert_eq!(
+            wire.recv().await,
+            json!({ "jsonrpc": "2.0", "id": 1, "result": {} })
         );
+    }
+
+    /// An upstream JSON-RPC error has to reach the client as the upstream
+    /// sent it. `-32042` is the sharpest case: its `data.elicitations` holds
+    /// the URLs the user must visit, and without them the error is a dead end.
+    /// The old loop flattened every upstream error to `-32603` with the text
+    /// in `data`.
+    #[tokio::test]
+    async fn upstream_errors_are_forwarded_with_their_data() {
+        let elicitations = json!({
+            "elicitations": [{
+                "mode": "url",
+                "elicitationId": "e-1",
+                "url": "https://example.com/connect",
+                "message": "Connect your account"
+            }]
+        });
+        let upstream = turbomcp_protocol::Error::from_rpc_code(-32042, "Authorization required")
+            .with_data(elicitations.clone());
+        let mut wire = Wire::over(BackendConnector::failing_tool_calls_for_test(
+            "connect", upstream,
+        ))
+        .await;
+        wire.initialize("2025-11-25").await;
+
+        wire.send(json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": { "name": "connect", "arguments": {} }
+        }))
+        .await;
+        let response = wire.recv().await;
+
+        assert_eq!(response["id"], 7);
+        assert_eq!(response["error"]["code"], -32042);
+        assert_eq!(response["error"]["data"], elicitations);
+    }
+
+    /// JSON-RPC 2.0 §5.1: an unknown method is `-32601`. The old loop
+    /// reported it correctly but every other local failure as `-32603`; the
+    /// server router is now the only place that decides.
+    #[tokio::test]
+    async fn an_unknown_method_is_method_not_found() {
+        let mut wire = Wire::over(catalogue_backend()).await;
+        wire.initialize("2025-11-25").await;
+
+        wire.send(json!({ "jsonrpc": "2.0", "id": 3, "method": "no/such/method" }))
+            .await;
+        let response = wire.recv().await;
+        assert_eq!(response["error"]["code"], -32601);
     }
 }

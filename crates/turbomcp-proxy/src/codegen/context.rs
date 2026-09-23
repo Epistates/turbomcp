@@ -29,6 +29,9 @@ pub struct MainContext {
 
     /// Whether STDIO backend is enabled
     pub has_stdio: bool,
+
+    /// Whether WebSocket frontend is enabled
+    pub has_websocket: bool,
 }
 
 /// Proxy implementation context for proxy.rs template
@@ -56,8 +59,12 @@ pub struct ProxyContext {
 /// Tool definition for code generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
-    /// Tool name
+    /// The upstream's tool name, escaped for a Rust string literal. This is
+    /// what the generated proxy lists and sends upstream.
     pub name: String,
+
+    /// Rust identifier for the tool's handler (`snake_case`, unique)
+    pub ident: String,
 
     /// Tool description
     pub description: Option<String>,
@@ -88,8 +95,11 @@ pub struct ResourceDefinition {
 /// Prompt definition for code generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptDefinition {
-    /// Prompt name
+    /// The upstream's prompt name, escaped for a Rust string literal
     pub name: String,
+
+    /// Rust identifier for the prompt's handler (`snake_case`, unique)
+    pub ident: String,
 
     /// Prompt description
     pub description: Option<String>,
@@ -139,6 +149,10 @@ pub struct FieldDefinition {
     /// Field name (`snake_case`)
     pub name: String,
 
+    /// The property's name on the wire, when it differs from `name`
+    /// (escaped for a Rust string literal)
+    pub rename: Option<String>,
+
     /// Rust type
     pub rust_type: String,
 
@@ -152,11 +166,11 @@ pub struct FieldDefinition {
 /// Tool enum variant
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolEnumVariant {
-    /// Tool name (original)
+    /// The upstream's tool name, escaped for a Rust string literal
     pub name: String,
 
-    /// Parameters
-    pub params: Vec<ParamDefinition>,
+    /// Variant identifier (`PascalCase`, unique)
+    pub ident: String,
 }
 
 /// Parameter in an enum variant
@@ -185,8 +199,11 @@ pub struct ResourceEnumVariant {
 /// Prompt enum variant
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptEnumVariant {
-    /// Prompt name
+    /// The upstream's prompt name, escaped for a Rust string literal
     pub name: String,
+
+    /// Variant identifier (`PascalCase`, unique)
+    pub ident: String,
 }
 
 /// Cargo.toml context
@@ -241,6 +258,7 @@ mod tests {
             backend_type: "STDIO".to_string(),
             has_http: true,
             has_stdio: true,
+            has_websocket: false,
         };
 
         let json = serde_json::to_string(&context);
@@ -251,6 +269,7 @@ mod tests {
     fn test_tool_definition() {
         let tool = ToolDefinition {
             name: "search".to_string(),
+            ident: "search".to_string(),
             description: Some("Search for items".to_string()),
             input_type: Some("SearchInput".to_string()),
             output_type: Some("SearchOutput".to_string()),
@@ -269,12 +288,14 @@ mod tests {
             fields: vec![
                 FieldDefinition {
                     name: "query".to_string(),
+                    rename: None,
                     rust_type: "String".to_string(),
                     optional: false,
                     description: Some("Search query".to_string()),
                 },
                 FieldDefinition {
                     name: "limit".to_string(),
+                    rename: None,
                     rust_type: "i64".to_string(),
                     optional: true,
                     description: Some("Result limit".to_string()),

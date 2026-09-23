@@ -1,108 +1,87 @@
 //! Generated types for {{server_name}}
 //!
-//! This module contains all type definitions extracted from the MCP server
-//! specification, including tool inputs, outputs, and enums.
+//! Typed shapes of the upstream's tool arguments, for callers that want to
+//! build them with the compiler's help. Field names are Rust's; each
+//! serializes under the upstream's own name.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 {{#each type_definitions}}
+{{#if this.description}}
 /// {{this.description}}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-{{#if this.rename}}
-#[serde(rename = "{{this.rename}}")]
 {{/if}}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct {{this.name}} {
-    {{#each this.fields}}
-    {{#if this.description}}
+{{#each this.fields}}
+{{#if this.description}}
     /// {{this.description}}
-    {{/if}}
-    {{#if this.optional}}
-    #[serde(skip_serializing_if = "Option::is_none")]
+{{/if}}
+{{#if this.rename}}
+    #[serde(rename = "{{this.rename}}")]
+{{/if}}
+{{#if this.optional}}
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub {{this.name}}: Option<{{this.rust_type}}>,
-    {{else}}
+{{else}}
     pub {{this.name}}: {{this.rust_type}},
-    {{/if}}
-    {{/each}}
+{{/if}}
+{{/each}}
 }
 
 {{/each}}
-
-/// Tool enum for type-safe tool dispatch
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "name")]
+/// The upstream's tools, by the name the upstream uses
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
-    {{#each tool_enums}}
-    #[serde(rename = "{{this.name}}")]
-    {{pascal_case this.name}} {
-        {{#each this.params}}
-        {{#if this.optional}}
-        #[serde(skip_serializing_if = "Option::is_none")]
-        {{this.name}}: Option<{{this.rust_type}}>,
-        {{else}}
-        {{this.name}}: {{this.rust_type}},
-        {{/if}}
-        {{/each}}
-    },
-    {{/each}}
+{{#each tool_enums}}
+    {{this.ident}},
+{{/each}}
 }
 
 impl Tool {
-    /// Get the tool name
-    pub fn name(&self) -> &str {
-        match self {
-            {{#each tool_enums}}
-            Tool::{{pascal_case this.name}} { .. } => "{{this.name}}",
-            {{/each}}
-            #[allow(unreachable_patterns)]
-            _ => unreachable!("All Tool variants are handled"),
+    /// The upstream's name for this tool
+    pub fn name(&self) -> &'static str {
+        match *self {
+{{#each tool_enums}}
+            Tool::{{this.ident}} => "{{this.name}}",
+{{/each}}
         }
-    }
-
-    /// Convert tool to JSON arguments
-    pub fn to_arguments(&self) -> Value {
-        serde_json::to_value(self).unwrap_or(Value::Null)
     }
 }
 
-/// Resource enum for type-safe resource access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The upstream's static resources
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resource {
-    {{#each resource_enums}}
-    {{pascal_case this.name}},
-    {{/each}}
+{{#each resource_enums}}
+    {{this.name}},
+{{/each}}
 }
 
 impl Resource {
-    /// Get the resource URI
-    pub fn uri(&self) -> &str {
-        match self {
-            {{#each resource_enums}}
-            Resource::{{pascal_case this.name}} => "{{this.uri}}",
-            {{/each}}
-            #[allow(unreachable_patterns)]
-            _ => unreachable!("All Resource variants are handled"),
+    /// The resource's URI
+    pub fn uri(&self) -> &'static str {
+        match *self {
+{{#each resource_enums}}
+            Resource::{{this.name}} => "{{this.uri}}",
+{{/each}}
         }
     }
 }
 
-/// Prompt enum for type-safe prompt access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The upstream's prompts, by the name the upstream uses
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prompt {
-    {{#each prompt_enums}}
-    {{pascal_case this.name}},
-    {{/each}}
+{{#each prompt_enums}}
+    {{this.ident}},
+{{/each}}
 }
 
 impl Prompt {
-    /// Get the prompt name
-    pub fn name(&self) -> &str {
-        match self {
-            {{#each prompt_enums}}
-            Prompt::{{pascal_case this.name}} => "{{this.name}}",
-            {{/each}}
-            #[allow(unreachable_patterns)]
-            _ => unreachable!("All Prompt variants are handled"),
+    /// The upstream's name for this prompt
+    pub fn name(&self) -> &'static str {
+        match *self {
+{{#each prompt_enums}}
+            Prompt::{{this.ident}} => "{{this.name}}",
+{{/each}}
         }
     }
 }

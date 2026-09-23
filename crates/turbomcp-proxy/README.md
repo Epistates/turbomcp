@@ -13,7 +13,7 @@
 
 ```bash
 # Inspect any MCP server
-turbomcp-proxy inspect stdio --cmd "python my-server.py"
+turbomcp-proxy inspect --backend stdio --cmd "python my-server.py"
 
 # Expose STDIO server over HTTP/SSE (development)
 turbomcp-proxy serve \
@@ -35,7 +35,8 @@ turbomcp-proxy serve \
   --backend stdio --cmd "python my-server.py" \
   --frontend http --bind 0.0.0.0:3000 \
   --jwt-secret "your-secret-key" \
-  --jwt-algorithm HS256
+  --jwt-algorithm HS256 \
+  --jwt-audience "https://proxy.example.com/mcp"
 
 # Expose with JWKS (production - asymmetric, OAuth providers)
 turbomcp-proxy serve \
@@ -93,14 +94,29 @@ Works with **any MCP implementation**:
 - **Codegen Mode**: Production binaries with 0ms overhead
 - **Schema Mode**: Export OpenAPI, GraphQL, Protobuf
 
-### Universal Transport Support
+### Transport Support
 
-- **STDIO ↔ HTTP/SSE** (bidirectional)
-- **HTTP ↔ STDIO** (bidirectional)
-- **TCP** (high-performance network)
-- **Unix Domain Sockets** (IPC, high-security)
-- **WebSocket** (browser-friendly, real-time)
-- **25+ Transport Combinations** (5 backends × 5 frontends)
+- **Backends:** STDIO (subprocess), Streamable HTTP, TCP, Unix domain sockets, WebSocket
+- **Frontends:** Streamable HTTP and STDIO (`serve`), plus WebSocket through `RuntimeProxy`
+
+Every frontend serves the same `ProxyService` through `turbomcp-server`'s own
+transports, so the handshake, protocol-version negotiation (2025-06-18 and
+2025-11-25), `ping`, and notifications behave exactly as they do for any
+TurboMCP server.
+
+### What the proxy relays
+
+The proxy forwards `tools/call`, `resources/read`, and `prompts/get` to the
+upstream and serves the upstream's catalogue (tools, resources, resource
+templates, prompts, with icons, `_meta`, and annotations intact) from what it
+discovered at startup. Upstream errors come back unchanged, `data` included.
+
+It does **not** relay traffic the upstream originates: sampling and
+elicitation requests, log messages, progress, and `list_changed` /
+`resources/updated` notifications. It therefore advertises only the `tools`,
+`resources`, and `prompts` capabilities, with no `listChanged` or `subscribe`,
+and no `logging` or `completions`. A catalogue change upstream takes a proxy
+restart to show.
 
 ### Authentication & Security
 
@@ -111,11 +127,14 @@ Works with **any MCP implementation**:
   - Automatic key caching with TTL
   - Claims validation (exp, nbf, iat, iss, aud)
   - Clock skew tolerance (60s default)
+  - An audience is required: `--jwt-secret` refuses to start without `--jwt-audience`
+  - RFC 9728 protected-resource metadata: when the first audience is the
+    proxy's own `https://` URL and an issuer is an `https://` URL, the proxy
+    serves the metadata and its 401s point at it (`resource_metadata`)
 - **API Key Authentication** (configurable header)
-- **OAuth 2.1 Support** (via turbomcp-auth integration)
-- **DPoP Token Binding** (RFC 9449, optional)
 - **Command allowlist** (prevents shell injection)
-- **SSRF protection** (blocks private IPs, metadata endpoints)
+- **SSRF protection** (blocks private, CGNAT, and metadata addresses in every
+  spelling, including IPv4-mapped and NAT64 IPv6)
 - **Path traversal protection** (canonical path resolution)
 - **Auth token security** (automatic secret zeroization)
 - **Request limiting** (DoS protection, 10 MB default)
@@ -142,7 +161,8 @@ turbomcp-proxy serve \
 turbomcp-proxy serve \
   --backend stdio --cmd "./my-mcp-server" \
   --frontend http --bind 0.0.0.0:3000 \
-  --jwt-secret "your-secret-key"
+  --jwt-secret "your-secret-key" \
+  --jwt-audience "https://proxy.example.com/mcp"
 
 # Expose with API key authentication (production)
 turbomcp-proxy serve \
@@ -176,22 +196,25 @@ turbomcp-proxy serve \
   --frontend stdio
 ```
 
-### 3. Generate REST API from MCP Server
+### 3. Serve an MCP Server as a REST API
 
-**Problem:** Want REST API with Swagger docs
+**Problem:** Want plain HTTP/JSON endpoints for an MCP server (requires the
+`rest` feature: `cargo install turbomcp-proxy --features rest`)
 
 ```bash
-# Generate and serve REST API
 turbomcp-proxy adapter rest \
   --backend stdio --cmd "python my-server.py" \
-  --bind 0.0.0.0:3000 \
-  --openapi-ui
+  --bind 127.0.0.1:3001
 
-# Endpoints automatically created:
-#   POST /tools/{tool_name}    → tools/call
-#   GET  /resources/{uri}       → resources/read
-#   GET  /openapi.json          → Auto-generated spec
-#   GET  /docs                  → Swagger UI
+# Endpoints:
+#   GET  /api/tools              → the tool catalogue
+#   POST /api/tools/{name}       → tools/call, JSON body = arguments
+#   GET  /api/resources          → the resource catalogue
+#   GET  /api/resources/{uri}    → resources/read (the rest of the path is the URI)
+#   GET  /api/prompts            → the prompt catalogue
+#   POST /api/prompts/{name}     → prompts/get
+#   GET  /openapi.json           → a minimal OpenAPI description
+#   GET  /health
 ```
 
 ### 4. Code Generation for Production
@@ -206,9 +229,18 @@ turbomcp-proxy generate \
   --output ./production-proxy \
   --build --release
 
-# Deploy optimized binary (0ms overhead)
-./production-proxy/target/release/proxy
+# Run it: the upstream command comes from the environment
+BACKEND_CMD=python BACKEND_ARGS=my-server.py \
+  ./production-proxy/target/release/<package-name>
 ```
+
+The generated crate is an ordinary TurboMCP server: `ProxyRouter` implements
+`McpHandler` and is served by `turbomcp-server`'s stdio, Streamable HTTP, or
+WebSocket transport (`--frontend`). It routes the tools and prompts it was
+generated for by their upstream names, fetches the upstream's catalogue at
+startup, and logs to stderr. `BIND_ADDR` sets the listen address for the HTTP
+and WebSocket frontends; `BACKEND_WORKING_DIR` sets the upstream's working
+directory. Generation currently supports STDIO backends only.
 
 ---
 
@@ -324,7 +356,7 @@ Backend Options:
   --auth-token <TOK>  Bearer token for HTTP backend authentication
 
 Frontend Options:
-  --frontend <TYPE>   Frontend type (default: http)
+  --frontend <TYPE>   Frontend type: http (default) or stdio
   --bind <ADDR>       Bind address (default: 127.0.0.1:3000)
   --path <PATH>       HTTP endpoint path (default: /mcp)
 
@@ -332,7 +364,7 @@ Authentication Options (Frontend HTTP Server):
   --jwt-secret <SECRET>        JWT secret (symmetric HS256/384/512)
   --jwt-jwks-uri <URI>         JWKS URI for asymmetric RS*/ES* validation
   --jwt-algorithm <ALG>        JWT algorithm (default: HS256)
-  --jwt-audience <AUD>         Required `aud` claim (repeatable)
+  --jwt-audience <AUD>         Required `aud` claim (repeatable; required with any JWT option)
   --jwt-issuer <ISS>           Required `iss` claim (repeatable)
   --api-key-header <HEADER>    API key header name (default: x-api-key)
   --require-auth               Require authentication for all requests
@@ -351,7 +383,8 @@ Examples:
   turbomcp-proxy serve \
     --backend stdio --cmd "python server.py" \
     --frontend http --bind 0.0.0.0:3000 \
-    --jwt-secret "your-secret-key"
+    --jwt-secret "your-secret-key" \
+    --jwt-audience "https://proxy.example.com/mcp"
 
   # STDIO → HTTP with API key authentication (production)
   turbomcp-proxy serve \
@@ -450,9 +483,10 @@ Examples:
     --backend stdio --cmd "npx @mcp/server-fs /tmp"
 ```
 
-### `adapter` - Protocol Adapters (Phase 6 - Scaffolded)
+### `adapter` - Protocol Adapters
 
-Expose MCP servers through standard web protocols. Adapter framework is ready for full implementation.
+Expose MCP servers through standard web protocols. `rest` needs the `rest`
+feature; `graphql` is not implemented and returns an error.
 
 ```bash
 turbomcp-proxy adapter <PROTOCOL> [OPTIONS]
@@ -472,23 +506,12 @@ Server Options:
   --bind <ADDR>       Bind address (default: 127.0.0.1:3001)
 
 REST-Specific:
-  --openapi-ui        Serve Swagger UI at /docs (future)
-
-GraphQL-Specific:
-  --playground        Serve GraphQL Playground at /playground (future)
+  --openapi-ui        Accepted; no Swagger UI is served yet
 
 Examples:
-  # REST API (framework ready)
   turbomcp-proxy adapter rest \
     --backend stdio --cmd "python server.py" \
-    --bind 127.0.0.1:3000
-
-  # GraphQL API (framework ready)
-  turbomcp-proxy adapter graphql \
-    --backend tcp --tcp localhost:5000 \
-    --bind 127.0.0.1:4000
-
-Status: Command structure complete. Full implementation of REST and GraphQL adapters coming in next release.
+    --bind 127.0.0.1:3001
 ```
 
 ---
@@ -496,18 +519,11 @@ Status: Command structure complete. Full implementation of REST and GraphQL adap
 ## Development Status
 
 **Current Version:** 3.5.0 (tracks the TurboMCP workspace)
-**Status:** Production-ready for STDIO/HTTP/TCP/Unix/WebSocket proxying,
-code generation, and OpenAPI/GraphQL/Protobuf schema export. Protocol
-adapters (`adapter rest`, `adapter graphql`) are scaffolded — see
-"Protocol Adapters" below.
-
 **Transport Coverage:**
-- [x] **STDIO** (subprocess, CLI tools)
-- [x] **HTTP/SSE** (web services, APIs)
-- [x] **TCP** (high-performance network)
-- [x] **Unix Domain Sockets** (IPC, same-host)
-- [x] **WebSocket** (real-time, browser-friendly)
-- [x] **25 Transport Combinations** (5 backends × 5 frontends)
+- [x] **Backends:** STDIO, Streamable HTTP, TCP, Unix domain sockets, WebSocket
+- [x] **Frontends:** Streamable HTTP, STDIO, WebSocket (`RuntimeProxy`)
+- [ ] **TCP / Unix frontends:** `TcpFrontend` and `UnixFrontend` accept
+  connections but do not route requests yet
 
 **Authentication & Security:**
 - [x] **JWT Authentication** (RFC 7519, symmetric and JWKS validation)
@@ -535,9 +551,15 @@ adapters (`adapter rest`, `adapter graphql`) are scaffolded — see
 
 ### What's not done yet
 
-- **Full REST adapter implementation** — the `adapter rest` command structure
-  is in place; end-to-end request routing and Swagger UI wiring are a work
-  in progress.
+- **Server-to-client relay** — sampling, elicitation, logging, progress, and
+  change notifications from the upstream are not forwarded (see "What the
+  proxy relays").
+- **Per-user backend identity** — the frontend credential is checked, but
+  every client shares one backend connection that authenticates as the proxy
+  (`--auth-token`). `JwtSigner` exists as a building block and is not wired
+  into `serve`.
+- **Swagger UI for the REST adapter** — `--openapi-ui` is accepted but serves
+  nothing yet.
 - **Full GraphQL adapter** — scaffolded behind the `graphql` feature flag;
   no `async-graphql` dependency is pinned yet, so the feature on its own
   does not produce a working adapter.

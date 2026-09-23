@@ -286,12 +286,12 @@ impl {struct_name} {{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {{
-    // Initialize tracing
+    // Log to stderr: over STDIO, stdout is the MCP channel.
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
         ))
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 
     let server = {struct_name} {{
@@ -945,6 +945,19 @@ mod tests {
         let main_rs = fs::read_to_string(full.join("src/main.rs")).unwrap();
         assert!(cargo_toml.contains(&format!("version = \"{}\"", SDK_VERSION)));
         assert!(!main_rs.contains("ResourceError"));
+    }
+
+    /// PX-V2: the `full` template serves STDIO by default, where stdout is
+    /// the MCP channel. Its tracing layer wrote there, so the first log line
+    /// corrupted every client's stream.
+    #[test]
+    fn full_template_logs_to_stderr() {
+        let dir = tempfile::tempdir().unwrap();
+        generate_full(&test_args(ProjectTemplate::Full, dir.path()), dir.path()).unwrap();
+        let main_rs = fs::read_to_string(dir.path().join("src/main.rs")).unwrap();
+
+        assert!(main_rs.contains("fmt::layer().with_writer(std::io::stderr)"));
+        assert!(!main_rs.contains("fmt::layer())"));
     }
 
     #[test]

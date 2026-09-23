@@ -38,6 +38,22 @@
 //!
 //! This design follows MCP security best practices and prevents token theft
 //! across service boundaries.
+//!
+//! ## What `turbomcp-proxy serve` does today
+//!
+//! [`JwtSigner`] and [`ProxyAuthConfig`] are building blocks; the `serve`
+//! command does not wire them in yet. It validates the frontend credential
+//! (`--jwt-secret`, `--jwt-jwks-uri`, or `--api-key`) and then serves every
+//! client over **one** shared backend connection, which authenticates as the
+//! proxy itself with the static `--auth-token`. The frontend identity is
+//! checked but not carried to the backend, so the backend sees the proxy, not
+//! the end user, and cannot authorize per user.
+//!
+//! Carrying it would take a per-request credential on the backend hop, which
+//! the shared `turbomcp-client` connection cannot express, or a backend
+//! connection per identity. Until one of those exists, put per-user
+//! authorization at the proxy (the frontend check) and treat the backend as
+//! trusting the proxy.
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secrecy::ExposeSecret;
@@ -125,7 +141,15 @@ impl JwtSigner {
     /// Sign an `AuthContext` into a JWT for backend authentication
     ///
     /// This takes the client's `AuthContext` and generates a JWT that the backend
-    /// server can validate. The JWT includes all claims from the `AuthContext`.
+    /// server can validate. The JWT carries the identity and the grants only:
+    /// `sub`, `roles`, `permissions`, and `scopes`, plus this signer's `iss`,
+    /// `aud`, `iat`, and `exp`.
+    ///
+    /// The claims are an explicit allowlist rather than the serialized
+    /// context. Serializing the whole `AuthContext` put the client's raw access
+    /// and refresh tokens into the backend JWT (`token`), which is exactly the
+    /// token passthrough this module exists to prevent, along with profile
+    /// data and arbitrary custom metadata the backend had no need for.
     ///
     /// # Errors
     ///
@@ -154,17 +178,17 @@ impl JwtSigner {
     pub fn sign(&self, auth_context: &AuthContext) -> ProxyResult<String> {
         let now = Self::current_timestamp()?;
 
-        // Create a new AuthContext with updated timing claims for the backend
-        let mut backend_context = auth_context.clone();
-        backend_context.iss = Some(self.issuer.clone());
-        backend_context.aud.clone_from(&self.audience);
-        backend_context.iat = Some(now);
-        backend_context.exp = Some(now + self.ttl);
+        let claims = serde_json::json!({
+            "sub": auth_context.sub,
+            "roles": auth_context.roles,
+            "permissions": auth_context.permissions,
+            "scopes": auth_context.scopes,
+            "iss": self.issuer,
+            "aud": self.audience,
+            "iat": now,
+            "exp": now.saturating_add(self.ttl),
+        });
 
-        // Convert to JWT claims (this serializes the entire AuthContext)
-        let claims = backend_context.to_jwt_claims();
-
-        // Sign the JWT using shared encoding logic
         self.encode_jwt(&claims)
     }
 
@@ -187,7 +211,7 @@ impl JwtSigner {
             "iss": self.issuer,
             "aud": self.audience,
             "iat": now,
-            "exp": now + self.ttl,
+            "exp": now.saturating_add(self.ttl),
         });
 
         // Sign the JWT using shared encoding logic
@@ -383,6 +407,64 @@ mod tests {
         // Verify that this is a NEW token (not the client's original)
         assert!(decoded.claims["iat"].is_number());
         assert!(decoded.claims["exp"].is_number());
+    }
+
+    /// AU-8: the backend JWT carries an allowlist of claims. It used to be the
+    /// serialized `AuthContext`, so the client's own access and refresh
+    /// tokens, profile, and custom metadata all went to the backend.
+    #[test]
+    fn backend_jwt_never_carries_the_client_token() {
+        use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+
+        let mut auth_context = create_test_auth_context();
+        auth_context.token = Some(turbomcp_auth::TokenInfo {
+            access_token: "client-access-token".to_string(),
+            token_type: "Bearer".to_string(),
+            refresh_token: Some("client-refresh-token".to_string()),
+            expires_in: Some(3600),
+            scope: None,
+            issued_at: None,
+        });
+        auth_context
+            .metadata
+            .insert("tenant_secret".to_string(), serde_json::json!("s3cr3t"));
+
+        let signer = JwtSigner::new("secret".to_string(), "proxy".to_string())
+            .with_audience("backend".to_string());
+        let jwt = signer.sign(&auth_context).unwrap();
+
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.set_audience(&["backend"]);
+        let claims = decode::<serde_json::Value>(
+            &jwt,
+            &DecodingKey::from_secret("secret".as_bytes()),
+            &validation,
+        )
+        .unwrap()
+        .claims;
+
+        let mut keys: Vec<&str> = claims
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "aud",
+                "exp",
+                "iat",
+                "iss",
+                "permissions",
+                "roles",
+                "scopes",
+                "sub"
+            ]
+        );
+        assert!(!jwt.contains("client-access-token"));
+        assert_eq!(claims["roles"], serde_json::json!(["admin", "user"]));
     }
 
     #[test]

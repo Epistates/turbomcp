@@ -17,6 +17,8 @@
 //! ```
 
 mod layer;
+#[cfg(feature = "opentelemetry")]
+mod propagation;
 mod service;
 
 pub use layer::TelemetryLayer;
@@ -31,14 +33,17 @@ use std::time::Duration;
 /// Several recorded fields can be expensive in OTel backends or expose user data:
 /// - `mcp.request.id` is unique per request (highest possible cardinality).
 /// - `mcp.session.id` / `mcp.user.id` / `mcp.tenant.id` track real principals.
-/// - `mcp.resource.uri` is client-controlled; a hostile client can inflate
-///   cardinality with synthetic URIs.
+/// - `mcp.resource.uri` is client-controlled and routinely carries user data
+///   or credentials (home-directory paths, account IDs, signed-URL tokens),
+///   and a hostile client can inflate cardinality with synthetic URIs. It is
+///   therefore **not recorded unless you opt in** with
+///   [`Self::redact_resource_uri`]`(false)`.
 ///
 /// `mcp.error.message` echoes JSON-RPC error strings verbatim, which routinely
 /// contain user input, file paths, SQL fragments, and backend stack traces. The
 /// layer truncates error messages to [`Self::error_message_max_len`] before
 /// recording; set to `0` to drop entirely. Toggle [`Self::redact_request_id`]
-/// or [`Self::redact_resource_uri`] to omit those high-cardinality fields.
+/// to omit the request ID.
 #[derive(Debug, Clone)]
 pub struct TelemetryLayerConfig {
     /// Service name for span attribution
@@ -47,11 +52,27 @@ pub struct TelemetryLayerConfig {
     pub service_version: String,
     /// Whether to record request/response sizes
     pub record_sizes: bool,
-    /// Whether to record request timing
+    /// Whether to record completion on the span (`mcp.duration_ms`,
+    /// `mcp.status`, `mcp.error.code`, `mcp.error.message`) and emit a
+    /// completion event
     pub record_timing: bool,
     /// Methods to exclude from instrumentation
     pub excluded_methods: Vec<String>,
-    /// Whether to propagate trace context from incoming requests
+    /// Whether to continue the caller's trace. Default `true`.
+    ///
+    /// When set, W3C trace context (`traceparent` / `tracestate`) found in a
+    /// JSON-RPC request's `params._meta`, or in an HTTP request's headers,
+    /// becomes the parent of the `mcp.request` span. Requests without valid
+    /// trace context keep their local parent. Takes effect only when the
+    /// subscriber includes a `tracing-opentelemetry` layer, such as the one
+    /// [`TelemetryConfig::init`](crate::TelemetryConfig::init) installs when
+    /// an OTLP endpoint is configured.
+    ///
+    /// Trace context is caller-supplied, so a client can choose which trace
+    /// its requests land in. Turn this off at a trust boundary where that
+    /// matters.
+    #[cfg(feature = "opentelemetry")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "opentelemetry")))]
     pub propagate_context: bool,
     /// Maximum length (in bytes) at which `mcp.error.message` is truncated
     /// before being recorded on a span. Default `512`. Set to `0` to drop
@@ -60,7 +81,8 @@ pub struct TelemetryLayerConfig {
     /// Skip recording `mcp.request.id` to avoid the per-request cardinality
     /// explosion in cardinality-sensitive backends.
     pub redact_request_id: bool,
-    /// Skip recording `mcp.resource.uri` (client-controlled, unbounded).
+    /// Skip recording `mcp.resource.uri` (client-controlled, unbounded, and
+    /// often sensitive). Default `true`; set to `false` to record it.
     pub redact_resource_uri: bool,
 }
 
@@ -72,10 +94,13 @@ impl Default for TelemetryLayerConfig {
             record_sizes: true,
             record_timing: true,
             excluded_methods: Vec::new(),
+            #[cfg(feature = "opentelemetry")]
             propagate_context: true,
             error_message_max_len: 512,
             redact_request_id: false,
-            redact_resource_uri: false,
+            // Resource URIs can carry secrets and PII, so exporting them has
+            // to be a deliberate choice rather than the default.
+            redact_resource_uri: true,
         }
     }
 }
@@ -122,7 +147,10 @@ impl TelemetryLayerConfig {
         self
     }
 
-    /// Enable or disable trace context propagation
+    /// Enable or disable continuing the caller's trace from incoming W3C trace
+    /// context. See the `propagate_context` field for what gets extracted.
+    #[cfg(feature = "opentelemetry")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "opentelemetry")))]
     #[must_use]
     pub fn propagate_context(mut self, enabled: bool) -> Self {
         self.propagate_context = enabled;
@@ -144,7 +172,8 @@ impl TelemetryLayerConfig {
         self
     }
 
-    /// Skip recording `mcp.resource.uri` (client-controlled, unbounded).
+    /// Skip recording `mcp.resource.uri` (client-controlled, unbounded, and
+    /// often sensitive). On by default; pass `false` to record resource URIs.
     #[must_use]
     pub fn redact_resource_uri(mut self, enabled: bool) -> Self {
         self.redact_resource_uri = enabled;
@@ -188,7 +217,10 @@ mod tests {
         assert!(config.record_sizes);
         assert!(config.record_timing);
         assert!(config.excluded_methods.is_empty());
+        #[cfg(feature = "opentelemetry")]
         assert!(config.propagate_context);
+        assert!(!config.redact_request_id);
+        assert!(config.redact_resource_uri);
     }
 
     #[test]

@@ -55,17 +55,22 @@ shell-words = "1.1"
 # Cross-platform PATH lookup (replaces shelling out to `which`)
 which = "8.0"
 
+# Splitting an HTTP endpoint URL into base and path
+url = { workspace = true, optional = true }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-# Transport features - enable individual transports as needed
-default = ["stdio", "tcp", "unix"]
+# Transport features - enable individual transports as needed. Streamable HTTP
+# and WebSocket are on by default: the CLI's default --url is an HTTP endpoint,
+# and a default build that couldn't reach it was the common first failure.
+default = ["stdio", "tcp", "unix", "http", "websocket"]
 stdio = ["turbomcp-transport/stdio"]
 tcp = ["turbomcp-transport/tcp"]
 unix = ["turbomcp-transport/unix"]
-http = ["turbomcp-transport/http"]
+http = ["turbomcp-transport/http", "dep:url"]
 websocket = ["turbomcp-transport/websocket"]
 # Convenience: enable all transports
 all = ["stdio", "tcp", "unix", "http", "websocket"]

@@ -1,8 +1,8 @@
 //! Tower Service implementation for telemetry
 
 use super::TelemetryLayerConfig;
-use crate::attributes::McpSpanContext;
-use crate::span_attributes::{MCP_DURATION_MS, MCP_ERROR_MESSAGE, MCP_STATUS};
+use crate::attributes::{McpSpanContext, record_completion};
+use crate::span_attributes::MCP_ERROR_CODE;
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -137,6 +137,14 @@ where
 
         let span = span_ctx.into_span();
 
+        #[cfg(feature = "opentelemetry")]
+        if config.propagate_context {
+            super::propagation::adopt_remote_parent(
+                &span,
+                &super::propagation::MetaExtractor::new(&req),
+            );
+        }
+
         // Calculate request size if configured
         let request_size = if config.record_sizes {
             Some(req.to_string().len())
@@ -152,37 +160,33 @@ where
                 let result = inner.call(req).await;
                 let duration = start.elapsed();
 
-                // Record completion
-                let (success, error_msg) = match &result {
-                    Ok(response) => {
-                        // Check if response indicates error
-                        let is_error = response.get("error").is_some();
-                        if is_error {
-                            let error_message = response
-                                .get("error")
-                                .and_then(|e| e.get("message"))
+                // Record completion. A JSON-RPC error response is still `Ok`
+                // at the service level, so look inside it for the error.
+                let (success, error_code, error_msg) = match &result {
+                    Ok(response) => match response.get("error") {
+                        Some(error) => (
+                            false,
+                            error.get("code").and_then(serde_json::Value::as_i64),
+                            error
+                                .get("message")
                                 .and_then(|m| m.as_str())
-                                .map(String::from);
-                            (false, error_message)
-                        } else {
-                            (true, None)
-                        }
-                    }
-                    Err(e) => (false, Some(e.to_string())),
+                                .map(String::from),
+                        ),
+                        None => (true, None, None),
+                    },
+                    Err(e) => (false, None, Some(e.to_string())),
                 };
 
                 // Log completion
                 if config.record_timing {
                     let current_span = Span::current();
-                    let duration_ms = i64::try_from(duration.as_millis()).unwrap_or(i64::MAX);
-                    current_span.record(MCP_DURATION_MS, duration_ms);
-                    current_span.record(MCP_STATUS, if success { "success" } else { "error" });
-
-                    if let Some(ref err) = error_msg {
-                        let truncated = truncate_error_message(err, config.error_message_max_len);
-                        if !truncated.is_empty() {
-                            current_span.record(MCP_ERROR_MESSAGE, truncated.as_ref());
-                        }
+                    let error_msg = error_msg
+                        .as_deref()
+                        .map(|err| truncate_error_message(err, config.error_message_max_len))
+                        .filter(|err| !err.is_empty());
+                    record_completion(&current_span, duration, success, error_msg.as_deref());
+                    if let Some(code) = error_code {
+                        current_span.record(MCP_ERROR_CODE, code);
                     }
 
                     info!(
@@ -240,6 +244,14 @@ where
             .server(&config.service_name, &config.service_version)
             .into_span();
 
+        #[cfg(feature = "opentelemetry")]
+        if config.propagate_context {
+            super::propagation::adopt_remote_parent(
+                &span,
+                &super::propagation::HeaderExtractor(req.headers()),
+            );
+        }
+
         let inner = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, inner);
 
@@ -251,10 +263,7 @@ where
                 let success = result.is_ok();
 
                 if config.record_timing {
-                    let current_span = Span::current();
-                    let duration_ms = i64::try_from(duration.as_millis()).unwrap_or(i64::MAX);
-                    current_span.record(MCP_DURATION_MS, duration_ms);
-                    current_span.record(MCP_STATUS, if success { "success" } else { "error" });
+                    record_completion(&Span::current(), duration, success, None);
 
                     info!(
                         method = %method,

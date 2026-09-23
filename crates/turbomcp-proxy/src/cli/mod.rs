@@ -99,7 +99,10 @@ impl Cli {
             }
         };
 
+        // stderr, always: with a stdio frontend stdout *is* the MCP channel,
+        // and every log line written there corrupted the client's stream.
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .with_max_level(level)
             .with_target(false)
             .with_thread_ids(false)

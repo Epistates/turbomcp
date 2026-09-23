@@ -1,5 +1,6 @@
 //! OpenAPI provider for generating MCP components from OpenAPI specs.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -7,13 +8,16 @@ use std::sync::Arc;
 use openapiv3::{
     OpenAPI, Operation, Parameter, ParameterSchemaOrContent, ReferenceOr, Schema, SecurityScheme,
 };
-use serde_json::{Value, json};
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use serde_json::Value;
 use url::Url;
 
 use crate::error::{OpenApiError, Result};
 use crate::handler::OpenApiHandler;
 use crate::mapping::{McpType, RouteMapping};
 use crate::parser::{fetch_from_url, load_from_file, parse_spec};
+use crate::schema::SchemaConverter;
+use crate::security::SsrfGuard;
 
 /// An operation extracted from an OpenAPI spec.
 #[derive(Debug, Clone)]
@@ -32,6 +36,9 @@ pub struct ExtractedOperation {
     pub parameters: Vec<ExtractedParameter>,
     /// Request body schema (if any)
     pub request_body_schema: Option<Value>,
+    /// Whether the request body is required (`requestBody.required`, which
+    /// OpenAPI defaults to `false`).
+    pub request_body_required: bool,
     /// What MCP type this maps to
     pub mcp_type: McpType,
     /// Effective security requirements: a list of alternative
@@ -42,10 +49,14 @@ pub struct ExtractedOperation {
     /// (`security: []`) on an operation disables auth.
     pub security: Vec<HashMap<String, Vec<String>>>,
     /// JSON Schema of the operation's primary success response (first 2xx
-    /// `application/json` response, with `$ref`s inlined). Surfaces in the
-    /// generated MCP `Tool::output_schema` for clients that consume MCP
-    /// 2025-11-25's `outputSchema`. `None` if the operation has no JSON
-    /// response or only `default` / non-2xx responses.
+    /// `application/json` response). Surfaces in the generated MCP
+    /// `Tool::output_schema` for clients that consume MCP 2025-11-25's
+    /// `outputSchema`. `None` if the operation has no JSON response or only
+    /// `default` / non-2xx responses.
+    ///
+    /// This and the other schemas here are JSON Schema 2020-12 converted from
+    /// OpenAPI 3.0: `$ref`s are inlined, except recursive ones, which point
+    /// into a `$defs` at the root of the same value.
     pub response_schema: Option<Value>,
 }
 
@@ -134,6 +145,11 @@ pub trait AuthProvider: Send + Sync + std::fmt::Debug {
 /// - Link-local addresses (169.254.0.0/16) including cloud metadata endpoints
 /// - Other reserved ranges
 ///
+/// A hostname is refused if it fails to resolve or if any of its addresses is
+/// blocked. The built-in client connects only to the addresses it validated,
+/// so a name cannot answer differently the second time (DNS rebinding), and it
+/// re-checks every redirect before following it.
+///
 /// Requests have a default timeout of 30 seconds to prevent slowloris attacks.
 #[derive(Debug)]
 pub struct OpenApiProvider {
@@ -143,6 +159,8 @@ pub struct OpenApiProvider {
     base_url: Option<Url>,
     /// Route mapping configuration
     mapping: RouteMapping,
+    /// Where outbound requests may go.
+    ssrf: SsrfGuard,
     /// HTTP client for making API calls
     client: reqwest::Client,
     /// Extracted operations
@@ -166,14 +184,8 @@ impl OpenApiProvider {
     pub fn from_spec(spec: OpenAPI) -> Self {
         let mapping = RouteMapping::default_rules();
         let timeout = std::time::Duration::from_secs(DEFAULT_TIMEOUT_SECS);
-        // `Client::builder().build()` only fails on egregious config (e.g.
-        // a missing TLS backend) — not silently downgrading to
-        // `Client::new()` (which would lose the configured timeout) is the
-        // correct stance: the user asked for a timeout, surface the error.
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .expect("reqwest::Client::builder() failed; check TLS backend / build features");
+        let ssrf = SsrfGuard::default();
+        let client = Self::build_client(ssrf, timeout);
 
         let base_url = spec
             .servers
@@ -185,6 +197,7 @@ impl OpenApiProvider {
             spec,
             base_url,
             mapping,
+            ssrf,
             client,
             operations: Vec::new(),
             security_schemes,
@@ -193,6 +206,27 @@ impl OpenApiProvider {
         };
         provider.extract_operations();
         provider
+    }
+
+    /// Build the SSRF-guarded client with a timeout.
+    fn build_client(ssrf: SsrfGuard, timeout: std::time::Duration) -> reqwest::Client {
+        // `Client::builder().build()` only fails on egregious config (e.g.
+        // a missing TLS backend) — not silently downgrading to
+        // `Client::new()` (which would lose the configured timeout and the
+        // SSRF guard) is the correct stance: surface the error.
+        ssrf.client_builder()
+            .timeout(timeout)
+            .build()
+            .expect("reqwest::Client::builder() failed; check TLS backend / build features")
+    }
+
+    /// Let requests reach loopback addresses, so tests can use a local mock
+    /// server. Everything else stays blocked.
+    #[cfg(test)]
+    pub(crate) fn allowing_loopback(mut self) -> Self {
+        self.ssrf = SsrfGuard::allowing_loopback();
+        self.client = Self::build_client(self.ssrf, self.timeout);
+        self
     }
 
     /// Substitute the default values for any `{var}` placeholders in a server URL,
@@ -265,6 +299,12 @@ impl OpenApiProvider {
     ///
     /// When using a custom client, ensure it has appropriate timeout settings.
     /// The default client uses a 30-second timeout.
+    ///
+    /// A custom client also gives up part of the SSRF protection. Every URL is
+    /// still checked, and its hostname resolved and checked, before the
+    /// request is sent; but the custom client resolves the name again to
+    /// connect and follows redirects by its own policy, so neither DNS
+    /// rebinding nor a redirect to an internal address is caught.
     #[must_use]
     pub fn with_client(mut self, client: reqwest::Client) -> Self {
         self.client = client;
@@ -295,18 +335,12 @@ impl OpenApiProvider {
 
     /// Set a custom request timeout.
     ///
-    /// This rebuilds the HTTP client with the new timeout. The default timeout
-    /// is 30 seconds.
+    /// This rebuilds the HTTP client with the new timeout, replacing any client
+    /// set with [`Self::with_client`]. The default timeout is 30 seconds.
     #[must_use]
     pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.timeout = timeout;
-        // See `from_spec`: rebuilding without the configured timeout would
-        // silently regress to reqwest's default; expect on builder failure
-        // instead so the caller's intent isn't lost.
-        self.client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .expect("reqwest::Client::builder() failed in with_timeout");
+        self.client = Self::build_client(self.ssrf, timeout);
         self
     }
 
@@ -407,6 +441,8 @@ impl OpenApiProvider {
                 .and_then(|s| self.schema_to_json(s)),
             ReferenceOr::Reference { .. } => None,
         });
+        let request_body_required = request_body_schema.is_some()
+            && matches!(&operation.request_body, Some(ReferenceOr::Item(body)) if body.required);
 
         // Operation-level `security` overrides spec-level. An explicit empty
         // list (`security: []`) on the operation disables auth and must NOT
@@ -466,6 +502,7 @@ impl OpenApiProvider {
             description: operation.description.clone(),
             parameters,
             request_body_schema,
+            request_body_required,
             mcp_type,
             security,
             response_schema,
@@ -522,90 +559,10 @@ impl OpenApiProvider {
         }
     }
 
-    /// Convert an OpenAPI schema to a JSON Schema value, inlining `$ref`s
-    /// against `components.schemas`.
-    ///
-    /// OpenAPI lets schemas reference each other through
-    /// `{"$ref": "#/components/schemas/Foo"}`. MCP tool-input schemas have
-    /// no cross-operation component dictionary to share, so we resolve those
-    /// refs inline. Cycles are broken by leaving the first re-visited
-    /// reference as a `$ref` literal rather than expanding it forever.
+    /// Convert an OpenAPI schema to a self-contained JSON Schema 2020-12
+    /// value; see [`SchemaConverter`] for what changes and why.
     fn schema_to_json(&self, schema: &ReferenceOr<Schema>) -> Option<Value> {
-        let initial = match schema {
-            ReferenceOr::Item(s) => serde_json::to_value(s).ok()?,
-            ReferenceOr::Reference { reference } => {
-                json!({ "$ref": reference })
-            }
-        };
-        let mut visited = std::collections::HashSet::new();
-        Some(self.resolve_refs(initial, &mut visited))
-    }
-
-    /// Recursively inline `$ref` pointers that target `components.schemas`.
-    ///
-    /// `visited` tracks the ref path currently being expanded; re-encountering
-    /// the same pointer during expansion leaves the `$ref` in place so the
-    /// output stays finite on self-referential schemas (the default interpretation
-    /// consumers do — most JSON Schema validators understand internal `$ref`).
-    fn resolve_refs(&self, value: Value, visited: &mut std::collections::HashSet<String>) -> Value {
-        match value {
-            Value::Object(mut map) => {
-                if let Some(Value::String(reference)) = map.get("$ref").cloned()
-                    && map.len() == 1
-                {
-                    if !visited.insert(reference.clone()) {
-                        map.insert("$ref".to_string(), Value::String(reference));
-                        return Value::Object(map);
-                    }
-                    let expanded = self.lookup_ref(&reference).map(|target| {
-                        let target_json = serde_json::to_value(target).unwrap_or(Value::Null);
-                        self.resolve_refs(target_json, visited)
-                    });
-                    visited.remove(&reference);
-                    return expanded.unwrap_or(Value::Object({
-                        let mut fallback = serde_json::Map::new();
-                        fallback.insert("$ref".to_string(), Value::String(reference));
-                        fallback
-                    }));
-                }
-                let resolved = map
-                    .into_iter()
-                    .map(|(k, v)| (k, self.resolve_refs(v, visited)))
-                    .collect();
-                Value::Object(resolved)
-            }
-            Value::Array(items) => Value::Array(
-                items
-                    .into_iter()
-                    .map(|v| self.resolve_refs(v, visited))
-                    .collect(),
-            ),
-            other => other,
-        }
-    }
-
-    /// Look up a `#/components/schemas/Name` reference in the parsed spec.
-    /// Follows reference chains up to `MAX_DEPTH` levels deep with cycle detection,
-    /// so chains like `Foo -> Bar -> Baz` resolve correctly without unbounded recursion.
-    fn lookup_ref(&self, reference: &str) -> Option<&Schema> {
-        const PREFIX: &str = "#/components/schemas/";
-        const MAX_DEPTH: usize = 10;
-        let mut name = reference.strip_prefix(PREFIX)?;
-        let components = self.spec.components.as_ref()?;
-        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for _ in 0..MAX_DEPTH {
-            if !seen.insert(name) {
-                // Cycle.
-                return None;
-            }
-            match components.schemas.get(name)? {
-                ReferenceOr::Item(schema) => return Some(schema),
-                ReferenceOr::Reference { reference } => {
-                    name = reference.strip_prefix(PREFIX)?;
-                }
-            }
-        }
-        None
+        SchemaConverter::new(&self.spec).convert(schema)
     }
 
     /// Build the full URL for an operation.
@@ -616,36 +573,27 @@ impl OpenApiProvider {
     ) -> Result<Url> {
         let base = self.base_url.as_ref().ok_or(OpenApiError::NoBaseUrl)?;
 
-        // Replace path parameters
-        let mut path = operation.path.clone();
-        for param in &operation.parameters {
-            if param.location == "path" {
-                if let Some(value) = args.get(&param.name) {
-                    let value_str = match value {
-                        Value::String(s) => s.clone(),
-                        _ => value.to_string(),
-                    };
-                    path = path.replace(&format!("{{{}}}", param.name), &value_str);
-                } else if param.required {
-                    return Err(OpenApiError::MissingParameter(param.name.clone()));
-                }
-            }
+        // Append to the base path rather than `Url::join`ing onto it: join
+        // resolves the operation path as an absolute reference, which drops
+        // the base's own path (`https://api.x/v1` + `/pets` gave
+        // `https://api.x/pets`), and a value beginning with `/` turned the
+        // path into a network-path reference that swapped the host.
+        let mut path = base.path().trim_end_matches('/').to_string();
+        for segment in operation.path.trim_start_matches('/').split('/') {
+            path.push('/');
+            path.push_str(&expand_path_segment(segment, args)?);
         }
 
-        let mut url = base.join(&path)?;
+        let mut url = base.clone();
+        url.set_path(&path);
+        url.set_fragment(None);
 
         // Collect query parameters first
         let mut query_params: Vec<(String, String)> = Vec::new();
         for param in &operation.parameters {
             if param.location == "query" {
                 if let Some(value) = args.get(&param.name) {
-                    let value_str = match value {
-                        Value::String(s) => s.clone(),
-                        Value::Bool(b) => b.to_string(),
-                        Value::Number(n) => n.to_string(),
-                        _ => value.to_string(),
-                    };
-                    query_params.push((param.name.clone(), value_str));
+                    query_params.push((param.name.clone(), param_value(value).into_owned()));
                 } else if param.required {
                     return Err(OpenApiError::MissingParameter(param.name.clone()));
                 }
@@ -667,10 +615,103 @@ impl OpenApiProvider {
     pub(crate) fn client(&self) -> &reqwest::Client {
         &self.client
     }
+
+    /// Get the SSRF guard outbound requests are held to.
+    pub(crate) fn ssrf(&self) -> SsrfGuard {
+        self.ssrf
+    }
+}
+
+/// Characters a path parameter value keeps verbatim: RFC 3986 `unreserved`.
+///
+/// Everything else is percent-encoded, so a value can never contribute a `/`,
+/// `?` or `#` and with them leave its own segment, the query, or the host.
+const PATH_SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+/// Render an argument the way it goes on the wire: strings bare, everything
+/// else as its JSON text.
+pub(crate) fn param_value(value: &Value) -> Cow<'_, str> {
+    match value {
+        Value::String(s) => Cow::Borrowed(s),
+        other => Cow::Owned(other.to_string()),
+    }
+}
+
+/// Substitute the `{name}` placeholders in one segment of a path template.
+///
+/// Each value is encoded as data within the segment. Two values would still
+/// escape it after encoding, because `.` is unreserved: a segment that comes
+/// out as exactly `.` or `..` is a dot-segment, which URL normalisation
+/// resolves against the path before it and so walks out of the operation's
+/// route. Those, and empty values (which silently address the parent
+/// collection), are refused.
+fn expand_path_segment(segment: &str, args: &HashMap<String, Value>) -> Result<String> {
+    let mut expanded = String::with_capacity(segment.len());
+    let mut last_param = None;
+    let mut rest = segment;
+
+    while let Some((literal, name, after)) = split_placeholder(rest) {
+        let value = args
+            .get(name)
+            .ok_or_else(|| OpenApiError::MissingParameter(name.to_string()))?;
+        let value = param_value(value);
+        if value.is_empty() {
+            return Err(OpenApiError::InvalidParameter(
+                name.to_string(),
+                "path parameters must not be empty".to_string(),
+            ));
+        }
+
+        expanded.push_str(literal);
+        expanded.extend(utf8_percent_encode(&value, PATH_SEGMENT));
+        last_param = Some(name);
+        rest = after;
+    }
+    expanded.push_str(rest);
+
+    if let Some(name) = last_param
+        && (expanded == "." || expanded == "..")
+    {
+        return Err(OpenApiError::InvalidParameter(
+            name.to_string(),
+            format!("`{expanded}` is not a valid path segment"),
+        ));
+    }
+
+    Ok(expanded)
+}
+
+/// The names of a path template's `{name}` placeholders, in order.
+pub(crate) fn path_param_names(path: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = path;
+    while let Some((_, name, after)) = split_placeholder(rest) {
+        names.push(name);
+        rest = after;
+    }
+    names
+}
+
+/// Split off the first `{name}` placeholder in `template`, as the text before
+/// it, the name, and the text after it. An unclosed `{` is literal text.
+fn split_placeholder(template: &str) -> Option<(&str, &str, &str)> {
+    let open = template.find('{')?;
+    let len = template[open..].find('}')?;
+    Some((
+        &template[..open],
+        &template[open + 1..open + len],
+        &template[open + len + 1..],
+    ))
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     const TEST_SPEC: &str = r#"{
@@ -789,6 +830,94 @@ mod tests {
         assert_eq!(url.as_str(), "https://api.example.com/users/123");
     }
 
+    /// A single-operation spec at `path`, for exercising `build_url`.
+    fn provider_for_path(path: &str, base_url: &str) -> OpenApiProvider {
+        let spec = json!({
+            "openapi": "3.0.0",
+            "info": { "title": "T", "version": "1.0.0" },
+            "paths": { path: { "post": { "responses": { "200": { "description": "ok" } } } } }
+        });
+        OpenApiProvider::from_string(&spec.to_string())
+            .unwrap()
+            .with_base_url(base_url)
+            .unwrap()
+    }
+
+    fn url_for(path: &str, base_url: &str, args: Value) -> Result<Url> {
+        let provider = provider_for_path(path, base_url);
+        let args: HashMap<String, Value> = serde_json::from_value(args).unwrap();
+        provider.build_url(&provider.operations()[0], &args)
+    }
+
+    #[test]
+    fn test_build_url_keeps_base_path_prefix() {
+        for base in ["https://api.example.com/v1", "https://api.example.com/v1/"] {
+            let url = url_for("/pets/{id}", base, json!({ "id": 7 })).unwrap();
+            assert_eq!(
+                url.as_str(),
+                "https://api.example.com/v1/pets/7",
+                "base {base}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_url_keeps_base_query() {
+        let url = url_for("/pets", "https://api.example.com/v1?key=abc", json!({})).unwrap();
+        assert_eq!(url.as_str(), "https://api.example.com/v1/pets?key=abc");
+    }
+
+    #[test]
+    fn test_build_url_encodes_path_params_as_one_segment() {
+        let url = url_for(
+            "/users/{id}/posts",
+            "https://api.example.com/v1",
+            json!({ "id": "../../admin?x=1#frag" }),
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://api.example.com/v1/users/..%2F..%2Fadmin%3Fx%3D1%23frag/posts"
+        );
+        assert_eq!(url.query(), None);
+        assert_eq!(url.fragment(), None);
+    }
+
+    #[test]
+    fn test_build_url_path_param_cannot_swap_host() {
+        let url = url_for(
+            "/{tenant}/items",
+            "https://api.example.com",
+            json!({ "tenant": "/evil.example" }),
+        )
+        .unwrap();
+        assert_eq!(url.host_str(), Some("api.example.com"));
+        assert_eq!(url.path(), "/%2Fevil.example/items");
+    }
+
+    #[test]
+    fn test_build_url_rejects_dot_segments_and_empty_values() {
+        for id in [".", "..", ""] {
+            let result = url_for(
+                "/users/{id}",
+                "https://api.example.com/v1",
+                json!({ "id": id }),
+            );
+            assert!(
+                matches!(result, Err(OpenApiError::InvalidParameter(ref name, _)) if name == "id"),
+                "{id:?} gave {result:?}"
+            );
+        }
+        // A dot within a larger segment is just data.
+        let url = url_for(
+            "/files/{name}.json",
+            "https://api.example.com",
+            json!({ "name": ".." }),
+        )
+        .unwrap();
+        assert_eq!(url.path(), "/files/...json");
+    }
+
     #[test]
     fn test_ref_resolution_inlines_components() {
         const REF_SPEC: &str = r##"{
@@ -884,13 +1013,18 @@ mod tests {
             .iter()
             .find(|o| o.operation_id.as_deref() == Some("makeNode"))
             .unwrap();
-        // Must not infinite-loop or panic — resolver should have returned a finite value
-        // with the inner cycle preserved as a $ref.
+        // Must not infinite-loop or panic, and the cycle must point at a
+        // definition that exists: `#/components/schemas/Node` does not exist
+        // in a tool schema, so a client could never resolve it.
         let body = op.request_body_schema.as_ref().unwrap();
         let next = body.pointer("/properties/next").expect("next property");
         assert_eq!(
             next.get("$ref").and_then(|v| v.as_str()),
-            Some("#/components/schemas/Node")
+            Some("#/$defs/Node")
+        );
+        assert_eq!(
+            body.pointer("/$defs/Node/properties/next/$ref"),
+            Some(&json!("#/$defs/Node"))
         );
     }
 

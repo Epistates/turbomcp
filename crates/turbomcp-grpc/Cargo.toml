@@ -14,7 +14,7 @@ rust-version = "1.89.0"
 
 [dependencies]
 # gRPC framework
-tonic = { version = "0.14", features = ["tls-ring", "gzip", "zstd"] }
+tonic = { version = "0.14", features = ["gzip", "zstd"] }
 tonic-prost = "0.14"
 prost = "0.14"
 prost-types = "0.14"
@@ -62,15 +62,12 @@ tonic-prost-build = "0.14"
 prost-build = "0.14"
 
 [features]
-default = ["server", "client"]
+default = ["server", "client", "tls"]
 server = []
 client = []
-# Health checking service
-health = ["tonic/channel"]
-# Reflection service for debugging
-reflection = []
-# TLS support
-tls = []
+# rustls for tonic: `Server::tls_config` on the server side, and `https://`
+# endpoints verified against the platform's root certificates on the client.
+tls = ["tonic/tls-ring", "tonic/tls-native-roots"]
 
 [package.metadata.docs.rs]
 all-features = true

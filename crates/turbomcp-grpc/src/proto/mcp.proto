@@ -93,10 +93,21 @@ enum Role {
   ROLE_ASSISTANT = 2;
 }
 
-// Annotations for tools, resources, prompts
+// Annotations for resources, resource templates and content blocks
 message Annotations {
   repeated string audience = 1;
-  double priority = 2;
+  // Explicit presence: 0.0 is a meaningful priority ("least important").
+  optional double priority = 2;
+  optional string last_modified = 3;  // ISO 8601
+}
+
+// Behavioural hints for a tool (MCP `ToolAnnotations`)
+message ToolAnnotations {
+  optional string title = 1;
+  optional bool read_only_hint = 2;
+  optional bool destructive_hint = 3;
+  optional bool idempotent_hint = 4;
+  optional bool open_world_hint = 5;
 }
 
 // Icon for visual representation
@@ -105,6 +116,9 @@ message Icon {
     string uri = 1;
     string data_uri = 2;  // Base64 encoded with MIME type prefix
   }
+  optional string mime_type = 3;
+  repeated string sizes = 4;
+  optional string theme = 5;  // "light" or "dark"
 }
 
 // =============================================================================
@@ -240,9 +254,15 @@ message Tool {
   string name = 1;
   optional string description = 2;
   bytes input_schema = 3;  // JSON Schema as bytes
+  // Unused: MCP tools have no audience/priority annotations. Their
+  // behavioural hints travel in `tool_annotations`.
   optional Annotations annotations = 4;
   repeated Icon icons = 5;
   optional string title = 6;
+  optional ToolAnnotations tool_annotations = 7;
+  optional bytes output_schema = 8;  // JSON Schema as bytes
+  optional bytes execution = 9;      // JSON object as bytes
+  optional bytes meta = 10;          // `_meta` JSON object as bytes
 }
 
 message CallToolRequest {
@@ -253,6 +273,8 @@ message CallToolRequest {
 message CallToolResult {
   repeated Content content = 1;
   optional bool is_error = 2;
+  optional bytes structured_content = 3;  // JSON as bytes
+  optional bytes meta = 4;                // `_meta` JSON object as bytes
 }
 
 // =============================================================================
@@ -277,6 +299,7 @@ message Resource {
   repeated Icon icons = 6;
   optional string title = 7;
   optional uint64 size = 8;
+  optional bytes meta = 9;  // `_meta` JSON object as bytes
 }
 
 message ListResourceTemplatesRequest {
@@ -296,6 +319,7 @@ message ResourceTemplate {
   optional Annotations annotations = 5;
   repeated Icon icons = 6;
   optional string title = 7;
+  optional bytes meta = 8;  // `_meta` JSON object as bytes
 }
 
 message ReadResourceRequest {
@@ -313,6 +337,7 @@ message ResourceContent {
     string text = 3;
     bytes blob = 4;  // Base64 decoded binary content
   }
+  optional bytes meta = 5;  // `_meta` JSON object as bytes
 }
 
 // =============================================================================
@@ -334,12 +359,14 @@ message Prompt {
   repeated PromptArgument arguments = 3;
   repeated Icon icons = 4;
   optional string title = 5;
+  optional bytes meta = 6;  // `_meta` JSON object as bytes
 }
 
 message PromptArgument {
   string name = 1;
   optional string description = 2;
   optional bool required = 3;
+  optional string title = 4;
 }
 
 message GetPromptRequest {
@@ -350,6 +377,7 @@ message GetPromptRequest {
 message GetPromptResult {
   optional string description = 1;
   repeated PromptMessage messages = 2;
+  optional bytes meta = 3;  // `_meta` JSON object as bytes
 }
 
 message PromptMessage {
@@ -367,8 +395,12 @@ message Content {
     ImageContent image = 2;
     AudioContent audio = 3;
     ResourceContent resource = 4;
+    // A link carries its own annotations and `_meta`; fields 10 and 11 are
+    // left unset for it.
+    Resource resource_link = 5;
   }
   optional Annotations annotations = 10;
+  optional bytes meta = 11;  // `_meta` JSON object as bytes
 }
 
 message TextContent {
