@@ -2183,3 +2183,59 @@ async fn a_panicking_notification_hook_still_answers_202() {
 
     handle.abort();
 }
+
+/// This crate's client against this crate's server: a handshake that
+/// negotiates down, then a call answered over a stream. Each side is tested
+/// against the spec on its own above; this checks they agree with each other.
+#[tokio::test]
+async fn the_turbomcp_client_transport_round_trips_a_streamed_call() {
+    use turbomcp_transport::streamable_http_client::{
+        StreamableHttpClientConfig, StreamableHttpClientTransport,
+    };
+    use turbomcp_transport::{Transport, TransportMessage};
+
+    let (base_url, handle) = spawn_cancellable_server().await;
+    let transport = StreamableHttpClientTransport::new(StreamableHttpClientConfig {
+        base_url,
+        endpoint_path: "/mcp".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let message = |body: serde_json::Value| {
+        TransportMessage::new(
+            turbomcp_protocol::MessageId::from("m".to_string()),
+            bytes::Bytes::from(body.to_string()),
+        )
+    };
+    let next = || async {
+        let message = tokio::time::timeout(Duration::from_secs(3), transport.recv_async())
+            .await
+            .expect("a message should arrive")
+            .unwrap();
+        serde_json::from_slice::<serde_json::Value>(&message.payload).unwrap()
+    };
+
+    let mut initialize = initialize_request();
+    initialize["params"]["protocolVersion"] = json!("2025-06-18");
+    transport.send(message(initialize)).await.unwrap();
+    assert_eq!(next().await["result"]["protocolVersion"], "2025-06-18");
+    transport
+        .send(message(
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        ))
+        .await
+        .unwrap();
+
+    transport
+        .send(message(report_call(3, "report")))
+        .await
+        .unwrap();
+    assert_eq!(next().await["method"], "notifications/progress");
+    let answer = next().await;
+    assert_eq!(answer["id"], 3);
+    assert_eq!(answer["result"]["content"][0]["text"], "done");
+
+    transport.disconnect().await.unwrap();
+    handle.abort();
+}
