@@ -54,12 +54,13 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
+use syn::ext::IdentExt;
 use syn::{FnArg, ItemFn, Pat, PatType, Signature, Type};
 
 /// Information about a tool handler method.
 #[derive(Clone)]
 pub struct ToolInfo {
-    /// Tool name (from function name)
+    /// Tool name on the wire: the function name with any `r#` prefix removed.
     pub name: String,
     /// Tool description (from doc comments or attribute)
     pub description: String,
@@ -103,8 +104,12 @@ impl ToolAnnotationFlags {
 /// Information about a function parameter.
 #[derive(Clone)]
 pub struct ParameterInfo {
-    /// Parameter name
+    /// Parameter name on the wire: the identifier with any `r#` prefix removed,
+    /// so `r#type` is the `type` argument a client actually sends.
     pub name: String,
+    /// The identifier as written, which generated code must bind and pass.
+    /// `Ident::new` rejects `r#type`, so it cannot be rebuilt from `name`.
+    pub ident: syn::Ident,
     /// Parameter type
     pub ty: Type,
     /// Parameter description (from doc comments or #[description] attribute)
@@ -382,7 +387,7 @@ pub fn parse_bool_value(token_str: &str, key: &str) -> Option<bool> {
 impl ToolInfo {
     /// Extract tool info from a function.
     pub fn from_fn(item: &ItemFn, attrs: ToolAttrs) -> Result<Self, syn::Error> {
-        let name = item.sig.ident.to_string();
+        let name = item.sig.ident.unraw().to_string();
 
         // Get description from doc comments or attribute
         let doc_description = extract_doc_comments(&item.attrs);
@@ -498,7 +503,7 @@ fn analyze_parameters(sig: &Signature) -> Result<Vec<ParameterInfo>, syn::Error>
             }
             FnArg::Typed(PatType { pat, ty, attrs, .. }) => {
                 if let Pat::Ident(pat_ident) = pat.as_ref() {
-                    let param_name = pat_ident.ident.to_string();
+                    let param_name = pat_ident.ident.unraw().to_string();
 
                     // Skip context parameters
                     if is_context_type(ty) {
@@ -512,6 +517,7 @@ fn analyze_parameters(sig: &Signature) -> Result<Vec<ParameterInfo>, syn::Error>
 
                     parameters.push(ParameterInfo {
                         name: param_name,
+                        ident: pat_ident.ident.clone(),
                         ty: (**ty).clone(),
                         description,
                         is_optional,
@@ -713,35 +719,56 @@ pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -
 /// Maximum size for a single parameter value (1MB)
 const MAX_PARAM_VALUE_SIZE: usize = 1024 * 1024;
 
+/// The arguments map as the generated dispatch code binds it.
+///
+/// Every handler parameter is bound under the user's own name in the same
+/// scope as this map, so a plain `args` would be shadowed by a parameter called
+/// `args` — and every parameter extracted after it would then read from the
+/// wrong value. A reserved name keeps the two apart.
+pub fn args_ident() -> syn::Ident {
+    syn::Ident::new("__turbomcp_args", proc_macro2::Span::call_site())
+}
+
+/// The `&RequestContext` as the generated dispatch code binds it, reserved for
+/// the same reason as [`args_ident`]: a tool parameter called `ctx` would
+/// otherwise shadow the context that a `&RequestContext` parameter is handed.
+pub fn ctx_ident() -> syn::Ident {
+    syn::Ident::new("__turbomcp_ctx", proc_macro2::Span::call_site())
+}
+
 /// Generate parameter extraction code with size validation.
 ///
 /// This includes security checks to prevent DoS attacks via oversized parameters.
 /// The `krate` parameter is the resolved path to the turbomcp crate.
+///
+/// Reads the arguments map bound as [`args_ident`].
 pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStream) -> TokenStream {
     if parameters.is_empty() {
         return quote! {};
     }
 
+    let args = args_ident();
+
     // Add parameter count validation at the start
     let param_count = parameters.len();
     let mut extraction = quote! {
         // Validate parameter count (defense against parameter pollution)
-        if args.len() > #param_count + 10 {
+        if #args.len() > #param_count + 10 {
             return Err(#krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
-                format!("Too many parameters: got {}, expected at most {}", args.len(), #param_count)
+                format!("Too many parameters: got {}, expected at most {}", #args.len(), #param_count)
             ));
         }
     };
 
     for param in parameters {
         let name_str = &param.name;
-        let name_ident = syn::Ident::new(&param.name, proc_macro2::Span::call_site());
+        let name_ident = &param.ident;
         let ty = &param.ty;
 
         // Generate size check code
         let size_check = quote! {
             // Security: Validate parameter size before deserialization
-            if let Some(v) = args.get(#name_str) {
+            if let Some(v) = #args.get(#name_str) {
                 let size_estimate = v.to_string().len();
                 if size_estimate > #MAX_PARAM_VALUE_SIZE {
                     return Err(#krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
@@ -763,7 +790,7 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStrea
             // distinction by parsing the value as `Option<T>` directly.
             extraction.extend(quote! {
                 #size_check
-                let #name_ident: #ty = match args.get(#name_str) {
+                let #name_ident: #ty = match #args.get(#name_str) {
                     None => None,
                     Some(v) => {
                         #krate::__macro_support::serde_json::from_value::<#ty>(v.clone())
@@ -776,7 +803,7 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStrea
         } else {
             extraction.extend(quote! {
                 #size_check
-                let #name_ident: #ty = args
+                let #name_ident: #ty = #args
                     .get(#name_str)
                     .ok_or_else(|| #krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
                         format!("Missing required parameter: {}", #name_str)
@@ -890,6 +917,7 @@ pub fn generate_output_schema_code(ty: &Option<Type>, krate: &TokenStream) -> To
 /// Generate call arguments.
 pub fn generate_call_args(sig: &Signature) -> TokenStream {
     let mut args = Vec::new();
+    let ctx = ctx_ident();
 
     for input in &sig.inputs {
         match input {
@@ -897,7 +925,7 @@ pub fn generate_call_args(sig: &Signature) -> TokenStream {
             FnArg::Typed(PatType { pat, ty, .. }) => {
                 if let Pat::Ident(pat_ident) = pat.as_ref() {
                     if is_context_type(ty) {
-                        args.push(quote! { ctx });
+                        args.push(quote! { #ctx });
                     } else {
                         let name = &pat_ident.ident;
                         args.push(quote! { #name });

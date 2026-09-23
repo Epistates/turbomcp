@@ -25,10 +25,11 @@ fn turbomcp_crate() -> TokenStream {
 }
 
 use super::tool::{
-    ToolAttrs, ToolInfo, generate_annotations_code, generate_call_args, generate_extraction_code,
-    generate_icons_code, generate_output_schema_code, generate_schema_code, parse_quoted_value,
-    parse_string_array, parse_tags_array,
+    ToolAttrs, ToolInfo, args_ident, ctx_ident, generate_annotations_code, generate_call_args,
+    generate_extraction_code, generate_icons_code, generate_output_schema_code,
+    generate_schema_code, parse_quoted_value, parse_string_array, parse_tags_array,
 };
+use syn::ext::IdentExt;
 
 /// Information collected from analyzing the impl block.
 pub struct ServerInfo {
@@ -148,8 +149,10 @@ pub struct PromptInfo {
 /// Prompt argument info (HIGH-002).
 #[derive(Clone)]
 pub struct PromptArgumentInfo {
-    /// Argument name
+    /// Argument name on the wire, with any `r#` prefix removed.
     pub name: String,
+    /// The parameter's identifier as written, for the generated binding.
+    pub ident: Ident,
     /// Human-readable label for the argument, from `#[title("...")]`
     pub title: Option<String>,
     /// Argument description
@@ -346,7 +349,7 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
                     let description = extract_doc_comments(&method.attrs);
                     resources.push(ResourceInfo {
                         uri_template: resource_attrs.uri_template,
-                        name: fn_name.to_string(),
+                        name: fn_name.unraw().to_string(),
                         description,
                         mime_type: resource_attrs.mime_type,
                         fn_name,
@@ -363,7 +366,7 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
                         extract_doc_comments(&method.attrs).or(prompt_attrs.description);
                     let arguments = extract_prompt_arguments(&method.sig);
                     prompts.push(PromptInfo {
-                        name: fn_name.to_string(),
+                        name: fn_name.unraw().to_string(),
                         description,
                         arguments,
                         returns_mcp_error: returns_mcp_error(&method.sig),
@@ -683,7 +686,7 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
         if let syn::FnArg::Typed(pat_type) = input
             && let syn::Pat::Ident(pat_ident) = &*pat_type.pat
         {
-            let name = pat_ident.ident.to_string();
+            let name = pat_ident.ident.unraw().to_string();
 
             // Skip self parameter
             if name == "self" {
@@ -720,6 +723,7 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
 
             args.push(PromptArgumentInfo {
                 name,
+                ident: pat_ident.ident.clone(),
                 title,
                 description,
                 required: !is_option,
@@ -1267,7 +1271,9 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     // to bubble up as protocol errors.
     let tool_dispatch_code = info.tools.iter().map(|tool| {
         let tool_name = &tool.name;
-        let fn_name = syn::Ident::new(&tool.name, proc_macro2::Span::call_site());
+        // The identifier as written, not rebuilt from the wire name: `r#type`
+        // is the tool `type`, but only `r#type` names the method.
+        let fn_name = &tool.sig.ident;
         let extraction = generate_extraction_code(&tool.parameters, &turbomcp);
         let call_args = generate_call_args(&tool.sig);
 
@@ -1389,6 +1395,8 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     // - String, &str -> PromptResult::user(...)
     // - PromptResult -> passed through
     // - Result<T, E> -> Ok unwrapped, Err converted to message
+    let args = args_ident();
+    let ctx = ctx_ident();
     let prompt_dispatch_code = info.prompts.iter().map(|prompt| {
         let prompt_name = &prompt.name;
         let fn_name = &prompt.fn_name;
@@ -1396,11 +1404,11 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         // Generate argument extraction code
         let arg_extractions = prompt.arguments.iter().map(|arg| {
             let arg_name = &arg.name;
-            let arg_ident = syn::Ident::new(arg_name, proc_macro2::Span::call_site());
+            let arg_ident = &arg.ident;
 
             if arg.required {
                 quote! {
-                    let #arg_ident: String = prompt_args
+                    let #arg_ident: String = #args
                         .as_ref()
                         .and_then(|a| a.get(#arg_name))
                         .and_then(|v| v.as_str())
@@ -1411,7 +1419,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 }
             } else {
                 quote! {
-                    let #arg_ident: Option<String> = prompt_args
+                    let #arg_ident: Option<String> = #args
                         .as_ref()
                         .and_then(|a| a.get(#arg_name))
                         .and_then(|v| v.as_str())
@@ -1421,10 +1429,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         });
 
         // Generate call arguments (excluding ctx which is passed separately)
-        let call_args = prompt.arguments.iter().map(|arg| {
-            let arg_ident = syn::Ident::new(&arg.name, proc_macro2::Span::call_site());
-            quote! { #arg_ident }
-        });
+        let call_args = prompt.arguments.iter().map(|arg| &arg.ident);
 
         // A prompt returning `McpResult<T>` propagates its error as a JSON-RPC
         // error. The blanket `IntoPromptResult` conversion renders `Err` as a
@@ -1459,11 +1464,11 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         };
 
         let call = if prompt.arguments.is_empty() {
-            quote! { let result = self.#fn_name(ctx).await; }
+            quote! { let result = self.#fn_name(#ctx).await; }
         } else {
             quote! {
                 #(#arg_extractions)*
-                let result = self.#fn_name(#(#call_args,)* ctx).await;
+                let result = self.#fn_name(#(#call_args,)* #ctx).await;
             }
         };
 
@@ -1537,12 +1542,12 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             fn call_tool<'a>(
                 &'a self,
                 name: &'a str,
-                args: #turbomcp::__macro_support::serde_json::Value,
-                ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+                #args: #turbomcp::__macro_support::serde_json::Value,
+                #ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
             ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::ToolResult>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
                 let name = name.to_string();
                 async move {
-                    let args = args.as_object().cloned().unwrap_or_default();
+                    let #args = #args.as_object().cloned().unwrap_or_default();
                     match name.as_str() {
                         #(#tool_dispatch_code)*
                         _ => Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::tool_not_found(&name))
@@ -1580,12 +1585,12 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             fn get_prompt<'a>(
                 &'a self,
                 name: &'a str,
-                args: Option<#turbomcp::__macro_support::serde_json::Value>,
-                ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+                #args: Option<#turbomcp::__macro_support::serde_json::Value>,
+                #ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
             ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::PromptResult>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
                 let name = name.to_string();
                 // HIGH-002: Convert args to Map for argument extraction
-                let prompt_args = args.and_then(|v| v.as_object().cloned());
+                let #args = #args.and_then(|v| v.as_object().cloned());
                 async move {
                     match name.as_str() {
                         #(#prompt_dispatch_code)*
