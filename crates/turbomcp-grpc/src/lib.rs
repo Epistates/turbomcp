@@ -9,7 +9,12 @@
 //! - **Server**: gRPC server implementation with streaming notifications
 //! - **Client**: gRPC client wrapper with explicit session initialization
 //! - **Tower Integration**: Composable middleware via Tower
-//! - **TLS**: Configured through tonic's transport builders
+//! - **TLS** (`tls` feature): rustls through tonic; configure the server with
+//!   `Server::tls_config`, and the client verifies `https://` endpoints against
+//!   the platform's root certificates
+//!
+//! Building needs the `protoc` Protocol Buffers compiler (on `PATH`, or named
+//! by `PROTOC`) to compile `src/proto/mcp.proto`.
 //!
 //! # Quick Start
 //!
