@@ -104,34 +104,14 @@ pub async fn route_request_with_config<H: McpHandler>(
         // Validate clientInfo has required fields
         let client_name = client_info.get("name").and_then(|v| v.as_str());
         let client_version = client_info.get("version").and_then(|v| v.as_str());
-        let Some(name) = client_name else {
+        // Any string is a valid name and version: the schema constrains
+        // neither, and refusing a schema-valid `initialize` is refusing the
+        // client. Where these reach a log they go through `tracing`'s Debug
+        // formatting, which escapes control characters.
+        if client_name.is_none() || client_version.is_none() {
             return JsonRpcOutgoing::error(
                 id,
                 McpError::invalid_params("clientInfo must contain 'name' and 'version' fields"),
-            );
-        };
-        let Some(version) = client_version else {
-            return JsonRpcOutgoing::error(
-                id,
-                McpError::invalid_params("clientInfo must contain 'name' and 'version' fields"),
-            );
-        };
-        // Bound length and reject empty / control-char values so they don't
-        // become a log-injection / telemetry-noise vector.
-        const CLIENT_INFO_MAX_LEN: usize = 128;
-        let is_bad = |s: &str| {
-            let trimmed = s.trim();
-            trimmed.is_empty()
-                || trimmed.len() > CLIENT_INFO_MAX_LEN
-                || trimmed.chars().any(|c| c.is_control())
-        };
-        if is_bad(name) || is_bad(version) {
-            return JsonRpcOutgoing::error(
-                id,
-                McpError::invalid_params(
-                    "clientInfo.name / clientInfo.version must be non-empty, \
-                     <=128 chars, and contain no control characters",
-                ),
             );
         }
 
@@ -157,14 +137,24 @@ pub async fn route_request_with_config<H: McpHandler>(
                 }
                 version
             }
+            // Only reachable with `allow_fallback: false`, which the spec does
+            // not permit ("the server MUST respond with another protocol
+            // version it supports"). Answered in the shape the lifecycle
+            // spec's own error example uses.
             None => {
+                let supported: Vec<&str> = protocol_config
+                    .supported_versions
+                    .iter()
+                    .map(turbomcp_types::ProtocolVersion::as_str)
+                    .collect();
                 return JsonRpcOutgoing::error(
                     id,
-                    McpError::invalid_request(format!(
-                        "Unsupported protocol version: {}. Supported versions: {:?}",
-                        protocol_version.unwrap_or("none"),
-                        protocol_config.supported_versions
-                    )),
+                    McpError::invalid_params("Unsupported protocol version").with_data(
+                        serde_json::json!({
+                            "supported": supported,
+                            "requested": protocol_version,
+                        }),
+                    ),
                 );
             }
         };

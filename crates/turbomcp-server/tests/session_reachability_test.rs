@@ -77,7 +77,8 @@ async fn ctx_elicit_form_reaches_session() {
     assert_eq!(session.calls().len(), 1);
     let (method, params) = &session.calls()[0];
     assert_eq!(method, "elicitation/create");
-    assert_eq!(params["mode"], "form");
+    // Form is the default mode, and 2025-06-18 has no `mode` field.
+    assert!(params.get("mode").is_none(), "{params}");
     assert_eq!(params["message"], "Approve dangerous op?");
     assert_eq!(params["requestedSchema"], schema);
 }

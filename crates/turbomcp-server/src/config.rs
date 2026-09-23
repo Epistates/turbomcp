@@ -451,7 +451,10 @@ pub struct ProtocolConfig {
     pub preferred_version: ProtocolVersion,
     /// Supported protocol versions.
     pub supported_versions: Vec<ProtocolVersion>,
-    /// Allow fallback to server's preferred version if client's is unsupported.
+    /// Answer an unsupported requested version with the preferred one.
+    ///
+    /// The lifecycle spec requires this, so it should stay `true`. With
+    /// `false` an unsupported request is refused with -32602 instead.
     pub allow_fallback: bool,
 }
 
@@ -481,14 +484,19 @@ impl Default for ProtocolConfig {
 }
 
 impl ProtocolConfig {
-    /// Create a strict configuration that only accepts the specified version.
+    /// Create a configuration that speaks only the specified version.
+    ///
+    /// A client asking for any other version is answered with this one — the
+    /// lifecycle spec's required response to an unsupported request — and
+    /// decides for itself whether to continue. It used to be refused outright,
+    /// which the spec does not permit.
     #[must_use]
     pub fn strict(version: impl Into<ProtocolVersion>) -> Self {
         let v = version.into();
         Self {
             preferred_version: v.clone(),
             supported_versions: vec![v],
-            allow_fallback: false,
+            allow_fallback: true,
         }
     }
 
@@ -982,10 +990,16 @@ mod tests {
         );
     }
 
+    /// `strict` speaks one version, and offers it to a client asking for
+    /// another: refusing the handshake is not an answer the lifecycle spec
+    /// permits.
     #[test]
-    fn test_protocol_negotiation_strict_rejects_older_version() {
+    fn test_protocol_negotiation_strict_offers_its_version() {
         let config = ProtocolConfig::strict(ProtocolVersion::LATEST.clone());
-        assert_eq!(config.negotiate(Some("2025-06-18")), None);
+        assert_eq!(
+            config.negotiate(Some("2025-06-18")),
+            Some(ProtocolVersion::LATEST)
+        );
     }
 
     #[test]
@@ -1033,11 +1047,18 @@ mod tests {
         }
     }
 
-    /// `strict` remains an explicit opt-out of lenient negotiation.
+    /// `strict` narrows what is spoken, not whether the handshake is
+    /// answered; only `allow_fallback: false` refuses.
     #[test]
     fn test_protocol_negotiation_strict() {
         let config = ProtocolConfig::strict("2025-11-25");
-        assert_eq!(config.negotiate(Some("2025-06-18")), None);
+        assert!(!config.is_supported(&ProtocolVersion::V2025_06_18));
+
+        let refusing = ProtocolConfig {
+            allow_fallback: false,
+            ..config
+        };
+        assert_eq!(refusing.negotiate(Some("2025-06-18")), None);
     }
 
     #[test]

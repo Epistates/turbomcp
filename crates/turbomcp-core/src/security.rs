@@ -355,20 +355,24 @@ fn sanitize_secrets(s: &str) -> String {
     ];
 
     let mut result = String::from(s);
-    let lower = s.to_lowercase();
 
-    // Process each pattern once (find all occurrences, then replace from back to front)
     for pattern in patterns {
-        let pattern_lower = pattern.to_lowercase();
-        let mut positions: Vec<usize> = Vec::new();
+        // Found afresh in the current text for every pattern: offsets taken
+        // from the original went stale as soon as an earlier pattern had
+        // shortened or lengthened the text, and then cut replacements in the
+        // wrong place — `password=ab token=cd` came out with `cd` intact.
+        //
+        // ASCII lowercasing, because it keeps byte offsets aligned with
+        // `result`. `to_lowercase` does not ('İ' lowercases to two chars), and
+        // its offsets sliced through a character and panicked.
+        let lower = result.to_ascii_lowercase();
+        let pattern_lower = pattern.to_ascii_lowercase();
+        let positions: Vec<usize> = lower
+            .match_indices(pattern_lower.as_str())
+            .map(|(at, _)| at)
+            .collect();
 
-        let mut search_start = 0;
-        while let Some(pos) = lower[search_start..].find(&pattern_lower) {
-            positions.push(search_start + pos);
-            search_start += pos + pattern.len();
-        }
-
-        // Replace from back to front to preserve earlier positions
+        // Back to front, so each replacement leaves earlier offsets valid.
         for start in positions.into_iter().rev() {
             let prefix_end = start + pattern.len();
             if prefix_end >= result.len() {
@@ -384,7 +388,7 @@ fn sanitize_secrets(s: &str) -> String {
                 .unwrap_or(result.len());
 
             // Build replacement string (preserve original case of keyword)
-            let keyword = &result[start..start + pattern.len()];
+            let keyword = &result[start..prefix_end];
             let replacement = if keyword.ends_with('=') {
                 format!("{}=[REDACTED]", keyword.trim_end_matches('='))
             } else if keyword.ends_with(':') {
@@ -574,6 +578,23 @@ pub const GENERIC_ERROR_MESSAGE: &str = "An error occurred. Please try again.";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two secrets in one message used to leave the second in place, because
+    /// offsets were taken before the first was replaced.
+    #[test]
+    fn test_sanitize_every_secret_in_a_message() {
+        let safe = sanitize_error_message("password=ab token=cd");
+        assert!(!safe.contains("ab"), "{safe}");
+        assert!(!safe.contains("cd"), "{safe}");
+    }
+
+    /// Characters whose lowercase form is longer used to shift the offsets
+    /// into the middle of a character, and slicing there panicked.
+    #[test]
+    fn test_sanitize_non_ascii_does_not_panic() {
+        let safe = sanitize_error_message("İtoken=é secret");
+        assert!(!safe.contains('é'), "{safe}");
+    }
 
     #[test]
     fn test_sanitize_connection_strings() {
