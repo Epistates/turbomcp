@@ -383,6 +383,22 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
     ) -> impl Future<Output = McpResult<PromptResult>> + MaybeSend + 'a;
 
     // ===== Task Management (SEP-1686) =====
+    //
+    // Experimental in MCP 2025-11-25. The SDK routes these four methods to
+    // the handler and enforces a tool's `execution.taskSupport`, but it does
+    // not run task-augmented requests itself: `call_tool` receives the plain
+    // arguments. A handler that declares `tasks` in `server_capabilities`
+    // takes on the rest of the utility, notably:
+    //
+    // - a task id MUST be unique and, without an authorization context to
+    //   bind it to, unguessable; with one, tasks MUST be scoped to it;
+    // - `tasks/result` MUST block until the task is terminal, then return
+    //   the underlying result (or error) with
+    //   `_meta["io.modelcontextprotocol/related-task"] = {"taskId": …}`;
+    // - `tasks/cancel` on a task already in a terminal state MUST be
+    //   answered -32602;
+    // - status moves only forward: `working` / `input_required` to
+    //   `completed`, `failed` or `cancelled`.
 
     /// Lists all active and recent tasks.
     ///

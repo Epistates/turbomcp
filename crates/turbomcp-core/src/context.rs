@@ -148,6 +148,13 @@ struct LogBudget {
     suppressed: u64,
 }
 
+/// The last progress value sent for each in-flight request that asked for
+/// progress, keyed by [`RequestContext::progress_key`].
+#[cfg(feature = "std")]
+static PROGRESS_SENT: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, f64>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
 #[cfg(feature = "std")]
 static LOG_BUDGET: std::sync::LazyLock<
     std::sync::RwLock<std::collections::HashMap<String, LogBudget>>,
@@ -1043,6 +1050,19 @@ impl RequestContext {
             return Ok(());
         }
 
+        // "The progress value MUST increase with each notification." A
+        // report that does not move forward — a retry, two workers racing, a
+        // counter reset — is dropped rather than put on the wire.
+        #[cfg(feature = "std")]
+        if let Some(key) = self.progress_key()
+            && let Ok(mut sent) = PROGRESS_SENT.lock()
+        {
+            if sent.get(&key).is_some_and(|last| progress <= *last) {
+                return Ok(());
+            }
+            sent.insert(key, progress);
+        }
+
         let mut params = serde_json::json!({
             "progressToken": token,
             "progress": progress,
@@ -1063,6 +1083,31 @@ impl RequestContext {
         // stream attached" into a failed tool call.
         let _ = self.notify_client("notifications/progress", params).await;
         Ok(())
+    }
+
+    /// Identifies this request's progress stream: session, request and token.
+    #[cfg(feature = "std")]
+    fn progress_key(&self) -> Option<String> {
+        let token = self.progress_token()?;
+        Some(alloc::format!(
+            "{}\u{1f}{}\u{1f}{}",
+            self.session_id.as_deref().unwrap_or(""),
+            self.request_id,
+            token
+        ))
+    }
+
+    /// Forget the progress sent for this request, which has finished.
+    ///
+    /// Called by the router once the request has been answered.
+    #[doc(hidden)]
+    pub fn end_progress(&self) {
+        #[cfg(feature = "std")]
+        if let Some(key) = self.progress_key()
+            && let Ok(mut sent) = PROGRESS_SENT.lock()
+        {
+            sent.remove(&key);
+        }
     }
 
     fn require_session(&self, op: &str) -> McpResult<&Arc<dyn McpSession>> {

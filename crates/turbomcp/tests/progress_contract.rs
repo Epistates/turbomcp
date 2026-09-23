@@ -201,3 +201,44 @@ async fn progress_without_a_session_is_not_an_error() {
     assert_ne!(response["result"]["isError"], true);
     assert_eq!(response["result"]["content"][0]["text"], "done");
 }
+
+#[derive(Clone)]
+struct Backwards;
+
+#[server(name = "backwards", version = "1.0.0")]
+impl Backwards {
+    /// Reports progress that goes nowhere, then backwards, then on.
+    #[tool]
+    async fn wobble(&self, ctx: &RequestContext) -> McpResult<String> {
+        for value in [1.0, 1.0, 0.5, 2.0] {
+            ctx.report_progress(value, None, None).await?;
+        }
+        Ok("done".into())
+    }
+}
+
+/// "The progress value MUST increase with each notification." Reports that
+/// would break that are dropped at the source rather than put on the wire.
+#[tokio::test]
+async fn progress_that_does_not_increase_is_not_sent() {
+    let session = Arc::new(RecordingSession::default());
+    Backwards
+        .handle_request(
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": { "name": "wobble", "arguments": {}, "_meta": { "progressToken": "t" } }
+            }),
+            ctx_with(&session),
+        )
+        .await
+        .unwrap();
+
+    let sent: Vec<f64> = session
+        .notifications
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, params)| params["progress"].as_f64().unwrap())
+        .collect();
+    assert_eq!(sent, vec![1.0, 2.0]);
+}

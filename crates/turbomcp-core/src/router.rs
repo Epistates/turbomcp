@@ -85,6 +85,62 @@ fn progress_token(request: &JsonRpcIncoming) -> Option<Value> {
 /// points past the end. The spec's own guidance is `-32602` for an invalid
 /// cursor, and failing loudly beats serving page one again, which a client
 /// walking pages would read as an infinite list.
+/// Ends a request's progress stream when the request has been answered.
+struct ProgressScope<'a>(&'a RequestContext);
+
+impl Drop for ProgressScope<'_> {
+    fn drop(&mut self) {
+        self.0.end_progress();
+    }
+}
+
+/// Enforce a tool's `execution.taskSupport`.
+///
+/// It binds only on a server that declares `tasks.requests.tools.call`; a
+/// server without it ignores `task` and runs the call normally, as the tasks
+/// utility requires. On one that declares it, a `required` tool called without
+/// `task` MUST be answered -32601, and a `forbidden` (or unmarked) tool called
+/// with one SHOULD be.
+///
+/// This SDK does not run task-augmented calls itself: a handler that declares
+/// the capability implements them, and this keeps plain and task invocations
+/// on the side of the line the tool declared.
+fn check_task_support<H: McpHandler>(
+    handler: &H,
+    name: &str,
+    is_task: bool,
+    ctx: &RequestContext,
+) -> Result<(), McpError> {
+    let declares_task_calls = handler
+        .server_capabilities()
+        .tasks
+        .and_then(|tasks| tasks.requests)
+        .and_then(|requests| requests.tools)
+        .and_then(|tools| tools.call)
+        .is_some();
+    if !declares_task_calls {
+        return Ok(());
+    }
+
+    let support = handler
+        .list_tools_for(ctx)
+        .into_iter()
+        .find(|tool| tool.name == name)
+        .and_then(|tool| tool.execution)
+        .and_then(|execution| execution.task_support);
+    match (support, is_task) {
+        (Some(turbomcp_types::TaskSupportLevel::Required), false) => Err(McpError::new(
+            crate::error::ErrorKind::MethodNotFound,
+            alloc::format!("tool '{name}' must be invoked as a task"),
+        )),
+        (None | Some(turbomcp_types::TaskSupportLevel::Forbidden), true) => Err(McpError::new(
+            crate::error::ErrorKind::MethodNotFound,
+            alloc::format!("tool '{name}' cannot be invoked as a task"),
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// The `cursor` param of a list request.
 ///
 /// Absent or `null` means the first page. The schema types `Cursor` as a
@@ -203,6 +259,8 @@ pub async fn route_request<H: McpHandler>(
         }
         None => ctx,
     };
+    // Releases the request's progress state however this function returns.
+    let _progress = ProgressScope(ctx);
 
     let id = request.id.clone();
 
@@ -300,6 +358,10 @@ pub async fn route_request<H: McpHandler>(
                 );
             };
             let args = params.get("arguments").cloned().unwrap_or_default();
+
+            if let Err(err) = check_task_support(handler, name, params.get("task").is_some(), ctx) {
+                return JsonRpcOutgoing::error(id, err);
+            }
 
             match handler.call_tool(name, args, ctx).await {
                 Ok(result) => match serde_json::to_value(&result) {
@@ -970,6 +1032,123 @@ mod tests {
             result["serverInfo"]["icons"][0]["src"],
             "https://example.com/icon.png"
         );
+    }
+
+    /// On a server declaring task-augmented `tools/call`, `taskSupport` is
+    /// binding: `required` without `task` MUST be -32601, and `task` on a
+    /// `forbidden` or unmarked tool SHOULD be. Without the capability, `task`
+    /// is ignored and the call runs normally.
+    #[tokio::test]
+    async fn test_task_support_is_enforced_only_where_declared() {
+        #[derive(Clone)]
+        struct TaskServer {
+            declares: bool,
+        }
+
+        #[allow(clippy::manual_async_fn)]
+        impl McpHandler for TaskServer {
+            fn server_info(&self) -> ServerInfo {
+                ServerInfo::new("tasks", "1.0.0")
+            }
+
+            fn server_capabilities(&self) -> ServerCapabilities {
+                ServerCapabilities {
+                    tasks: self.declares.then(|| ServerTasksCapabilities {
+                        requests: Some(ServerTasksRequestsCapabilities {
+                            tools: Some(TasksToolsCapabilities {
+                                call: Some(TasksToolsCallCapabilities {}),
+                            }),
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+            }
+
+            fn list_tools(&self) -> Vec<Tool> {
+                let with = |name: &str, support| {
+                    let mut tool = Tool::new(name, name);
+                    tool.execution = Some(turbomcp_types::ToolExecution {
+                        task_support: Some(support),
+                    });
+                    tool
+                };
+                vec![
+                    with("slow", turbomcp_types::TaskSupportLevel::Required),
+                    with("quick", turbomcp_types::TaskSupportLevel::Forbidden),
+                ]
+            }
+
+            fn list_resources(&self) -> Vec<Resource> {
+                vec![]
+            }
+
+            fn list_prompts(&self) -> Vec<Prompt> {
+                vec![]
+            }
+
+            fn call_tool<'a>(
+                &'a self,
+                _name: &'a str,
+                _args: Value,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<ToolResult>> + MaybeSend + 'a {
+                async move { Ok(ToolResult::text("ran")) }
+            }
+
+            fn read_resource<'a>(
+                &'a self,
+                uri: &'a str,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<ResourceResult>> + MaybeSend + 'a {
+                async move { Err(McpError::resource_not_found(uri)) }
+            }
+
+            fn get_prompt<'a>(
+                &'a self,
+                name: &'a str,
+                _args: Option<Value>,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<PromptResult>> + MaybeSend + 'a {
+                async move { Err(McpError::prompt_not_found(name)) }
+            }
+        }
+
+        let call = |handler: TaskServer, tool: &'static str, task: bool| async move {
+            let mut params = serde_json::json!({ "name": tool, "arguments": {} });
+            if task {
+                params["task"] = serde_json::json!({ "ttl": 1000 });
+            }
+            let request = JsonRpcIncoming {
+                jsonrpc: "2.0".to_string(),
+                id: Some(serde_json::json!(1)),
+                method: "tools/call".to_string(),
+                params: Some(params),
+            };
+            route_request(
+                &handler,
+                request,
+                &RequestContext::stdio(),
+                &RouteConfig::default(),
+            )
+            .await
+        };
+        let code = |response: JsonRpcOutgoing| response.error.map(|e| e.code);
+
+        let declaring = TaskServer { declares: true };
+        assert_eq!(
+            code(call(declaring.clone(), "slow", false).await),
+            Some(-32601)
+        );
+        assert_eq!(
+            code(call(declaring.clone(), "quick", true).await),
+            Some(-32601)
+        );
+        assert_eq!(code(call(declaring, "quick", false).await), None);
+
+        let plain = TaskServer { declares: false };
+        assert_eq!(code(call(plain.clone(), "slow", false).await), None);
+        assert_eq!(code(call(plain, "quick", true).await), None);
     }
 
     #[tokio::test]
