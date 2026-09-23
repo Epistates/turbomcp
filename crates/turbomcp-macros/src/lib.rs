@@ -350,6 +350,11 @@ pub fn tool(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// The declared type is authoritative for a single-entry read, replacing the
+/// conversion's guess (`text/plain` for a `String`). A read that returns
+/// several entries keeps the type each entry set for itself; the declared one
+/// only fills in entries that have none.
+///
 /// # Attribute keys
 ///
 /// After the URI, `#[resource]` accepts the keys every marker shares

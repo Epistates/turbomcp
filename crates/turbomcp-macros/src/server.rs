@@ -1444,8 +1444,28 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         // guess from the body (`text/plain`, `application/octet-stream`), which
         // left the catalogue and the content describing the same resource
         // differently.
-        let mime_override = match &resource.mime_type {
-            Some(mime) => quote! { .with_mime_type(#mime) },
+        //
+        // That holds for a single entry, which *is* the listed resource. A read
+        // returning several entries — a directory's children, or renditions of
+        // one document — carries a type per entry that the handler chose, and
+        // overwriting them all with the one declared type mislabelled every
+        // entry but the matching ones. There the declared type only fills in
+        // entries that set none.
+        let apply_mime = match &resource.mime_type {
+            Some(mime) => quote! {
+                let mut read = read;
+                if read.contents.len() == 1 {
+                    read = read.with_mime_type(#mime);
+                } else {
+                    for entry in &mut read.contents {
+                        let slot = match entry {
+                            #turbomcp::__macro_support::turbomcp_types::ResourceContents::Text(text) => &mut text.mime_type,
+                            #turbomcp::__macro_support::turbomcp_types::ResourceContents::Blob(blob) => &mut blob.mime_type,
+                        };
+                        slot.get_or_insert_with(|| #mime.to_string());
+                    }
+                }
+            },
             None => quote! {},
         };
 
@@ -1456,10 +1476,11 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 #turbomcp::__macro_support::turbomcp_types::ResourceResult
             > = ::std::boxed::Box::pin(async {
                 match self.#fn_name(uri.to_string(), ctx).await {
-                    Ok(r) => Ok(
-                        #turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)
-                            #mime_override
-                    ),
+                    Ok(r) => {
+                        let read = #turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri);
+                        #apply_mime
+                        Ok(read)
+                    }
                     Err(e) => Err(e),
                 }
             }).await;
