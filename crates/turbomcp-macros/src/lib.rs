@@ -91,6 +91,10 @@ mod tool;
 ///   model much like a system prompt.
 /// - `website_url = "..."` - Homepage for this implementation
 /// - `icons = ["https://…/icon.png"]` - Icon sources (SEP-973)
+/// - `page_size = N` - Paginate the list methods at `N` entries
+/// - `logging` - Accepted for compatibility and has no effect: the `logging`
+///   capability is always advertised, since every server can emit
+///   `notifications/message` through `ctx.log()`
 ///
 /// Every value is an expression, not just a string literal, so server identity
 /// can come from the build or the environment. Unknown keys are a compile
@@ -152,11 +156,17 @@ mod tool;
 /// | [`#[completion]`](macro@completion) | `completion/complete` | `completions` |
 /// | [`#[subscribe]`](macro@subscribe) | `resources/subscribe` | `resources.subscribe` |
 /// | [`#[unsubscribe]`](macro@unsubscribe) | `resources/unsubscribe` | — |
-/// | [`#[set_level]`](macro@set_level) | `logging/setLevel` | `logging` |
+/// | [`#[set_level]`](macro@set_level) | `logging/setLevel` | — (`logging` is always advertised) |
 ///
 /// Each may appear at most once. Omitting one leaves the trait default, which
 /// answers `capability_not_supported`, and the capability stays unadvertised —
 /// so what `initialize` claims always matches what the server can serve.
+/// `#[subscribe]` without `#[unsubscribe]` is a compile error, since a client
+/// must be able to cancel a subscription the server accepted.
+///
+/// `logging/setLevel` is the exception: every server advertises `logging` and
+/// accepts the level (it is recorded per session and filters what `ctx.log()`
+/// emits), so `#[set_level]` is only needed to observe the change.
 ///
 /// ```ignore
 /// #[server(name = "docs", version = "1.0.0")]
@@ -488,7 +498,8 @@ pub fn completion(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// resource changes. Emit those with
 /// `ctx.notify_client("notifications/resources/updated", ...)`.
 ///
-/// At most one `#[subscribe]` method may exist per server.
+/// At most one `#[subscribe]` method may exist per server, and it must be
+/// paired with an [`macro@unsubscribe`] handler.
 ///
 /// # Signature
 ///
@@ -505,8 +516,9 @@ pub fn subscribe(_args: TokenStream, input: TokenStream) -> TokenStream {
 
 /// Marks a method as the handler for `resources/unsubscribe`.
 ///
-/// Pairs with [`macro@subscribe`]. A server that declares `#[subscribe]` should
-/// declare this too, so clients can cancel what they started.
+/// Pairs with [`macro@subscribe`]. A server that declares `#[subscribe]` must
+/// declare this too — `#[server]` rejects one without the other — so clients
+/// can cancel what they started.
 ///
 /// # Signature
 ///
@@ -521,10 +533,14 @@ pub fn unsubscribe(_args: TokenStream, input: TokenStream) -> TokenStream {
 
 /// Marks a method as the handler for `logging/setLevel`.
 ///
-/// Declaring it makes `#[server]` advertise the `logging` capability. The level
-/// is the raw spec string: `debug`, `info`, `notice`, `warning`, `error`,
-/// `critical`, `alert`, or `emergency`. Persist it and use it to filter the
-/// `notifications/message` your server emits.
+/// Optional: every `#[server]` advertises the `logging` capability and accepts
+/// `logging/setLevel` without it, recording the level per session so that
+/// `ctx.log()` drops messages below it. Declare this marker to observe the
+/// change as well — for example to reconfigure logging the server does outside
+/// `ctx.log()`. The level is the raw spec string, already validated: `debug`,
+/// `info`, `notice`, `warning`, `error`, `critical`, `alert`, or `emergency`.
+/// Returning an error rejects the request and leaves the recorded level as it
+/// was.
 ///
 /// At most one `#[set_level]` method may exist per server.
 ///

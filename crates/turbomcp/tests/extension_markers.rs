@@ -205,13 +205,14 @@ async fn omitting_markers_advertises_nothing_extra() {
     // The central guarantee: never claim a capability we would then answer
     // with `capability_not_supported`.
     assert!(caps["completions"].is_null(), "got {caps}");
-    assert!(caps["logging"].is_null(), "got {caps}");
     assert!(caps["resources"].is_null(), "got {caps}");
     assert_eq!(caps["tools"]["listChanged"], true);
 }
 
 #[tokio::test]
 async fn undeclared_extension_points_still_report_unsupported() {
+    // `logging/setLevel` is deliberately absent: every server advertises
+    // `logging` and accepts the level, with or without `#[set_level]`.
     for (method, params) in [
         ("completion/complete", serde_json::json!({})),
         ("resources/subscribe", serde_json::json!({ "uri": "x://y" })),
@@ -219,7 +220,6 @@ async fn undeclared_extension_points_still_report_unsupported() {
             "resources/unsubscribe",
             serde_json::json!({ "uri": "x://y" }),
         ),
-        ("logging/setLevel", serde_json::json!({ "level": "debug" })),
     ] {
         let response = request(&Bare, method, params).await;
         // -32601: the completion spec spells this out as "Method not found:
@@ -350,12 +350,22 @@ async fn roots_changed_marker_reaches_the_handler() {
 
 // ── #[server(logging)] ─────────────────────────────────────────────────────
 
-/// The `logging` capability means "this server emits `notifications/message`",
-/// which is independent of implementing `logging/setLevel`. A server that logs
-/// but does not let clients change the level previously had no way to declare
-/// it, so it violated the rule that a server must declare what it uses.
+/// "Servers that emit log message notifications MUST declare the `logging`
+/// capability." Every server can emit them through `ctx.log()`, so every
+/// server declares it — not only those that opted in with a marker or a flag.
 #[tokio::test]
-async fn logging_can_be_declared_without_a_set_level_handler() {
+async fn every_server_advertises_logging() {
+    let caps = capabilities_of(&Bare).await;
+    assert!(
+        caps["logging"].is_object(),
+        "a server without #[set_level] can still log, got {caps}"
+    );
+}
+
+/// `#[server(logging)]` predates the capability being unconditional. It must
+/// keep compiling, and it changes nothing.
+#[tokio::test]
+async fn the_logging_flag_is_still_accepted() {
     #[derive(Clone)]
     struct Emitter;
 
@@ -368,25 +378,6 @@ async fn logging_can_be_declared_without_a_set_level_handler() {
     }
 
     let caps = capabilities_of(&Emitter).await;
-    assert!(
-        caps["logging"].is_object(),
-        "#[server(logging)] must advertise the capability, got {caps}"
-    );
-
-    // Declaring it does not fabricate a setLevel handler.
-    let response = request(
-        &Emitter,
-        "logging/setLevel",
-        serde_json::json!({ "level": "debug" }),
-    )
-    .await;
-    assert_eq!(response["error"]["code"], -32601);
-}
-
-/// And `#[set_level]` still implies it, so neither signal is load-bearing alone.
-#[tokio::test]
-async fn set_level_still_implies_the_logging_capability() {
-    let caps = capabilities_of(&Full::default()).await;
     assert!(caps["logging"].is_object(), "got {caps}");
 }
 

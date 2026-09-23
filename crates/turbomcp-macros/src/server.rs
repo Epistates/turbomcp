@@ -56,8 +56,6 @@ pub struct ServerInfo {
     pub prompts: Vec<PromptInfo>,
     /// Optional extension-point handlers discovered from marker attributes.
     pub extensions: ExtensionHandlers,
-    /// Whether `#[server(logging)]` asked for the `logging` capability.
-    pub logging: bool,
     /// `#[server(page_size = N)]`, if given.
     pub page_size: Option<TokenStream>,
 }
@@ -69,15 +67,18 @@ pub struct ServerInfo {
 /// capability. Leaving one unset keeps the trait default, which reports
 /// `capability_not_supported` — so what a server claims during initialization
 /// always matches what it can actually serve.
+///
+/// `#[set_level]` is the exception: `logging` is always advertised, and the
+/// trait default accepts the level, so the marker only lets a server observe it.
 #[derive(Default)]
 pub struct ExtensionHandlers {
     /// `#[completion]` → `complete` + `completions` capability.
     pub completion: Option<ExtensionHandler>,
     /// `#[subscribe]` → `subscribe` + `resources.subscribe` capability.
     pub subscribe: Option<ExtensionHandler>,
-    /// `#[unsubscribe]` → `unsubscribe`.
+    /// `#[unsubscribe]` → `unsubscribe`. Required alongside `#[subscribe]`.
     pub unsubscribe: Option<ExtensionHandler>,
-    /// `#[set_level]` → `set_log_level` + `logging` capability.
+    /// `#[set_level]` → `set_log_level`.
     pub set_level: Option<ExtensionHandler>,
     /// `#[roots_changed]` → `on_roots_list_changed`. Advertises nothing:
     /// `roots` is a client capability, not a server one.
@@ -182,8 +183,6 @@ pub struct ServerAttrs {
     pub website_url: Option<syn::Expr>,
     /// Icon source URIs (SEP-973)
     pub icons: Vec<syn::Expr>,
-    /// Bare `logging` flag: declare the `logging` capability.
-    pub logging: bool,
     /// `page_size = N`: paginate the list methods at N entries.
     pub page_size: Option<syn::Expr>,
 }
@@ -205,7 +204,6 @@ impl ServerAttrs {
             ref mut instructions,
             ref mut website_url,
             ref mut icons,
-            ref mut logging,
             ref mut page_size,
         } = attrs;
 
@@ -235,13 +233,11 @@ impl ServerAttrs {
             } else if meta.path.is_ident("page_size") {
                 *page_size = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("logging") {
-                // A bare flag, not a key=value: `#[server(name = "x", logging)]`.
-                // The `logging` capability means "this server emits
-                // notifications/message". That is independent of implementing
-                // `logging/setLevel`, so it cannot be inferred from
-                // `#[set_level]` alone — a server may emit logs without letting
-                // clients change the level.
-                *logging = true;
+                // A bare flag, still accepted so servers that declare it keep
+                // compiling. It no longer changes anything: every server
+                // can emit `notifications/message` through `ctx.log()`, and a
+                // server that emits log notifications must declare `logging`,
+                // so the capability is now always advertised.
             } else if meta.path.is_ident("transports") {
                 // v3: The `transports` attribute was removed.
                 //
@@ -270,7 +266,8 @@ impl ServerAttrs {
                     .unwrap_or_else(|| "<unknown>".to_string());
                 return Err(meta.error(format!(
                     "unknown #[server] attribute key `{key}`; expected one of `name`, \
-                     `version`, `description`, `title`, `instructions`, `website_url`, `icons`",
+                     `version`, `description`, `title`, `instructions`, `website_url`, `icons`, \
+                     `page_size`, `logging`",
                 )));
             }
             Ok(())
@@ -413,9 +410,33 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
         resources,
         prompts,
         extensions,
-        logging: attrs.logging,
         page_size: attrs.page_size.as_ref().map(|expr| quote!(#expr)),
     })
+}
+
+/// Reject marker combinations that would advertise a method the server cannot
+/// serve.
+///
+/// `#[subscribe]` advertises `resources.subscribe`, and a client that holds a
+/// subscription must be able to cancel it. Generating a no-op `unsubscribe`
+/// would answer success while the handler's own bookkeeping kept the
+/// subscription alive, so the server would go on sending updates the client
+/// asked to stop — the same "accepted and then ignored" failure a no-op
+/// `logging/setLevel` would be. Only the author knows how to undo what their
+/// `#[subscribe]` did, so the pairing is enforced here instead.
+fn validate_extensions(extensions: &ExtensionHandlers) -> Result<(), syn::Error> {
+    if let (Some(subscribe), None) = (&extensions.subscribe, &extensions.unsubscribe) {
+        return Err(syn::Error::new_spanned(
+            &subscribe.fn_name,
+            "#[subscribe] requires a matching #[unsubscribe] handler\n\n\
+             Declaring #[subscribe] advertises `resources.subscribe`, which commits the \
+             server to answering `resources/unsubscribe` as well:\n\
+             \n\
+             #[unsubscribe]\n\
+             async fn unwatch(&self, uri: String) -> McpResult<()> { ... }",
+        ));
+    }
+    Ok(())
 }
 
 /// Map a marker attribute to its slot in [`ExtensionHandlers`].
@@ -910,10 +931,15 @@ fn generate_extension_handlers(
 /// Generate `server_capabilities`, inferred from what the server can serve.
 ///
 /// Tools, resources, and prompts are advertised when the impl block declares
-/// any; `completions`, `logging`, and `resources.subscribe` are advertised only
-/// when the corresponding marker attribute supplied a handler. A server
-/// therefore never claims a capability whose method would answer
-/// `capability_not_supported`.
+/// any; `completions` and `resources.subscribe` are advertised only when the
+/// corresponding marker attribute supplied a handler. A server therefore never
+/// claims a capability whose method would answer `capability_not_supported`.
+///
+/// `logging` is always advertised. Every server can emit
+/// `notifications/message` through `ctx.log()`, a server that emits log
+/// notifications must declare `logging`, and the trait default for
+/// `logging/setLevel` accepts the level (the router records it), so the method
+/// is served whether or not `#[set_level]` is present.
 fn generate_capabilities(info: &ServerInfo, turbomcp: &TokenStream) -> TokenStream {
     let types = quote! { #turbomcp::__macro_support::turbomcp_types };
 
@@ -960,15 +986,6 @@ fn generate_capabilities(info: &ServerInfo, turbomcp: &TokenStream) -> TokenStre
         }
     });
 
-    // Either signal is enough: implementing `logging/setLevel` implies the
-    // server does logging, and `#[server(logging)]` covers the server that
-    // emits `notifications/message` without letting clients set a level.
-    let logging_code = (info.extensions.set_level.is_some() || info.logging).then(|| {
-        quote! {
-            capabilities.logging = Some(#types::LoggingCapabilities::default());
-        }
-    });
-
     quote! {
         fn server_capabilities(&self) -> #types::ServerCapabilities {
             let mut capabilities = #types::ServerCapabilities::default();
@@ -976,7 +993,7 @@ fn generate_capabilities(info: &ServerInfo, turbomcp: &TokenStream) -> TokenStre
             #resources_code
             #prompts_code
             #completions_code
-            #logging_code
+            capabilities.logging = Some(#types::LoggingCapabilities::default());
             capabilities
         }
     }
@@ -1716,6 +1733,8 @@ fn validate_handlers(info: &ServerInfo) -> Result<(), syn::Error> {
         // But we could warn in the future
     }
 
+    validate_extensions(&info.extensions)?;
+
     // Validate tool signatures
     for tool in &info.tools {
         // Check for async
@@ -1756,4 +1775,41 @@ fn validate_handlers(info: &ServerInfo) -> Result<(), syn::Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    /// Run the analysis and validation `#[server]` performs, stopping short of
+    /// code generation.
+    fn check(impl_block: ItemImpl) -> Result<ServerInfo, syn::Error> {
+        let info = analyze_impl(&impl_block, &ServerAttrs::default())?;
+        validate_handlers(&info)?;
+        Ok(info)
+    }
+
+    #[test]
+    fn subscribe_without_unsubscribe_is_rejected() {
+        let err = check(parse_quote! {
+            impl S {
+                #[subscribe]
+                async fn watch(&self, uri: String) -> McpResult<()> { Ok(()) }
+            }
+        })
+        .err()
+        .expect("an unpaired #[subscribe] must not compile");
+        assert!(err.to_string().contains("#[unsubscribe]"), "{err}");
+
+        check(parse_quote! {
+            impl S {
+                #[subscribe]
+                async fn watch(&self, uri: String) -> McpResult<()> { Ok(()) }
+                #[unsubscribe]
+                async fn unwatch(&self, uri: String) -> McpResult<()> { Ok(()) }
+            }
+        })
+        .unwrap_or_else(|e| panic!("a paired #[subscribe] must compile: {e}"));
+    }
 }
