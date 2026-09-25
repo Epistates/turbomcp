@@ -17,7 +17,7 @@ This crate provides the foundational types for the Model Context Protocol (MCP) 
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "3.1", default-features = false }
+turbomcp-core = { version = "3.5.0", default-features = false }
 ```
 
 ## What's Included

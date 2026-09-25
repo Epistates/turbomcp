@@ -17,7 +17,7 @@
 //! behind a feature flag:
 //! ```toml
 //! # Enable experimental Tasks API
-//! turbomcp-protocol = { version = "3.0", features = ["experimental-tasks"] }
+//! turbomcp-protocol = { version = "3.5.0", features = ["experimental-tasks"] }
 //! ```
 //!
 //! Runtime negotiation is policy-driven by the server/client configuration:

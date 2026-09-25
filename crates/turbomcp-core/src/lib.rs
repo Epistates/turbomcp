@@ -42,7 +42,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! turbomcp-core = { version = "3.0", default-features = false }
+//! turbomcp-core = { version = "3.5.0", default-features = false }
 //! ```
 //!
 //! ## Module Organization

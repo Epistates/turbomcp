@@ -15,7 +15,7 @@ Add `turbomcp-wasm` with the `macros` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp-wasm = { version = "3.1", default-features = false, features = ["macros"] }
+turbomcp-wasm = { version = "3.5.0", default-features = false, features = ["macros"] }
 worker = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 schemars = "1.2"
