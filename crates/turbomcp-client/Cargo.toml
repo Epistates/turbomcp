@@ -15,7 +15,7 @@ categories = ["network-programming", "asynchronous", "api-bindings"]
 [features]
 # The Streamable HTTP client transport (reqwest + SSE). Off by default; stdio
 # needs no extra deps.
-http = ["dep:reqwest", "dep:eventsource-stream", "dep:futures"]
+http = ["dep:reqwest", "dep:eventsource-stream"]
 
 oauth = ["http", "dep:turbomcp-auth"]
 
@@ -36,7 +36,7 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "process", "io-util", "macros"] }
 reqwest = { workspace = true, optional = true }
 eventsource-stream = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 turbomcp-server = { workspace = true }

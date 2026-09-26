@@ -76,19 +76,28 @@ impl ElicitationHandler for AcceptAll {
 
 // ---- Auto → legacy fallback ----------------------------------------------------
 
-/// The point of `ConnectMode::Auto`: when `server/discover` is unavailable
-/// (`-32601` from a legacy-only server, or UnsupportedProtocolVersion from a
-/// version-strict one), the client falls back to `initialize` and lands on
-/// `2025-11-25`. Both the RC's `-32004` and the earlier draft's `-32022` are
-/// accepted, so a peer tracking either spec revision still negotiates.
+/// "The server returns any other error, or does not respond within a
+/// reasonable timeout: the server is legacy … The fallback MUST NOT be keyed to
+/// one specific error code" (2026-07-28 stdio §Backward Compatibility). Each
+/// case is what a real legacy SDK answers `server/discover` with: `-32601`,
+/// python-sdk/FastMCP's `-32602`, `-32600`, an implementation-defined
+/// `-32603`, and an unsupported-version error listing only stateful
+/// revisions. Falling back on `-32601` alone stranded all but the first.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn auto_falls_back_to_legacy_when_discover_is_unavailable() {
-    for discover_code in [-32601i64, -32004, -32022] {
+async fn auto_falls_back_on_any_non_modern_answer() {
+    let answers = [
+        json!({ "code": -32601, "message": "Method not found" }),
+        json!({ "code": -32602, "message": "Invalid request parameters" }),
+        json!({ "code": -32600, "message": "Invalid Request" }),
+        json!({ "code": -32603, "message": "boom" }),
+        json!({ "code": -32022, "message": "Unsupported protocol version",
+                "data": { "supported": ["2025-06-18", "2025-11-25"], "requested": "2026-07-28" } }),
+    ];
+    for answer in answers {
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let discover = answer.clone();
         spawn_scripted(server_io, move |method, _| match method {
-            "server/discover" => Some(json!({
-                "error": { "code": discover_code, "message": "not here" }
-            })),
+            "server/discover" => Some(json!({ "error": discover.clone() })),
             "initialize" => Some(json!({ "result": {
                 "protocolVersion": "2025-11-25",
                 "capabilities": { "tools": {} },
@@ -102,50 +111,77 @@ async fn auto_falls_back_to_legacy_when_discover_is_unavailable() {
             .with_connect_mode(ConnectMode::Auto)
             .connect(transport_for(client_io))
             .await
-            .unwrap_or_else(|e| panic!("fallback handshake (code {discover_code}) failed: {e}"));
+            .unwrap_or_else(|e| panic!("fallback after {answer} failed: {e}"));
         assert_eq!(client.protocol_version(), &ProtocolVersion::V2025_11_25);
         assert_eq!(client.server_info().unwrap().name, "legacy-only");
-        // The negotiated legacy wire drives the typed surface.
         let tools = client.list_tools(None).await.expect("legacy list works");
         assert!(tools.tools.is_empty());
     }
 }
 
-/// A non-negotiation failure (here `-32603`) must NOT trigger the fallback —
-/// it surfaces as the handshake error.
+/// A legacy server that ignores unknown methods never answers the probe. That
+/// is the spec's other legacy signal; it used to cost the full request timeout
+/// and then fail the connect.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn auto_does_not_swallow_unrelated_discover_failures() {
+async fn auto_falls_back_when_the_probe_goes_unanswered() {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     spawn_scripted(server_io, |method, _| match method {
-        "server/discover" => Some(json!({
-            "error": { "code": -32603, "message": "boom" }
-        })),
-        other => panic!("no fallback expected, got {other}"),
+        "server/discover" => None,
+        "initialize" => Some(json!({ "result": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "serverInfo": { "name": "silent", "version": "1.0" }
+        }})),
+        other => panic!("unexpected method from client: {other}"),
     });
-    let Err(err) = ClientBuilder::new("auto", "1.0.0")
+    let client = ClientBuilder::new("auto", "1.0.0")
         .with_connect_mode(ConnectMode::Auto)
+        .with_timeout(Duration::from_millis(300))
         .connect(transport_for(client_io))
         .await
-    else {
-        panic!("internal error is not a fallback trigger");
-    };
-    assert!(
-        matches!(&err, ClientError::Rpc(e) if e.code == -32603),
-        "{err:?}"
-    );
+        .expect("a silent probe means legacy");
+    assert_eq!(client.protocol_version(), &ProtocolVersion::V2025_11_25);
+}
+
+/// A recognized modern error is a modern server, and falling back to
+/// `initialize` is exactly what the spec says not to do.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_does_not_fall_back_on_a_modern_error() {
+    for answer in [
+        json!({ "code": -32021, "message": "Missing required client capability",
+                "data": { "requiredCapabilities": { "sampling": {} } } }),
+        json!({ "code": -32022, "message": "Unsupported protocol version",
+                "data": { "supported": ["2099-01-01"], "requested": "2026-07-28" } }),
+    ] {
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let discover = answer.clone();
+        spawn_scripted(server_io, move |method, _| match method {
+            "server/discover" => Some(json!({ "error": discover.clone() })),
+            other => panic!("no fallback expected after {discover}, got {other}"),
+        });
+        let Err(err) = ClientBuilder::new("auto", "1.0.0")
+            .with_connect_mode(ConnectMode::Auto)
+            .connect(transport_for(client_io))
+            .await
+        else {
+            panic!("{answer} is not a fallback trigger");
+        };
+        assert!(
+            matches!(&err, ClientError::Rpc(e) if e.code == -32021)
+                || matches!(&err, ClientError::Protocol(_)),
+            "{err:?}"
+        );
+    }
 }
 
 // ---- HeaderMismatch recovery ----------------------------------------------------
 
-/// Per the transports spec, a HeaderMismatch on `tools/call` means the
-/// client's mirrored headers came from a stale schema: refresh `tools/list`
-/// (rebuilding the header cache) and retry exactly once. Driven for both the
-/// RC's `-32001` and the earlier draft's `-32020`.
+/// Per the transports spec, a HeaderMismatch (`-32020`) on `tools/call` means
+/// the client's mirrored headers came from a stale schema: refresh
+/// `tools/list` (rebuilding the header cache) and retry exactly once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn header_mismatch_refreshes_tools_list_and_retries_once() {
-    for mismatch_code in [-32001i64, -32020] {
-        header_mismatch_retry_case(mismatch_code).await;
-    }
+    header_mismatch_retry_case(-32020).await;
 }
 
 async fn header_mismatch_retry_case(mismatch_code: i64) {
@@ -230,6 +266,142 @@ async fn mrtr_without_a_handler_is_a_protocol_error() {
         matches!(&err, ClientError::Protocol(m) if m.contains("no handler")),
         "{err:?}"
     );
+}
+
+/// "If the `InputRequiredResult` does not contain a `requestState` field, the
+/// client MUST NOT include one in the retry." The retry used to keep the
+/// previous round's state, echoing a token the server had stopped issuing.
+/// And a state-only round needs no handler at all: there is nothing to answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_mrtr_retry_carries_only_what_its_round_issued() {
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    {
+        let seen = Arc::clone(&seen);
+        spawn_scripted(server_io, move |method, frame| match method {
+            "server/discover" => Some(discover_ok()),
+            "tools/call" => {
+                let mut seen = seen.lock().unwrap();
+                seen.push(frame["params"].clone());
+                Some(match seen.len() {
+                    // Round 1: a token only, no questions.
+                    1 => {
+                        json!({ "result": { "resultType": "input_required", "requestState": "s1" } })
+                    }
+                    // Round 2: a question and no token.
+                    2 => input_required_no_state(),
+                    _ => json!({ "result": {
+                        "resultType": "complete",
+                        "content": [{ "type": "text", "text": "done" }]
+                    }}),
+                })
+            }
+            other => panic!("unexpected method from client: {other}"),
+        });
+    }
+    let client = ClientBuilder::new("mrtr", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .with_elicitation(AcceptAll)
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    client.call_tool("t", Map::new()).await.expect("converges");
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[1]["requestState"], "s1", "round 1's token comes back");
+    assert!(seen[1].get("inputResponses").is_none(), "nothing was asked");
+    assert!(
+        seen[2].get("requestState").is_none(),
+        "round 2 issued no token, so none goes back: {}",
+        seen[2]
+    );
+    assert!(seen[2]["inputResponses"].get("k").is_some());
+}
+
+fn input_required_no_state() -> Value {
+    json!({ "result": {
+        "resultType": "input_required",
+        "inputRequests": { "k": { "method": "elicitation/create",
+            "params": { "message": "?", "requestedSchema": { "type": "object", "properties": {} } } } }
+    }})
+}
+
+/// A handler-less client can still follow a state-only round.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_state_only_round_needs_no_handler() {
+    let rounds = Arc::new(AtomicUsize::new(0));
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    {
+        let rounds = Arc::clone(&rounds);
+        spawn_scripted(server_io, move |method, _| match method {
+            "server/discover" => Some(discover_ok()),
+            "tools/call" => Some(if rounds.fetch_add(1, SeqCst) == 0 {
+                json!({ "result": { "resultType": "input_required", "requestState": "later" } })
+            } else {
+                json!({ "result": { "resultType": "complete", "content": [] } })
+            }),
+            other => panic!("unexpected method from client: {other}"),
+        });
+    }
+    let client = ClientBuilder::new("bare", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    client
+        .call_tool("t", Map::new())
+        .await
+        .expect("no questions, so no handler needed");
+}
+
+/// "A `resultType` of any value unrecognized by the client MUST be considered
+/// invalid." It used to be read as a plain result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unrecognized_result_type_is_invalid() {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    spawn_scripted(server_io, |method, _| match method {
+        "server/discover" => Some(discover_ok()),
+        "tools/call" => Some(json!({ "result": { "resultType": "banana", "content": [] } })),
+        other => panic!("unexpected method from client: {other}"),
+    });
+    let client = ClientBuilder::new("strict", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    let err = client.call_tool("t", Map::new()).await.unwrap_err();
+    assert!(
+        matches!(&err, ClientError::Protocol(m) if m.contains("banana")),
+        "{err:?}"
+    );
+}
+
+/// `-32001` is implementation-defined (FastMCP answers "Not found" with it),
+/// and re-issuing `tools/call` on it ran the tool twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_implementation_defined_code_does_not_rerun_the_tool() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    {
+        let calls = Arc::clone(&calls);
+        spawn_scripted(server_io, move |method, _| match method {
+            "server/discover" => Some(discover_ok()),
+            "tools/call" => {
+                calls.fetch_add(1, SeqCst);
+                Some(json!({ "error": { "code": -32001, "message": "Not found" } }))
+            }
+            other => panic!("unexpected method from client: {other}"),
+        });
+    }
+    let client = ClientBuilder::new("once", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    let err = client.call_tool("t", Map::new()).await.unwrap_err();
+    assert_eq!(err.rpc_code(), Some(-32001));
+    assert_eq!(calls.load(SeqCst), 1, "the tool ran exactly once");
 }
 
 /// A server that answers `input_required` forever hits the round cap and
@@ -395,8 +567,11 @@ async fn task_client(terminal: Value, ttl_ms: u64) -> Client {
         "tasks/get" => Some(json!({ "result": terminal })),
         other => panic!("unexpected method from client: {other}"),
     });
+    // A server may answer `resultType: "task"` only to a client that declared
+    // the Tasks extension; to anyone else it is an unrecognized result type.
     ClientBuilder::new("tasks", "1.0.0")
         .with_connect_mode(ConnectMode::Modern)
+        .with_extension("io.modelcontextprotocol/tasks", json!({}))
         .connect(transport_for(client_io))
         .await
         .unwrap()

@@ -1040,6 +1040,16 @@ fn extract_header_params(msg: &mut JsonRpcMessage) -> Vec<(String, String)> {
 /// responses to server requests and notifications, which carry no signal).
 /// Remembers whatever it resolves. An emptied `_meta` is dropped entirely.
 fn extract_protocol_version(msg: &mut JsonRpcMessage, shared: &Shared) -> Option<String> {
+    // `initialize` *is* the negotiation: nothing has been agreed yet, so it
+    // carries no version header and forgets any it inherited. After a failed
+    // `server/discover` probe the remembered value was that probe's
+    // `2026-07-28`, and the fallback `initialize` went out claiming it — a
+    // strict legacy server refuses exactly that.
+    if matches!(msg, JsonRpcMessage::Request(r) if r.method == turbomcp_protocol::methods::request::INITIALIZE)
+    {
+        *shared.version.lock().expect("version mutex") = None;
+        return None;
+    }
     let params = match msg {
         JsonRpcMessage::Request(r) => r.params.as_mut(),
         JsonRpcMessage::Notification(n) => n.params.as_mut(),

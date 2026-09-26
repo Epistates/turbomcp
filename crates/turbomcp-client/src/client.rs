@@ -24,7 +24,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use turbomcp_core::meta::keys;
-use turbomcp_core::{Implementation, LogLevel, ProtocolVersion};
+use turbomcp_core::{Implementation, LogLevel, ProtocolVersion, codes};
 use turbomcp_protocol::methods::{notification, request};
 use turbomcp_protocol::neutral;
 use turbomcp_protocol::v2025_11_25::types as legacy;
@@ -50,6 +50,9 @@ const MAX_LIST_PAGES: usize = 10_000;
 
 /// `resultType: "task"` marks a `CreateTaskResult` (SEP-2663).
 const RESULT_TYPE_TASK: &str = "task";
+
+/// The Tasks extension's identifier (SEP-2663).
+const TASKS_EXTENSION: &str = "io.modelcontextprotocol/tasks";
 /// Poll cadence when the server suggests none, and the floor applied to a
 /// server-suggested `pollIntervalMs` (protects the server from a zero value).
 const DEFAULT_TASK_POLL_MS: u64 = 500;
@@ -68,11 +71,19 @@ pub(crate) const HEADER_PARAMS_META_KEY: &str = "io.turbomcp.internal/headerPara
 /// every server boundary otherwise.
 pub(crate) const NEGOTIATED_VERSION_META_KEY: &str = "io.turbomcp.internal/negotiatedVersion";
 
+/// How long [`ConnectMode::Auto`] waits for its `server/discover` probe (or the
+/// request timeout, if shorter) before concluding the server is legacy.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// How a [`Client`] decides which protocol version to speak.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectMode {
-    /// Probe the modern (`server/discover`) path first; on `-32601`/`-32004`
-    /// fall back to the legacy `initialize` handshake. The default.
+    /// Probe the modern (`server/discover`) path first, and fall back to the
+    /// legacy `initialize` handshake when the server turns out to be legacy:
+    /// any error that is not a recognized modern one, or no answer within a
+    /// few seconds (2026-07-28 stdio/HTTP §Backward Compatibility). The
+    /// default.
     #[default]
     Auto,
     /// Force the modern, stateless `2026-07-28` path (`server/discover`).
@@ -248,23 +259,9 @@ impl ClientBuilder {
         let outcome = match self.connect_mode {
             ConnectMode::Modern => self.modern_handshake(&conn).await?,
             ConnectMode::Legacy => self.legacy_handshake(&conn).await?,
-            ConnectMode::Auto => match self.modern_handshake(&conn).await {
-                Ok(o) => o,
-                // -32601 method-not-found (no discover) / unsupported version
-                // → the server only speaks legacy. `-32004` is the current
-                // UnsupportedProtocolVersionError code (2026-07-28 RC);
-                // `-32022` is the earlier draft's value, tolerated for peers
-                // still tracking it.
-                Err(e) if matches!(e.rpc_code(), Some(-32601 | -32004 | -32022)) => {
-                    self.legacy_handshake(&conn).await?
-                }
-                // The server answered `server/discover` but doesn't serve the
-                // stateless path (it listed only stateful revisions). That is
-                // the same conclusion, reached from a success rather than an
-                // error — the method is version-agnostic, so answering it says
-                // nothing about which versions are served.
-                Err(ClientError::Protocol(_)) => self.legacy_handshake(&conn).await?,
-                Err(other) => return Err(other),
+            ConnectMode::Auto => match self.probe(&conn).await? {
+                Some(modern) => modern,
+                None => self.legacy_handshake(&conn).await?,
             },
         };
 
@@ -313,6 +310,75 @@ impl ClientBuilder {
     /// [`ConnectMode::Auto`] treats this as "fall back to `initialize`".
     async fn modern_handshake(&self, conn: &Connection) -> ClientResult<Handshake> {
         let version = ProtocolVersion::LATEST;
+        let result = self.discover(conn).await?;
+
+        // The server lists what it serves; believe it. Proceeding on a
+        // successful discover alone would connect "fine" and then fail every
+        // subsequent request, since each one restates the version.
+        if let Some(supported) = result.get("supportedVersions").and_then(Value::as_array)
+            && !supported
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|v| v == version.as_str())
+        {
+            return Err(ClientError::Protocol(format!(
+                "server does not serve `{version}` (it lists {supported:?})"
+            )));
+        }
+
+        Ok(Handshake::from_result(version, &result))
+    }
+
+    /// [`ConnectMode::Auto`]'s era probe: `Some` for a modern server, `None`
+    /// for a legacy one, `Err` when the answer rules out both.
+    ///
+    /// 2026-07-28 §Backward Compatibility (stdio): "The server returns a
+    /// recognized modern JSON-RPC error such as `UnsupportedProtocolVersionError`:
+    /// … Do **not** fall back to `initialize`. The server returns any other
+    /// error, or does not respond within a reasonable timeout: the server is
+    /// legacy … The fallback **MUST NOT** be keyed to one specific error code."
+    /// And over HTTP a `400` whose body is not a recognized modern error means
+    /// the same. Falling back only on `-32601` stranded python-sdk and FastMCP
+    /// servers (`-32602`), go-sdk HTTP servers (a plain-text 400), and any
+    /// server that ignores unknown methods (the full request timeout).
+    async fn probe(&self, conn: &Connection) -> ClientResult<Option<Handshake>> {
+        let wait = self.request_timeout.min(PROBE_TIMEOUT);
+        let result = match tokio::time::timeout(wait, self.discover(conn)).await {
+            // "does not respond within a reasonable timeout: the server is legacy"
+            Err(_elapsed) => return Ok(None),
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => return probe_error(error),
+        };
+        let listed: Vec<ProtocolVersion> = result
+            .get("supportedVersions")
+            .and_then(Value::as_array)
+            .map(|v| {
+                v.iter()
+                    .filter_map(Value::as_str)
+                    .map(ProtocolVersion::from_wire)
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![ProtocolVersion::LATEST]);
+        if listed.contains(&ProtocolVersion::LATEST) {
+            return Ok(Some(Handshake::from_result(
+                ProtocolVersion::LATEST,
+                &result,
+            )));
+        }
+        // Answered, but serving only revisions reached through `initialize`.
+        if listed.iter().any(ProtocolVersion::is_stateful) {
+            return Ok(None);
+        }
+        Err(ClientError::Protocol(format!(
+            "server serves {listed:?}, none of which this client speaks"
+        )))
+    }
+
+    /// One `server/discover`, retried once if the server says the version is
+    /// unsupported while listing it (a server that changed its mind between
+    /// probe and retry).
+    async fn discover(&self, conn: &Connection) -> ClientResult<Value> {
+        let version = ProtocolVersion::LATEST;
         let mut meta = Map::new();
         meta.insert(keys::PROTOCOL_VERSION.into(), json!(version.as_str()));
         meta.insert(
@@ -327,7 +393,7 @@ impl ClientBuilder {
 
         let result = match conn.request(request::DISCOVER, Some(params.clone())).await {
             Err(error)
-                if matches!(error.rpc_code(), Some(-32004 | -32022))
+                if error.rpc_code() == Some(codes::UNSUPPORTED_PROTOCOL_VERSION)
                     && error
                         .as_rpc()
                         .and_then(|rpc| rpc.data.as_ref())
@@ -343,22 +409,7 @@ impl ClientBuilder {
             }
             other => other?,
         };
-
-        // The server lists what it serves; believe it. Proceeding on a
-        // successful discover alone would connect "fine" and then fail every
-        // subsequent request with `-32004`, since each one restates the version.
-        if let Some(supported) = result.get("supportedVersions").and_then(Value::as_array)
-            && !supported
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|v| v == version.as_str())
-        {
-            return Err(ClientError::Protocol(format!(
-                "server does not serve `{version}` (it lists {supported:?})"
-            )));
-        }
-
-        Ok(Handshake::from_result(version, &result))
+        Ok(result)
     }
 
     /// The legacy, stateful handshake: `initialize` then `notifications/initialized`.
@@ -414,6 +465,59 @@ impl ClientBuilder {
         )
         .await?;
         Ok(Handshake::from_result(negotiated, &result))
+    }
+}
+
+/// What a failed `server/discover` probe says about the server.
+fn probe_error(error: ClientError) -> ClientResult<Option<Handshake>> {
+    // A recognized modern error: the server is modern, and falling back to
+    // `initialize` is what the spec says not to do — unless the versions it
+    // does serve are ones reached through `initialize`.
+    if let Some(rpc) = error.as_rpc() {
+        if rpc.code == codes::UNSUPPORTED_PROTOCOL_VERSION {
+            let supported: Vec<ProtocolVersion> = rpc
+                .data
+                .as_ref()
+                .and_then(|d| d.get("supported"))
+                .and_then(Value::as_array)
+                .map(|v| {
+                    v.iter()
+                        .filter_map(Value::as_str)
+                        .map(ProtocolVersion::from_wire)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if supported.iter().any(ProtocolVersion::is_stateful) {
+                return Ok(None);
+            }
+            return Err(ClientError::Protocol(format!(
+                "server serves {supported:?}, none of which this client speaks"
+            )));
+        }
+        if matches!(
+            rpc.code,
+            codes::MISSING_REQUIRED_CLIENT_CAPABILITY | codes::HEADER_MISMATCH
+        ) {
+            return Err(error);
+        }
+        // Any other JSON-RPC error — `-32601`, `-32602`, `-32600`, an
+        // implementation-defined code — is a legacy server that did not know
+        // the method.
+        return Ok(None);
+    }
+    match &error {
+        // A 4xx with no recognized modern error in the body (go-sdk answers
+        // with plain text): legacy. Authentication and rate limiting say
+        // nothing about the era, so they stay errors.
+        ClientError::Http(failure)
+            if (400..500).contains(&failure.status)
+                && !matches!(failure.status, 401 | 403 | 407 | 429) =>
+        {
+            Ok(None)
+        }
+        // The connection's own timeout is the probe timeout's slower cousin.
+        ClientError::Timeout => Ok(None),
+        _ => Err(error),
     }
 }
 
@@ -848,10 +952,16 @@ impl Client {
         let v = match self.mrtr_request(request::TOOLS_CALL, build(self)).await {
             // HeaderMismatch: our mirror headers may be built from a stale
             // schema. Per the transports spec, refresh `tools/list` (which
-            // rebuilds the header cache) and retry once. `-32001` is the
-            // current code (2026-07-28 RC); `-32020` is the earlier draft's,
-            // tolerated for peers still tracking it.
-            Err(e) if matches!(e.rpc_code(), Some(-32001 | -32020)) => {
+            // rebuilds the header cache) and retry once. Re-issuing is safe
+            // only because a mismatch is refused before the tool runs — which
+            // is why this is keyed to the one spec-allocated code, on the one
+            // revision that has mirror headers. `-32001` (the RC's number) is
+            // implementation-defined: FastMCP answers "Not found" with it, and
+            // treating that as a header problem ran the tool a second time.
+            Err(e)
+                if self.version == ProtocolVersion::V2026_07_28
+                    && e.rpc_code() == Some(codes::HEADER_MISMATCH) =>
+            {
                 let code = e.rpc_code().unwrap_or_default();
                 tracing::warn!(
                     tool = %name,
@@ -1573,46 +1683,69 @@ impl Client {
     async fn mrtr_request(
         &self,
         method: &str,
-        mut params: Map<String, Value>,
+        original: Map<String, Value>,
     ) -> ClientResult<Value> {
+        let mut params = original.clone();
+        let mut state_only_rounds = 0u32;
         for _ in 0..MAX_MRTR_ROUNDS {
-            let result = self.versioned_request(method, params.clone()).await?;
-            let input_required = result.get("resultType").and_then(Value::as_str)
-                == Some(neutral::result_type::INPUT_REQUIRED);
-            if !input_required {
+            let result = self.versioned_request(method, params).await?;
+            if !self.result_is_input_required(&result)? {
                 return Ok(result);
             }
 
-            if self.handler.is_empty() {
-                return Err(ClientError::Protocol(
-                    "server requires input (MRTR) but the client registered no handler".into(),
-                ));
-            }
-            let handler = &self.handler;
-
-            // Answer each packaged input request, keyed exactly as the server sent.
-            let mut responses = Map::new();
-            if let Some(requests) = result.get("inputRequests").and_then(Value::as_object) {
-                for (key, req) in requests {
-                    let req_method = req
-                        .get("method")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    let req_params = req.get("params").cloned();
-                    let answer =
-                        dispatch_server_request(handler, &self.version, req_method, req_params)
+            // Each retry is the original request plus what *this* round
+            // asked for, and nothing from an earlier one: "If the
+            // `InputRequiredResult` does not contain a `requestState` field,
+            // the client MUST NOT include one in the retry." Keeping the last
+            // round's state echoed a token the server had stopped issuing,
+            // which it must reject.
+            params = original.clone();
+            let requests = result
+                .get("inputRequests")
+                .and_then(Value::as_object)
+                .filter(|requests| !requests.is_empty());
+            if let Some(requests) = requests {
+                if self.handler.is_empty() {
+                    return Err(ClientError::Protocol(
+                        "server requires input (MRTR) but the client registered no handler".into(),
+                    ));
+                }
+                // Answered concurrently: they are independent by construction,
+                // and one slow human should not serialize the rest.
+                let answers = futures::future::try_join_all(requests.iter().map(|(key, req)| {
+                    let handler = &self.handler;
+                    let version = &self.version;
+                    async move {
+                        let req_method = req
+                            .get("method")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let req_params = req.get("params").cloned();
+                        dispatch_server_request(handler, version, req_method, req_params)
                             .await
+                            .map(|answer| (key.clone(), answer))
                             .map_err(|e| {
                                 ClientError::Protocol(format!(
                                     "input handler failed: {}",
                                     e.message
                                 ))
-                            })?;
-                    responses.insert(key.clone(), answer);
-                }
+                            })
+                    }
+                }))
+                .await?;
+                params.insert(
+                    "inputResponses".into(),
+                    Value::Object(answers.into_iter().collect()),
+                );
+            } else {
+                // No questions, only a token to bring back: the server is
+                // shedding load or pacing a long operation. "The client MAY
+                // retry the original request immediately", but a back-to-back
+                // loop is exactly the load it is shedding.
+                state_only_rounds += 1;
+                let backoff = Duration::from_millis(50 << state_only_rounds.min(6));
+                tokio::time::sleep(backoff).await;
             }
-            params.insert("inputResponses".into(), Value::Object(responses));
-            // Carry the opaque resume state back verbatim, if present.
             if let Some(state) = result.get("requestState") {
                 params.insert("requestState".into(), state.clone());
             }
@@ -1620,6 +1753,36 @@ impl Client {
         Err(ClientError::Protocol(format!(
             "MRTR did not converge after {MAX_MRTR_ROUNDS} rounds"
         )))
+    }
+
+    /// Classify a 2026-07-28 result by its `resultType`.
+    ///
+    /// "A `resultType` of any value unrecognized by the client MUST be
+    /// considered invalid", and an absent one MUST be treated as `"complete"`.
+    /// `"task"` is recognized only by a client that declared the Tasks
+    /// extension, the only one a server may send it to. The stateful
+    /// revisions have no `resultType`, so nothing is checked there.
+    fn result_is_input_required(&self, result: &Value) -> ClientResult<bool> {
+        if self.version.is_stateful() {
+            return Ok(false);
+        }
+        match result.get("resultType").and_then(Value::as_str) {
+            None | Some(neutral::result_type::COMPLETE) => Ok(false),
+            Some(neutral::result_type::INPUT_REQUIRED) => Ok(true),
+            Some(RESULT_TYPE_TASK) if self.declares_extension(TASKS_EXTENSION) => Ok(false),
+            Some(other) => Err(ClientError::Protocol(format!(
+                "server answered with an unrecognized resultType `{other}`"
+            ))),
+        }
+    }
+
+    /// Whether this client declared the extension `id`.
+    fn declares_extension(&self, id: &str) -> bool {
+        self.request_meta
+            .get(keys::CLIENT_CAPABILITIES)
+            .and_then(|caps| caps.get("extensions"))
+            .and_then(Value::as_object)
+            .is_some_and(|extensions| extensions.contains_key(id))
     }
 
     /// Issue a request, stamping the modern `_meta` envelope when the negotiated
