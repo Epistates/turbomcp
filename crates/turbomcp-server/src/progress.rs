@@ -87,6 +87,20 @@ impl ProgressReporter {
     /// best-effort by design, so the call is infallible.
     pub async fn report(&self, progress: f64, total: Option<f64>, message: Option<&str>) {
         let Some(inner) = &self.inner else { return };
+        // JSON has no NaN or infinity: serde writes `null`, which the schema
+        // rejects, and a NaN would also poison the guard below (every
+        // comparison with it is false, so later reports could go down).
+        if !progress.is_finite() {
+            tracing::warn!(progress, "progress must be a finite number; report dropped");
+            return;
+        }
+        let total = total.filter(|t| {
+            let finite = t.is_finite();
+            if !finite {
+                tracing::warn!(total = t, "progress total must be a finite number; omitted");
+            }
+            finite
+        });
 
         {
             let mut last = inner.last.lock().expect("progress guard poisoned");
@@ -164,5 +178,34 @@ mod tests {
         assert_eq!(second.params.as_ref().unwrap()["progress"], 3.0);
         assert_eq!(second.params.as_ref().unwrap()["message"], "step 3");
         assert_eq!(second.params.as_ref().unwrap()["progressToken"], "t1");
+    }
+
+    /// `done / total` with `total == 0` is NaN. It used to go out as
+    /// `"progress": null` and then disarm the monotonic guard, letting later
+    /// reports go down.
+    #[tokio::test]
+    async fn non_finite_progress_is_dropped_and_does_not_disarm_the_guard() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let _guard = turbomcp_service::outbound::register("prog-nan-conn", tx);
+        let reporter = ProgressReporter::new(json!("t2"), "prog-nan-conn".into(), String::new());
+
+        reporter.report(f64::NAN, None, None).await;
+        reporter.report(5.0, Some(f64::INFINITY), None).await;
+        reporter.report(3.0, None, None).await; // lower than 5: still dropped
+
+        let turbomcp_core::JsonRpcMessage::Notification(only) = rx.try_recv().expect("one report")
+        else {
+            panic!("expected a notification");
+        };
+        assert!(
+            rx.try_recv().is_err(),
+            "the NaN and the decrease were dropped"
+        );
+        let params = only.params.unwrap();
+        assert_eq!(params["progress"], 5.0);
+        assert!(
+            params.get("total").is_none(),
+            "a non-finite total is omitted"
+        );
     }
 }

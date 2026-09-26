@@ -448,7 +448,30 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// for when this is required and how to source the key.
     #[must_use]
     pub fn with_state_key(mut self, key: [u8; 32]) -> Self {
-        self.shared.signer = Arc::new(StateSigner::from_key(key));
+        let current = self.shared.signer.as_ref().clone();
+        self.shared.signer = Arc::new(
+            StateSigner::from_key(key)
+                .with_limit(current.limit())
+                .with_ttl(current.ttl()),
+        );
+        self
+    }
+
+    /// Cap the serialized `requestState` at `bytes` (default 256 KiB). Every
+    /// answer a multi-round handler has collected rides the state into the next
+    /// round, so a flow with large sampling answers may need more.
+    #[must_use]
+    pub fn request_state_limit(mut self, bytes: usize) -> Self {
+        self.shared.signer = Arc::new(self.shared.signer.as_ref().clone().with_limit(bytes));
+        self
+    }
+
+    /// How long an issued `requestState` stays redeemable (default ten
+    /// minutes): the bound on how long a client may take to answer, and on how
+    /// long a captured state can be replayed.
+    #[must_use]
+    pub fn request_state_ttl(mut self, ttl: std::time::Duration) -> Self {
+        self.shared.signer = Arc::new(self.shared.signer.as_ref().clone().with_ttl(ttl));
         self
     }
 

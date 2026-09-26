@@ -46,11 +46,14 @@ use crate::subscriptions::request_writer;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Cap on the serialized `requestState` payload (PLAN MR-5).
-pub(crate) const MAX_STATE_BYTES: usize = 32 * 1024;
-/// How long an issued `requestState` stays redeemable (replay bound — the mrtr
-/// spec's SHOULD; single-use semantics, if needed, are the handler's job).
-const STATE_TTL: Duration = Duration::from_secs(10 * 60);
+/// Default cap on the serialized `requestState` payload. Every answer collected
+/// so far rides the state into the next round, and one sampling answer alone
+/// can run to tens of kilobytes, so the cap has to hold a whole conversation.
+pub(crate) const DEFAULT_STATE_BYTES: usize = 256 * 1024;
+/// Default for how long an issued `requestState` stays redeemable (replay
+/// bound — the mrtr spec's SHOULD; single-use semantics, if needed, are the
+/// handler's job).
+pub(crate) const DEFAULT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 
 // ---- request-state signing -----------------------------------------------------
 
@@ -61,8 +64,11 @@ const STATE_TTL: Duration = Duration::from_secs(10 * 60);
 /// invalidates every outstanding one. A deployment running more than one
 /// replica must supply a shared key instead — see
 /// [`ServerBuilder::with_state_key`](crate::ServerBuilder::with_state_key).
+#[derive(Clone)]
 pub(crate) struct StateSigner {
     key: [u8; 32],
+    limit: usize,
+    ttl: Duration,
 }
 
 impl StateSigner {
@@ -70,12 +76,36 @@ impl StateSigner {
         use rand::Rng as _;
         let mut key = [0u8; 32];
         rand::rng().fill_bytes(&mut key);
-        Self { key }
+        Self::from_key(key)
     }
 
     /// A signer over a caller-supplied key (shared across replicas).
     pub(crate) fn from_key(key: [u8; 32]) -> Self {
-        Self { key }
+        Self {
+            key,
+            limit: DEFAULT_STATE_BYTES,
+            ttl: DEFAULT_STATE_TTL,
+        }
+    }
+
+    /// The same signer with a different payload cap.
+    pub(crate) fn with_limit(mut self, limit: usize) -> Self {
+        self.limit = limit.max(1024);
+        self
+    }
+
+    /// The same signer with a different redemption window.
+    pub(crate) fn with_ttl(mut self, ttl: Duration) -> Self {
+        self.ttl = ttl;
+        self
+    }
+
+    pub(crate) fn limit(&self) -> usize {
+        self.limit
+    }
+
+    pub(crate) fn ttl(&self) -> Duration {
+        self.ttl
     }
 
     fn mac(&self) -> HmacSha256 {
@@ -98,13 +128,19 @@ impl StateSigner {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
-            + STATE_TTL.as_secs();
+            + self.ttl.as_secs();
         let payload =
             serde_json::to_vec(&json!({ "m": method, "sub": subject, "exp": expires, "d": data }))
                 .map_err(|e| McpError::internal(format!("serialize request state: {e}")))?;
-        if payload.len() > MAX_STATE_BYTES {
-            return Err(McpError::invalid_params(format!(
-                "request state exceeds the {MAX_STATE_BYTES}-byte limit"
+        // The server's own configuration, not anything the client sent: an
+        // `invalid_params` here told the client to fix a request it cannot
+        // change, and every retry failed the same way.
+        if payload.len() > self.limit {
+            return Err(McpError::internal(format!(
+                "request state is {} bytes, over this server's {}-byte limit; raise it with \
+                 `ServerBuilder::request_state_limit`",
+                payload.len(),
+                self.limit
             )));
         }
         let mut mac = self.mac();
@@ -132,7 +168,7 @@ impl StateSigner {
             McpError::invalid_params("requestState failed verification")
         }
         // Bound work before touching anything attacker-sized.
-        if token.len() > 2 * MAX_STATE_BYTES {
+        if token.len() > 2 * self.limit {
             return Err(rejected());
         }
         let mut parts = token.splitn(3, '.');
@@ -352,8 +388,12 @@ impl ClientHandle {
                 client_capabilities,
                 responses: merged,
                 collected: Mutex::new(BTreeMap::new()),
+                // Resume state lives until replaced or cleared, like the
+                // answers beside it. Starting each round empty dropped it the
+                // first round a handler read it without storing it again, so
+                // "store once, load on retry" lost its state by round three.
+                state_out: Mutex::new(handler_state.clone()),
                 state_in: handler_state,
-                state_out: Mutex::new(None),
                 strict_keys,
             }),
         }
@@ -423,11 +463,11 @@ impl ClientHandle {
         key: &str,
         params: neutral::ElicitParams,
     ) -> McpResult<neutral::ElicitOutcome> {
-        params.validate().map_err(McpError::invalid_params)?;
+        self.prepare_elicit(&params)?;
         let raw = self
             .obtain(key, self.form_capability(), elicit_request_value(&params))
             .await?;
-        parse_elicit_outcome(&raw)
+        checked_outcome(&params, &raw)
     }
 
     /// Which capability a *form*-mode elicitation needs from this client.
@@ -588,13 +628,19 @@ impl ClientHandle {
             }
             return Ok(outcomes);
         }
+        // The same checks `elicit` makes: on this path the requests go out
+        // batched in `inputRequests`, and an unrenderable form used to reach
+        // the client here while the identical call failed cleanly elsewhere.
+        for (_, params) in &requests {
+            self.prepare_elicit(params)?;
+        }
         if requests
             .iter()
             .all(|(key, _)| self.inner.responses.contains_key(*key))
         {
             return requests
                 .iter()
-                .map(|(key, _)| parse_elicit_outcome(&self.inner.responses[*key]))
+                .map(|(key, params)| checked_outcome(params, &self.inner.responses[*key]))
                 .collect();
         }
         for (key, params) in &requests {
@@ -625,6 +671,11 @@ impl ClientHandle {
         // says send only `none`. Which capability this request needs is a
         // property of the request, so it is read off the params rather than
         // fixed at the call site.
+        // A request can need both; each is its own promise. The narrowest one
+        // gates the delivery below, and the other is checked here first.
+        if params.uses_tools() && params.uses_context() {
+            self.require_capability("sampling.context")?;
+        }
         let capability = if params.uses_tools() {
             "sampling.tools"
         } else if params.uses_context() {
@@ -654,14 +705,21 @@ impl ClientHandle {
         Ok(neutral::Root::list_from_wire(&raw))
     }
 
-    /// Stash typed resume state for the retry execution (PLAN MR-6). It is
-    /// signed into the result's `requestState`; the retry's verified copy is
-    /// readable via [`ClientHandle::load_state`].
+    /// Stash typed resume state for every later round of this request, until
+    /// it is replaced or [cleared](Self::clear_state) (PLAN MR-6). It is signed
+    /// into the result's `requestState` — signed, not encrypted: the client
+    /// can read it — and each retry's verified copy is readable via
+    /// [`ClientHandle::load_state`].
     pub fn store_state<T: Serialize>(&self, value: &T) -> McpResult<()> {
         let value = serde_json::to_value(value)
             .map_err(|e| McpError::internal(format!("serialize state: {e}")))?;
         *self.inner.state_out.lock().expect("state lock poisoned") = Some(value);
         Ok(())
+    }
+
+    /// Drop the stored resume state, so later rounds see none.
+    pub fn clear_state(&self) {
+        *self.inner.state_out.lock().expect("state lock poisoned") = None;
     }
 
     /// The verified `requestState` data from the retry request, if any.
@@ -675,6 +733,14 @@ impl ClientHandle {
     }
 
     // ---- internals ---------------------------------------------------------
+
+    /// What every form elicitation checks before it goes out: the schema is in
+    /// the form subset this session's revision can render.
+    fn prepare_elicit(&self, params: &neutral::ElicitParams) -> McpResult<()> {
+        params
+            .validate_for(&self.inner.version)
+            .map_err(McpError::invalid_params)
+    }
 
     /// Whether the client declared `capability`, which may be a dotted path
     /// into a sub-capability (`elicitation.url`, `sampling.tools`).
@@ -960,6 +1026,31 @@ struct RawElicitResult {
     content: Map<String, Value>,
 }
 
+/// The client's answer to a form elicitation, checked against what was asked.
+///
+/// "Servers SHOULD validate received data matches the requested schema"
+/// (elicitation.mdx §Form Mode Security, 2025-11-25 and 2026-07-28; 2025-06-18
+/// says both parties SHOULD). An accepted form is entirely client-supplied,
+/// and on MRTR it is whatever the client put in `inputResponses`; without this,
+/// every handler would have to re-validate by hand, or forget to.
+fn checked_outcome(
+    params: &neutral::ElicitParams,
+    raw: &Value,
+) -> McpResult<neutral::ElicitOutcome> {
+    let outcome = parse_elicit_outcome(raw)?;
+    if outcome.accepted() {
+        let validator = jsonschema::validator_for(&params.requested_schema)
+            .map_err(|e| McpError::internal(format!("invalid requestedSchema: {e}")))?;
+        let content = Value::Object(outcome.content.clone());
+        if let Err(e) = validator.validate(&content) {
+            return Err(McpError::invalid_params(format!(
+                "the client's answer does not match the requested schema: {e}"
+            )));
+        }
+    }
+    Ok(outcome)
+}
+
 fn parse_elicit_outcome(raw: &Value) -> McpResult<neutral::ElicitOutcome> {
     let parsed: RawElicitResult = serde_json::from_value(raw.clone())
         .map_err(|e| McpError::invalid_params(format!("invalid elicit response: {e}")))?;
@@ -1076,13 +1167,15 @@ mod tests {
     }
 
     #[test]
-    fn oversized_state_is_rejected_at_sign_time() {
+    fn oversized_state_is_the_servers_error_and_names_the_knob() {
         let signer = StateSigner::new();
-        let big = json!({ "blob": "x".repeat(MAX_STATE_BYTES) });
-        assert!(matches!(
-            signer.sign("tools/call", None, &big),
-            Err(McpError::InvalidParams(_))
-        ));
+        let big = json!({ "blob": "x".repeat(DEFAULT_STATE_BYTES) });
+        let err = signer.sign("tools/call", None, &big).unwrap_err();
+        assert!(matches!(err, McpError::Internal(_)), "{err:?}");
+        assert!(err.to_string().contains("request_state_limit"), "{err}");
+        // And a larger configured limit admits it.
+        let roomy = StateSigner::new().with_limit(2 * DEFAULT_STATE_BYTES);
+        assert!(roomy.sign("tools/call", None, &big).is_ok());
     }
 
     /// An undeclared capability is `MissingRequiredCapability` (`-32021`), not
@@ -1324,7 +1417,7 @@ mod tests {
             ("tag is not base64", format!("v1.{payload}.~~~~")),
             (
                 "over the length bound",
-                format!("v1.{}.{tag}", "A".repeat(2 * MAX_STATE_BYTES)),
+                format!("v1.{}.{tag}", "A".repeat(2 * DEFAULT_STATE_BYTES)),
             ),
             (
                 "valid MAC over a non-JSON payload",
@@ -1723,6 +1816,102 @@ mod tests {
                 .await,
             Err(McpError::InputRequired)
         ));
+    }
+
+    /// A request carrying both tools and `includeContext` needs both promises;
+    /// only `sampling.tools` used to be checked.
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn a_request_needing_two_sampling_capabilities_checks_both() {
+        let tools_only = ClientHandle::mrtr(
+            "",
+            Some(json!({ "sampling": { "tools": {} } })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        let both = neutral::CreateMessageParams::new(Vec::new(), 16)
+            .with_tools(vec![alloc_tool()])
+            .with_include_context(neutral::IncludeContext::ThisServer);
+        let err = tools_only.create_message("k", both).await.unwrap_err();
+        assert!(
+            matches!(&err, McpError::MissingRequiredCapability(c) if c == "sampling.context"),
+            "{err:?}"
+        );
+    }
+
+    /// "Servers SHOULD validate received data matches the requested schema."
+    /// An accepted form is entirely client-supplied; on MRTR it is whatever
+    /// the client put in `inputResponses`.
+    #[tokio::test]
+    async fn an_accepted_answer_that_misses_the_schema_is_refused() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "age": { "type": "integer", "minimum": 0 } },
+            "required": ["age"]
+        });
+        let answered = |content: Value| {
+            ClientHandle::mrtr(
+                "",
+                Some(json!({ "elicitation": {} })),
+                BTreeMap::from([(
+                    "age".to_owned(),
+                    json!({ "action": "accept", "content": content }),
+                )]),
+                None,
+                false,
+            )
+        };
+        let bad = answered(json!({ "age": "DROP TABLE" }))
+            .elicit("age", neutral::ElicitParams::new("Age?", schema.clone()))
+            .await
+            .unwrap_err();
+        assert!(matches!(bad, McpError::InvalidParams(_)), "{bad:?}");
+
+        let good = answered(json!({ "age": 41 }))
+            .elicit("age", neutral::ElicitParams::new("Age?", schema.clone()))
+            .await
+            .unwrap();
+        assert!(good.accepted());
+
+        // A decline carries no content to check.
+        let declined = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": {} })),
+            BTreeMap::from([("age".to_owned(), json!({ "action": "decline" }))]),
+            None,
+            false,
+        );
+        assert!(
+            !declined
+                .elicit("age", neutral::ElicitParams::new("Age?", schema))
+                .await
+                .unwrap()
+                .accepted()
+        );
+    }
+
+    /// `elicit_all` on MRTR used to skip the form-subset check `elicit` makes,
+    /// so an unrenderable form went out batched in `inputRequests`.
+    #[tokio::test]
+    async fn elicit_all_refuses_an_unrenderable_form_like_elicit_does() {
+        let handle = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": {} })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        let nested = json!({
+            "type": "object",
+            "properties": { "tags": { "type": "array", "items": { "type": "object" } } }
+        });
+        let err = handle
+            .elicit_all(vec![("a", neutral::ElicitParams::new("?", nested))])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, McpError::InvalidParams(_)), "{err:?}");
+        assert!(handle.collected().is_empty(), "nothing went out");
     }
 
     /// A one-tool catalogue for the sampling tests.
@@ -2223,6 +2412,34 @@ mod tests {
         // An explicit JSON null is "no state", the same as absent.
         let null_state = ClientHandle::mrtr("", None, BTreeMap::new(), Some(Value::Null), false);
         assert!(null_state.load_state::<Resume>().unwrap().is_none());
+    }
+
+    /// "Store once, load on retry": a round that reads the state without
+    /// storing it again must still pass it on. It used to start each round
+    /// empty, so the third execution of a two-question handler saw no state
+    /// and redid whatever the first had done.
+    #[test]
+    fn resume_state_survives_a_round_that_does_not_store_it() {
+        let first = ClientHandle::mrtr("", None, BTreeMap::new(), None, false);
+        first.store_state(&"created-record-7").unwrap();
+        let second = ClientHandle::mrtr("", None, BTreeMap::new(), first.state_out(), false);
+        assert_eq!(
+            second.load_state::<String>().unwrap().as_deref(),
+            Some("created-record-7")
+        );
+        // Round two only reads it.
+        let third = ClientHandle::mrtr("", None, BTreeMap::new(), second.state_out(), false);
+        assert_eq!(
+            third.load_state::<String>().unwrap().as_deref(),
+            Some("created-record-7")
+        );
+
+        third.clear_state();
+        let fourth = ClientHandle::mrtr("", None, BTreeMap::new(), third.state_out(), false);
+        assert!(
+            fourth.load_state::<String>().unwrap().is_none(),
+            "cleared means gone"
+        );
     }
 
     // ---- elicit response parsing ---------------------------------------------

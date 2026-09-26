@@ -1382,7 +1382,20 @@ impl ElicitParams {
     /// # Errors
     /// A description of the first property outside the subset.
     pub fn validate(&self) -> Result<(), String> {
-        validate_requested_schema(&self.requested_schema)
+        validate_requested_schema(&self.requested_schema, false)
+    }
+
+    /// [`validate`](Self::validate) for the revision the request will go out
+    /// on. `2025-06-18` predates SEP-1330: its forms have no multi-select and
+    /// no titled options, only the plain primitives and a string `enum`.
+    ///
+    /// # Errors
+    /// A description of the first property that revision cannot render.
+    pub fn validate_for(&self, version: &ProtocolVersion) -> Result<(), String> {
+        validate_requested_schema(
+            &self.requested_schema,
+            matches!(version, ProtocolVersion::V2025_06_18),
+        )
     }
 }
 
@@ -1451,7 +1464,7 @@ const ELICIT_PRIMITIVES: [&str; 4] = ["string", "number", "integer", "boolean"];
 ///
 /// # Errors
 /// A description of the first property that falls outside the subset.
-fn validate_requested_schema(schema: &Value) -> Result<(), String> {
+fn validate_requested_schema(schema: &Value, primitives_only: bool) -> Result<(), String> {
     // The wire type makes both `type` and `properties` required, so this is
     // the schema's own floor rather than an extra rule.
     if schema.get("type").and_then(Value::as_str) != Some("object") {
@@ -1468,10 +1481,24 @@ fn validate_requested_schema(schema: &Value) -> Result<(), String> {
             ));
         };
         if ELICIT_PRIMITIVES.contains(&ty) {
+            if primitives_only
+                && (property.get("oneOf").is_some() || property.get("anyOf").is_some())
+            {
+                return Err(alloc::format!(
+                    "requestedSchema property `{name}` uses titled options (`oneOf`/`anyOf`), \
+                     which 2025-06-18 forms do not have; use a plain string `enum`"
+                ));
+            }
             continue;
         }
         // The one non-primitive the subset allows: a multi-select, which is an
         // array whose items are a string enum.
+        if ty == "array" && primitives_only {
+            return Err(alloc::format!(
+                "requestedSchema property `{name}` is a multi-select, which 2025-06-18 \
+                 forms do not have"
+            ));
+        }
         if ty == "array" {
             // SEP-1330 spells a multi-select two ways: a plain string `enum`,
             // or an `anyOf` of `{const, title}` alternatives when the options
@@ -5835,6 +5862,38 @@ mod tests {
                 "{label} should be refused"
             );
         }
+    }
+
+    /// `2025-06-18` predates SEP-1330: "elicitation schemas are limited to flat
+    /// objects with primitive properties only", and its enum is a plain string
+    /// `enum`. Multi-selects and titled options used to go out anyway.
+    #[test]
+    fn a_2025_06_18_form_has_no_multi_select_or_titled_options() {
+        let multi = ElicitParams::new(
+            "?",
+            json!({ "type": "object", "properties": {
+                "langs": { "type": "array", "items": { "type": "string", "enum": ["rs", "go"] } }
+            }}),
+        );
+        let titled = ElicitParams::new(
+            "?",
+            json!({ "type": "object", "properties": {
+                "size": { "type": "string", "oneOf": [{ "const": "s", "title": "Small" }] }
+            }}),
+        );
+        let plain = ElicitParams::new(
+            "?",
+            json!({ "type": "object", "properties": {
+                "size": { "type": "string", "enum": ["s", "m"] },
+                "ok": { "type": "boolean" }
+            }}),
+        );
+        for params in [&multi, &titled] {
+            assert!(params.validate_for(&ProtocolVersion::V2025_06_18).is_err());
+            assert!(params.validate_for(&ProtocolVersion::V2025_11_25).is_ok());
+            assert!(params.validate_for(&ProtocolVersion::V2026_07_28).is_ok());
+        }
+        assert!(plain.validate_for(&ProtocolVersion::V2025_06_18).is_ok());
     }
 
     // ---- roots ---------------------------------------------------------------

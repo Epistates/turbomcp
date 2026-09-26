@@ -418,22 +418,35 @@ async fn a_bare_input_required_sentinel_is_a_server_error() {
 /// assembled — after the handler has already returned. That has to surface as
 /// a clean error naming the limit, not a panic or a turn with the state
 /// silently dropped (which would loop: the retry would re-store and re-fail).
+///
+/// It is the server's configuration, not the client's mistake, so it is
+/// `-32603` naming the setting; `-32602` told the client to fix a request it
+/// could not change. And the limit is configurable, so the same handler fits.
 #[tokio::test]
 async fn an_oversized_resume_state_fails_the_turn_cleanly() {
-    let mut svc = dispatcher();
-    let out = call(
-        &mut svc,
+    let hoard = || {
         JsonRpcRequest::new(
             1,
             "tools/call",
             Some(json!({ "name": "hoard", "arguments": {}, "_meta": meta() })),
-        ),
-    )
-    .await;
-    assert_eq!(out["error"]["code"], -32602, "{out}");
+        )
+    };
+    let mut tight = dispatcher().request_state_limit(32 * 1024);
+    let out = call(&mut tight, hoard()).await;
+    assert_eq!(out["error"]["code"], -32603, "{out}");
     assert!(
-        out["error"]["message"].as_str().unwrap().contains("limit"),
+        out["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("request_state_limit"),
         "{out}"
+    );
+
+    let mut default = dispatcher();
+    let out = call(&mut default, hoard()).await;
+    assert_eq!(
+        out["resultType"], "input_required",
+        "fits the default: {out}"
     );
 }
 

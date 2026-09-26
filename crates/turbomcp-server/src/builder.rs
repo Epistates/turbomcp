@@ -57,6 +57,8 @@ pub struct ServerBuilder<S> {
     extensions: Vec<Arc<dyn Extension>>,
     cache: Option<CachePolicies>,
     state_key: Option<[u8; 32]>,
+    request_state_limit: Option<usize>,
+    request_state_ttl: Option<std::time::Duration>,
     visibility: Option<Arc<dyn crate::VisibilityPolicy>>,
     roots_changed: Option<Arc<crate::dispatcher::RootsChangedHandler>>,
 }
@@ -76,6 +78,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
             extensions: Vec::new(),
             cache: None,
             state_key: None,
+            request_state_limit: None,
+            request_state_ttl: None,
             visibility: None,
             roots_changed: None,
         }
@@ -96,6 +100,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
             extensions: Vec::new(),
             cache: None,
             state_key: None,
+            request_state_limit: None,
+            request_state_ttl: None,
             visibility: None,
             roots_changed: None,
         }
@@ -321,6 +327,28 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
+    /// Cap the serialized MRTR `requestState` at `bytes` (default 256 KiB).
+    ///
+    /// Every answer a multi-round handler has collected — elicitation content,
+    /// sampling replies — rides the state into the next round, so a flow with
+    /// long sampling answers may need more. Going over is a `-32603` naming
+    /// this setting. The state is signed, not encrypted: the client can read
+    /// it.
+    #[must_use]
+    pub fn request_state_limit(mut self, bytes: usize) -> Self {
+        self.request_state_limit = Some(bytes);
+        self
+    }
+
+    /// How long an issued MRTR `requestState` stays redeemable (default ten
+    /// minutes): the bound on how long a client may take to answer, and on how
+    /// long a captured state could be replayed.
+    #[must_use]
+    pub fn request_state_ttl(mut self, ttl: std::time::Duration) -> Self {
+        self.request_state_ttl = Some(ttl);
+        self
+    }
+
     /// The server and its capability registrations, dropping everything else.
     ///
     /// For [`Composite::mount`](crate::Composite::mount), which wants exactly
@@ -350,6 +378,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
             extensions,
             cache,
             state_key,
+            request_state_limit,
+            request_state_ttl,
             visibility,
             roots_changed,
         } = self;
@@ -376,6 +406,12 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if state_key.is_some() {
             return Some("with_state_key");
+        }
+        if request_state_limit.is_some() {
+            return Some("request_state_limit");
+        }
+        if request_state_ttl.is_some() {
+            return Some("request_state_ttl");
         }
         if visibility.is_some() {
             return Some("with_visibility");
@@ -411,6 +447,12 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if let Some(key) = self.state_key {
             dispatcher = dispatcher.with_state_key(key);
+        }
+        if let Some(bytes) = self.request_state_limit {
+            dispatcher = dispatcher.request_state_limit(bytes);
+        }
+        if let Some(ttl) = self.request_state_ttl {
+            dispatcher = dispatcher.request_state_ttl(ttl);
         }
         if let Some(policy) = self.visibility {
             dispatcher = dispatcher.with_visibility(policy);

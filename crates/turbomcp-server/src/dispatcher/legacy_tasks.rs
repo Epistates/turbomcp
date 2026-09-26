@@ -81,6 +81,14 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
             );
         }
     };
+    // A TTL of zero or less asks for a task that is gone before anyone could
+    // poll it; clamping it to zero used to do exactly that, silently.
+    if task_meta.ttl.is_some_and(|ttl| ttl <= 0) {
+        return error_response(
+            id,
+            &McpError::invalid_params("a task `ttl` must be a positive number of milliseconds"),
+        );
+    }
     // The task's token doubles as the handler's request cancellation, so
     // `tasks/cancel` (and ttl purge) reach a cooperative handler.
     let token = CancellationToken::new();
