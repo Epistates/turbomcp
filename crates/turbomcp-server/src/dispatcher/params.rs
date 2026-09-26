@@ -126,12 +126,15 @@ pub(super) fn parse_call_tool_params(
     Ok(neutral::CallToolParams::new(raw.name, raw.arguments))
 }
 
-/// Lenient pagination-cursor extraction: a missing `params` or absent `cursor`
-/// is simply a first-page request, never an error.
-pub(super) fn parse_list_params(params: Option<&Value>) -> neutral::ListParams {
-    match params.and_then(|p| p.get("cursor")).and_then(Value::as_str) {
-        Some(cursor) => neutral::ListParams::with_cursor(cursor),
-        None => neutral::ListParams::new(),
+/// The pagination cursor: a missing `params` or an absent (or `null`) `cursor`
+/// is a first-page request. A cursor that is not a string is not one this
+/// server issued — "Invalid cursors SHOULD result in an error with code
+/// -32602" — rather than a quiet first page.
+pub(super) fn parse_list_params(params: Option<&Value>) -> Result<neutral::ListParams, McpError> {
+    match params.and_then(|p| p.get("cursor")) {
+        None | Some(Value::Null) => Ok(neutral::ListParams::new()),
+        Some(Value::String(cursor)) => Ok(neutral::ListParams::with_cursor(cursor.as_str())),
+        Some(_) => Err(McpError::invalid_params("invalid cursor: not a string")),
     }
 }
 

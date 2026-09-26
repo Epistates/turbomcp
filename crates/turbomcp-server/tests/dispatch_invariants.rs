@@ -318,8 +318,9 @@ async fn list_cursor_reaches_the_handler_and_next_cursor_reaches_the_wire() {
         ),
     )
     .await;
-    assert!(out["error"].is_null(), "{out}");
-    assert_eq!(out["result"]["tools"][0]["name"], "page-first", "{out}");
+    // Not a cursor this server issued: "Invalid cursors SHOULD result in an
+    // error with code -32602", not a quiet first page.
+    assert_eq!(out["error"]["code"], -32602, "{out}");
 }
 
 /// A list handler's error must come back as a JSON-RPC error carrying its own
@@ -661,4 +662,53 @@ async fn roots_list_changed_reaches_a_registered_observer() {
         .await
         .unwrap();
     assert!(reply.is_none());
+}
+
+/// A tool whose own input schema does not compile.
+#[derive(Clone)]
+struct BrokenSchema;
+
+impl McpServerCore for BrokenSchema {
+    fn server_info(&self) -> Implementation {
+        Implementation::new("broken", "1.0.0")
+    }
+}
+
+impl WithTools for BrokenSchema {
+    async fn list_tools(
+        &self,
+        _ctx: &ListToolsContext,
+        _params: neutral::ListParams,
+    ) -> McpResult<neutral::ListToolsResult> {
+        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            "t",
+            json!({ "type": "object", "properties": { "x": { "type": 12 } } }),
+        )]))
+    }
+
+    async fn call_tool(
+        &self,
+        _ctx: &CallToolContext,
+        _params: neutral::CallToolParams,
+    ) -> McpResult<neutral::CallToolResult> {
+        Ok(neutral::CallToolResult::text("unreachable"))
+    }
+}
+
+/// A schema that does not compile is the server's bug. Reported as a tool
+/// result, the model would retry different arguments forever and nobody
+/// operating the server would see a JSON-RPC error.
+#[tokio::test]
+async fn a_tool_schema_that_does_not_compile_is_an_internal_error() {
+    let mut svc = VersionDispatcher::new(BrokenSchema, MethodRouter::new().with_tools());
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "t", "arguments": {}, "_meta": draft_meta() })),
+        ),
+    )
+    .await;
+    assert_eq!(out["error"]["code"], -32603, "{out}");
 }

@@ -468,7 +468,12 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
     let pending = &shared.pending;
     let method = req.method.as_str();
     let ctx = ctx.clone();
-    let list_params = parse_list_params(req.params.as_ref());
+    let list_params = match parse_list_params(req.params.as_ref()) {
+        Ok(params) => params,
+        // Only a list method has a cursor to get wrong.
+        Err(e) if method.ends_with("/list") => return error_response_for(id, &W::VERSION, &e),
+        Err(_) => neutral::ListParams::new(),
+    };
     match method {
         methods::request::TOOLS_LIST => {
             // Core Tasks (`2025-11-25`) advertise each tool's `taskSupport`.
@@ -711,7 +716,22 @@ pub(super) async fn call_prepared_tool<S: McpServerCore, W: WireFamily>(
     let validators = shared.validators.clone();
     let fut = fut.map(
         |fut| -> BoxFuture<'static, McpResult<neutral::CallToolResult>> {
-            Box::pin(async move { validators.output(tool.output_schema.as_ref(), fut.await?) })
+            Box::pin(async move {
+                let result = match fut.await {
+                    // On the stateful revisions there is no code a client
+                    // could act on (capabilities are fixed at `initialize`),
+                    // so a tool that needs one the client lacks reports it as
+                    // a tool failure the model can read and route around.
+                    Err(McpError::MissingRequiredCapability(capability)) if !W::MRTR => {
+                        return Ok(neutral::CallToolResult::error(format!(
+                            "this tool needs the client capability `{capability}`, which \
+                             the client did not declare"
+                        )));
+                    }
+                    result => result?,
+                };
+                validators.output(tool.output_schema.as_ref(), result)
+            })
         },
     );
     let subject = ctx.identity.principal_key();
@@ -784,11 +804,17 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     shared
         .validators
         .validate(&tool.input_schema, &Value::Object(params.arguments.clone()))
-        .map_err(|e| {
-            ok_value(
+        .map_err(|e| match e {
+            // Arguments that miss the schema are a tool execution error the
+            // model can read and correct (tools.mdx: "Input validation errors").
+            McpError::InvalidParams(_) => ok_value(
                 id.clone(),
                 &W::CallTool::from(neutral::CallToolResult::error(e.to_string())),
-            )
+            ),
+            // A schema that does not compile is the server's bug. Reported as a
+            // tool result, the model would retry different arguments forever
+            // and the operator would see nothing.
+            other => error_response_for(id.clone(), &W::VERSION, &other),
         })?;
     Ok((params, tool))
 }

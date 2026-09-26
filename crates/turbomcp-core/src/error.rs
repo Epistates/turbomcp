@@ -169,8 +169,8 @@ impl McpError {
             | Self::Timeout(_)
             | Self::Transport(_) => -32000,
             // Spec-allocated codes (see [`codes`]). All three are
-            // `2026-07-28` concepts — no legacy schema defines them — so
-            // there is nothing to version-split here.
+            // `2026-07-28` allocations; `jsonrpc_code_for` says what an older
+            // revision gets instead.
             Self::HeaderMismatch(_) => codes::HEADER_MISMATCH,
             Self::MissingRequiredCapability(_) => codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
             Self::UnsupportedProtocolVersion(_) => codes::UNSUPPORTED_PROTOCOL_VERSION,
@@ -179,11 +179,19 @@ impl McpError {
 
     /// The JSON-RPC error code for this variant **as `version` spells it**.
     ///
-    /// One code is version-split: resource-not-found is `-32002` through
-    /// `2025-11-25` and `-32602` (Invalid Params) from the `2026-07-28` RC on,
-    /// which renumbered it to align with JSON-RPC. Everything else matches
-    /// [`jsonrpc_code`](Self::jsonrpc_code), which answers for the current
-    /// revision — prefer this method wherever the negotiated version is known.
+    /// Two codes are version-split:
+    ///
+    /// - resource-not-found is `-32002` through `2025-11-25` and `-32602`
+    ///   (Invalid Params) from the `2026-07-28` RC on, which renumbered it to
+    ///   align with JSON-RPC;
+    /// - a missing client capability is `-32021` only from `2026-07-28`, which
+    ///   allocated it. No older schema defines that code, and on the stateful
+    ///   revisions capabilities are fixed at `initialize`, so its "re-declare
+    ///   and retry" affordance cannot be used either: there it is `-32602`.
+    ///
+    /// Everything else matches [`jsonrpc_code`](Self::jsonrpc_code), which
+    /// answers for the current revision — prefer this method wherever the
+    /// negotiated version is known.
     #[must_use]
     pub fn jsonrpc_code_for(&self, version: &crate::ProtocolVersion) -> i32 {
         use crate::ProtocolVersion as V;
@@ -195,6 +203,14 @@ impl McpError {
                 ) =>
             {
                 -32002
+            }
+            Self::MissingRequiredCapability(_)
+                if matches!(
+                    version,
+                    V::V2024_11_05 | V::V2025_03_26 | V::V2025_06_18 | V::V2025_11_25
+                ) =>
+            {
+                -32602
             }
             other => other.jsonrpc_code(),
         }
@@ -284,6 +300,20 @@ mod tests {
         assert_eq!(
             McpError::MissingRequiredCapability("x".into()).jsonrpc_code(),
             -32021
+        );
+        // `-32021` is a `2026-07-28` allocation; no older schema defines it.
+        let missing = McpError::MissingRequiredCapability("x".into());
+        assert_eq!(
+            missing.jsonrpc_code_for(&crate::ProtocolVersion::V2026_07_28),
+            -32021
+        );
+        assert_eq!(
+            missing.jsonrpc_code_for(&crate::ProtocolVersion::V2025_11_25),
+            -32602
+        );
+        assert_eq!(
+            missing.jsonrpc_code_for(&crate::ProtocolVersion::V2025_06_18),
+            -32602
         );
         assert_eq!(McpError::HeaderMismatch("x".into()).jsonrpc_code(), -32020);
         assert_eq!(McpError::authentication("x").http_status(), 401);

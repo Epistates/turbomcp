@@ -720,8 +720,7 @@ async fn handle_request<S: McpServerCore>(
     // well we could answer it. Checked before the dispatch table so the two
     // methods that skip version routing (`initialize`, `ping`) are covered too.
     if REMOVED_IN_STATELESS.contains(&method.as_str())
-        && version::request_protocol_version(req.params.as_ref())
-            .is_some_and(|v| v == ProtocolVersion::V2026_07_28)
+        && version::request_protocol_version(req.params.as_ref()).is_some_and(|v| v.is_stateless())
     {
         return Ok(error_response(id, &McpError::method_not_found(method)));
     }
@@ -732,8 +731,28 @@ async fn handle_request<S: McpServerCore>(
         // first call, where the client states the version it intends to use
         // and the reply tells it what is actually served.
         methods::request::DISCOVER => {
+            // A server that serves no stateless revision is, to a probing
+            // client, a legacy server, and a legacy server does not know this
+            // method. That `-32601` is exactly what the stdio fallback keys on;
+            // answering with a `DiscoverResult` instead stranded dual-era
+            // clients that only fall back on an error.
+            if !supported.iter().any(ProtocolVersion::is_stateless) {
+                return Ok(error_response(id, &McpError::method_not_found(method)));
+            }
             if let Some(field) = meta::missing_request_envelope_field(req.params.as_ref()) {
                 return Ok(invalid_envelope(id, field, supported));
+            }
+            // "If the server does not implement the requested version … it
+            // MUST respond with an `UnsupportedProtocolVersionError`." Only a
+            // stateless revision is implemented through this method.
+            if let Some(requested) = version::request_protocol_version(req.params.as_ref())
+                && !(requested.is_stateless() && supported.contains(&requested))
+            {
+                return Ok(unsupported_version(
+                    id,
+                    Some(requested.as_str().to_owned()),
+                    supported,
+                ));
             }
             Ok(discover_response(
                 id,
@@ -1233,7 +1252,16 @@ fn ok_value<T: Serialize>(id: RequestId, value: &T) -> JsonRpcMessage {
 /// Render `err` for a request whose version isn't known (or isn't relevant to
 /// the code): uses the current revision's mapping. Prefer
 /// [`error_response_for`] anywhere the negotiated version is in hand.
+/// Render an error whose code is the same on every revision (`-32601`,
+/// `-32602`, `-32603`, …). An error that might carry a version-split code —
+/// anything a handler returned — goes through [`error_response_for`] with the
+/// revision the request speaks; the debug assertion catches a mix-up in tests.
 fn error_response(id: RequestId, err: &McpError) -> JsonRpcMessage {
+    debug_assert_eq!(
+        err.jsonrpc_code_for(&ProtocolVersion::V2025_06_18),
+        err.jsonrpc_code_for(&ProtocolVersion::V2026_07_28),
+        "error_response on a version-split error; use error_response_for: {err}"
+    );
     JsonRpcResponse::error(id, mcp_to_jsonrpc_error(err)).into()
 }
 

@@ -289,6 +289,45 @@ async fn discover_advertises_only_the_pinned_versions() {
     assert_eq!(versions, [PREVIOUS, LEGACY, DRAFT_META]);
 }
 
+/// To a probing client, a server with no stateless revision is a legacy
+/// server, and a legacy server does not know `server/discover`: the `-32601`
+/// is what dual-era clients (rmcp's among them) fall back to `initialize` on.
+/// A `DiscoverResult` here used to strand them.
+#[tokio::test]
+async fn a_legacy_only_server_does_not_know_discover() {
+    let body = call(
+        StableOnly.into_server().build(),
+        JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() }))),
+    )
+    .await;
+    assert_eq!(body["error"]["code"], -32601, "{body}");
+}
+
+/// "If the server does not implement the requested version … it MUST respond
+/// with an `UnsupportedProtocolVersionError`." `discover` used to answer any
+/// version, including one the server never heard of.
+#[tokio::test]
+async fn discover_refuses_a_version_it_does_not_serve_statelessly() {
+    for requested in ["1900-01-01", LEGACY] {
+        let body = call(
+            DualStack.into_server().build(),
+            JsonRpcRequest::new(
+                1,
+                "server/discover",
+                Some(json!({ "_meta": meta_for(requested) })),
+            ),
+        )
+        .await;
+        assert_eq!(body["error"]["code"], -32022, "{requested}: {body}");
+        assert!(
+            body["error"]["data"]["supported"]
+                .as_array()
+                .is_some_and(|v| v.iter().any(|v| v == DRAFT_META)),
+            "{body}"
+        );
+    }
+}
+
 /// The mirror of the stable-only case: pinning to the previous revision must
 /// refuse the newer ones just as firmly, and still serve its own handshake.
 #[tokio::test]

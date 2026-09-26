@@ -75,6 +75,18 @@ impl ProtocolVersion {
         Self::STATEFUL.contains(self)
     }
 
+    /// The stateless revisions: version and client state ride every request's
+    /// `_meta`, and discovery is `server/discover`.
+    pub const STATELESS: &'static [Self] = &[Self::V2026_07_28];
+
+    /// Whether this version is a known stateless revision (see
+    /// [`STATELESS`](Self::STATELESS)). An unknown version is neither stateful
+    /// nor stateless: ask the positive question you mean.
+    #[must_use]
+    pub fn is_stateless(&self) -> bool {
+        Self::STATELESS.contains(self)
+    }
+
     /// Whether this version has **core** Tasks: the `tasks/*` methods, the
     /// `tasks` server capability, and `Tool.execution`.
     ///

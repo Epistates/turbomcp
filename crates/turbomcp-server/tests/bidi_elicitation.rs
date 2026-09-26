@@ -232,21 +232,21 @@ async fn undeclared_capability_refuses_to_elicit() {
     handshake(&mut p, json!({})).await;
 
     p.in_tx.send(call_frame(2)).await.unwrap();
-    // No elicitation request may be sent; the call fails immediately with
-    // `MissingRequiredClientCapabilityError`, whose `data` names the
-    // capability as a `ClientCapabilities` object so the client can merge it
-    // into its own declaration and retry.
+    // No elicitation request may be sent. `-32021` is a 2026-07-28 code no
+    // 2025-11-25 client knows, and capabilities are fixed at `initialize`
+    // there, so the tool reports the missing capability as a tool failure the
+    // model can read.
     let JsonRpcMessage::Response(done) = recv(&mut p.out_rx).await else {
         panic!("expected the tools/call response, not a server request");
     };
-    let err = done.error.expect("undeclared capability is an error");
-    assert_eq!(
-        err.code,
-        turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY
+    assert!(
+        done.error.is_none(),
+        "a tool-level failure, not a JSON-RPC error"
     );
-    assert!(err.message.contains("elicitation"), "got: {err:?}");
-    let data = err.data.expect("names the required capability");
-    assert_eq!(data["requiredCapabilities"], json!({ "elicitation": {} }));
+    let result = done.result.expect("a tool result");
+    assert_eq!(result["isError"], true);
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("elicitation"), "{text}");
 
     drop(p.in_tx);
     p.driver.await.unwrap().expect("clean shutdown");
@@ -265,8 +265,10 @@ async fn a_url_only_client_is_not_sent_a_form() {
     let JsonRpcMessage::Response(done) = recv(&mut p.out_rx).await else {
         panic!("a form went to a client that declared only URL mode");
     };
-    let err = done.error.expect("form elicitation is refused");
-    assert!(err.message.contains("elicitation.form"), "got: {err:?}");
+    let result = done.result.expect("a tool result");
+    assert_eq!(result["isError"], true);
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("elicitation.form"), "{text}");
 
     drop(p.in_tx);
     p.driver.await.unwrap().expect("clean shutdown");
