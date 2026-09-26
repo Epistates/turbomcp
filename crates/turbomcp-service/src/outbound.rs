@@ -80,6 +80,46 @@ pub fn writer(connection_id: &str) -> Option<mpsc::Sender<JsonRpcMessage>> {
         .cloned()
 }
 
+/// How handing a broadcast message to one connection went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    /// Queued on the connection's writer.
+    Queued,
+    /// The connection's queue is full: it has stopped reading. The message
+    /// was dropped for this connection only.
+    Dropped,
+    /// The connection is gone.
+    Closed,
+}
+
+/// Hand a broadcast notification to one connection without waiting on it.
+///
+/// A fan-out that awaited each writer in turn let one connection that stopped
+/// reading stall delivery to every other one, and park the application task
+/// that published. Broadcast notifications (`*/list_changed`,
+/// `resources/updated`, task status) are "something changed, look again"
+/// hints, and a reader that far behind already has one queued, so a full queue
+/// drops the message for that connection instead. Replies and requests to a
+/// request's own connection should keep awaiting: there, waiting is the
+/// backpressure.
+pub fn offer(
+    connection_id: &str,
+    writer: &mpsc::Sender<JsonRpcMessage>,
+    msg: JsonRpcMessage,
+) -> Delivery {
+    match writer.try_send(msg) {
+        Ok(()) => Delivery::Queued,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            tracing::warn!(
+                connection = connection_id,
+                "connection is not reading its stream; dropped a broadcast notification for it"
+            );
+            Delivery::Dropped
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => Delivery::Closed,
+    }
+}
+
 /// The table key for a legacy (`2025-11-25`) session's server→client stream.
 ///
 /// The HTTP transport registers its `GET`-opened SSE stream under this key;

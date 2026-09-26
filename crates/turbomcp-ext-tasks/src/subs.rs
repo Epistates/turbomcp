@@ -115,7 +115,10 @@ pub(crate) async fn push_status(subs: &TaskSubscriptions, store: &DraftTaskStore
             Some(writer) => {
                 let params = stamp_subscription_id(base.clone(), &subscriber.subscription_id);
                 let note = JsonRpcNotification::new(NOTIFICATIONS_TASKS, Some(params));
-                if writer.send(note.into()).await.is_err() {
+                // Never waits on one subscriber: see `outbound::offer`.
+                if outbound::offer(&subscriber.connection, &writer, note.into())
+                    == outbound::Delivery::Closed
+                {
                     subs.drop_connection(&subscriber.connection);
                 }
             }

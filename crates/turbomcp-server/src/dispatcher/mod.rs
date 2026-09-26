@@ -389,7 +389,14 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// (`*_list_changed`, `resources/updated`) to every live subscription.
     #[must_use]
     pub fn notifier(&self) -> ServerNotifier {
-        ServerNotifier::new(Arc::clone(&self.shared.subs))
+        ServerNotifier::new(
+            Arc::clone(&self.shared.subs),
+            [
+                self.router.has_tools(),
+                self.router.has_resources(),
+                self.router.has_prompts(),
+            ],
+        )
     }
 
     /// A [`SessionTerminator`](turbomcp_service::SessionTerminator) handle for

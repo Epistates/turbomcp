@@ -26,7 +26,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use turbomcp_core::{JsonRpcMessage, JsonRpcNotification, RequestId, meta};
@@ -72,19 +72,29 @@ impl ListChangedKind {
     }
 }
 
-/// Upper bound on tracked legacy session routes; at capacity, an arbitrary
-/// existing route is evicted to admit the new one (matches the session store's
-/// bounded-memory posture; explicit lifecycle eviction is a Phase 7 item).
+/// Upper bound on tracked legacy session routes. At capacity a route with no
+/// reachable stream goes first, then the least recently seen one.
 pub(crate) const MAX_LEGACY_ROUTES: usize = 4096;
 
 /// A legacy session's delivery route: where its messages go and which
 /// resource URIs it subscribed to.
-#[derive(Default)]
 struct LegacyRoute {
     /// The byte-pipe connection the session was last seen on (stdio delivery
     /// fallback); empty for HTTP-only sessions.
     connection: String,
     uris: HashSet<String>,
+    /// When the session last sent anything.
+    last_seen: Instant,
+}
+
+impl LegacyRoute {
+    fn new() -> Self {
+        Self {
+            connection: String::new(),
+            uris: HashSet::new(),
+            last_seen: Instant::now(),
+        }
+    }
 }
 
 /// Shared map of live subscriptions; dispatcher clones share it via `Arc`.
@@ -130,13 +140,33 @@ impl SubscriptionRegistry {
     /// Called on every legacy dispatch so the stdio fallback stays current.
     pub(crate) fn legacy_touch(&self, session: &str, connection: Option<&str>) {
         let mut routes = self.lock_legacy();
-        if !routes.contains_key(session) && routes.len() >= MAX_LEGACY_ROUTES {
-            // Bounded memory: evict an arbitrary route to admit the new one.
-            if let Some(victim) = routes.keys().next().cloned() {
-                routes.remove(&victim);
+        if !routes.contains_key(session) {
+            // A byte pipe carries one session at a time. A new one on the same
+            // connection (the client initialized again) replaces the old, whose
+            // route would otherwise deliver every notification twice and keep
+            // sending updates for URIs the new session never subscribed to.
+            if let Some(conn) = connection.filter(|c| !c.is_empty()) {
+                routes.retain(|_, route| route.connection != conn);
+            }
+            if routes.len() >= MAX_LEGACY_ROUTES {
+                // A route nothing can be delivered to is dead weight; after
+                // that, the one idle longest. Evicting at random threw away
+                // live sessions' subscriptions.
+                let victim = routes
+                    .iter()
+                    .filter(|(id, route)| legacy_writer(id, &route.connection).is_none())
+                    .min_by_key(|(_, route)| route.last_seen)
+                    .or_else(|| routes.iter().min_by_key(|(_, route)| route.last_seen))
+                    .map(|(id, _)| id.clone());
+                if let Some(victim) = victim {
+                    routes.remove(&victim);
+                }
             }
         }
-        let route = routes.entry(session.to_owned()).or_default();
+        let route = routes
+            .entry(session.to_owned())
+            .or_insert_with(LegacyRoute::new);
+        route.last_seen = Instant::now();
         if let Some(conn) = connection {
             conn.clone_into(&mut route.connection);
         }
@@ -230,7 +260,8 @@ impl SubscriptionRegistry {
                 .as_ref()
                 .map(|(key, value)| json!({ *key: value.clone() }));
             let note = JsonRpcNotification::new(method, params);
-            let _ = writer.send(note.into()).await;
+            // Never waits on one session: see `outbound::offer`.
+            outbound::offer(&session, &writer, note.into());
         }
     }
 
@@ -256,7 +287,8 @@ impl SubscriptionRegistry {
                 continue;
             };
             let note = subscription_notification(method, &id, extra.clone());
-            if writer.send(note).await.is_err() {
+            // Never waits on one subscriber: see `outbound::offer`.
+            if outbound::offer(&connection, &writer, note) == outbound::Delivery::Closed {
                 self.remove(&connection, &id);
             }
         }
@@ -379,6 +411,11 @@ fn subscription_notification(
 #[derive(Clone)]
 pub struct ServerNotifier {
     subs: Arc<SubscriptionRegistry>,
+    /// Which list capabilities the server advertises, by [`ListChangedKind`]
+    /// slot. Announcing a change to one it never advertised would send a
+    /// legacy session a notification for a capability it was told does not
+    /// exist.
+    advertised: [bool; 3],
 }
 
 impl core::fmt::Debug for ServerNotifier {
@@ -390,23 +427,37 @@ impl core::fmt::Debug for ServerNotifier {
 }
 
 impl ServerNotifier {
-    pub(crate) fn new(subs: Arc<SubscriptionRegistry>) -> Self {
-        Self { subs }
+    pub(crate) fn new(subs: Arc<SubscriptionRegistry>, advertised: [bool; 3]) -> Self {
+        Self { subs, advertised }
     }
 
-    /// The tool list changed (`notifications/tools/list_changed`).
+    fn list_changed(&self, kind: ListChangedKind) {
+        if self.advertised[kind.slot()] {
+            self.subs.schedule_list_changed(kind);
+        } else {
+            tracing::debug!(
+                ?kind,
+                "list changed for a capability this server does not have"
+            );
+        }
+    }
+
+    /// The tool list changed (`notifications/tools/list_changed`). A no-op on
+    /// a server without tools.
     pub fn tools_list_changed(&self) {
-        self.subs.schedule_list_changed(ListChangedKind::Tools);
+        self.list_changed(ListChangedKind::Tools);
     }
 
-    /// The resource list changed (`notifications/resources/list_changed`).
+    /// The resource list changed (`notifications/resources/list_changed`). A
+    /// no-op on a server without resources.
     pub fn resources_list_changed(&self) {
-        self.subs.schedule_list_changed(ListChangedKind::Resources);
+        self.list_changed(ListChangedKind::Resources);
     }
 
-    /// The prompt list changed (`notifications/prompts/list_changed`).
+    /// The prompt list changed (`notifications/prompts/list_changed`). A no-op
+    /// on a server without prompts.
     pub fn prompts_list_changed(&self) {
-        self.subs.schedule_list_changed(ListChangedKind::Prompts);
+        self.list_changed(ListChangedKind::Prompts);
     }
 
     /// `uri`'s content changed (`notifications/resources/updated`), delivered
@@ -561,7 +612,7 @@ mod tests {
         let reg = Arc::new(SubscriptionRegistry::default());
         reg.insert("coalesce-conn", &RequestId::from(1i64), filter(true, &[]));
 
-        let notifier = ServerNotifier::new(Arc::clone(&reg));
+        let notifier = ServerNotifier::new(Arc::clone(&reg), [true; 3]);
         for _ in 0..5 {
             notifier.tools_list_changed();
         }
@@ -573,5 +624,60 @@ mod tests {
             JsonRpcMessage::Notification(n) if n.method == methods::notification::TOOLS_LIST_CHANGED
         ));
         assert!(rx.try_recv().is_err(), "the burst coalesced into one");
+    }
+
+    /// One subscriber that stops reading used to stall delivery to every other
+    /// one, and park the task that published, because each send waited for
+    /// room in that subscriber's queue.
+    #[tokio::test]
+    async fn a_subscriber_that_stops_reading_does_not_stall_the_rest() {
+        let (stuck_tx, _stuck_rx) = tokio::sync::mpsc::channel(1);
+        let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(8);
+        let _stuck = outbound::register("stalled-reader", stuck_tx);
+        let _live = outbound::register("live-reader", live_tx);
+        let reg = Arc::new(SubscriptionRegistry::default());
+        reg.insert(
+            "stalled-reader",
+            &RequestId::from(1i64),
+            filter(false, &["x"]),
+        );
+        reg.insert("live-reader", &RequestId::from(2i64), filter(false, &["x"]));
+
+        let notifier = ServerNotifier::new(Arc::clone(&reg), [true; 3]);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            for _ in 0..3 {
+                notifier.resource_updated("x").await;
+            }
+        })
+        .await
+        .expect("publishing must not wait on the stalled reader");
+        for _ in 0..3 {
+            assert!(
+                live_rx.try_recv().is_ok(),
+                "the live reader got every update"
+            );
+        }
+        assert_eq!(reg.lock().len(), 2, "a slow reader is not unsubscribed");
+    }
+
+    #[tokio::test]
+    async fn announcing_an_unadvertised_capability_sends_nothing() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let _guard = outbound::register("tools-only-conn", tx);
+        let reg = Arc::new(SubscriptionRegistry::default());
+        reg.legacy_touch("sess", Some("tools-only-conn"));
+
+        let notifier = ServerNotifier::new(Arc::clone(&reg), [true, false, false]);
+        notifier.resources_list_changed();
+        notifier.prompts_list_changed();
+        tokio::time::sleep(Duration::from_millis(COALESCE_WINDOW_MS * 3)).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing for capabilities not advertised"
+        );
+
+        notifier.tools_list_changed();
+        tokio::time::sleep(Duration::from_millis(COALESCE_WINDOW_MS * 3)).await;
+        assert!(rx.try_recv().is_ok());
     }
 }
