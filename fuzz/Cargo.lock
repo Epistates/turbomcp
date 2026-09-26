@@ -1730,6 +1730,7 @@ dependencies = [
  "hmac",
  "jsonschema",
  "moka",
+ "percent-encoding",
  "rand 0.10.2",
  "regex",
  "serde",
