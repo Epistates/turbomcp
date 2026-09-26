@@ -58,9 +58,7 @@ mod params;
 use augment::try_augment_call;
 use capability::{DraftWire, Legacy0618Wire, LegacyWire, dispatch_capability, resource_hidden};
 use handshake::{discover_response, handle_initialize};
-use legacy_tasks::{
-    handle_tasks_method, has_task_field, legacy_list_tools_with_task_support, task_augmented_call,
-};
+use legacy_tasks::{handle_tasks_method, has_task_field, task_augmented_call};
 use listen::handle_subscriptions_listen;
 use params::{
     build_context, extract_log_level, legacy_context, parse_set_level_params, parse_uri_param,
@@ -819,45 +817,38 @@ async fn handle_request<S: McpServerCore>(
                     if let Some(sid) = session_id(req.params.as_ref()) {
                         subs.legacy_touch(sid, connection_id(req.params.as_ref()));
                     }
-                    // Core Tasks hooks (2025-11-25 only): augmented tools/call
-                    // detaches into a task; tools/list advertises taskSupport.
-                    // `2025-06-18` predates Tasks, so a `task` field on a call
-                    // from that revision is an unknown param it ignores, and
-                    // its `tools/list` must not carry `execution`.
-                    if let Some(store) = tasks.as_ref().filter(|_| revision.has_tasks()) {
-                        if method == methods::request::TOOLS_CALL
-                            && has_task_field(req.params.as_ref())
+                    // Core Tasks (2025-11-25 only): an augmented tools/call
+                    // detaches into a task. (`tools/list` advertises
+                    // `taskSupport` on the shared path.) `2025-06-18` predates
+                    // Tasks, so a `task` field on a call from that revision is
+                    // an unknown param it ignores.
+                    if let Some(store) = tasks.as_ref().filter(|_| revision.has_tasks())
+                        && method == methods::request::TOOLS_CALL
+                        && has_task_field(req.params.as_ref())
+                    {
+                        let (_, tool) = match capability::prepare_tool::<S, LegacyWire>(
+                            &server,
+                            router,
+                            &req,
+                            &ctx,
+                            shared,
+                            id.clone(),
+                        )
+                        .await
                         {
-                            let (_, tool) = match capability::prepare_tool::<S, LegacyWire>(
-                                &server,
-                                router,
-                                &req,
-                                &ctx,
-                                shared,
-                                id.clone(),
-                            )
-                            .await
-                            {
-                                Ok(prepared) => prepared,
-                                Err(response) => return Ok(*response),
-                            };
-                            return Ok(task_augmented_call(
-                                server,
-                                router,
-                                store,
-                                ctx,
-                                &req,
-                                id,
-                                (shared.validators.clone(), tool.output_schema),
-                            )
-                            .await);
-                        }
-                        if method == methods::request::TOOLS_LIST {
-                            return Ok(legacy_list_tools_with_task_support(
-                                server, router, &req, ctx, id,
-                            )
-                            .await);
-                        }
+                            Ok(prepared) => prepared,
+                            Err(response) => return Ok(*response),
+                        };
+                        return Ok(task_augmented_call(
+                            server,
+                            router,
+                            store,
+                            ctx,
+                            &req,
+                            id,
+                            (shared.validators.clone(), tool.output_schema),
+                        )
+                        .await);
                     }
                     Ok(match revision {
                         LegacyRevision::V2025_11_25 => {
@@ -885,16 +876,21 @@ async fn handle_request<S: McpServerCore>(
         // `subscriptions/listen` instead).
         methods::request::RESOURCES_SUBSCRIBE | methods::request::RESOURCES_UNSUBSCRIBE => {
             match classify_version(req.params.as_ref(), supported) {
-                VersionRoute::Legacy(_) => {
+                VersionRoute::Legacy(revision) => {
+                    let version = revision.version();
                     if let Err(response) = legacy_context(sessions.as_ref(), &req).await? {
                         return Ok(response);
                     }
                     if !router.has_resources() {
-                        return Ok(error_response(id, &McpError::method_not_found(method)));
+                        return Ok(error_response_for(
+                            id,
+                            &version,
+                            &McpError::method_not_found(method),
+                        ));
                     }
                     let uri = match parse_uri_param(req.params.as_ref(), &method) {
                         Ok(uri) => uri,
-                        Err(e) => return Ok(error_response(id, &e)),
+                        Err(e) => return Ok(error_response_for(id, &version, &e)),
                     };
                     // `legacy_context` proved the session id is present.
                     let sid = session_id(req.params.as_ref()).unwrap_or_default();
@@ -902,16 +898,19 @@ async fn handle_request<S: McpServerCore>(
                         // A hidden resource is unreachable, and that has to
                         // include watching it: every `resources/updated` names
                         // its URI, so a subscription the policy would refuse a
-                        // read of is the same disclosure on a timer.
+                        // read of is the same disclosure on a timer. It must
+                        // also be *answered* as a URI the server does not have
+                        // is — subscribe never checks existence, so that is a
+                        // plain success — or the refusal itself enumerates
+                        // what is hidden. So it succeeds and records nothing.
                         let ctx = build_context(&req);
                         match resource_hidden(shared, router, &server, &ctx, &uri).await {
-                            Ok(true) => {
-                                return Ok(error_response(id, &McpError::resource_not_found(uri)));
+                            Ok(true) => {}
+                            Ok(false) => {
+                                subs.legacy_subscribe(sid, connection_id(req.params.as_ref()), uri);
                             }
-                            Ok(false) => {}
-                            Err(e) => return Ok(error_response(id, &e)),
+                            Err(e) => return Ok(error_response_for(id, &version, &e)),
                         }
-                        subs.legacy_subscribe(sid, connection_id(req.params.as_ref()), uri);
                     } else {
                         subs.legacy_unsubscribe(sid, &uri);
                     }

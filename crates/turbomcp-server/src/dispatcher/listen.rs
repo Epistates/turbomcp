@@ -99,7 +99,10 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // Honor only what the server can actually emit; unsupported types are
     // omitted from the acknowledgment (spec §Acknowledgment).
     let wanted = requested.notifications;
-    let agreed = v0728::SubscriptionFilter {
+    // Resource URIs the policy hides: acknowledged like any other, but never
+    // watched. See the comment on `resource_subscriptions` below.
+    let mut unwatched = Vec::new();
+    let mut agreed = v0728::SubscriptionFilter {
         tools_list_changed: (wanted.tools_list_changed == Some(true) && router.has_tools())
             .then_some(true),
         resources_list_changed: (wanted.resources_list_changed == Some(true)
@@ -108,23 +111,22 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         prompts_list_changed: (wanted.prompts_list_changed == Some(true) && router.has_prompts())
             .then_some(true),
         // Each requested URI is judged the way a `resources/read` of it would
-        // be: `notifications/resources/updated` names the URI, so agreeing to
-        // watch one the policy hides is the same disclosure on a timer. A
-        // refused URI is dropped from the agreed filter rather than failing
-        // the whole subscription — the acknowledgment already tells the client
-        // what the server agreed to, and it is the same answer a URI the
-        // server does not have gets.
+        // be: `notifications/resources/updated` names the URI, so watching one
+        // the policy hides is the same disclosure on a timer. It must also be
+        // *acknowledged* exactly as a URI the server does not have is — echoed
+        // back, since nothing checks existence — or the difference between the
+        // requested and acknowledged lists enumerates what is hidden. So a
+        // hidden URI is acknowledged and simply never watched.
         resource_subscriptions: if router.has_resources() {
             let ctx = build_context(req);
-            let mut agreed = Vec::with_capacity(wanted.resource_subscriptions.len());
-            for uri in wanted.resource_subscriptions {
-                match resource_hidden(shared, router, server, &ctx, &uri).await {
-                    Ok(false) => agreed.push(uri),
-                    Ok(true) => {}
+            for uri in &wanted.resource_subscriptions {
+                match resource_hidden(shared, router, server, &ctx, uri).await {
+                    Ok(false) => {}
+                    Ok(true) => unwatched.push(uri.clone()),
                     Err(e) => return Ok(Some(error_response(id, &e))),
                 }
             }
-            agreed
+            wanted.resource_subscriptions
         } else {
             Vec::new()
         },
@@ -178,6 +180,9 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     if writer.send(ack.into()).await.is_err() {
         return Ok(None); // connection already gone; nothing to answer
     }
+    agreed
+        .resource_subscriptions
+        .retain(|uri| !unwatched.contains(uri));
     subs.insert(&conn, &id, agreed);
     // A `notifications/cancelled` that raced this dispatch fired our in-flight
     // token before the insert could be seen — honor it now.

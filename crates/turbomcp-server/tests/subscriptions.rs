@@ -316,3 +316,77 @@ async fn malformed_listen_filter_is_invalid_params() {
     drop(h.in_tx);
     h.driver.await.unwrap().expect("clean shutdown on EOF");
 }
+
+/// Lists one resource the policy hides.
+#[derive(Clone)]
+struct Guarded;
+
+impl McpServerCore for Guarded {
+    fn server_info(&self) -> Implementation {
+        Implementation::new("guarded", "0.1.0")
+    }
+}
+
+impl WithResources for Guarded {
+    async fn list_resources(
+        &self,
+        _ctx: &ListResourcesContext,
+        _params: neutral::ListParams,
+    ) -> McpResult<neutral::ListResourcesResult> {
+        Ok(neutral::ListResourcesResult::new(vec![
+            neutral::Resource::new("file://secret", "secret")
+                .with_meta_entry(turbomcp_core::meta::keys::TAGS, json!(["internal"])),
+        ]))
+    }
+
+    async fn read_resource(
+        &self,
+        _ctx: &ReadResourceContext,
+        params: neutral::ReadResourceParams,
+    ) -> McpResult<neutral::ReadResourceResult> {
+        Ok(neutral::ReadResourceResult::text(params.uri, "x"))
+    }
+}
+
+/// The acknowledgment must not tell a hidden URI from one the server does not
+/// have. It used to drop the hidden one and echo the unknown one, so the
+/// difference between what was asked for and what was agreed enumerated
+/// exactly what the policy hides. Both are acknowledged; neither is watched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_hidden_uri_is_acknowledged_like_an_unknown_one_but_never_watched() {
+    let service = VersionDispatcher::new(Guarded, MethodRouter::new().with_resources())
+        .with_visibility(std::sync::Arc::new(
+            turbomcp_server::Visibility::new().hiding_tagged(["internal"]),
+        ));
+    let notifier = service.notifier();
+    let (in_tx, in_rx) = mpsc::channel(8);
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+    let transport = MockTransport {
+        inbound: in_rx,
+        outbound: out_tx,
+    };
+    let driver = tokio::spawn(serve_with(transport, service, ServeConfig::default()));
+
+    in_tx
+        .send(listen(
+            1,
+            json!({ "resourceSubscriptions": ["file://secret", "file://nowhere"] }),
+        ))
+        .await
+        .unwrap();
+    let ack = recv_notification(&mut out_rx).await;
+    assert_eq!(
+        ack.params.as_ref().unwrap()["notifications"]["resourceSubscriptions"],
+        json!(["file://secret", "file://nowhere"])
+    );
+
+    // An update to the hidden URI is not delivered; one to the unknown URI is,
+    // as it always was (nothing checks existence).
+    notifier.resource_updated("file://secret").await;
+    notifier.resource_updated("file://nowhere").await;
+    let update = recv_notification(&mut out_rx).await;
+    assert_eq!(update.params.as_ref().unwrap()["uri"], "file://nowhere");
+
+    drop(in_tx);
+    driver.await.unwrap().expect("clean shutdown on EOF");
+}

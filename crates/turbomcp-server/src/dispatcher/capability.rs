@@ -269,17 +269,11 @@ async fn hidden<S: McpServerCore>(
     ctx: &RequestContext,
     component: Component<'_>,
 ) -> McpResult<bool> {
-    let Some(policy) = shared.visibility.as_ref() else {
+    if shared.visibility.is_none() {
         return Ok(false);
-    };
-    let judge = |kind, id: &str, meta: &Map<String, Value>| {
-        !policy.is_visible(&VisibleComponent {
-            kind,
-            id,
-            meta,
-            request: ctx,
-        })
-    };
+    }
+    let judge =
+        |kind, id: &str, meta: &Map<String, Value>| policy_hides(shared, ctx, kind, id, meta);
     match component {
         Component::Prompt(name) => {
             let Some(fut) = router.dispatch_lookup_prompt(
@@ -330,6 +324,108 @@ async fn hidden<S: McpServerCore>(
     }
 }
 
+/// Whether the visibility policy (if any) hides a component the lookup found.
+fn policy_hides(
+    shared: &Shared,
+    ctx: &RequestContext,
+    kind: ComponentKind,
+    id: &str,
+    meta: &Map<String, Value>,
+) -> bool {
+    shared.visibility.as_ref().is_some_and(|policy| {
+        !policy.is_visible(&VisibleComponent {
+            kind,
+            id,
+            meta,
+            request: ctx,
+        })
+    })
+}
+
+/// Why `completion/complete` must be refused for `reference`, if it must.
+///
+/// The ref is resolved for real, policy or not: "Invalid prompt name: `-32602`"
+/// (completion.mdx §Error Handling) is a fact about the server, and it used to
+/// hold only when a visibility policy happened to be installed. A `ref/resource`
+/// names a listed resource's URI or a template's exact `uriTemplate` — matching
+/// it as a concrete URI would let a template string accidentally expand against
+/// another template. Hidden gets exactly the refusal unknown gets.
+async fn completion_refusal<S: McpServerCore>(
+    shared: &Shared,
+    router: &MethodRouter<S>,
+    server: &S,
+    ctx: &RequestContext,
+    reference: &neutral::CompletionReference,
+) -> McpResult<Option<McpError>> {
+    match reference {
+        neutral::CompletionReference::Prompt { name } => {
+            let unknown = McpError::invalid_params(format!("unknown prompt: {name}"));
+            let Some(fut) = router.dispatch_lookup_prompt(
+                server.clone(),
+                ListPromptsContext::new(ctx.clone()),
+                name.clone(),
+            ) else {
+                return Ok(Some(unknown));
+            };
+            Ok(match fut.await? {
+                Some(p) if !policy_hides(shared, ctx, ComponentKind::Prompt, &p.name, &p.meta) => {
+                    None
+                }
+                _ => Some(unknown),
+            })
+        }
+        neutral::CompletionReference::ResourceTemplate { uri } => {
+            let unknown = McpError::resource_not_found(uri.clone());
+            if let Some(fut) = router.dispatch_lookup_resource(
+                server.clone(),
+                ListResourcesContext::new(ctx.clone()),
+                uri.clone(),
+            ) && let Some(r) = fut.await?
+            {
+                let hidden = policy_hides(shared, ctx, ComponentKind::Resource, &r.uri, &r.meta);
+                return Ok(hidden.then_some(unknown));
+            }
+            let template = crate::catalog::find(
+                |params| {
+                    let listed = router.dispatch_list_resource_templates(
+                        server.clone(),
+                        ListResourceTemplatesContext::new(ctx.clone()),
+                        params,
+                    );
+                    async move {
+                        let Some(listed) = listed else {
+                            return Ok((Vec::new(), None));
+                        };
+                        let page = listed.await?;
+                        Ok((page.resource_templates, page.next_cursor))
+                    }
+                },
+                |t: &neutral::ResourceTemplate| t.uri_template == *uri,
+            )
+            .await?;
+            Ok(match template {
+                Some(t)
+                    if !policy_hides(
+                        shared,
+                        ctx,
+                        ComponentKind::ResourceTemplate,
+                        &t.uri_template,
+                        &t.meta,
+                    ) =>
+                {
+                    None
+                }
+                _ => Some(unknown),
+            })
+        }
+        // A reference kind this build cannot resolve to a component cannot be
+        // checked, so it is refused rather than waved through.
+        other => Ok(Some(McpError::invalid_params(format!(
+            "unsupported completion reference: {other:?}"
+        )))),
+    }
+}
+
 pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
     server: S,
     router: &MethodRouter<S>,
@@ -345,8 +441,27 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
     let list_params = parse_list_params(req.params.as_ref());
     match method {
         methods::request::TOOLS_LIST => {
-            let fut =
-                router.dispatch_list_tools(server, ListToolsContext::new(ctx.clone()), list_params);
+            // Core Tasks (`2025-11-25`) advertise each tool's `taskSupport`.
+            let task_support = if W::VERSION.has_core_tasks() && shared.tasks.is_some() {
+                match super::legacy_tasks::any_tool_declares_task_support(&server, router, &ctx)
+                    .await
+                {
+                    Ok(any_declared) => Some(any_declared),
+                    Err(e) => return error_response_for(id, &W::VERSION, &e),
+                }
+            } else {
+                None
+            };
+            let fut = router
+                .dispatch_list_tools(server, ListToolsContext::new(ctx.clone()), list_params)
+                .map(|fut| match task_support {
+                    Some(any_declared) => fut
+                        .map(move |r| {
+                            r.map(|r| super::legacy_tasks::with_task_support(r, any_declared))
+                        })
+                        .boxed(),
+                    None => fut,
+                });
             let fut = with_visibility(fut, shared, &ctx, visibility::filter_tools);
             let fut = with_cache_default(fut, shared.cache.tools_list);
             finish::<_, W::ListTools>(id, method, &W::VERSION, fut).await
@@ -555,27 +670,16 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             // be visibility-checked, so it is refused rather than waved
             // through — the same answer `parse_complete_params` gives an
             // unknown `ref` type, which is the only way to reach it.
-            let (component, unknown) = match &params.reference {
-                neutral::CompletionReference::Prompt { name } => (
-                    Component::Prompt(name.as_str()),
-                    McpError::invalid_params(format!("unknown prompt: {name}")),
-                ),
-                neutral::CompletionReference::ResourceTemplate { uri } => (
-                    Component::Resource(uri.as_str()),
-                    McpError::ResourceNotFound(uri.clone()),
-                ),
-                other => {
-                    let e = McpError::invalid_params(format!(
-                        "unsupported completion reference: {other:?}"
-                    ));
-                    return error_response_for(id, &W::VERSION, &e);
+            // An unadvertised capability is `-32601` before anything else is
+            // looked at, whatever the request names.
+            if !router.has_completions() {
+                return error_response_for(id, &W::VERSION, &McpError::method_not_found(method));
+            }
+            match completion_refusal(shared, router, &server, &ctx, &params.reference).await {
+                Ok(None) => {}
+                Ok(Some(refusal)) | Err(refusal) => {
+                    return error_response_for(id, &W::VERSION, &refusal);
                 }
-            };
-            if match hidden(shared, router, &server, &ctx, component).await {
-                Ok(hidden) => hidden,
-                Err(e) => return error_response_for(id, &W::VERSION, &e),
-            } {
-                return error_response_for(id, &W::VERSION, &unknown);
             }
             let fut = router.dispatch_complete(server, CompleteContext::new(ctx), params);
             finish::<_, W::Complete>(id, method, &W::VERSION, fut).await

@@ -534,3 +534,142 @@ async fn filtering_happens_on_every_revision() {
         );
     }
 }
+
+/// A `2025-11-25` session on a server with Tasks on. Its `tools/list` used to
+/// go through a separate function that never applied the policy, so every
+/// hidden tool was listed in full.
+async fn tasks_session()
+-> impl Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = turbomcp::ProtocolError>
++ Clone {
+    let mut svc = turbomcp::LegacySessionAdapter::new(
+        Catalog
+            .into_server()
+            .with_tasks()
+            .with_visibility(hides_internal())
+            .build(),
+    );
+    result(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            request::INITIALIZE,
+            Some(json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": { "name": "t", "version": "1" },
+            })),
+        ),
+    )
+    .await;
+    svc
+}
+
+#[tokio::test]
+async fn with_tasks_on_the_2025_11_25_list_is_still_filtered() {
+    let mut svc = tasks_session().await;
+    let tools = result(
+        &mut svc,
+        JsonRpcRequest::new(2, request::TOOLS_LIST, Some(json!({}))),
+    )
+    .await;
+    assert_eq!(field(&tools, "tools", "name"), ["read", "wipe"]);
+    for tool in tools["tools"].as_array().unwrap() {
+        assert_eq!(
+            tool["execution"]["taskSupport"], "optional",
+            "Tasks on and no tool opting in individually: every tool may be a task"
+        );
+    }
+}
+
+/// Subscribing never checks existence, so an unknown URI succeeds. A hidden
+/// one used to be refused, which told the caller it exists.
+#[tokio::test]
+async fn subscribing_to_a_hidden_resource_answers_as_an_unknown_one_does() {
+    let mut svc = tasks_session().await;
+    for (id, uri) in [(2, "catalog://secret"), (3, "catalog://no-such-thing")] {
+        let answer = result(
+            &mut svc,
+            JsonRpcRequest::new(
+                id,
+                request::RESOURCES_SUBSCRIBE,
+                Some(json!({ "uri": uri })),
+            ),
+        )
+        .await;
+        assert_eq!(answer, json!({}), "{uri}");
+    }
+}
+
+/// "Invalid prompt name: `-32602`" is a fact about the server. It used to hold
+/// only when a visibility policy happened to be installed.
+#[tokio::test]
+async fn completing_an_unknown_ref_is_refused_with_or_without_a_policy() {
+    for policy in [None, Some(hides_internal())] {
+        let mut svc = dispatcher(policy);
+        let unknown_prompt = error(
+            &mut svc,
+            as_caller(
+                1,
+                request::COMPLETION_COMPLETE,
+                json!({
+                    "ref": { "type": "ref/prompt", "name": "no_such_prompt" },
+                    "argument": { "name": "text", "value": "" }
+                }),
+                "",
+            ),
+        )
+        .await;
+        assert_eq!(unknown_prompt.code, -32602);
+
+        let unknown_template = error(
+            &mut svc,
+            as_caller(
+                2,
+                request::COMPLETION_COMPLETE,
+                json!({
+                    "ref": { "type": "ref/resource", "uri": "catalog://nowhere/{x}" },
+                    "argument": { "name": "x", "value": "" }
+                }),
+                "",
+            ),
+        )
+        .await;
+        assert_eq!(unknown_template.code, -32602);
+    }
+
+    // And a hidden template is refused with exactly that answer.
+    let mut svc = dispatcher(Some(hides_internal()));
+    let hidden = error(
+        &mut svc,
+        as_caller(
+            3,
+            request::COMPLETION_COMPLETE,
+            json!({
+                "ref": { "type": "ref/resource", "uri": "catalog://vault/{+path}" },
+                "argument": { "name": "path", "value": "" }
+            }),
+            "",
+        ),
+    )
+    .await;
+    let unknown = error(
+        &mut svc,
+        as_caller(
+            4,
+            request::COMPLETION_COMPLETE,
+            json!({
+                "ref": { "type": "ref/resource", "uri": "catalog://nowhere/{+path}" },
+                "argument": { "name": "path", "value": "" }
+            }),
+            "",
+        ),
+    )
+    .await;
+    assert_eq!(hidden.code, unknown.code);
+    assert_eq!(
+        hidden
+            .message
+            .replace("catalog://vault", "catalog://nowhere"),
+        unknown.message
+    );
+}

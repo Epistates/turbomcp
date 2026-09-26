@@ -9,9 +9,10 @@ use serde_json::{Map, Value};
 
 use turbomcp_core::{
     CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError,
-    RequestContext, RequestId,
+    McpResult, RequestContext, RequestId,
 };
 use turbomcp_protocol::methods;
+use turbomcp_protocol::neutral::{self, TaskSupport};
 use turbomcp_protocol::v2025_11_25::types as legacy;
 use turbomcp_service::mcp_to_jsonrpc_error;
 
@@ -20,7 +21,7 @@ use crate::router::MethodRouter;
 use crate::tasks::{TaskBackend, TaskError, TaskSnapshot, TaskStatus};
 use crate::traits::McpServerCore;
 
-use super::params::{parse_call_tool_params, parse_list_params};
+use super::params::parse_call_tool_params;
 use super::{error_response, ok_value, session_id};
 
 // ---- core Tasks (2025-11-25) ---------------------------------------------------
@@ -132,50 +133,58 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     )
 }
 
-/// Legacy `tools/list` with Tasks enabled: every tool that doesn't declare its
-/// own task support is advertised as `execution.taskSupport: "optional"`
-/// (the conversion layer can't know Tasks are on, so the dispatcher patches).
-pub(super) async fn legacy_list_tools_with_task_support<S: McpServerCore>(
-    server: S,
+/// Whether any tool in the catalogue declares its own task support.
+///
+/// That decides what an undeclared tool gets once Tasks are on: when some tool
+/// opts in individually (`#[tool(task)]`) the rest are `forbidden`, and when
+/// none does, Tasks were switched on for every tool and each is `optional`.
+/// Asked of the whole catalogue, not one page, so every page of `tools/list`
+/// and the `tools/call` gate agree.
+pub(super) async fn any_tool_declares_task_support<S: McpServerCore>(
+    server: &S,
     router: &MethodRouter<S>,
-    req: &JsonRpcRequest,
-    ctx: RequestContext,
-    id: RequestId,
-) -> JsonRpcMessage {
-    let list_params = parse_list_params(req.params.as_ref());
-    let Some(fut) = router.dispatch_list_tools(server, ListToolsContext::new(ctx), list_params)
-    else {
-        return error_response(
-            id,
-            &McpError::method_not_found(methods::request::TOOLS_LIST),
-        );
-    };
-    match fut.await {
-        Ok(result) => {
-            let mut wire = legacy::ListToolsResult::from(result);
-            // If any tool declared per-tool support (`#[tool(task)]`), honor those
-            // and default the rest to `forbidden`. If none did, keep the blanket
-            // `optional` default (backward-compatible with servers that only flip
-            // Tasks on globally).
-            let any_declared = wire
-                .tools
-                .iter()
-                .any(|t| t.execution.as_ref().and_then(|e| e.task_support).is_some());
-            let default = if any_declared {
-                legacy::ToolExecutionTaskSupport::Forbidden
-            } else {
-                legacy::ToolExecutionTaskSupport::Optional
-            };
-            for tool in &mut wire.tools {
-                tool.execution
-                    .get_or_insert(legacy::ToolExecution { task_support: None })
-                    .task_support
-                    .get_or_insert(default);
+    ctx: &RequestContext,
+) -> McpResult<bool> {
+    let found = crate::catalog::find(
+        |params| {
+            let listed = router.dispatch_list_tools(
+                server.clone(),
+                ListToolsContext::new(ctx.clone()),
+                params,
+            );
+            async move {
+                let page = listed
+                    .ok_or_else(|| McpError::method_not_found(methods::request::TOOLS_LIST))?
+                    .await?;
+                Ok((page.tools, page.next_cursor))
             }
-            ok_value(id, &wire)
-        }
-        Err(e) => error_response(id, &e),
+        },
+        |tool: &neutral::Tool| tool.task_support.is_some(),
+    )
+    .await?;
+    Ok(found.is_some())
+}
+
+/// The task support `tool` actually has on a server with Tasks enabled.
+pub(super) fn effective_task_support(tool: &neutral::Tool, any_declared: bool) -> TaskSupport {
+    tool.task_support.unwrap_or(if any_declared {
+        TaskSupport::Forbidden
+    } else {
+        TaskSupport::Optional
+    })
+}
+
+/// Spell out every tool's effective task support. The conversion layer can't
+/// know Tasks are on, so `tools/list` applies this to the neutral result —
+/// after the visibility filter, on the same path every other list takes.
+pub(super) fn with_task_support(
+    mut result: neutral::ListToolsResult,
+    any_declared: bool,
+) -> neutral::ListToolsResult {
+    for tool in &mut result.tools {
+        tool.task_support = Some(effective_task_support(tool, any_declared));
     }
+    result
 }
 
 pub(super) async fn handle_tasks_method(
