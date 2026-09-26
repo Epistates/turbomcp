@@ -251,3 +251,23 @@ async fn undeclared_capability_refuses_to_elicit() {
     drop(p.in_tx);
     p.driver.await.unwrap().expect("clean shutdown");
 }
+
+/// A client that declared only `elicitation.url` cannot render a form. The
+/// handshake used to round-trip the capabilities through a generated type that
+/// dropped empty sub-objects, so `{"url":{}}` arrived as `{}` (which means
+/// "form only") and the server sent the form anyway.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_url_only_client_is_not_sent_a_form() {
+    let mut p = spawn_pipe();
+    handshake(&mut p, json!({ "elicitation": { "url": {} } })).await;
+
+    p.in_tx.send(call_frame(2)).await.unwrap();
+    let JsonRpcMessage::Response(done) = recv(&mut p.out_rx).await else {
+        panic!("a form went to a client that declared only URL mode");
+    };
+    let err = done.error.expect("form elicitation is refused");
+    assert!(err.message.contains("elicitation.form"), "got: {err:?}");
+
+    drop(p.in_tx);
+    p.driver.await.unwrap().expect("clean shutdown");
+}

@@ -36,6 +36,51 @@ use crate::v2025_11_25::types as v11;
 /// than being dropped.
 const SCHEMA_KEYWORD: &str = "$schema";
 
+// ---- shared shapes -------------------------------------------------------------
+
+/// Each wire module generates its own one-variant tag enum per tagged shape
+/// (`type: "text"` → `TextContentType::Text`). They mean the same thing on both
+/// revisions; the match is exhaustive so a variant added on either side fails
+/// to compile here.
+macro_rules! same_tag {
+    ($($ty:ident :: $variant:ident),* $(,)?) => {$(
+        impl From<v11::$ty> for v06::$ty {
+            fn from(tag: v11::$ty) -> Self {
+                match tag {
+                    v11::$ty::$variant => Self::$variant,
+                }
+            }
+        }
+        impl From<v06::$ty> for v11::$ty {
+            fn from(tag: v06::$ty) -> Self {
+                match tag {
+                    v06::$ty::$variant => Self::$variant,
+                }
+            }
+        }
+    )*};
+}
+
+same_tag!(
+    TextContentType::Text,
+    ImageContentType::Image,
+    AudioContentType::Audio,
+    ResourceLinkType::ResourceLink,
+    EmbeddedResourceType::Resource,
+);
+
+impl From<v11::JsonObject> for v06::JsonObject {
+    fn from(o: v11::JsonObject) -> Self {
+        Self(o.0)
+    }
+}
+
+impl From<v06::JsonObject> for v11::JsonObject {
+    fn from(o: v06::JsonObject) -> Self {
+        Self(o.0)
+    }
+}
+
 // ---- leaves ------------------------------------------------------------------
 
 impl From<v11::Role> for v06::Role {
@@ -260,7 +305,7 @@ impl From<v11::TextContent> for v06::TextContent {
             annotations: annotations.map(Into::into),
             meta,
             text,
-            type_,
+            type_: type_.into(),
         }
     }
 }
@@ -277,7 +322,7 @@ impl From<v06::TextContent> for v11::TextContent {
             annotations: annotations.map(Into::into),
             meta,
             text,
-            type_,
+            type_: type_.into(),
         }
     }
 }
@@ -296,7 +341,7 @@ impl From<v11::ImageContent> for v06::ImageContent {
             data,
             meta,
             mime_type,
-            type_,
+            type_: type_.into(),
         }
     }
 }
@@ -315,7 +360,7 @@ impl From<v06::ImageContent> for v11::ImageContent {
             data,
             meta,
             mime_type,
-            type_,
+            type_: type_.into(),
         }
     }
 }
@@ -334,7 +379,7 @@ impl From<v11::AudioContent> for v06::AudioContent {
             data,
             meta,
             mime_type,
-            type_,
+            type_: type_.into(),
         }
     }
 }
@@ -353,7 +398,7 @@ impl From<v06::AudioContent> for v11::AudioContent {
             data,
             meta,
             mime_type,
-            type_,
+            type_: type_.into(),
         }
     }
 }
@@ -381,7 +426,7 @@ impl From<v11::ResourceLink> for v06::ResourceLink {
             name,
             size,
             title,
-            type_,
+            type_: type_.into(),
             uri,
         }
     }
@@ -409,7 +454,7 @@ impl From<v06::ResourceLink> for v11::ResourceLink {
             name,
             size,
             title,
-            type_,
+            type_: type_.into(),
             uri,
         }
     }
@@ -427,7 +472,7 @@ impl From<v11::EmbeddedResource> for v06::EmbeddedResource {
             annotations: annotations.map(Into::into),
             meta,
             resource: resource.into(),
-            type_,
+            type_: type_.into(),
         }
     }
 }
@@ -444,7 +489,7 @@ impl From<v06::EmbeddedResource> for v11::EmbeddedResource {
             annotations: annotations.map(Into::into),
             meta,
             resource: resource.into(),
-            type_,
+            type_: type_.into(),
         }
     }
 }
@@ -491,7 +536,7 @@ impl From<v11::ToolInputSchema> for v06::ToolInputSchema {
             extra.insert(SCHEMA_KEYWORD.into(), schema.into());
         }
         Self {
-            properties,
+            properties: properties.map(Into::into),
             required,
             type_,
             extra,
@@ -511,7 +556,7 @@ impl From<v06::ToolInputSchema> for v11::ToolInputSchema {
             .remove(SCHEMA_KEYWORD)
             .and_then(|v| v.as_str().map(String::from));
         Self {
-            properties,
+            properties: properties.map(Into::into),
             required,
             schema,
             type_,
@@ -533,7 +578,7 @@ impl From<v11::ToolOutputSchema> for v06::ToolOutputSchema {
             extra.insert(SCHEMA_KEYWORD.into(), schema.into());
         }
         Self {
-            properties,
+            properties: properties.map(Into::into),
             required,
             type_,
             extra,
@@ -553,7 +598,7 @@ impl From<v06::ToolOutputSchema> for v11::ToolOutputSchema {
             .remove(SCHEMA_KEYWORD)
             .and_then(|v| v.as_str().map(String::from));
         Self {
-            properties,
+            properties: properties.map(Into::into),
             required,
             schema,
             type_,
@@ -860,7 +905,7 @@ impl From<v11::CallToolResult> for v06::CallToolResult {
             content: content.into_iter().map(Into::into).collect(),
             is_error,
             meta,
-            structured_content,
+            structured_content: structured_content.map(Into::into),
         }
     }
 }
@@ -877,7 +922,7 @@ impl From<v06::CallToolResult> for v11::CallToolResult {
             content: content.into_iter().map(Into::into).collect(),
             is_error,
             meta,
-            structured_content,
+            structured_content: structured_content.map(Into::into),
         }
     }
 }
@@ -1180,9 +1225,9 @@ impl From<v11::ServerCapabilities> for v06::ServerCapabilities {
             tools,
         } = c;
         Self {
-            completions,
+            completions: completions.map(Into::into),
             experimental,
-            logging,
+            logging: logging.map(Into::into),
             prompts: prompts.map(Into::into),
             resources: resources.map(Into::into),
             tools: tools.map(Into::into),
@@ -1201,9 +1246,9 @@ impl From<v06::ServerCapabilities> for v11::ServerCapabilities {
             tools,
         } = c;
         Self {
-            completions,
+            completions: completions.map(Into::into),
             experimental,
-            logging,
+            logging: logging.map(Into::into),
             prompts: prompts.map(Into::into),
             resources: resources.map(Into::into),
             tasks: None,

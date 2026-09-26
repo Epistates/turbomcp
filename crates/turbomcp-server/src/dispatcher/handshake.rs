@@ -56,7 +56,15 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     };
 
     if let Some(sid) = session_id(req.params.as_ref()) {
-        let client_capabilities = serde_json::to_value(&params.capabilities).unwrap_or(Value::Null);
+        // Keep what the client sent, not a re-serialization of the typed parse:
+        // the typed form exists to validate, and anything it doesn't model
+        // (`extensions`, a future sub-capability) would not survive the trip.
+        let client_capabilities = req
+            .params
+            .as_ref()
+            .and_then(|p| p.get("capabilities"))
+            .cloned()
+            .unwrap_or(Value::Null);
         sessions
             .insert(
                 sid,
@@ -77,7 +85,7 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     }
 
     let result = legacy::InitializeResult {
-        capabilities: build_legacy_capabilities(router),
+        capabilities: build_legacy_capabilities(router, tasks_enabled),
         instructions: server.instructions(),
         meta: Map::new(),
         protocol_version: negotiated.as_str().to_owned(),
@@ -91,38 +99,10 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     } else {
         serde_json::to_value(&result)
     };
-    let mut value = match serialized {
-        Ok(v) => v,
-        Err(e) => {
-            return error_response(id, &McpError::internal(format!("serialize result: {e}")));
-        }
-    };
-    // The generated capability types model presence-markers (`completions: {}`,
-    // the `tasks` sub-objects) as maps that serde skips when empty, so an
-    // advertised-but-empty marker would vanish. Patch them into the serialized
-    // form instead.
-    if let Some(caps) = value.get_mut("capabilities").and_then(Value::as_object_mut) {
-        if router.has_completions() {
-            caps.insert("completions".to_owned(), serde_json::json!({}));
-        }
-        if router.has_logging() {
-            caps.insert("logging".to_owned(), serde_json::json!({}));
-        }
-        // Tasks are `2025-11-25`-only. Advertising them to a `2025-06-18`
-        // client would invite `tasks/*` calls that revision's dispatch can only
-        // answer `-32601`.
-        if tasks_enabled && negotiated.has_core_tasks() {
-            caps.insert(
-                "tasks".to_owned(),
-                serde_json::json!({
-                    "list": {},
-                    "cancel": {},
-                    "requests": { "tools": { "call": {} } },
-                }),
-            );
-        }
+    match serialized {
+        Ok(value) => JsonRpcResponse::success(id, value).into(),
+        Err(e) => error_response(id, &McpError::internal(format!("serialize result: {e}"))),
     }
-    JsonRpcResponse::success(id, value).into()
 }
 
 /// Pick the version to answer `initialize` with.
@@ -159,17 +139,16 @@ fn negotiate_initialize_version(
 
 fn build_legacy_capabilities<S: McpServerCore>(
     router: &MethodRouter<S>,
+    tasks_enabled: bool,
 ) -> legacy::ServerCapabilities {
+    let marker = || legacy::JsonObject(Map::new());
     // `listChanged`/`subscribe` are true: the subscription registry delivers
     // them for every registered capability (`resources/subscribe` + the
     // session's notification stream).
     legacy::ServerCapabilities {
-        // `completions` is a presence marker the generated type can't express
-        // (empty map ⇒ skipped); patched post-serialization in
-        // `handle_initialize`.
-        completions: Map::new(),
+        completions: router.has_completions().then(marker),
         experimental: BTreeMap::new(),
-        logging: Map::new(),
+        logging: router.has_logging().then(marker),
         prompts: router
             .has_prompts()
             .then_some(legacy::ServerCapabilitiesPrompts {
@@ -181,7 +160,16 @@ fn build_legacy_capabilities<S: McpServerCore>(
                 list_changed: Some(true),
                 subscribe: Some(true),
             }),
-        tasks: None,
+        // `2025-06-18` has no Tasks; its step-down conversion drops this.
+        tasks: tasks_enabled.then(|| legacy::ServerCapabilitiesTasks {
+            cancel: Some(marker()),
+            list: Some(marker()),
+            requests: Some(legacy::ServerCapabilitiesTasksRequests {
+                tools: Some(legacy::ServerCapabilitiesTasksRequestsTools {
+                    call: Some(marker()),
+                }),
+            }),
+        }),
         tools: router
             .has_tools()
             .then_some(legacy::ServerCapabilitiesTools {
@@ -255,12 +243,10 @@ fn build_discover_result<S: McpServerCore>(
         // server supports argument autocompletion).
         completions: router
             .has_completions()
-            .then(|| v0728::JsonObject(BTreeMap::new())),
+            .then(|| v0728::JsonObject(Map::new())),
         experimental: BTreeMap::new(),
         extensions: BTreeMap::new(),
-        logging: router
-            .has_logging()
-            .then(|| v0728::JsonObject(BTreeMap::new())),
+        logging: router.has_logging().then(|| v0728::JsonObject(Map::new())),
         prompts: router
             .has_prompts()
             .then_some(v0728::ServerCapabilitiesPrompts {

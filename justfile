@@ -77,6 +77,21 @@ codegen:
     "${root}/2026-07-28/schema.json" \
     crates/turbomcp-protocol/src/v2026_07_28/types.rs "MCP 2026-07-28"
   cargo fmt -p turbomcp-protocol
+  # The schema oracle test (crates/turbomcp-protocol/tests/schema_oracle.rs)
+  # validates emitted wire JSON against these exact files, so they are vendored
+  # from the same revision the types came from and drift-checked with them.
+  fixtures=crates/turbomcp-protocol/tests/fixtures/schema
+  rm -rf "${fixtures}"
+  for rev in 2025-06-18 2025-11-25 2026-07-28; do
+    mkdir -p "${fixtures}/${rev}"
+    cp "${root}/${rev}/schema.json" "${fixtures}/${rev}/schema.json"
+    if [ -d "${root}/${rev}/examples" ]; then
+      cp -R "${root}/${rev}/examples" "${fixtures}/${rev}/examples"
+    fi
+  done
+  # A local checkout can carry untracked tool state (`.claude/`, `.DS_Store`);
+  # CI's fresh clone never does, so vendoring it would fail the drift check.
+  find "${fixtures}" -mindepth 1 -name '.*' -prune -exec rm -rf {} +
   echo "Done. Review the diff before committing."
 
 # `types.rs` is `@generated` and CLAUDE.md says never to hand-edit it, but until
@@ -91,7 +106,8 @@ codegen-check:
   set -euo pipefail
   generated="crates/turbomcp-protocol/src/v2025_06_18/types.rs \
              crates/turbomcp-protocol/src/v2025_11_25/types.rs \
-             crates/turbomcp-protocol/src/v2026_07_28/types.rs"
+             crates/turbomcp-protocol/src/v2026_07_28/types.rs \
+             crates/turbomcp-protocol/tests/fixtures/schema"
   # Skipped rather than failed without the schema, so a contributor who hasn't
   # checked out the sibling repo can still run `just test`. CI always clones it
   # (see the `drift` job), so the check is never skipped where it counts.
@@ -102,13 +118,16 @@ codegen-check:
     exit 0
   fi
   just codegen
-  if ! git diff --quiet -- ${generated}; then
+  # Work tree against the index, like `git diff`, but also counting untracked
+  # files (a fixture the schema gained): the second porcelain column is the
+  # work-tree state, and it is blank only when the file matches the index.
+  if git status --porcelain -- ${generated} | grep -q '^.[^ ]'; then
     echo >&2
     echo "The checked-in wire types do not match the generator's output." >&2
     echo "Either they were hand-edited, or the codegen/schema moved without a" >&2
     echo "regeneration. Run 'just codegen' and commit the result." >&2
     echo >&2
-    git --no-pager diff --stat -- ${generated} >&2
+    git status --short -- ${generated} >&2
     exit 1
   fi
   echo "Wire types match the schema."

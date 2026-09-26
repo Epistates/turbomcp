@@ -1555,7 +1555,11 @@ impl Root {
     /// `None`, because there is no sound way to interpret it.
     pub fn new(uri: impl Into<String>) -> Option<Self> {
         let uri = uri.into();
-        uri.starts_with("file://").then_some(Self {
+        // Schemes are case-insensitive (RFC 3986 §3.1): `FILE:///x` is a file URI.
+        let file = uri
+            .get(..7)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
+        file.then_some(Self {
             uri,
             name: None,
             meta: Map::new(),
@@ -1711,7 +1715,9 @@ pub struct ToolResult {
     /// Unstructured result content, the same shape a `tools/call` returns.
     pub content: Vec<Content>,
     /// Structured result, conforming to the tool's `outputSchema` if it has one.
-    pub structured_content: Map<String, Value>,
+    /// Any JSON value on `2026-07-28`; `2025-11-25` carries only an object and
+    /// drops anything else, as [`CallToolResult::structured_content`] does.
+    pub structured_content: Option<Value>,
     /// Whether the call failed; the content then describes the failure.
     pub is_error: Option<bool>,
     /// Arbitrary `_meta`, preserved across turns like [`ToolUse::meta`].
@@ -1740,8 +1746,8 @@ impl ToolResult {
 
     /// Attach a structured result (builder style).
     #[must_use]
-    pub fn with_structured_content(mut self, structured: Map<String, Value>) -> Self {
-        self.structured_content = structured;
+    pub fn with_structured_content(mut self, structured: Value) -> Self {
+        self.structured_content = Some(structured);
         self
     }
 }
@@ -2235,6 +2241,13 @@ impl CreateMessageResult {
         self
     }
 
+    /// Add one `_meta` entry (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// The tool calls the model asked for, in order.
     pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
         self.content.iter().filter_map(|c| match c {
@@ -2255,7 +2268,9 @@ impl CreateMessageResult {
         if let Some(r) = &self.stop_reason {
             out.insert("stopReason".into(), Value::String(r.clone()));
         }
-        if !self.meta.is_empty() && !matches!(version, ProtocolVersion::V2025_06_18) {
+        // Every revision's `CreateMessageResult` has `_meta`; it is the
+        // *message* `_meta` that `2025-06-18` lacks.
+        if !self.meta.is_empty() {
             out.insert("_meta".into(), Value::Object(self.meta.clone()));
         }
         Ok(Value::Object(out))
@@ -2317,6 +2332,18 @@ fn validate_sampling_messages(messages: &[SamplingMessage]) -> Result<(), Sampli
             return Err(SamplingError::Invalid(alloc::format!(
                 "message {i} mixes tool results with other content; a message \
                  carrying tool results must carry nothing else"
+            )));
+        }
+        // The model makes tool calls; the user side answers them.
+        if results > 0 && message.role != Role::User {
+            return Err(SamplingError::Invalid(alloc::format!(
+                "message {i} carries tool results but is not a user message"
+            )));
+        }
+        let calls = message.content.iter().any(|c| c.tool_use_id().is_some());
+        if calls && message.role != Role::Assistant {
+            return Err(SamplingError::Invalid(alloc::format!(
+                "message {i} makes tool calls but is not an assistant message"
             )));
         }
     }
@@ -2444,11 +2471,14 @@ fn sampling_block_wire(
             out.insert("type".into(), Value::String("tool_result".into()));
             out.insert("toolUseId".into(), Value::String(r.tool_use_id.clone()));
             out.insert("content".into(), Value::Array(content));
-            if !r.structured_content.is_empty() {
-                out.insert(
-                    "structuredContent".into(),
-                    Value::Object(r.structured_content.clone()),
-                );
+            match &r.structured_content {
+                Some(value @ Value::Object(_)) => {
+                    out.insert("structuredContent".into(), value.clone());
+                }
+                Some(value) if matches!(version, ProtocolVersion::V2026_07_28) => {
+                    out.insert("structuredContent".into(), value.clone());
+                }
+                _ => {}
             }
             if let Some(e) = r.is_error {
                 out.insert("isError".into(), Value::Bool(e));
@@ -2602,11 +2632,7 @@ fn sampling_block_from_wire(value: &Value) -> Result<SamplingContent, SamplingEr
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(content_block_from_wire).collect())
                 .unwrap_or_default(),
-            structured_content: value
-                .get("structuredContent")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default(),
+            structured_content: value.get("structuredContent").cloned(),
             is_error: value.get("isError").and_then(Value::as_bool),
             meta: value
                 .get("_meta")
@@ -2614,9 +2640,21 @@ fn sampling_block_from_wire(value: &Value) -> Result<SamplingContent, SamplingEr
                 .cloned()
                 .unwrap_or_default(),
         }))),
-        _ => content_block_from_wire(value)
-            .map(SamplingContent::Media)
-            .ok_or_else(|| SamplingError::Invalid("unrecognized sampling content block".into())),
+        // Text, image and audio only: no revision's `SamplingMessageContentBlock`
+        // has the resource kinds, which the outbound side refuses too. (A tool
+        // result's own `content` is a `tools/call` content list, so any kind
+        // is legal there.)
+        _ => match content_block_from_wire(value) {
+            Some(c @ (Content::Text { .. } | Content::Image { .. } | Content::Audio { .. })) => {
+                Ok(SamplingContent::Media(c))
+            }
+            Some(_) => Err(SamplingError::Invalid(
+                "resource blocks are not sampling message content".into(),
+            )),
+            None => Err(SamplingError::Invalid(
+                "unrecognized sampling content block".into(),
+            )),
+        },
     }
 }
 
@@ -2957,7 +2995,7 @@ impl From<Content> for v0728::ContentBlock {
                 annotations: annotations.map(Into::into),
                 meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                 text,
-                type_: "text".to_string(),
+                type_: v0728::TextContentType::Text,
             }),
             Content::Image {
                 data,
@@ -2969,7 +3007,7 @@ impl From<Content> for v0728::ContentBlock {
                 data,
                 meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                 mime_type,
-                type_: "image".to_string(),
+                type_: v0728::ImageContentType::Image,
             }),
             Content::Audio {
                 data,
@@ -2981,7 +3019,7 @@ impl From<Content> for v0728::ContentBlock {
                 data,
                 meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                 mime_type,
-                type_: "audio".to_string(),
+                type_: v0728::AudioContentType::Audio,
             }),
             Content::Resource {
                 contents,
@@ -2991,7 +3029,7 @@ impl From<Content> for v0728::ContentBlock {
                 annotations: annotations.map(Into::into),
                 meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
                 resource: contents.into(),
-                type_: "resource".to_string(),
+                type_: v0728::EmbeddedResourceType::Resource,
             }),
             Content::ResourceLink(r) => {
                 let r = *r;
@@ -3004,7 +3042,7 @@ impl From<Content> for v0728::ContentBlock {
                     name: r.name,
                     size: r.size.map(|s| i64::try_from(s).unwrap_or(i64::MAX)),
                     title: r.title,
-                    type_: "resource_link".to_string(),
+                    type_: v0728::ResourceLinkType::ResourceLink,
                     uri: r.uri,
                 })
             }
@@ -3391,7 +3429,7 @@ impl From<Content> for legacy::ContentBlock {
                 annotations: annotations.map(Into::into),
                 meta,
                 text,
-                type_: "text".to_string(),
+                type_: legacy::TextContentType::Text,
             }),
             Content::Image {
                 data,
@@ -3403,7 +3441,7 @@ impl From<Content> for legacy::ContentBlock {
                 data,
                 meta,
                 mime_type,
-                type_: "image".to_string(),
+                type_: legacy::ImageContentType::Image,
             }),
             Content::Audio {
                 data,
@@ -3415,7 +3453,7 @@ impl From<Content> for legacy::ContentBlock {
                 data,
                 meta,
                 mime_type,
-                type_: "audio".to_string(),
+                type_: legacy::AudioContentType::Audio,
             }),
             Content::Resource {
                 contents,
@@ -3425,7 +3463,7 @@ impl From<Content> for legacy::ContentBlock {
                 annotations: annotations.map(Into::into),
                 meta,
                 resource: contents.into(),
-                type_: "resource".to_string(),
+                type_: legacy::EmbeddedResourceType::Resource,
             }),
             Content::ResourceLink(r) => {
                 let r = *r;
@@ -3438,7 +3476,7 @@ impl From<Content> for legacy::ContentBlock {
                     name: r.name,
                     size: r.size.map(|s| i64::try_from(s).unwrap_or(i64::MAX)),
                     title: r.title,
-                    type_: "resource_link".to_string(),
+                    type_: legacy::ResourceLinkType::ResourceLink,
                     uri: r.uri,
                 })
             }
@@ -3466,15 +3504,35 @@ impl From<legacy::ToolExecutionTaskSupport> for TaskSupport {
     }
 }
 
+/// Spell boolean property subschemas as the objects that mean the same thing.
+///
+/// JSON Schema allows `true`/`false` anywhere a schema goes, and schemars emits
+/// `true` for a `serde_json::Value` field. The `2025-06-18` and `2025-11-25`
+/// schemas type each entry of a tool schema's top-level `properties` as an
+/// object, so `true` would be schema-invalid there; `{}` accepts everything and
+/// `{"not": {}}` nothing, exactly as the booleans do.
+fn object_property_schemas(mut schema: Value) -> Value {
+    if let Some(Value::Object(props)) = schema.get_mut("properties") {
+        for subschema in props.values_mut() {
+            match subschema {
+                Value::Bool(true) => *subschema = Value::Object(Map::new()),
+                Value::Bool(false) => *subschema = serde_json::json!({ "not": {} }),
+                _ => {}
+            }
+        }
+    }
+    schema
+}
+
 impl From<Tool> for legacy::Tool {
     fn from(t: Tool) -> Self {
         // Deserialize the neutral JSON Schema into the (closed) legacy wrapper;
         // a non-object value falls back to an empty object schema. `execution`
         // (task support) is left unset here — the dispatcher patches it when
         // the server has Tasks enabled, since a pure conversion can't know.
-        let input_schema =
-            serde_json::from_value(t.input_schema).unwrap_or(legacy::ToolInputSchema {
-                properties: BTreeMap::new(),
+        let input_schema = serde_json::from_value(object_property_schemas(t.input_schema))
+            .unwrap_or(legacy::ToolInputSchema {
+                properties: None,
                 required: Vec::new(),
                 schema: None,
                 type_: "object".to_string(),
@@ -3506,7 +3564,10 @@ impl From<Tool> for legacy::Tool {
             // step-down — on this wire the tool returns its text mirror only.
             output_schema: t
                 .output_schema
-                .and_then(|v| serde_json::from_value::<legacy::ToolOutputSchema>(v).ok())
+                .and_then(|v| {
+                    serde_json::from_value::<legacy::ToolOutputSchema>(object_property_schemas(v))
+                        .ok()
+                })
                 .filter(|s| s.type_ == "object"),
             title: t.title,
         }
@@ -3554,8 +3615,8 @@ impl From<CallToolResult> for legacy::CallToolResult {
         // The legacy wire requires `structuredContent` to be a JSON object;
         // a non-object neutral value is dropped (documented above).
         let structured_content = match r.structured_content {
-            Some(Value::Object(map)) => map,
-            _ => Map::new(),
+            Some(Value::Object(map)) => Some(legacy::JsonObject(map)),
+            _ => None,
         };
         legacy::CallToolResult {
             content: r.content.into_iter().map(Into::into).collect(),
@@ -3905,7 +3966,8 @@ impl From<v0728::Resource> for Resource {
             title: r.title,
             description: r.description,
             mime_type: r.mime_type,
-            size: r.size.map(|s| u64::try_from(s).unwrap_or(0)),
+            // A negative size is no size at all, not a zero-byte resource.
+            size: r.size.and_then(|s| u64::try_from(s).ok()),
             annotations: r.annotations.map(Into::into),
             icons: r.icons.into_iter().map(Into::into).collect(),
             meta: r.meta.map(|m| m.0).unwrap_or_default(),
@@ -3931,7 +3993,7 @@ impl From<v0728::ResourceLink> for Resource {
             title: l.title,
             description: l.description,
             mime_type: l.mime_type,
-            size: l.size.map(|s| u64::try_from(s).unwrap_or(0)),
+            size: l.size.and_then(|s| u64::try_from(s).ok()),
             annotations: l.annotations.map(Into::into),
             icons: l.icons.into_iter().map(Into::into).collect(),
             meta: l.meta.map(|m| m.0).unwrap_or_default(),
@@ -4214,11 +4276,7 @@ impl From<legacy::CallToolResult> for CallToolResult {
         CallToolResult {
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: r.is_error.unwrap_or(false),
-            structured_content: if r.structured_content.is_empty() {
-                None
-            } else {
-                Some(Value::Object(r.structured_content))
-            },
+            structured_content: r.structured_content.map(|o| Value::Object(o.0)),
         }
     }
 }
@@ -4231,7 +4289,8 @@ impl From<legacy::Resource> for Resource {
             title: r.title,
             description: r.description,
             mime_type: r.mime_type,
-            size: r.size.map(|s| u64::try_from(s).unwrap_or(0)),
+            // A negative size is no size at all, not a zero-byte resource.
+            size: r.size.and_then(|s| u64::try_from(s).ok()),
             annotations: r.annotations.map(Into::into),
             icons: r.icons.into_iter().map(Into::into).collect(),
             meta: r.meta,
@@ -4257,7 +4316,7 @@ impl From<legacy::ResourceLink> for Resource {
             title: l.title,
             description: l.description,
             mime_type: l.mime_type,
-            size: l.size.map(|s| u64::try_from(s).unwrap_or(0)),
+            size: l.size.and_then(|s| u64::try_from(s).ok()),
             annotations: l.annotations.map(Into::into),
             icons: l.icons.into_iter().map(Into::into).collect(),
             meta: l.meta,
@@ -5455,6 +5514,19 @@ mod tests {
                 "{version}"
             );
         }
+
+        // And the same block arriving from a peer is refused, not accepted.
+        let inbound = json!({
+            "maxTokens": 8,
+            "messages": [{
+                "role": "user",
+                "content": { "type": "resource", "resource": { "uri": "file:///a", "text": "x" } }
+            }]
+        });
+        assert!(matches!(
+            CreateMessageParams::from_wire(&inbound),
+            Err(SamplingError::Invalid(_))
+        ));
     }
 
     /// The two tool-use MUSTs, and the round trip of a balanced conversation.
@@ -5504,6 +5576,92 @@ mod tests {
 
         let back = CreateMessageParams::from_wire(&wire).expect("round trip");
         assert_eq!(back.messages, balanced.messages);
+    }
+
+    /// Tool calls come from the model and tool results from the user side;
+    /// balance alone let `[assistant: call, assistant: result]` through.
+    #[test]
+    fn tool_calls_and_results_must_sit_on_the_right_role() {
+        let call = |role| {
+            SamplingMessage::new(
+                role,
+                alloc::vec![SamplingContent::tool_use(ToolUse::new("c1", "echo"))],
+            )
+        };
+        let answer = |role| {
+            SamplingMessage::new(
+                role,
+                alloc::vec![SamplingContent::tool_result(ToolResult::new(
+                    "c1",
+                    Vec::new()
+                ))],
+            )
+        };
+        for messages in [
+            alloc::vec![call(Role::Assistant), answer(Role::Assistant)],
+            alloc::vec![call(Role::User), answer(Role::User)],
+        ] {
+            assert!(matches!(
+                CreateMessageParams::new(messages, 8).validate(),
+                Err(SamplingError::Invalid(_))
+            ));
+        }
+        CreateMessageParams::new(alloc::vec![call(Role::Assistant), answer(Role::User)], 8)
+            .validate()
+            .expect("the model calls, the user answers");
+    }
+
+    /// `2026-07-28` lets a tool result's `structuredContent` be any JSON value;
+    /// `2025-11-25` only an object, so anything else is dropped there rather
+    /// than parsed into an empty map.
+    #[test]
+    fn a_tool_results_structured_content_follows_each_wire() {
+        let messages = |structured| {
+            alloc::vec![
+                SamplingMessage::new(
+                    Role::Assistant,
+                    alloc::vec![SamplingContent::tool_use(ToolUse::new("c1", "echo"))],
+                ),
+                SamplingMessage::new(
+                    Role::User,
+                    alloc::vec![SamplingContent::tool_result(
+                        ToolResult::new("c1", Vec::new()).with_structured_content(structured),
+                    )],
+                ),
+            ]
+        };
+        let array = CreateMessageParams::new(messages(json!([1, 2])), 8);
+        let modern = array.to_wire(&ProtocolVersion::V2026_07_28).unwrap();
+        assert_eq!(
+            modern["messages"][1]["content"]["structuredContent"],
+            json!([1, 2])
+        );
+        assert_eq!(CreateMessageParams::from_wire(&modern).unwrap(), array);
+        let legacy = array.to_wire(&ProtocolVersion::V2025_11_25).unwrap();
+        assert!(
+            legacy["messages"][1]["content"]
+                .get("structuredContent")
+                .is_none()
+        );
+
+        let object = CreateMessageParams::new(messages(json!({ "n": 1 })), 8);
+        let legacy = object.to_wire(&ProtocolVersion::V2025_11_25).unwrap();
+        assert_eq!(
+            legacy["messages"][1]["content"]["structuredContent"],
+            json!({ "n": 1 })
+        );
+    }
+
+    /// Every revision's `CreateMessageResult` has `_meta`; only the message
+    /// `_meta` is `2025-11-25`-and-later.
+    #[test]
+    fn a_sampling_results_meta_reaches_every_wire() {
+        let result = CreateMessageResult::new("m", alloc::vec![SamplingContent::text("hi")])
+            .with_meta_entry("x/trace", json!("t"));
+        for version in ProtocolVersion::SUPPORTED {
+            let wire = result.to_wire(version).unwrap();
+            assert_eq!(wire["_meta"]["x/trace"], "t", "{version}");
+        }
     }
 
     /// Params and results survive the wire in both directions, including the
@@ -5687,7 +5845,11 @@ mod tests {
     #[test]
     fn only_file_uri_roots_exist() {
         assert!(Root::new("file:///work").is_some());
-        for bad in ["https://example.com", "/work", "FILE:///work", ""] {
+        assert!(
+            Root::new("FILE:///work").is_some(),
+            "schemes are case-insensitive"
+        );
+        for bad in ["https://example.com", "/work", "file:/work", ""] {
             assert!(Root::new(bad).is_none(), "{bad}");
         }
 

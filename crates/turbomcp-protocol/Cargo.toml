@@ -11,6 +11,9 @@ repository = "https://github.com/Epistates/turbomcp"
 homepage = "https://turbomcp.org"
 keywords = ["mcp", "protocol", "json-rpc", "no_std"]
 categories = ["encoding", "no-std", "api-bindings"]
+# The vendored MCP schemas and examples the schema oracle test validates
+# against; half a megabyte nobody downloading the crate needs.
+exclude = ["tests/fixtures/"]
 
 [lib]
 # The generated per-version `types` modules carry the spec's prose docs
@@ -22,6 +25,9 @@ doctest = false
 turbomcp-core = { workspace = true, default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+jsonschema = { workspace = true }
 
 [features]
 default = ["std"]
