@@ -36,6 +36,7 @@ mod subscriptions;
 pub mod tags;
 mod tasks;
 mod traits;
+mod uri_template;
 pub mod visibility;
 
 pub use adapter::LegacySessionAdapter;
@@ -63,6 +64,7 @@ pub use session::{SessionBackend, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
 pub use tasks::{TaskBackend, TaskError, TaskSnapshot, TaskStatus, TaskStore};
 pub use traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
+pub use uri_template::{UriTemplate, UriTemplateError};
 pub use visibility::{ComponentKind, Visibility, VisibilityPolicy, VisibleComponent};
 
 /// Support items called by `#[server]`-generated code. Not part of the stable
@@ -141,92 +143,15 @@ pub mod __macro_support {
     }
 
     /// Match a concrete `uri` against an RFC 6570 URI template, returning the
-    /// captured variables (in template order) on a match.
-    ///
-    /// RFC 6570 defines expansion, not matching, so — like the reference SDKs —
-    /// we compile the template to an anchored regex: literal spans are escaped,
-    /// `{var}` captures one path segment (`[^/]+`), and `{+var}` (reserved
-    /// expansion) captures across segments (`.+`). Other operators aren't
-    /// modeled. Returns `None` if the template is malformed or doesn't match.
+    /// decoded variables it binds (in template order) on a match. Every
+    /// operator is supported; see [`UriTemplate`](crate::UriTemplate). Returns
+    /// `None` if the template is malformed or doesn't match. Templates are
+    /// compiled once and cached.
     #[must_use]
     pub fn match_uri_template(template: &str, uri: &str) -> Option<Vec<(String, String)>> {
-        let mut pattern = String::from("^");
-        let mut names = Vec::new();
-        let mut rest = template;
-        while let Some(open) = rest.find('{') {
-            pattern.push_str(&regex::escape(&rest[..open]));
-            let close = rest[open..].find('}')? + open;
-            let mut var = &rest[open + 1..close];
-            let greedy = var.starts_with('+');
-            if greedy {
-                var = &var[1..];
-            }
-            if var.is_empty() || !var.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return None;
-            }
-            names.push(var.to_string());
-            pattern.push_str(if greedy { "(.+)" } else { "([^/]+)" });
-            rest = &rest[close + 1..];
-        }
-        pattern.push_str(&regex::escape(rest));
-        pattern.push('$');
-
-        let re = regex::Regex::new(&pattern).ok()?;
-        let caps = re.captures(uri)?;
-        Some(
-            names
-                .into_iter()
-                .enumerate()
-                .map(|(i, name)| (name, caps[i + 1].to_string()))
-                .collect(),
-        )
-    }
-
-    #[cfg(test)]
-    mod template_tests {
-        use super::match_uri_template;
-
-        #[test]
-        fn single_segment_var() {
-            let m = match_uri_template("file://{name}", "file://notes").unwrap();
-            assert_eq!(m, vec![("name".to_string(), "notes".to_string())]);
-        }
-
-        #[test]
-        fn segment_var_stops_at_slash() {
-            // `{name}` is one segment, so a slashed remainder doesn't match.
-            assert!(match_uri_template("file://{name}", "file://a/b").is_none());
-        }
-
-        #[test]
-        fn reserved_var_spans_slashes() {
-            let m = match_uri_template("file://{+path}", "file:///etc/hosts").unwrap();
-            assert_eq!(m, vec![("path".to_string(), "/etc/hosts".to_string())]);
-        }
-
-        #[test]
-        fn multiple_vars() {
-            let m = match_uri_template("db://{table}/{id}", "db://users/42").unwrap();
-            assert_eq!(
-                m,
-                vec![
-                    ("table".to_string(), "users".to_string()),
-                    ("id".to_string(), "42".to_string()),
-                ]
-            );
-        }
-
-        #[test]
-        fn literal_mismatch_is_none() {
-            assert!(match_uri_template("file://{name}", "http://notes").is_none());
-        }
-
-        #[test]
-        fn regex_metachars_in_literal_are_escaped() {
-            let m = match_uri_template("x.y://{v}", "x.y://z").unwrap();
-            assert_eq!(m, vec![("v".to_string(), "z".to_string())]);
-            // The `.` is a literal, not "any char".
-            assert!(match_uri_template("x.y://{v}", "xqy://z").is_none());
+        match crate::uri_template::compiled(template).as_ref() {
+            Ok(compiled) => compiled.matches(uri),
+            Err(_) => None,
         }
     }
 }

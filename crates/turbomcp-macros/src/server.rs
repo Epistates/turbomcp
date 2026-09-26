@@ -922,7 +922,9 @@ impl Handler {
         }
 
         if let HandlerKind::Resource { uri } = &kind {
-            let vars = template_vars(uri);
+            let vars = template_vars(uri).map_err(|e| {
+                syn::Error::new(f.sig.span(), format!("invalid URI template `{uri}`: {e}"))
+            })?;
             if vars.is_empty() && !args.is_empty() {
                 return Err(syn::Error::new(
                     f.sig.span(),
@@ -930,14 +932,24 @@ impl Handler {
                      use a URI template (e.g. `#[resource(\"file://{path}\")]`) to accept args",
                 ));
             }
-            // Every handler argument must name a template variable.
+            // Every handler argument must name a template variable, and one the
+            // URI may leave out must be able to say so.
             for a in &args {
-                if !vars.contains(&a.ident.to_string()) {
+                let name = a.ident.unraw().to_string();
+                let Some(var) = vars.iter().find(|v| v.name == name) else {
                     return Err(syn::Error::new(
                         a.ident.span(),
                         format!(
-                            "resource argument `{}` does not match any variable in the URI template `{uri}`",
-                            a.ident
+                            "resource argument `{name}` does not match any variable in the URI template `{uri}`"
+                        ),
+                    ));
+                };
+                if !var.required && !a.is_option {
+                    return Err(syn::Error::new(
+                        a.ident.span(),
+                        format!(
+                            "`{name}` is optional in the URI template `{uri}` (a URI may leave \
+                             it out), so take it as `Option<String>`"
                         ),
                     ));
                 }
@@ -1296,7 +1308,16 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
         let default_mime = declared_mime_default(r);
         let extracts = r.args.iter().map(|a| {
             let ident = &a.ident;
-            let arg_name = a.ident.to_string();
+            let arg_name = a.ident.unraw().to_string();
+            if a.is_option {
+                // A variable the URI left out is simply absent.
+                return quote! {
+                    let #ident: ::core::option::Option<::std::string::String> = __vars
+                        .iter()
+                        .find(|(k, _)| k == #arg_name)
+                        .map(|(_, v)| ::core::clone::Clone::clone(v));
+                };
+            }
             quote! {
                 let #ident: ::std::string::String = match __vars.iter()
                     .find(|(k, _)| k == #arg_name)
@@ -1566,22 +1587,66 @@ fn gen_completions_impl(self_ty: &Type, c: &CompletionHandler) -> TokenStream {
 
 // ---- small helpers -----------------------------------------------------------
 
-/// Variable names in an RFC 6570 URI template (`{var}` / `{+var}`), in order.
-fn template_vars(uri: &str) -> Vec<String> {
+/// One variable of a resource URI template.
+struct TemplateVar {
+    name: String,
+    /// Whether every matching URI binds it. `{var}` and `{+var}` do; the
+    /// other operators expand to nothing when the variable is undefined, so a
+    /// URI may leave theirs out.
+    required: bool,
+}
+
+/// The variables of an RFC 6570 template, checking its grammar the way the
+/// runtime matcher (`turbomcp_server::UriTemplate`) does, so a template that
+/// could never be read fails to compile instead of being listed forever.
+fn template_vars(uri: &str) -> Result<Vec<TemplateVar>, String> {
     let mut vars = Vec::new();
     let mut rest = uri;
-    while let Some(open) = rest.find('{') {
-        let Some(close_rel) = rest[open..].find('}') else {
-            break;
-        };
-        let mut var = &rest[open + 1..open + close_rel];
-        var = var.strip_prefix('+').unwrap_or(var);
-        if !var.is_empty() {
-            vars.push(var.to_string());
+    while let Some(open) = rest.find(['{', '}']) {
+        if rest.as_bytes()[open] == b'}' {
+            return Err("unmatched `}`".into());
         }
-        rest = &rest[open + close_rel + 1..];
+        let close = rest[open..]
+            .find('}')
+            .map(|c| open + c)
+            .ok_or("unclosed `{`")?;
+        let body = &rest[open + 1..close];
+        let (required, list) = match body.chars().next() {
+            Some('+') => (true, &body[1..]),
+            Some('#' | '.' | '/' | ';' | '?' | '&') => (false, &body[1..]),
+            Some(c @ ('=' | ',' | '!' | '@' | '|')) => {
+                return Err(format!("operator `{c}` is reserved for future extensions"));
+            }
+            _ => (true, body),
+        };
+        if list.is_empty() {
+            return Err("empty expression `{}`".into());
+        }
+        for spec in list.split(',') {
+            let name = spec
+                .strip_suffix('*')
+                .or_else(|| spec.split_once(':').map(|(name, _)| name))
+                .unwrap_or(spec);
+            let valid = !name.is_empty()
+                && !name.starts_with('.')
+                && !name.ends_with('.')
+                && !name.contains("..")
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.');
+            if !valid {
+                return Err(format!(
+                    "`{name}` is not a variable name a handler argument can bind"
+                ));
+            }
+            vars.push(TemplateVar {
+                name: name.to_owned(),
+                required,
+            });
+        }
+        rest = &rest[close + 1..];
     }
-    vars
+    Ok(vars)
 }
 
 /// A string literal `Expr`, or `None`.

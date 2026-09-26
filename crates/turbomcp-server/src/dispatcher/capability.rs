@@ -308,6 +308,36 @@ async fn hidden<S: McpServerCore>(
                     &t.meta,
                 ));
             }
+            // A template this matcher cannot parse matches nothing, but the
+            // server may still serve URIs under it by hand. If the policy hides
+            // it, refuse URIs under its literal prefix rather than let them fall
+            // through to the handler below: failing open here would expose
+            // exactly what the policy was told to hide.
+            let malformed = crate::catalog::find(
+                |params| {
+                    let listed = router.dispatch_list_resource_templates(
+                        server.clone(),
+                        ListResourceTemplatesContext::new(ctx.clone()),
+                        params,
+                    );
+                    async move {
+                        let Some(listed) = listed else {
+                            return Ok((Vec::new(), None));
+                        };
+                        let page = listed.await?;
+                        Ok((page.resource_templates, page.next_cursor))
+                    }
+                },
+                |t: &neutral::ResourceTemplate| {
+                    crate::uri_template::compiled(&t.uri_template).is_err()
+                        && uri.starts_with(crate::uri_template::literal_prefix(&t.uri_template))
+                        && judge(ComponentKind::ResourceTemplate, &t.uri_template, &t.meta)
+                },
+            )
+            .await?;
+            if malformed.is_some() {
+                return Ok(true);
+            }
             // Neither a listed resource nor a registered template — a URI the
             // server never declared, so the policy has no component to judge
             // and the handler is the only thing that knows whether it exists.

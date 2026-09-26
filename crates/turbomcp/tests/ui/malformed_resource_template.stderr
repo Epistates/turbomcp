@@ -1,0 +1,5 @@
+error: invalid URI template `file://{path`: unclosed `{`
+  --> tests/ui/malformed_resource_template.rs:11:5
+   |
+11 |     async fn file(&self, path: String) -> McpResult<String> {
+   |     ^^^^^

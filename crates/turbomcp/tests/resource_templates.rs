@@ -29,6 +29,17 @@ impl Files {
     async fn file(&self, path: String) -> McpResult<String> {
         Ok(format!("file@{path}"))
     }
+
+    /// A form-style query: the URI may leave `q` and `limit` out, so both are
+    /// optional. This template compiled before but no URI ever matched it.
+    #[resource("search://items{?q,limit}")]
+    async fn search(&self, q: Option<String>, limit: Option<String>) -> McpResult<String> {
+        Ok(format!(
+            "q={} limit={}",
+            q.unwrap_or_default(),
+            limit.as_deref().unwrap_or("-")
+        ))
+    }
 }
 
 fn draft_meta() -> Value {
@@ -114,4 +125,25 @@ async fn templated_read_binds_variables() {
     // The fixed resource still works.
     let cfg = read(&mut svc, 5, "config://app").await;
     assert_eq!(cfg["contents"][0]["text"], "cfg", "got {cfg}");
+}
+
+/// RFC 6570 expansion percent-encodes, so a client reading the note "Q3 plan"
+/// sends `note://Q3%20plan`. The handler used to receive `Q3%20plan`.
+#[tokio::test]
+async fn captured_variables_are_percent_decoded() {
+    let mut svc = Files.into_server().build();
+    let note = read(&mut svc, 6, "note://Q3%20plan").await;
+    assert_eq!(note["contents"][0]["text"], "note:Q3 plan", "got {note}");
+}
+
+#[tokio::test]
+async fn query_variables_are_optional() {
+    let mut svc = Files.into_server().build();
+    let all = read(&mut svc, 7, "search://items?q=red%20shoes&limit=5").await;
+    assert_eq!(
+        all["contents"][0]["text"], "q=red shoes limit=5",
+        "got {all}"
+    );
+    let none = read(&mut svc, 8, "search://items").await;
+    assert_eq!(none["contents"][0]["text"], "q= limit=-", "got {none}");
 }

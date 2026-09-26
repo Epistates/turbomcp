@@ -71,6 +71,7 @@ pin-project-lite = "0.2.17"
 
 # URI template (RFC 6570) matching for #[resource("…/{var}")] — the pattern core
 regex = "1.11"
+percent-encoding = "2.3"
 
 # Serialization with performance focus. `float_roundtrip` makes serde_json's
 # float *parsing* correctly rounded (without it, extreme-exponent values like

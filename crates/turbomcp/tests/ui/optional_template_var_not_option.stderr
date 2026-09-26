@@ -1,0 +1,5 @@
+error: `q` is optional in the URI template `search://items{?q}` (a URI may leave it out), so take it as `Option<String>`
+  --> tests/ui/optional_template_var_not_option.rs:10:28
+   |
+10 |     async fn search(&self, q: String) -> McpResult<String> {
+   |                            ^
