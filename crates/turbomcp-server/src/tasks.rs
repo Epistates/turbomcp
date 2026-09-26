@@ -83,6 +83,30 @@ pub enum TaskError {
     AlreadyTerminal,
     /// The registry is full; the task-augmented request is rejected (`-32603`).
     CapacityExhausted,
+    /// This session already runs as many tasks as it may (`-32603`): the
+    /// per-requestor limit, so one client cannot starve every other.
+    SessionLimitReached,
+    /// A `tasks/list` cursor this store did not issue (`-32602`).
+    InvalidCursor,
+}
+
+/// How a task's underlying request ended.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum TaskOutcome {
+    /// It succeeded; `tasks/result` returns this value.
+    Completed(Value),
+    /// It answered, but the answer is a failure — a tool result with
+    /// `isError: true`. The task is `failed`, and `tasks/result` still returns
+    /// exactly this value, as the request itself would have.
+    FailedResult {
+        /// The result `tasks/result` returns.
+        result: Value,
+        /// Why, for `statusMessage`.
+        message: Option<String>,
+    },
+    /// It failed with this JSON-RPC error; the task is `failed`.
+    Error(JsonRpcError),
 }
 
 struct TaskEntry {
@@ -130,12 +154,14 @@ fn rfc3339(t: OffsetDateTime) -> String {
 pub struct TaskStore {
     inner: Mutex<HashMap<String, TaskEntry>>,
     capacity: usize,
+    session_limit: usize,
 }
 
 impl core::fmt::Debug for TaskStore {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TaskStore")
             .field("capacity", &self.capacity)
+            .field("session_limit", &self.session_limit)
             .field("live", &self.inner.lock().map(|m| m.len()).unwrap_or(0))
             .finish()
     }
@@ -149,7 +175,27 @@ impl TaskStore {
     /// Suggested client polling interval, in milliseconds.
     pub const POLL_INTERVAL_MS: i64 = 500;
 
-    const DEFAULT_CAPACITY: usize = 1024;
+    /// How many tasks the store holds, across every session, by default.
+    pub const DEFAULT_CAPACITY: usize = 1024;
+    /// How many tasks one session may have `working` at once, by default.
+    pub const DEFAULT_SESSION_LIMIT: usize = 64;
+
+    /// Hold at most `capacity` tasks. When full, the oldest finished task makes
+    /// room; a store full of working tasks refuses new ones.
+    #[must_use]
+    pub fn with_capacity(mut self, capacity: usize) -> Self {
+        self.capacity = capacity.max(1);
+        self
+    }
+
+    /// Let one session have at most `limit` tasks `working` at once
+    /// (tasks.mdx §Resource Management: "Enforce limits on concurrent tasks per
+    /// requestor").
+    #[must_use]
+    pub fn with_session_limit(mut self, limit: usize) -> Self {
+        self.session_limit = limit.max(1);
+        self
+    }
 
     /// Create a task in `working` status, owned by `session_id`, driven by
     /// `cancel`. Returns the snapshot to render as `CreateTaskResult`.
@@ -161,8 +207,27 @@ impl TaskStore {
     ) -> Result<TaskSnapshot, TaskError> {
         let mut map = self.inner.lock().expect("task store lock poisoned");
         Self::purge_expired(&mut map);
+        let working = map
+            .values()
+            .filter(|e| e.session_id == session_id && !e.status.is_terminal())
+            .count();
+        if working >= self.session_limit {
+            return Err(TaskError::SessionLimitReached);
+        }
         if map.len() >= self.capacity {
-            return Err(TaskError::CapacityExhausted);
+            // A finished task is only waiting to be collected; the oldest one
+            // makes room. Working tasks are never evicted.
+            let oldest_finished = map
+                .iter()
+                .filter(|(_, e)| e.status.is_terminal())
+                .min_by_key(|(_, e)| e.updated_wall)
+                .map(|(id, _)| id.clone());
+            match oldest_finished {
+                Some(id) => {
+                    map.remove(&id);
+                }
+                None => return Err(TaskError::CapacityExhausted),
+            }
         }
         let id = uuid::Uuid::new_v4().to_string();
         let now_wall = OffsetDateTime::now_utc();
@@ -186,10 +251,9 @@ impl TaskStore {
         Ok(snap)
     }
 
-    /// Record the underlying request's outcome: `Ok` ⇒ `completed`,
-    /// `Err` ⇒ `failed`. No-op if the task is already terminal (a cancel won
-    /// the race) or was purged.
-    pub fn complete(&self, id: &str, outcome: Result<Value, JsonRpcError>) {
+    /// Record how the underlying request ended. No-op if the task is already
+    /// terminal (a cancel won the race) or was purged.
+    pub fn complete(&self, id: &str, outcome: TaskOutcome) {
         let mut map = self.inner.lock().expect("task store lock poisoned");
         let Some(entry) = map.get_mut(id) else {
             return;
@@ -197,13 +261,15 @@ impl TaskStore {
         if entry.status.is_terminal() {
             return;
         }
-        entry.status = match &outcome {
-            Ok(_) => TaskStatus::Completed,
-            Err(_) => TaskStatus::Failed,
+        let (status, message, outcome) = match outcome {
+            TaskOutcome::Completed(v) => (TaskStatus::Completed, None, Ok(v)),
+            TaskOutcome::FailedResult { result, message } => {
+                (TaskStatus::Failed, message, Ok(result))
+            }
+            TaskOutcome::Error(e) => (TaskStatus::Failed, Some(e.message.clone()), Err(e)),
         };
-        if let Err(e) = &outcome {
-            entry.status_message = Some(e.message.clone());
-        }
+        entry.status = status;
+        entry.status_message = message;
         entry.outcome = Some(outcome);
         entry.updated_wall = OffsetDateTime::now_utc();
         let _ = entry.notify.send(());
@@ -258,7 +324,7 @@ impl TaskStore {
     ) -> Result<(Vec<TaskSnapshot>, Option<String>), TaskError> {
         let offset = match cursor {
             None => 0,
-            Some(c) => c.parse::<usize>().map_err(|_| TaskError::NotFound)?,
+            Some(c) => c.parse::<usize>().map_err(|_| TaskError::InvalidCursor)?,
         };
         let mut map = self.inner.lock().expect("task store lock poisoned");
         Self::purge_expired(&mut map);
@@ -311,6 +377,22 @@ impl TaskStore {
         }
     }
 
+    /// The session ended: cancel its working tasks and forget all of them.
+    /// Nothing can ask about them again — the session id is gone — so keeping
+    /// them would only hold capacity and keep their handlers running.
+    pub fn end_session(&self, session_id: &str) {
+        let mut map = self.inner.lock().expect("task store lock poisoned");
+        map.retain(|_, e| {
+            if e.session_id != session_id {
+                return true;
+            }
+            if !e.status.is_terminal() {
+                e.cancel.cancel();
+            }
+            false
+        });
+    }
+
     fn purge_expired(map: &mut HashMap<String, TaskEntry>) {
         let now = Instant::now();
         map.retain(|_, e| {
@@ -328,6 +410,7 @@ impl Default for TaskStore {
         Self {
             inner: Mutex::new(HashMap::new()),
             capacity: Self::DEFAULT_CAPACITY,
+            session_limit: Self::DEFAULT_SESSION_LIMIT,
         }
     }
 }
@@ -361,9 +444,14 @@ pub trait TaskBackend: Send + Sync {
         cancel: CancellationToken,
     ) -> Result<TaskSnapshot, TaskError>;
 
-    /// Record the underlying request's outcome: `Ok` ⇒ `completed`, `Err` ⇒
-    /// `failed`. Must be a no-op if the task is already terminal or purged.
-    async fn complete(&self, task_id: &str, outcome: Result<Value, JsonRpcError>);
+    /// Record how the underlying request ended. Must be a no-op if the task is
+    /// already terminal or purged.
+    async fn complete(&self, task_id: &str, outcome: TaskOutcome);
+
+    /// The session that owned these tasks ended: cancel its working tasks and
+    /// release the rest. The default does nothing, which suits a backend whose
+    /// tasks outlive sessions by design.
+    async fn end_session(&self, _session_id: &str) {}
 
     /// `tasks/cancel`: fire the task's token and transition to `cancelled`.
     async fn cancel(&self, session_id: &str, task_id: &str) -> Result<TaskSnapshot, TaskError>;
@@ -406,8 +494,12 @@ impl TaskBackend for TaskStore {
         TaskStore::create(self, session_id.to_owned(), requested_ttl_ms, cancel)
     }
 
-    async fn complete(&self, task_id: &str, outcome: Result<Value, JsonRpcError>) {
+    async fn complete(&self, task_id: &str, outcome: TaskOutcome) {
         TaskStore::complete(self, task_id, outcome);
+    }
+
+    async fn end_session(&self, session_id: &str) {
+        TaskStore::end_session(self, session_id);
     }
 
     async fn cancel(&self, session_id: &str, task_id: &str) -> Result<TaskSnapshot, TaskError> {
@@ -454,7 +546,7 @@ mod tests {
         assert_eq!(snap.status, TaskStatus::Working);
         assert_eq!(snap.ttl_ms, TaskStore::DEFAULT_TTL_MS);
 
-        s.complete(&snap.task_id, Ok(json!({"done": true})));
+        s.complete(&snap.task_id, TaskOutcome::Completed(json!({"done": true})));
         let got = s.get("sess", &snap.task_id).unwrap();
         assert_eq!(got.status, TaskStatus::Completed);
 
@@ -474,7 +566,7 @@ mod tests {
             tokio::spawn(async move { s.wait_result("sess", &id).await })
         };
         tokio::task::yield_now().await;
-        s.complete(&snap.task_id, Ok(json!("late")));
+        s.complete(&snap.task_id, TaskOutcome::Completed(json!("late")));
         let outcome = waiter.await.unwrap().unwrap();
         assert_eq!(outcome.unwrap(), json!("late"));
     }
@@ -494,7 +586,7 @@ mod tests {
             s.cancel("sess", &snap.task_id),
             Err(TaskError::AlreadyTerminal)
         );
-        s.complete(&snap.task_id, Ok(json!("too late")));
+        s.complete(&snap.task_id, TaskOutcome::Completed(json!("too late")));
         assert_eq!(
             s.get("sess", &snap.task_id).unwrap().status,
             TaskStatus::Cancelled
@@ -533,7 +625,80 @@ mod tests {
         let (third, end) = s.list("sess", next2.as_deref(), 2).unwrap();
         assert_eq!(third.len(), 1);
         assert!(end.is_none());
-        assert_eq!(s.list("sess", Some("bogus"), 2), Err(TaskError::NotFound));
+        assert_eq!(
+            s.list("sess", Some("bogus"), 2),
+            Err(TaskError::InvalidCursor)
+        );
+    }
+
+    /// "When the tool result has `isError` set to `true`, the task should reach
+    /// `failed` status", and `tasks/result` still returns that result.
+    #[tokio::test]
+    async fn a_failed_result_is_a_failed_task_that_still_returns_its_result() {
+        let s = store();
+        let snap = s
+            .create("sess".into(), None, CancellationToken::new())
+            .unwrap();
+        s.complete(
+            &snap.task_id,
+            TaskOutcome::FailedResult {
+                result: json!({ "isError": true }),
+                message: Some("the tool reported an error".into()),
+            },
+        );
+        let got = s.get("sess", &snap.task_id).unwrap();
+        assert_eq!(got.status, TaskStatus::Failed);
+        assert_eq!(
+            got.status_message.as_deref(),
+            Some("the tool reported an error")
+        );
+        let outcome = s.wait_result("sess", &snap.task_id).await.unwrap();
+        assert_eq!(outcome.unwrap()["isError"], true);
+    }
+
+    /// One session cannot hold more than its share, and a full store makes
+    /// room by dropping finished tasks, never working ones.
+    #[tokio::test]
+    async fn limits_are_per_session_and_capacity_evicts_finished_tasks() {
+        let s = TaskStore::default().with_capacity(3).with_session_limit(2);
+        let a1 = s
+            .create("a".into(), None, CancellationToken::new())
+            .unwrap();
+        s.create("a".into(), None, CancellationToken::new())
+            .unwrap();
+        assert_eq!(
+            s.create("a".into(), None, CancellationToken::new()),
+            Err(TaskError::SessionLimitReached)
+        );
+        // Another session is unaffected.
+        s.create("b".into(), None, CancellationToken::new())
+            .unwrap();
+        // Full, and nothing is finished.
+        assert_eq!(
+            s.create("c".into(), None, CancellationToken::new()),
+            Err(TaskError::CapacityExhausted)
+        );
+        // Once one finishes, it makes room.
+        s.complete(&a1.task_id, TaskOutcome::Completed(json!(1)));
+        s.create("c".into(), None, CancellationToken::new())
+            .unwrap();
+        assert_eq!(s.get("a", &a1.task_id), Err(TaskError::NotFound));
+    }
+
+    /// Nothing can ask about a dead session's tasks, so they are cancelled and
+    /// released rather than left holding capacity until their TTL.
+    #[tokio::test]
+    async fn ending_a_session_cancels_and_releases_its_tasks() {
+        let s = store();
+        let token = CancellationToken::new();
+        let snap = s.create("gone".into(), None, token.clone()).unwrap();
+        let kept = s
+            .create("kept".into(), None, CancellationToken::new())
+            .unwrap();
+        s.end_session("gone");
+        assert!(token.is_cancelled());
+        assert_eq!(s.get("gone", &snap.task_id), Err(TaskError::NotFound));
+        assert!(s.get("kept", &kept.task_id).is_ok());
     }
 
     #[tokio::test]

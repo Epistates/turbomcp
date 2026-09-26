@@ -14,15 +14,25 @@ use turbomcp_core::{
 use turbomcp_protocol::methods;
 use turbomcp_protocol::neutral::{self, TaskSupport};
 use turbomcp_protocol::v2025_11_25::types as legacy;
-use turbomcp_service::mcp_to_jsonrpc_error;
+use turbomcp_service::{catch_panic, mcp_to_jsonrpc_error_for};
 
 use crate::context::{CallToolContext, ListToolsContext};
 use crate::router::MethodRouter;
-use crate::tasks::{TaskBackend, TaskError, TaskSnapshot, TaskStatus};
+use crate::tasks::{TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStatus};
 use crate::traits::McpServerCore;
 
-use super::params::parse_call_tool_params;
-use super::{error_response, ok_value, session_id};
+use super::{error_response_for, ok_value, session_id};
+
+/// Core Tasks exist only on `2025-11-25`, so this module speaks its codes.
+const VERSION: turbomcp_core::ProtocolVersion = turbomcp_core::ProtocolVersion::V2025_11_25;
+
+/// `_meta` key associating a message with its task (tasks.mdx §Related Task
+/// Metadata).
+const RELATED_TASK: &str = "io.modelcontextprotocol/related-task";
+
+fn error_response(id: RequestId, err: &McpError) -> JsonRpcMessage {
+    error_response_for(id, &VERSION, err)
+}
 
 // ---- core Tasks (2025-11-25) ---------------------------------------------------
 
@@ -46,6 +56,7 @@ struct RawTaskMetadata {
 /// `tools/call` with a `task` field: validate, register the task, spawn the
 /// handler under the task's cancellation token, and answer immediately with
 /// `CreateTaskResult` (spec §Creating Tasks).
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn task_augmented_call<S: McpServerCore>(
     server: S,
     router: &MethodRouter<S>,
@@ -53,6 +64,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     ctx: RequestContext,
     req: &JsonRpcRequest,
     id: RequestId,
+    params: neutral::CallToolParams,
     contract: (Arc<crate::catalog::Validators>, Option<Value>),
 ) -> JsonRpcMessage {
     let task_meta: RawTaskMetadata = match req
@@ -69,11 +81,6 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
             );
         }
     };
-    let params = match parse_call_tool_params(req.params.as_ref()) {
-        Ok(p) => p,
-        Err(e) => return error_response(id, &e),
-    };
-
     // The task's token doubles as the handler's request cancellation, so
     // `tasks/cancel` (and ttl purge) reach a cooperative handler.
     let token = CancellationToken::new();
@@ -106,18 +113,37 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
                 // `tasks/cancel` (or expiry purge) already transitioned the
                 // record; dropping `fut` aborts the handler.
             }
-            out = fut => {
+            // A panic would otherwise unwind this task with the record still
+            // `working`, and `tasks/result` would block until the TTL: every
+            // other path answers a panicking handler `-32603`, and so does this.
+            out = catch_panic(fut) => {
                 let outcome = match out {
-                    Ok(result) => {
-                        serde_json::to_value(legacy::CallToolResult::from(result)).map_err(|e| {
-                            JsonRpcError {
+                    Ok(Ok(result)) => {
+                        let failed = result.is_error;
+                        match serde_json::to_value(legacy::CallToolResult::from(result)) {
+                            // "when the tool result has `isError` set to `true`,
+                            // the task should reach `failed` status."
+                            Ok(v) if failed => TaskOutcome::FailedResult {
+                                result: v,
+                                message: Some("the tool reported an error".to_owned()),
+                            },
+                            Ok(v) => TaskOutcome::Completed(v),
+                            Err(e) => TaskOutcome::Error(JsonRpcError {
                                 code: -32603,
                                 message: format!("serialize result: {e}"),
                                 data: None,
-                            }
+                            }),
+                        }
+                    }
+                    Ok(Err(e)) => TaskOutcome::Error(mcp_to_jsonrpc_error_for(&e, &VERSION)),
+                    Err(panic) => {
+                        tracing::error!(panic, task = %task_id, "task handler panicked");
+                        TaskOutcome::Error(JsonRpcError {
+                            code: -32603,
+                            message: "handler panicked".to_owned(),
+                            data: None,
                         })
                     }
-                    Err(e) => Err(mcp_to_jsonrpc_error(&e)),
                 };
                 store.complete(&task_id, outcome).await;
             }
@@ -261,7 +287,12 @@ pub(super) async fn handle_tasks_method(
             // Blocks until the task is terminal, then answers exactly what the
             // underlying request would have (spec §Result Retrieval).
             Ok(tid) => match store.wait_result(sid, &tid).await {
-                Ok(Ok(value)) => JsonRpcResponse::success(id, value).into(),
+                // "The `tasks/result` operation MUST include this metadata in
+                // its response, as the result structure itself does not contain
+                // the task ID."
+                Ok(Ok(value)) => {
+                    JsonRpcResponse::success(id, with_related_task(value, &tid)).into()
+                }
                 Ok(Err(err)) => JsonRpcResponse::error(id, err).into(),
                 Err(e) => task_error_response(id, &e),
             },
@@ -281,6 +312,23 @@ fn parse_task_id(params: Option<&Value>) -> Result<String, McpError> {
     let raw: RawTaskIdParams = serde_json::from_value(params.clone())
         .map_err(|e| McpError::invalid_params(format!("invalid task params: {e}")))?;
     Ok(raw.task_id)
+}
+
+/// `value` with `_meta["io.modelcontextprotocol/related-task"]` naming `task_id`,
+/// keeping any `_meta` it already carries.
+fn with_related_task(mut value: Value, task_id: &str) -> Value {
+    if let Some(result) = value.as_object_mut() {
+        let meta = result
+            .entry("_meta")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(meta) = meta.as_object_mut() {
+            meta.insert(
+                RELATED_TASK.to_owned(),
+                serde_json::json!({ "taskId": task_id }),
+            );
+        }
+    }
+    value
 }
 
 fn to_wire_status(s: TaskStatus) -> legacy::TaskStatus {
@@ -314,6 +362,11 @@ fn task_error_response(id: RequestId, e: &TaskError) -> JsonRpcMessage {
         ),
         TaskError::AlreadyTerminal => (-32602, "task is already in a terminal status"),
         TaskError::CapacityExhausted => (-32603, "task capacity exhausted; retry later"),
+        TaskError::SessionLimitReached => (
+            -32603,
+            "this session has as many tasks running as it may; retry when one finishes",
+        ),
+        TaskError::InvalidCursor => (-32602, "invalid cursor"),
     };
     JsonRpcResponse::error(
         id,

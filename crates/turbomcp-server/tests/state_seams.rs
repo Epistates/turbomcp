@@ -16,8 +16,8 @@ use turbomcp_core::{
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, LegacySessionAdapter, ListToolsContext, McpServerCore, ServerBuilder,
-    SessionBackend, SessionState, SessionStore, TaskBackend, TaskError, TaskSnapshot, TaskStore,
-    VersionDispatcher, WithTools,
+    SessionBackend, SessionState, SessionStore, TaskBackend, TaskError, TaskOutcome, TaskSnapshot,
+    TaskStore, VersionDispatcher, WithTools,
 };
 
 /// A [`SessionBackend`] that wraps the bundled store and counts traffic —
@@ -76,7 +76,7 @@ impl TaskBackend for CountingTasks {
         TaskBackend::create(&self.inner, session_id, requested_ttl_ms, cancel).await
     }
 
-    async fn complete(&self, task_id: &str, outcome: Result<Value, JsonRpcError>) {
+    async fn complete(&self, task_id: &str, outcome: TaskOutcome) {
         TaskBackend::complete(&self.inner, task_id, outcome).await;
     }
 

@@ -5,8 +5,12 @@
 //! status (`completed`/`failed`/`cancelled`) exactly once. `tasks/cancel` fires
 //! the task's cancellation token (cooperative — the handler decides when to
 //! stop) and transitions it to `cancelled`; a late `complete` is then a no-op.
-//! Expired tasks (finite `ttlMs`) are purged lazily, cancelling any in-flight
-//! work, after which a `tasks/get` answers `-32602` (compliant per spec).
+//! A finite `ttlMs` is enforced lazily, the way SEP-2663 allows ("servers
+//! **MAY** mark a task as `failed` at any point after the TTL elapses, and
+//! subsequently delete it"): a task still `working` when its TTL runs out is
+//! cancelled and marked `failed` with a status message, so its poller learns
+//! what happened; a finished task is kept for one more TTL after finishing and
+//! then deleted, after which `tasks/get` answers `-32602`.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -35,6 +39,8 @@ struct Entry {
     created_wall: OffsetDateTime,
     updated_wall: OffsetDateTime,
     created: Instant,
+    /// When it reached a terminal status.
+    finished: Option<Instant>,
     ttl_ms: Option<i64>,
     poll_interval_ms: Option<i64>,
     /// The terminal result/error, present once terminal.
@@ -58,14 +64,34 @@ struct Inputs {
 }
 
 impl Entry {
-    fn expired(&self, now: Instant) -> bool {
-        match self.ttl_ms {
-            None | Some(0) => false, // null/0 ⇒ unlimited here (never auto-purged)
-            Some(ms) => {
-                let ttl = u64::try_from(ms).unwrap_or(0);
-                now.duration_since(self.created) > Duration::from_millis(ttl)
-            }
+    /// The TTL as a duration; `None` means unlimited (only `null` does).
+    fn ttl(&self) -> Option<Duration> {
+        self.ttl_ms
+            .map(|ms| Duration::from_millis(u64::try_from(ms).unwrap_or(0)))
+    }
+
+    /// Past its TTL while still running.
+    fn overdue(&self, now: Instant) -> bool {
+        !self.status.is_terminal()
+            && self
+                .ttl()
+                .is_some_and(|ttl| now.duration_since(self.created) > ttl)
+    }
+
+    /// Finished, and kept for a full TTL since.
+    fn collectable(&self, now: Instant) -> bool {
+        match (self.finished, self.ttl()) {
+            (Some(finished), Some(ttl)) => now.duration_since(finished) > ttl,
+            _ => false,
         }
+    }
+
+    fn finish(&mut self, status: TaskStatus, message: Option<String>, outcome: TaskOutcome) {
+        self.status = status;
+        self.status_message = message;
+        self.outcome = Some(outcome);
+        self.updated_wall = OffsetDateTime::now_utc();
+        self.finished = Some(Instant::now());
     }
 
     fn base(&self, id: &str) -> Task {
@@ -106,16 +132,20 @@ fn rfc3339(t: OffsetDateTime) -> String {
 pub struct DraftTaskStore {
     inner: Mutex<HashMap<String, Entry>>,
     capacity: usize,
+    owner_limit: usize,
 }
 
 impl DraftTaskStore {
-    const DEFAULT_CAPACITY: usize = 1024;
+    pub(crate) const DEFAULT_CAPACITY: usize = 1024;
+    pub(crate) const DEFAULT_OWNER_LIMIT: usize = 64;
 
-    /// A registry bounded at `capacity` live (unexpired) tasks.
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
+    /// A registry holding at most `capacity` tasks, at most `owner_limit` of
+    /// them running for any one principal.
+    pub(crate) fn with_limits(capacity: usize, owner_limit: usize) -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
-            capacity,
+            capacity: capacity.max(1),
+            owner_limit: owner_limit.max(1),
         }
     }
 
@@ -131,8 +161,33 @@ impl DraftTaskStore {
     ) -> Option<Task> {
         let mut map = self.lock();
         Self::purge_expired(&mut map);
-        if map.len() >= self.capacity {
+        // One principal cannot take every slot: anonymous callers share one
+        // bucket, since there is nothing to tell them apart.
+        let running = map
+            .values()
+            .filter(|e| e.owner == owner && !e.status.is_terminal())
+            .count();
+        if running >= self.owner_limit {
+            tracing::warn!("task limit reached for this principal; running the call inline");
             return None;
+        }
+        if map.len() >= self.capacity {
+            // A finished task is only waiting to be collected; the oldest one
+            // makes room. Running tasks are never evicted.
+            let oldest_finished = map
+                .iter()
+                .filter_map(|(id, e)| e.finished.map(|at| (at, id.clone())))
+                .min()
+                .map(|(_, id)| id);
+            match oldest_finished {
+                Some(id) => {
+                    map.remove(&id);
+                }
+                None => {
+                    tracing::warn!("task store full; running the call inline");
+                    return None;
+                }
+            }
         }
         let id = uuid::Uuid::new_v4().to_string();
         let now_wall = OffsetDateTime::now_utc();
@@ -143,6 +198,7 @@ impl DraftTaskStore {
             created_wall: now_wall,
             updated_wall: now_wall,
             created: Instant::now(),
+            finished: None,
             ttl_ms,
             poll_interval_ms,
             outcome: None,
@@ -183,15 +239,11 @@ impl DraftTaskStore {
         if entry.status.is_terminal() {
             return;
         }
-        entry.status = match &outcome {
-            TaskOutcome::Completed(_) => TaskStatus::Completed,
-            TaskOutcome::Failed(err) => {
-                entry.status_message = Some(err.message.clone());
-                TaskStatus::Failed
-            }
+        let (status, message) = match &outcome {
+            TaskOutcome::Completed(_) => (TaskStatus::Completed, None),
+            TaskOutcome::Failed(err) => (TaskStatus::Failed, Some(err.message.clone())),
         };
-        entry.outcome = Some(outcome);
-        entry.updated_wall = OffsetDateTime::now_utc();
+        entry.finish(status, message, outcome);
     }
 
     /// `tasks/get`: the task's current detailed state, or `None` if unknown.
@@ -216,6 +268,7 @@ impl DraftTaskStore {
             entry.status = TaskStatus::Cancelled;
             entry.status_message = Some("the task was cancelled by request".to_owned());
             entry.updated_wall = OffsetDateTime::now_utc();
+            entry.finished = Some(Instant::now());
             // Unblock any handler awaiting client input (dropping the senders
             // errors the receivers) and stop advertising the requests.
             entry.inputs.waiters.clear();
@@ -293,13 +346,24 @@ impl DraftTaskStore {
 
     fn purge_expired(map: &mut HashMap<String, Entry>) {
         let now = Instant::now();
-        map.retain(|_, e| {
-            let keep = !e.expired(now);
-            if !keep && !e.status.is_terminal() {
+        for e in map.values_mut() {
+            if e.overdue(now) {
                 e.cancel.cancel();
+                let ttl = e.ttl_ms.unwrap_or_default();
+                let message = format!("the task did not finish within its TTL of {ttl} ms");
+                let error = JsonRpcError {
+                    code: -32603,
+                    message: message.clone(),
+                    data: None,
+                };
+                e.finish(
+                    TaskStatus::Failed,
+                    Some(message),
+                    TaskOutcome::Failed(error),
+                );
             }
-            keep
-        });
+        }
+        map.retain(|_, e| !e.collectable(now));
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Entry>> {
@@ -309,10 +373,7 @@ impl DraftTaskStore {
 
 impl Default for DraftTaskStore {
     fn default() -> Self {
-        Self {
-            inner: Mutex::new(HashMap::new()),
-            capacity: Self::DEFAULT_CAPACITY,
-        }
+        Self::with_limits(Self::DEFAULT_CAPACITY, Self::DEFAULT_OWNER_LIMIT)
     }
 }
 
@@ -339,38 +400,44 @@ mod tests {
         assert!(got.error.is_none());
     }
 
+    /// "servers MAY mark a task as `failed` at any point after the TTL
+    /// elapses, and subsequently delete it". Deleting it outright used to leave
+    /// the poller with `-32602 unknown task` and no idea what happened.
     #[test]
-    fn expired_tasks_are_purged_and_their_work_cancelled() {
+    fn an_overdue_task_fails_visibly_and_is_deleted_a_ttl_later() {
         let store = DraftTaskStore::default();
         let cancel = CancellationToken::new();
-        let short = store.create(Some(20), None, cancel.clone()).unwrap();
-        // ttl 0 means "unlimited here" — never auto-purged (spec: null/0).
-        let unlimited = store
-            .create(Some(0), None, CancellationToken::new())
-            .unwrap();
-        assert!(store.get(&short.task_id).is_some(), "fresh: visible");
+        let short = store.create(Some(30), None, cancel.clone()).unwrap();
+        let unlimited = store.create(None, None, CancellationToken::new()).unwrap();
 
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(45));
+        let overdue = store.get(&short.task_id).expect("still visible, as failed");
+        assert_eq!(overdue.task.status, TaskStatus::Failed);
+        assert!(
+            overdue
+                .task
+                .status_message
+                .as_deref()
+                .is_some_and(|m| m.contains("TTL")),
+            "{:?}",
+            overdue.task.status_message
+        );
+        assert!(cancel.is_cancelled(), "its work is told to stop");
+
+        std::thread::sleep(Duration::from_millis(45));
         assert!(
             store.get(&short.task_id).is_none(),
-            "past createdAt + ttlMs the task is gone (SEP-2663) → tasks/get -32602"
-        );
-        assert!(
-            cancel.is_cancelled(),
-            "purging a live task fires its cancel token so in-flight work stops"
+            "collected a TTL after finishing"
         );
         assert!(
             store.get(&unlimited.task_id).is_some(),
-            "ttl 0/null tasks are never auto-purged"
+            "only null is unlimited"
         );
     }
 
     #[test]
-    fn at_capacity_create_declines_until_an_expiry_frees_a_slot() {
-        let store = DraftTaskStore {
-            inner: Mutex::new(HashMap::new()),
-            capacity: 1,
-        };
+    fn at_capacity_create_declines_until_a_task_finishes() {
+        let store = DraftTaskStore::with_limits(1, 64);
         let first = store.create(Some(20), None, CancellationToken::new());
         assert!(first.is_some());
         // Full: the caller must fall back to running the call synchronously.
@@ -379,11 +446,36 @@ mod tests {
                 .create(Some(20), None, CancellationToken::new())
                 .is_none()
         );
-        // An expired entry frees the slot on the next create's purge.
+        // Once the first is overdue it is failed, and a finished task makes
+        // room.
         std::thread::sleep(Duration::from_millis(50));
         assert!(
             store
                 .create(Some(20), None, CancellationToken::new())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn one_principal_cannot_take_every_slot() {
+        let store = DraftTaskStore::with_limits(10, 2);
+        let mine = || Some("alice".to_owned());
+        for _ in 0..2 {
+            assert!(
+                store
+                    .create_owned(None, None, CancellationToken::new(), mine())
+                    .is_some()
+            );
+        }
+        assert!(
+            store
+                .create_owned(None, None, CancellationToken::new(), mine())
+                .is_none(),
+            "past the per-principal limit"
+        );
+        assert!(
+            store
+                .create_owned(None, None, CancellationToken::new(), Some("bob".into()))
                 .is_some()
         );
     }

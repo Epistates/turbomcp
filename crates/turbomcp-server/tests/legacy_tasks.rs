@@ -362,3 +362,210 @@ async fn malformed_task_augmentation_is_invalid_params() {
     .await;
     assert_eq!(r.error.expect("bad augmentation").code, -32602);
 }
+
+/// `tasks/result` "MUST include this metadata in its response, as the result
+/// structure itself does not contain the task ID."
+#[tokio::test]
+async fn tasks_result_names_its_task_in_meta() {
+    let server = Gated::new();
+    let mut svc = tasked(&server);
+    let _ = initialize(&mut svc).await;
+    let created = ok(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "gated", "task": {} })),
+        ),
+    )
+    .await;
+    let task_id = created["task"]["taskId"].as_str().unwrap().to_owned();
+    server.gate.add_permits(1);
+    let result = ok(
+        &mut svc,
+        JsonRpcRequest::new(2, "tasks/result", Some(json!({ "taskId": task_id }))),
+    )
+    .await;
+    assert_eq!(
+        result["_meta"]["io.modelcontextprotocol/related-task"]["taskId"],
+        json!(task_id)
+    );
+    assert_eq!(result["content"][0]["text"], "gate passed");
+}
+
+/// Tools that declare their own task support, plus one that doesn't.
+#[derive(Clone)]
+struct Declared;
+
+impl McpServerCore for Declared {
+    fn server_info(&self) -> Implementation {
+        Implementation::new("declared", "1.0.0")
+    }
+}
+
+impl WithTools for Declared {
+    async fn list_tools(
+        &self,
+        _ctx: &ListToolsContext,
+        _params: neutral::ListParams,
+    ) -> McpResult<neutral::ListToolsResult> {
+        let tool = |name| neutral::Tool::new(name, json!({ "type": "object" }));
+        Ok(neutral::ListToolsResult::new(vec![
+            tool("must").with_task_support(neutral::TaskSupport::Required),
+            tool("may").with_task_support(neutral::TaskSupport::Optional),
+            tool("plain"),
+            tool("reports_error").with_task_support(neutral::TaskSupport::Optional),
+            tool("panics").with_task_support(neutral::TaskSupport::Optional),
+        ]))
+    }
+
+    async fn call_tool(
+        &self,
+        _ctx: &CallToolContext,
+        params: neutral::CallToolParams,
+    ) -> McpResult<neutral::CallToolResult> {
+        match params.name.as_str() {
+            "reports_error" => Ok(neutral::CallToolResult::error("the upstream said no")),
+            "panics" => panic!("handler bug"),
+            _ => Ok(neutral::CallToolResult::text("ran")),
+        }
+    }
+}
+
+type DeclaredSvc = LegacySessionAdapter<VersionDispatcher<Declared>>;
+
+async fn declared() -> DeclaredSvc {
+    let mut svc = LegacySessionAdapter::new(
+        ServerBuilder::new(Declared)
+            .with_tools()
+            .with_tasks()
+            .build(),
+    );
+    let init = svc
+        .ready()
+        .await
+        .unwrap()
+        .call(
+            JsonRpcRequest::new(
+                0,
+                "initialize",
+                Some(json!({
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": { "name": "t", "version": "1" },
+                })),
+            )
+            .into(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(init, Some(JsonRpcMessage::Response(ref r)) if r.error.is_none()));
+    svc
+}
+
+async fn answer(svc: &mut DeclaredSvc, req: JsonRpcRequest) -> turbomcp_core::JsonRpcResponse {
+    match svc.ready().await.unwrap().call(req.into()).await.unwrap() {
+        Some(JsonRpcMessage::Response(r)) => r,
+        other => panic!("expected a response, got {other:?}"),
+    }
+}
+
+/// tasks.mdx §Tool-Level Negotiation: a `required` tool called without a task
+/// MUST get `-32601`, and a `forbidden` one called as a task SHOULD. With one
+/// tool declaring, an undeclared tool is `forbidden` — as `tools/list` says.
+#[tokio::test]
+async fn task_support_is_enforced_as_advertised() {
+    let mut svc = declared().await;
+    let list = answer(&mut svc, JsonRpcRequest::new(1, "tools/list", None)).await;
+    let support: Vec<_> = list.result.unwrap()["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["execution"]["taskSupport"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(support[..3], ["required", "optional", "forbidden"]);
+
+    let call = |id, name: &str, task: bool| {
+        let mut params = json!({ "name": name });
+        if task {
+            params["task"] = json!({});
+        }
+        JsonRpcRequest::new(id, "tools/call", Some(params))
+    };
+    let must_plain = answer(&mut svc, call(2, "must", false)).await;
+    assert_eq!(
+        must_plain.error.expect("required needs a task").code,
+        -32601
+    );
+    let plain_task = answer(&mut svc, call(3, "plain", true)).await;
+    assert_eq!(
+        plain_task.error.expect("forbidden refuses a task").code,
+        -32601
+    );
+
+    assert!(
+        answer(&mut svc, call(4, "must", true))
+            .await
+            .error
+            .is_none()
+    );
+    assert!(answer(&mut svc, call(5, "may", true)).await.error.is_none());
+    assert!(
+        answer(&mut svc, call(6, "may", false))
+            .await
+            .error
+            .is_none()
+    );
+    assert!(
+        answer(&mut svc, call(7, "plain", false))
+            .await
+            .error
+            .is_none()
+    );
+}
+
+async fn run_task(svc: &mut DeclaredSvc, name: &str) -> (Value, turbomcp_core::JsonRpcResponse) {
+    let created = answer(
+        svc,
+        JsonRpcRequest::new(1, "tools/call", Some(json!({ "name": name, "task": {} }))),
+    )
+    .await;
+    let task_id = created.result.expect("task created")["task"]["taskId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let result = answer(
+        svc,
+        JsonRpcRequest::new(2, "tasks/result", Some(json!({ "taskId": task_id }))),
+    )
+    .await;
+    let got = answer(
+        svc,
+        JsonRpcRequest::new(3, "tasks/get", Some(json!({ "taskId": task_id }))),
+    )
+    .await;
+    (got.result.expect("tasks/get"), result)
+}
+
+/// "When the tool result has `isError` set to `true`, the task should reach
+/// `failed` status" — and `tasks/result` still returns that exact result.
+#[tokio::test]
+async fn a_tool_error_fails_the_task_and_still_returns_its_result() {
+    let mut svc = declared().await;
+    let (task, result) = run_task(&mut svc, "reports_error").await;
+    assert_eq!(task["status"], "failed");
+    let result = result
+        .result
+        .expect("the tool's result, not a JSON-RPC error");
+    assert_eq!(result["isError"], true);
+}
+
+/// A panicking task handler used to leave the task `working` until its TTL,
+/// with `tasks/result` blocked the whole time.
+#[tokio::test]
+async fn a_panicking_task_handler_fails_the_task() {
+    let mut svc = declared().await;
+    let (task, result) = run_task(&mut svc, "panics").await;
+    assert_eq!(task["status"], "failed");
+    assert_eq!(result.error.expect("the panic's error").code, -32603);
+}

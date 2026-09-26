@@ -35,7 +35,7 @@ use turbomcp_core::{
     CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, McpError, ProtocolVersion, RequestContext, RequestId, meta,
 };
-use turbomcp_protocol::neutral::CachePolicy;
+use turbomcp_protocol::neutral::{CachePolicy, TaskSupport};
 use turbomcp_protocol::{methods, version};
 use turbomcp_service::{ProtocolError, mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
 
@@ -242,6 +242,9 @@ impl Shared {
     async fn sweep_idle_sessions(&self) {
         for id in self.sessions.sweep_expired().await {
             self.subs.legacy_remove(&id);
+            if let Some(tasks) = &self.tasks {
+                tasks.end_session(&id).await;
+            }
         }
     }
 
@@ -251,6 +254,11 @@ impl Shared {
     async fn terminate_session(&self, id: &str) -> bool {
         let existed = self.sessions.remove(id).await;
         self.subs.legacy_remove(id);
+        // Nothing can ask about the session's tasks any more, so they are
+        // cancelled and released rather than holding capacity until their TTL.
+        if let Some(tasks) = &self.tasks {
+            tasks.end_session(id).await;
+        }
         existed
     }
 }
@@ -824,9 +832,11 @@ async fn handle_request<S: McpServerCore>(
                     // an unknown param it ignores.
                     if let Some(store) = tasks.as_ref().filter(|_| revision.has_tasks())
                         && method == methods::request::TOOLS_CALL
-                        && has_task_field(req.params.as_ref())
                     {
-                        let (_, tool) = match capability::prepare_tool::<S, LegacyWire>(
+                        // Resolved (and visibility-checked) once, so a hidden
+                        // tool is refused as unknown before its task support
+                        // could say anything about it.
+                        let (params, tool) = match capability::prepare_tool::<S, LegacyWire>(
                             &server,
                             router,
                             &req,
@@ -839,14 +849,51 @@ async fn handle_request<S: McpServerCore>(
                             Ok(prepared) => prepared,
                             Err(response) => return Ok(*response),
                         };
-                        return Ok(task_augmented_call(
-                            server,
-                            router,
-                            store,
-                            ctx,
-                            &req,
-                            id,
-                            (shared.validators.clone(), tool.output_schema),
+                        let any_declared = if tool.task_support.is_some() {
+                            true
+                        } else {
+                            match legacy_tasks::any_tool_declares_task_support(
+                                &server, router, &ctx,
+                            )
+                            .await
+                            {
+                                Ok(any) => any,
+                                Err(e) => {
+                                    return Ok(error_response_for(id, &revision.version(), &e));
+                                }
+                            }
+                        };
+                        let support = legacy_tasks::effective_task_support(&tool, any_declared);
+                        let as_task = has_task_field(req.params.as_ref());
+                        // tasks.mdx §Tool-Level Negotiation: a `forbidden` tool
+                        // invoked as a task SHOULD get `-32601`, and a
+                        // `required` one invoked without MUST.
+                        let refused = match support {
+                            TaskSupport::Forbidden => as_task,
+                            TaskSupport::Required => !as_task,
+                            TaskSupport::Optional => false,
+                        };
+                        if refused {
+                            let why = if as_task {
+                                format!("tool `{}` cannot run as a task", tool.name)
+                            } else {
+                                format!("tool `{}` must be invoked as a task", tool.name)
+                            };
+                            return Ok(error_response_for(
+                                id,
+                                &revision.version(),
+                                &McpError::method_not_found(why),
+                            ));
+                        }
+                        if as_task {
+                            let contract = (shared.validators.clone(), tool.output_schema.clone());
+                            return Ok(task_augmented_call(
+                                server, router, store, ctx, &req, id, params, contract,
+                            )
+                            .await);
+                        }
+                        return Ok(capability::call_prepared_tool::<S, LegacyWire>(
+                            server, router, &req, &ctx, shared, id, params, tool,
                         )
                         .await);
                     }
@@ -970,8 +1017,14 @@ async fn handle_request<S: McpServerCore>(
                     if let Err(response) = legacy_context(sessions.as_ref(), &req).await? {
                         return Ok(response);
                     }
-                    let Some(store) = tasks else {
-                        return Ok(error_response(id, &McpError::method_not_found(method)));
+                    // Served exactly when advertised: `initialize` offers the
+                    // `tasks` capability only to a server that has tools.
+                    let Some(store) = tasks.as_ref().filter(|_| router.has_tools()) else {
+                        return Ok(error_response_for(
+                            id,
+                            &ProtocolVersion::V2025_11_25,
+                            &McpError::method_not_found(method),
+                        ));
                     };
                     // `legacy_context` proved the session id is present.
                     let sid = session_id(req.params.as_ref())

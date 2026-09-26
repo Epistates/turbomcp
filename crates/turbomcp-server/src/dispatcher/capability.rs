@@ -502,46 +502,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                     Ok(prepared) => prepared,
                     Err(response) => return *response,
                 };
-            let handle = match mrtr_handle::<W>(
-                req,
-                &ctx,
-                signer,
-                pending,
-                shared.strict_elicitation_keys,
-            ) {
-                Ok(h) => h,
-                Err(e) => return error_response_for(id, &W::VERSION, &e),
-            };
-            let fut = router.dispatch_call_tool(
-                server,
-                CallToolContext::new(ctx.clone())
-                    .with_client(handle.clone())
-                    .with_progress(progress_reporter::<W>(req))
-                    .with_log(log_sender::<W>(req, &ctx, router.has_logging())),
-                params,
-            );
-            let validators = shared.validators.clone();
-            let fut = fut.map(
-                |fut| -> BoxFuture<'static, McpResult<neutral::CallToolResult>> {
-                    Box::pin(
-                        async move { validators.output(tool.output_schema.as_ref(), fut.await?) },
-                    )
-                },
-            );
-            let subject = ctx.identity.principal_key();
-            finish_mrtr::<_, W::CallTool>(
-                id,
-                MrtrTurn {
-                    method: &request_binding(req),
-                    version: &W::VERSION,
-                    subject,
-                    handle: &handle,
-                    signer,
-                    mrtr_enabled: W::MRTR,
-                },
-                fut,
-            )
-            .await
+            call_prepared_tool::<S, W>(server, router, req, &ctx, shared, id, params, tool).await
         }
         methods::request::RESOURCES_LIST => {
             let fut = router.dispatch_list_resources(
@@ -716,6 +677,57 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
         }
         _ => unreachable!("dispatch_capability called with an unrouted method"),
     }
+}
+
+/// Run a `tools/call` whose tool [`prepare_tool`] already resolved and whose
+/// arguments it already validated.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn call_prepared_tool<S: McpServerCore, W: WireFamily>(
+    server: S,
+    router: &MethodRouter<S>,
+    req: &JsonRpcRequest,
+    ctx: &RequestContext,
+    shared: &Shared,
+    id: RequestId,
+    params: neutral::CallToolParams,
+    tool: neutral::Tool,
+) -> JsonRpcMessage {
+    let signer = &shared.signer;
+    let pending = &shared.pending;
+    let ctx = ctx.clone();
+    let handle = match mrtr_handle::<W>(req, &ctx, signer, pending, shared.strict_elicitation_keys)
+    {
+        Ok(h) => h,
+        Err(e) => return error_response_for(id, &W::VERSION, &e),
+    };
+    let fut = router.dispatch_call_tool(
+        server,
+        CallToolContext::new(ctx.clone())
+            .with_client(handle.clone())
+            .with_progress(progress_reporter::<W>(req))
+            .with_log(log_sender::<W>(req, &ctx, router.has_logging())),
+        params,
+    );
+    let validators = shared.validators.clone();
+    let fut = fut.map(
+        |fut| -> BoxFuture<'static, McpResult<neutral::CallToolResult>> {
+            Box::pin(async move { validators.output(tool.output_schema.as_ref(), fut.await?) })
+        },
+    );
+    let subject = ctx.identity.principal_key();
+    finish_mrtr::<_, W::CallTool>(
+        id,
+        MrtrTurn {
+            method: &request_binding(req),
+            version: &W::VERSION,
+            subject,
+            handle: &handle,
+            signer,
+            mrtr_enabled: W::MRTR,
+        },
+        fut,
+    )
+    .await
 }
 
 // Bind state to the operation as well as the principal. Canonical object

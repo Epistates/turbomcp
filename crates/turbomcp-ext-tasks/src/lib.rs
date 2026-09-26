@@ -104,6 +104,8 @@ pub struct TasksExtension {
     taskify: Option<TaskDecider>,
     ttl_ms: Option<i64>,
     poll_interval_ms: Option<i64>,
+    capacity: usize,
+    owner_limit: usize,
 }
 
 impl core::fmt::Debug for TasksExtension {
@@ -126,6 +128,8 @@ impl Default for TasksExtension {
             taskify: None,
             ttl_ms: Some(DEFAULT_TTL_MS),
             poll_interval_ms: Some(DEFAULT_POLL_INTERVAL_MS),
+            capacity: DraftTaskStore::DEFAULT_CAPACITY,
+            owner_limit: DraftTaskStore::DEFAULT_OWNER_LIMIT,
         }
     }
 }
@@ -166,8 +170,20 @@ impl TasksExtension {
 
     /// Override the task time-to-live in milliseconds (`None` ⇒ unlimited).
     /// Default: [`DEFAULT_TTL_MS`].
+    ///
+    /// A task still running when its TTL runs out is cancelled and marked
+    /// `failed`; a finished one is kept for one more TTL, then deleted.
+    ///
+    /// # Panics
+    ///
+    /// On a TTL that is not positive: only `None` means unlimited, and zero or
+    /// less would fail every task the moment it started.
     #[must_use]
     pub fn ttl_ms(mut self, ttl_ms: Option<i64>) -> Self {
+        assert!(
+            ttl_ms.is_none_or(|ms| ms > 0),
+            "task TTL must be positive, or None for unlimited"
+        );
         self.ttl_ms = ttl_ms;
         self
     }
@@ -180,13 +196,25 @@ impl TasksExtension {
         self
     }
 
-    /// Bound the number of live tasks the registry holds (default: 1024).
-    /// At capacity, taskification degrades gracefully — the next eligible
-    /// `tools/call` runs synchronously instead of failing — until an expiry
-    /// or terminal purge frees a slot. Call before registration.
+    /// Bound the number of tasks the registry holds (default: 1024). When it is
+    /// full the oldest finished task makes room; when every task is still
+    /// running, taskification degrades gracefully — the next eligible
+    /// `tools/call` runs synchronously instead of failing. Call before
+    /// registration.
     #[must_use]
     pub fn capacity(mut self, capacity: usize) -> Self {
-        self.store = Arc::new(DraftTaskStore::with_capacity(capacity));
+        self.capacity = capacity;
+        self.store = Arc::new(DraftTaskStore::with_limits(self.capacity, self.owner_limit));
+        self
+    }
+
+    /// Bound how many tasks one principal may have running at once (default:
+    /// 64), so a single caller cannot take every slot. Past it, that caller's
+    /// eligible calls run synchronously. Call before registration.
+    #[must_use]
+    pub fn owner_limit(mut self, limit: usize) -> Self {
+        self.owner_limit = limit;
+        self.store = Arc::new(DraftTaskStore::with_limits(self.capacity, self.owner_limit));
         self
     }
 
@@ -381,9 +409,20 @@ impl Extension for TasksExtension {
         let subs = Arc::clone(&self.subs);
         let task_id = task.task_id.clone();
         tokio::spawn(async move {
-            let outcome = match run.run().await {
-                Ok(result) => TaskOutcome::Completed(result),
-                Err(err) => TaskOutcome::Failed(err),
+            // A panic would otherwise unwind this task with the record still
+            // `working` — possibly forever, with an unlimited TTL. Every other
+            // path answers a panicking handler `-32603`; so does this.
+            let outcome = match turbomcp_service::catch_panic(run.run()).await {
+                Ok(Ok(result)) => TaskOutcome::Completed(result),
+                Ok(Err(err)) => TaskOutcome::Failed(err),
+                Err(panic) => {
+                    tracing::error!(panic, task = %task_id, "task handler panicked");
+                    TaskOutcome::Failed(turbomcp_core::JsonRpcError {
+                        code: -32603,
+                        message: "handler panicked".to_owned(),
+                        data: None,
+                    })
+                }
             };
             store.complete(&task_id, outcome);
             // Push the terminal status to any `subscriptions/listen` subscribers

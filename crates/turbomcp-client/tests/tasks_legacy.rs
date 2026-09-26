@@ -18,7 +18,7 @@ use turbomcp_core::{CancellationToken, Implementation, JsonRpcError, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, LegacySessionAdapter, ListToolsContext, McpServerCore, MethodRouter,
-    TaskBackend, TaskError, TaskSnapshot, TaskStore, VersionDispatcher, WithTools,
+    TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStore, VersionDispatcher, WithTools,
 };
 use turbomcp_transport_stdio::LineTransport;
 
@@ -77,7 +77,7 @@ impl TaskBackend for FastPoll {
             .create(session_id.to_string(), requested_ttl_ms, cancel)
     }
 
-    async fn complete(&self, task_id: &str, outcome: Result<Value, JsonRpcError>) {
+    async fn complete(&self, task_id: &str, outcome: TaskOutcome) {
         self.inner.complete(task_id, outcome);
     }
 
