@@ -151,17 +151,25 @@ impl OAuthClient {
     /// back to `redirect_uri`, registering via `strategy`. Credentials and
     /// tokens persist in a process-lifetime [`MemoryCredentialStore`] until
     /// [`with_store`](Self::with_store) supplies something durable.
+    ///
+    /// Outbound traffic follows [`NetworkPolicy::public_only`](crate::NetworkPolicy::public_only):
+    /// HTTPS to public addresses only. Discovery follows URLs the MCP server
+    /// chooses (its metadata names the authorization server, which names the
+    /// token and registration endpoints), so a hostile or compromised server
+    /// could otherwise aim this client at the internal network it runs on.
+    /// For a trusted internal or local server, opt out with
+    /// [`with_network_policy`](Self::with_network_policy), e.g.
+    /// `NetworkPolicy::default()` or `public_only().with_allowed_ranges(…)`.
     #[must_use]
     pub fn new(
         resource: impl Into<String>,
         redirect_uri: impl Into<String>,
         strategy: RegistrationStrategy,
     ) -> Self {
+        let network = crate::NetworkPolicy::public_only();
         Self {
-            http: crate::NetworkPolicy::default()
-                .http_client()
-                .expect("HTTP client initialization"),
-            network: crate::NetworkPolicy::default(),
+            http: network.http_client().expect("HTTP client initialization"),
+            network,
             resource: resource.into(),
             redirect_uri: redirect_uri.into(),
             strategy,

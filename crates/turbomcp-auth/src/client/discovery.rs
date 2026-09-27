@@ -81,8 +81,20 @@ pub(crate) async fn discover_protected_resource_with_policy(
     challenge_metadata_url: Option<&str>,
     policy: &crate::NetworkPolicy,
 ) -> Result<ProtectedResourceMetadata, OAuthClientError> {
+    // The challenge names where to look, but a document fetched from
+    // somewhere else only has its own word that it is about this resource.
+    // RFC 9728 puts the metadata at the resource's origin, so an off-origin
+    // pointer is ignored in favour of the well-known locations there.
     let candidates: Vec<String> = match challenge_metadata_url {
-        Some(url) => vec![url.to_owned()],
+        Some(url) if same_origin(url, resource_url) => vec![url.to_owned()],
+        Some(url) => {
+            tracing::warn!(
+                resource_metadata = url,
+                resource = resource_url,
+                "ignoring an off-origin resource_metadata URL; trying the resource's well-known locations"
+            );
+            protected_resource_wellknown_candidates(resource_url)?
+        }
         None => protected_resource_wellknown_candidates(resource_url)?,
     };
     let mut last_error = String::from("no candidate URLs");
@@ -172,6 +184,20 @@ fn is_loopback(url: &Url) -> bool {
     }
 }
 
+/// Scheme, host and port, compared case-insensitively.
+fn origin(u: &Url) -> (String, String, Option<u16>) {
+    (
+        u.scheme().to_ascii_lowercase(),
+        u.host_str().unwrap_or_default().to_ascii_lowercase(),
+        u.port_or_known_default(),
+    )
+}
+
+/// Whether two URLs share an origin; an unparseable one shares nothing.
+fn same_origin(a: &str, b: &str) -> bool {
+    matches!((Url::parse(a), Url::parse(b)), (Ok(a), Ok(b)) if origin(&a) == origin(&b))
+}
+
 /// Whether a metadata document's `resource` covers the server at `url`.
 ///
 /// Origin must match exactly — scheme, host, port — because that is what stops
@@ -189,13 +215,6 @@ fn same_resource(declared: &str, url: &str) -> bool {
     let (Ok(declared), Ok(url)) = (Url::parse(declared), Url::parse(url)) else {
         // An unparseable identifier is not something to wave through.
         return false;
-    };
-    let origin = |u: &Url| {
-        (
-            u.scheme().to_ascii_lowercase(),
-            u.host_str().unwrap_or_default().to_ascii_lowercase(),
-            u.port_or_known_default(),
-        )
     };
     if origin(&declared) != origin(&url) {
         return false;

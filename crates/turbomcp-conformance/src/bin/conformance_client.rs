@@ -396,7 +396,10 @@ async fn run_auth(url: &str, context: &ScenarioContext) -> Result<(), String> {
         )),
     };
 
-    let oauth = OAuthClient::new(url, REDIRECT_URI, strategy);
+    // The conformance suite serves its authorization server on localhost.
+    let oauth = OAuthClient::new(url, REDIRECT_URI, strategy)
+        .with_network_policy(turbomcp::auth::NetworkPolicy::default())
+        .map_err(|e| e.to_string())?;
     let source = std::sync::Arc::new(turbomcp::client::oauth::OAuthSession::new(
         oauth,
         std::sync::Arc::new(MockConsent),

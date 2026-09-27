@@ -70,14 +70,17 @@ can change identity or granted scopes between calls.
 
 OAuth discovery, registration, token exchange, and JWKS fetches use clients that
 disable redirects and environment proxies, enforce deadlines, and cap response bodies at 1 MiB. HTTPS is
-required except configured loopback HTTP. Internal HTTPS authorization servers
-remain supported by default. Server-side clients accepting untrusted endpoint
-URLs should select `NetworkPolicy::public_only()`: it rejects private/reserved
-literals and DNS results, uses the checked addresses for connection, and disables
-proxies. This policy also disables loopback HTTP. Where such a deployment still
+required except configured loopback HTTP. The OAuth client engine
+(`OAuthClient`) defaults to `NetworkPolicy::public_only()`, because discovery
+follows URLs the MCP server chooses: it rejects private/reserved literals and
+DNS results, uses the checked addresses for connection, disables proxies, and
+disables loopback HTTP. A client of a trusted internal or local server opts out
+with `with_network_policy(NetworkPolicy::default())`. Where a deployment only
 has to reach one internal authorization server, name its range with
 `with_allowed_ranges` rather than turning the policy off; the ranges are
-consulted after the reserved-range check, so nothing else reopens. A custom reqwest client is an
+consulted after the reserved-range check, so nothing else reopens.
+`NetworkPolicy::default()` (private HTTPS allowed) remains the default for the
+resource-server side, whose JWKS and issuer URLs are the operator's own. A custom reqwest client is an
 explicit trust override: its owner must preserve redirect and DNS restrictions.
 Use `with_network_policy` when those restrictions should be supplied by the SDK.
 

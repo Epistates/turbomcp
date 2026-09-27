@@ -92,7 +92,9 @@ async fn fixture(expiring: bool, reject_refresh: bool) -> Fixture {
                 credentials: ClientCredentials::public("test-client"),
                 issuer: Some(base),
             },
-        ),
+        )
+        .with_network_policy(turbomcp::auth::NetworkPolicy::default())
+        .expect("the mock authorization server is on loopback"),
         consent.clone(),
     ));
     Fixture {

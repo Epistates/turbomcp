@@ -233,6 +233,8 @@ fn engine(base: &str) -> OAuthClient {
             vec!["http://127.0.0.1:19999/callback".to_owned()],
         )),
     )
+    .with_network_policy(turbomcp_auth::NetworkPolicy::default())
+    .expect("the mock authorization server is on loopback")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -437,7 +439,9 @@ async fn a_remote_plaintext_redirect_uri_is_refused() {
             "turbomcp-test",
             vec!["http://evil.example/callback".to_owned()],
         )),
-    );
+    )
+    .with_network_policy(turbomcp_auth::NetworkPolicy::default())
+    .expect("the mock authorization server is on loopback");
     let discovered = engine
         .discover(None)
         .await
@@ -473,7 +477,9 @@ async fn preregistered_credentials_bound_to_a_different_issuer_error_out() {
             credentials: turbomcp_auth::client::ClientCredentials::public("pre-1"),
             issuer: Some("https://old-as.example".into()),
         },
-    );
+    )
+    .with_network_policy(turbomcp_auth::NetworkPolicy::default())
+    .expect("the mock authorization server is on loopback");
     let discovered = engine.discover(None).await.unwrap();
     let err = engine.credentials(&discovered).await.unwrap_err();
     assert!(
@@ -645,4 +651,42 @@ async fn refreshing_without_a_refresh_token_says_what_to_do() {
         state.lock().unwrap().token_forms.is_empty(),
         "nothing should reach the token endpoint"
     );
+}
+
+/// Discovery follows URLs the MCP server picks, so by default the engine
+/// reaches public addresses only: a hostile server can't aim it at the
+/// internal network. A loopback authorization server is refused until the
+/// integrator opts out, and the error says how.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn by_default_the_engine_refuses_internal_addresses() {
+    let state = Shared::default();
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let engine = OAuthClient::new(
+        format!("{base}/mcp"),
+        "http://127.0.0.1:19999/callback",
+        RegistrationStrategy::Dynamic(DynamicRegistration::native(
+            "turbomcp-test",
+            vec!["http://127.0.0.1:19999/callback".to_owned()],
+        )),
+    );
+    let err = engine.discover(None).await.unwrap_err();
+    assert!(err.to_string().contains("NetworkPolicy"), "got {err}");
+}
+
+/// A challenge's `resource_metadata` pointing off the resource's origin is
+/// only that document's word that it's about this resource, so it is ignored
+/// and discovery uses the resource's own well-known location.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_off_origin_resource_metadata_pointer_is_ignored() {
+    let state = Shared::default();
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let challenge = turbomcp_auth::client::parse_bearer_challenge(
+        r#"Bearer resource_metadata="https://attacker.example/.well-known/oauth-protected-resource""#,
+    )
+    .expect("a bearer challenge");
+    let discovered = engine(&base)
+        .discover(Some(&challenge))
+        .await
+        .expect("fell back to the resource's own metadata");
+    assert!(discovered.resource.resource.starts_with(&base));
 }

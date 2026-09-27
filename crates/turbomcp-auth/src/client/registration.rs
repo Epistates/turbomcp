@@ -190,6 +190,7 @@ pub(crate) async fn obtain_credentials_with_policy(
                     as_meta.issuer
                 )));
             }
+            require_metadata_document_url(client_id_url)?;
             Ok(ClientCredentials::public(client_id_url.clone()))
         }
         RegistrationStrategy::Dynamic(request) => {
@@ -227,6 +228,41 @@ pub(crate) async fn obtain_credentials_with_policy(
                 client_id: registered.client_id,
                 client_secret: registered.client_secret,
             })
+        }
+    }
+}
+
+/// "The `client_id` URL MUST use the `https` scheme and contain a path
+/// component, e.g. `https://example.com/client.json`." No loopback exception,
+/// unlike redirect URIs: the authorization server fetches this document, and
+/// a URL it can't fetch as HTTPS isn't a client identity at all.
+fn require_metadata_document_url(url: &str) -> Result<(), OAuthClientError> {
+    let parsed = url::Url::parse(url)
+        .map_err(|_| OAuthClientError::Registration(format!("invalid client_id_url: {url:?}")))?;
+    if parsed.scheme() != "https" || matches!(parsed.path(), "" | "/") {
+        return Err(OAuthClientError::Registration(format!(
+            "client_id_url must be an https URL with a path component (e.g. \
+             https://example.com/client.json), got {url:?}"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod metadata_document_tests {
+    use super::*;
+
+    #[test]
+    fn a_client_id_url_needs_https_and_a_path() {
+        assert!(require_metadata_document_url("https://example.com/client.json").is_ok());
+        for bad in [
+            "https://example.com",
+            "https://example.com/",
+            "http://example.com/client.json",
+            "http://localhost/client.json",
+            "not a url",
+        ] {
+            assert!(require_metadata_document_url(bad).is_err(), "{bad}");
         }
     }
 }

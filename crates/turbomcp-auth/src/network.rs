@@ -1,5 +1,7 @@
-//! Outbound OAuth/JWKS policy. Private HTTPS endpoints are supported by default;
-//! operators accepting untrusted server URLs can select public-only egress.
+//! Outbound OAuth/JWKS policy. [`NetworkPolicy::default`] reaches private
+//! HTTPS endpoints (an operator's own JWKS or authorization server);
+//! [`NetworkPolicy::public_only`] is for URLs someone else chose, and is what
+//! the OAuth client engine uses unless told otherwise.
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -145,14 +147,21 @@ impl NetworkPolicy {
         if url.scheme() != "https" && !(url.scheme() == "http" && local && self.allow_loopback_http)
         {
             return Err(
-                "endpoint must use HTTPS (HTTP is allowed only on configured loopback)".into(),
+                "endpoint must use HTTPS (plaintext HTTP only on loopback, and only when the \
+                 NetworkPolicy allows it)"
+                    .into(),
             );
         }
         // A name is only checkable once resolved (the resolver does that), with
         // the exception of the loopback names, which resolve nowhere else.
         let literal = ip.or_else(|| local.then(|| IpAddr::from([127, 0, 0, 1])));
         if literal.is_some_and(|ip| !self.permits(ip)) {
-            return Err("endpoint address is neither public nor in an allowed range".into());
+            return Err(
+                "endpoint address is neither public nor in an allowed range (for a trusted \
+                 internal or local server, relax the NetworkPolicy: NetworkPolicy::default() \
+                 or with_allowed_ranges)"
+                    .into(),
+            );
         }
         Ok(())
     }
