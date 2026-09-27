@@ -16,7 +16,6 @@ publish = false
 [dev-dependencies]
 turbomcp = { path = "../turbomcp", features = ["client", "http"] }
 turbomcp-service = { path = "../turbomcp-service" }
-turbomcp-transport-stdio = { path = "../turbomcp-transport-stdio" }
 turbomcp-core = { path = "../turbomcp-core", features = ["std"] }
 # The official Rust MCP SDK, from crates.io — interop is tested against the real
 # released SDK, not a local checkout. rmcp 3.x serves both 2025-11-25 and the

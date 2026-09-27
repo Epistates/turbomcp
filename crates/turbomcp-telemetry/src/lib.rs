@@ -42,7 +42,7 @@ mod layer;
 mod metrics;
 mod propagation;
 
-pub use layer::{TraceContext, TraceContextLayer};
+pub use layer::{TraceContextLayer, TraceContextService};
 pub use metrics::{Metrics, MetricsLayer};
 pub use propagation::{extract as extract_context, inject as inject_context};
 

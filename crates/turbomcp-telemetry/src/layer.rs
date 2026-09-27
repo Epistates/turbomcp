@@ -43,10 +43,10 @@ impl TraceContextLayer {
 }
 
 impl<S> Layer<S> for TraceContextLayer {
-    type Service = TraceContext<S>;
+    type Service = TraceContextService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        TraceContext {
+        TraceContextService {
             inner,
             policy: self.policy,
         }
@@ -55,12 +55,12 @@ impl<S> Layer<S> for TraceContextLayer {
 
 /// The service produced by [`TraceContextLayer`].
 #[derive(Debug, Clone)]
-pub struct TraceContext<S> {
+pub struct TraceContextService<S> {
     inner: S,
     policy: SpanPolicy,
 }
 
-impl<S, E> Service<JsonRpcMessage> for TraceContext<S>
+impl<S, E> Service<JsonRpcMessage> for TraceContextService<S>
 where
     S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = E>,
 {
@@ -78,7 +78,7 @@ where
     }
 }
 
-impl<S> TraceContext<S> {
+impl<S> TraceContextService<S> {
     /// Build the per-request span: parent it to the caller's extracted trace
     /// context and record method + redacted identity.
     fn make_span(&self, req: &JsonRpcMessage) -> tracing::Span {

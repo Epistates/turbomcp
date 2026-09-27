@@ -92,5 +92,5 @@ These are excluded from the compatibility promise:
 - Private implementation details within generated modules. Public generated
   types and module paths in published subcrates are public API; moving or
   removing them requires the same compatibility review as the facade.
-- Crates marked `publish = false` (`turbomcp-codegen`, `turbomcp-ext-apps`, and the interop and
+- Crates marked `publish = false` (`turbomcp-codegen` and the interop and
   conformance test crates).

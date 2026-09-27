@@ -15,8 +15,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
-turbomcp-core = { path = "../crates/turbomcp-core", features = ["std"] }
-turbomcp-codec = { path = "../crates/turbomcp-codec", features = ["simd"] }
+turbomcp-core = { path = "../crates/turbomcp-core", features = ["std", "simd"] }
+
 turbomcp-service = { path = "../crates/turbomcp-service" }
 turbomcp-server = { path = "../crates/turbomcp-server" }
 

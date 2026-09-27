@@ -7,8 +7,8 @@
 //! — the codec contract is `Err`, not equivalence of error taxonomies.
 
 use libfuzzer_sys::fuzz_target;
-use turbomcp_codec::{Codec, SerdeJsonCodec, SonicRsCodec};
 use turbomcp_core::JsonRpcMessage;
+use turbomcp_core::codec::{Codec, SerdeJsonCodec, SonicRsCodec};
 
 fuzz_target!(|data: &[u8]| {
     let sonic = SonicRsCodec;

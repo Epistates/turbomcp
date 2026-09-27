@@ -37,16 +37,14 @@ client = ["dep:turbomcp-client"]
 ext-tasks = ["dep:turbomcp-ext-tasks"]
 # SIMD-accelerated JSON (sonic-rs) as the DefaultCodec on native
 # x86_64/aarch64. Off by default: serde_json is the portable baseline.
-simd = ["turbomcp-codec/simd"]
+simd = ["turbomcp-core/simd"]
 
 [dependencies]
 tokio-util = { workspace = true, features = ["rt"], optional = true }
 turbomcp-core = { workspace = true }
 turbomcp-protocol = { workspace = true }
-turbomcp-codec = { workspace = true }
 turbomcp-service = { workspace = true }
 turbomcp-server = { workspace = true }
-turbomcp-transport-stdio = { workspace = true }
 turbomcp-transport-http = { workspace = true, optional = true }
 turbomcp-transport-ws = { workspace = true, optional = true }
 turbomcp-auth = { workspace = true, optional = true }
@@ -79,7 +77,6 @@ criterion = { workspace = true, features = ["async_tokio"] }
 axum = { workspace = true }
 http-body-util = "0.1"
 reqwest = { workspace = true }
-turbomcp-transport-stdio = { workspace = true }
 # For hand-built SSE bodies in the mock servers that stand in for peers whose
 # behaviour TurboMCP's own server does not exhibit (see
 # `client_standalone_stream.rs`).

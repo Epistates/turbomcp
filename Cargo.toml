@@ -4,11 +4,9 @@
 members = [
     "crates/turbomcp-core",
     "crates/turbomcp-protocol",
-    "crates/turbomcp-codec",
     "crates/turbomcp-service",
     "crates/turbomcp-server",
     "crates/turbomcp-client",
-    "crates/turbomcp-transport-stdio",
     "crates/turbomcp-transport-http",
     "crates/turbomcp-transport-ws",
     "crates/turbomcp-macros",
@@ -16,7 +14,6 @@ members = [
     "crates/turbomcp-auth",
     "crates/turbomcp-telemetry",
     "crates/turbomcp-ext-tasks",
-    "crates/turbomcp-ext-apps",
     "crates/turbomcp",
 ]
 # Excluded, separately-run test surfaces. Each carries its own lockfile and stays
@@ -53,19 +50,12 @@ const_is_empty = "allow"
 
 [workspace.dependencies]
 # Core async runtime and utilities
-# Tokio: Production optimization - use only needed features instead of "full"
-# Includes: runtime, networking, sync, timers, signal handling, process, macros, io
-tokio = { version = "1.52", features = [
-    "rt", "rt-multi-thread",  # Multi-threaded async runtime
-    "net",                     # TCP/UDP networking
-    "sync",                    # Channels, mutexes, RwLock
-    "time",                    # Timeouts, delays, intervals
-    "signal",                  # Signal handling (graceful shutdown)
-    "process",                 # Child process spawning
-    "macros",                  # #[tokio::main] macro
-    "io-util",                 # Async I/O utilities
-] }
-tokio-util = { version = "0.7.18", features = ["codec", "io"] }
+# Tokio: no features at the workspace level. Workspace features are additive
+# for every `tokio = { workspace = true }` member, so listing them here leaked
+# `process`, `signal` and `net` into crates that need none of them. Each crate
+# opts into what it uses.
+tokio = { version = "1.52" }
+tokio-util = { version = "0.7.18" }
 futures = "0.3.32"
 pin-project-lite = "0.2.17"
 
@@ -78,16 +68,16 @@ percent-encoding = "2.3"
 # 2.5e-308 gain 1 ulp on decode — wire fidelity is worth the small parse cost).
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.149", features = ["raw_value", "preserve_order", "float_roundtrip"] }
-sonic-rs = "0.5.8"   # High-performance JSON (codec `simd` feature)
+sonic-rs = "0.5.8"   # High-performance JSON (core `simd` codec)
 
 # Schema validation and generation
-schemars = { version = "1.2.1", features = ["chrono04", "uuid1"] }
+schemars = { version = "1.2.1" }
 jsonschema = { version = "0.49", default-features = false }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
 eventsource-stream = "0.2.3"
-axum = { version = "0.8.9", features = ["ws", "tracing", "macros"] }
+axum = { version = "0.8.9", features = ["tracing"] }
 mime = "0.3.17"
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
 tower-http = { version = "0.7.1", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
@@ -143,23 +133,20 @@ sha2 = "0.11"
 # Internal workspace crate dependencies.
 # `default-features = false` on turbomcp-core / turbomcp-protocol keeps the
 # no_std/WASM foundation portable (their `default = ["std"]` is opt-in per
-# crate); on turbomcp-codec it keeps sonic-rs (`default = ["simd"]`) out of the
-# SDK's default build — the facade's `simd` feature is the opt-in.
+# crate), which also keeps core's sonic-rs `simd` codec out of the SDK's default
+# build; the facade's `simd` feature is the opt-in.
 turbomcp = { version = "4.0.0-alpha.5", path = "crates/turbomcp" }
 turbomcp-core = { version = "4.0.0-alpha.5", path = "crates/turbomcp-core", default-features = false }
 turbomcp-protocol = { version = "4.0.0-alpha.5", path = "crates/turbomcp-protocol", default-features = false }
-turbomcp-codec = { version = "4.0.0-alpha.5", path = "crates/turbomcp-codec", default-features = false }
 turbomcp-service = { version = "4.0.0-alpha.5", path = "crates/turbomcp-service" }
 turbomcp-server = { version = "4.0.0-alpha.5", path = "crates/turbomcp-server" }
 turbomcp-client = { version = "4.0.0-alpha.5", path = "crates/turbomcp-client" }
-turbomcp-transport-stdio = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-stdio" }
 turbomcp-transport-http = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-http" }
 turbomcp-transport-ws = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-ws" }
 turbomcp-macros = { version = "4.0.0-alpha.5", path = "crates/turbomcp-macros" }
 turbomcp-auth = { version = "4.0.0-alpha.5", path = "crates/turbomcp-auth" }
 turbomcp-telemetry = { version = "4.0.0-alpha.5", path = "crates/turbomcp-telemetry" }
 turbomcp-ext-tasks = { version = "4.0.0-alpha.5", path = "crates/turbomcp-ext-tasks" }
-turbomcp-ext-apps = { version = "4.0.0-alpha.5", path = "crates/turbomcp-ext-apps" }
 
 [profile.dev]
 opt-level = 1

@@ -17,7 +17,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
 use tokio::sync::mpsc;
 use turbomcp::SerdeJsonCodec;
 use turbomcp::client::{Client, ClientBuilder, ClientError, ConnectMode};
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 /// What the scripted server does when the client's `tools/list` arrives.
 #[derive(Clone, Copy)]

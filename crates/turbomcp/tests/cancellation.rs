@@ -22,7 +22,7 @@ use tokio::io::{BufReader, split};
 use turbomcp::client::{Client, ClientBuilder, ClientError, ConnectMode};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 /// What the tool got to before it stopped.
 #[derive(Default)]

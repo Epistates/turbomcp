@@ -16,10 +16,10 @@ use turbomcp_client::{
     Client, ClientBuilder, ClientError, ConnectMode, ElicitationHandler, NotificationHandler,
     RootsHandler, SamplingHandler,
 };
-use turbomcp_codec::SerdeJsonCodec;
 use turbomcp_core::ProtocolVersion;
+use turbomcp_core::codec::SerdeJsonCodec;
 use turbomcp_protocol::neutral;
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 /// Spawn a line-delimited scripted server: `respond(method, frame)` returns
 /// `Some({"result": …})` / `Some({"error": …})` to answer, or `None` to stay

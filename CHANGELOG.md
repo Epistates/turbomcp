@@ -209,6 +209,22 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** fewer crates. `turbomcp-codec` is now `turbomcp_core::codec`
+  (the `simd` feature moved with it), `turbomcp-transport-stdio` is now
+  `turbomcp_service::io` (`LineTransport`, `stdio`, `serve_stdio`), and the
+  unimplemented `turbomcp-ext-apps` skeleton left the workspace. Through the
+  facade nothing moves, and `turbomcp::LineTransport` is newly reachable.
+- **Breaking:** one `CancellationToken`. `turbomcp::CancellationToken`
+  (and `ServeConfig`/`HttpConfig`'s shutdown token) is now the same type as a
+  handler's `ctx.base.cancellation`; comparing or passing one where the other
+  was expected no longer fails to type-check.
+- **Breaking:** telemetry's tower service is `TraceContextService`, so it no
+  longer shares a name with `turbomcp::TraceContext`.
+- The workspace no longer forces features on downstream builds: tokio's
+  `process`/`signal`/`net`, axum's `ws`/`macros` (and the second
+  tokio-tungstenite and `syn` they pulled), and schemars' `chrono04`/`uuid1`.
+  Deriving `JsonSchema` for a chrono or uuid type now needs that feature on
+  your own schemars dependency.
 - **Breaking:** `JsonRpcResponse::id` is `Option<RequestId>`, for the
   schema's id-less error response (`id?` in `JSONRPCErrorResponse`), which
   used to be undecodable. `JsonRpcResponse::error_without_id` builds one; the

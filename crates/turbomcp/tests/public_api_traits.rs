@@ -25,7 +25,7 @@ fn public_error_types_satisfy_the_error_bound() {
     assert_error::<turbomcp::McpError>();
     assert_error::<turbomcp::CodecError>();
     assert_error::<turbomcp::ProtocolError>();
-    assert_error::<turbomcp_transport_stdio::StdioError>();
+    assert_error::<turbomcp_service::io::StdioError>();
     #[cfg(feature = "client")]
     {
         assert_error::<turbomcp::client::ClientError>();
@@ -53,7 +53,7 @@ fn types_users_hold_are_debug() {
     assert_debug::<turbomcp_server::SessionStore>();
     assert_debug::<turbomcp_server::TaskStore>();
     assert_debug::<turbomcp_service::outbound::WriterGuard>();
-    assert_debug::<turbomcp_transport_stdio::StdioTransport>();
+    assert_debug::<turbomcp_service::io::StdioTransport>();
 
     #[cfg(feature = "client")]
     {
@@ -78,5 +78,5 @@ fn generic_wrappers_are_debug_without_bounding_their_parameter() {
     assert_debug::<turbomcp_server::ServerBuilder<NotDebug>>();
     assert_debug::<turbomcp_server::VersionDispatcher<NotDebug>>();
     assert_debug::<turbomcp_server::LegacySessionAdapter<NotDebug>>();
-    assert_debug::<turbomcp_transport_stdio::LineTransport<NotDebug, NotDebug, NotDebug>>();
+    assert_debug::<turbomcp_service::io::LineTransport<NotDebug, NotDebug, NotDebug>>();
 }

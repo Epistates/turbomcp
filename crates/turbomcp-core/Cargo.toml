@@ -14,17 +14,27 @@ categories = ["no-std", "encoding"]
 
 [dependencies]
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
-serde_json = { version = "1", default-features = false, features = ["alloc"] }
+# `float_roundtrip`: correctly rounded float parsing, so the codec does not
+# gain an ulp on values like 2.5e-308 (the workspace build enables it anyway).
+serde_json = { version = "1", default-features = false, features = ["alloc", "float_roundtrip"] }
 hashbrown = { version = "0.17", features = ["serde"] }
+bytes = { version = "1.11.1", default-features = false }
 # std-only: CancellationToken integration lives behind the `std` feature.
 tokio-util = { workspace = true, optional = true }
+
+# SIMD-accelerated JSON for the codec; native x86_64/aarch64 only.
+[target.'cfg(any(target_arch = "x86_64", target_arch = "aarch64"))'.dependencies]
+sonic-rs = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["std"] }
 
 [features]
 default = ["std"]
-std = ["serde/std", "serde_json/std", "dep:tokio-util"]
+std = ["serde/std", "serde_json/std", "bytes/std", "dep:tokio-util"]
+# sonic-rs as the codec's `DefaultCodec` on native x86_64/aarch64 (serde_json
+# stays the portable baseline, and the only codec on wasm32).
+simd = ["std", "dep:sonic-rs"]
 # Construct RequestContext in downstream unit tests (F-SC-4 / round-3).
 test-util = []
 

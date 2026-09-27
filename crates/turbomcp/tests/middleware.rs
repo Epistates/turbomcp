@@ -26,7 +26,7 @@ use turbomcp::{
     DefaultCodec, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, LegacySessionAdapter,
     ProtocolError, VersionDispatcher, mcp_to_jsonrpc_error, serve,
 };
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 // ---- a server covering every dispatched method -------------------------------
 

@@ -7,7 +7,7 @@
 use serde_json::{Map, json};
 use tokio::io::{BufReader, split};
 use turbomcp_client::{Client, ClientBuilder, ClientError, ConnectMode};
-use turbomcp_codec::DefaultCodec;
+use turbomcp_core::codec::DefaultCodec;
 use turbomcp_core::{Implementation, McpError, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
@@ -16,7 +16,7 @@ use turbomcp_server::{
     MethodRouter, ReadResourceContext, VersionDispatcher, WithCompletions, WithPrompts,
     WithResources, WithTools,
 };
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 #[derive(Clone)]
 struct Kitchen;

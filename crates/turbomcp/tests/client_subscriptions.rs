@@ -18,7 +18,7 @@ use turbomcp::client::{
 };
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 #[derive(Clone)]
 struct Watched;

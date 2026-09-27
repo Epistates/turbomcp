@@ -301,8 +301,8 @@ test:
   cargo clippy {{workspace_flags}} --all-targets --all-features -- -D warnings
   echo "Step 3/8: Verifying the no-default-features facade still lints..."
   cargo clippy -p turbomcp -- -D warnings
-  echo "Step 4/8: Testing non-default foundation configs (no_std core/protocol, no-simd codec)..."
-  cargo test -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features
+  echo "Step 4/8: Testing non-default foundation configs (no_std core/protocol, serde_json codec)..."
+  cargo test -p turbomcp-core -p turbomcp-protocol --no-default-features
   echo "Step 5/8: Checking formatting on all code (workspace + excluded crates)..."
   cargo fmt --all -- --check
   # `--all` stops at the workspace, and the excluded crates have their own CI
@@ -313,7 +313,7 @@ test:
   cd fuzz && cargo fmt -- --check
   echo "Step 6/8: Verifying wasm portability (no_std foundation, default + no-default)..."
   cargo build -p turbomcp-core -p turbomcp-protocol --target wasm32-unknown-unknown
-  cargo build -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features --target wasm32-unknown-unknown
+  cargo build -p turbomcp-core -p turbomcp-protocol --no-default-features --target wasm32-unknown-unknown
   echo "Step 7/8: Building docs the way docs.rs does (nightly, --cfg docsrs)..."
   just docs-rs
   echo "Step 8/8: Checking generated artifacts still match their sources..."

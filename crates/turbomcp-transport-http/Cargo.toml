@@ -16,7 +16,6 @@ categories = ["network-programming", "web-programming::http-server", "asynchrono
 # CIDR ranges for trusted proxies.
 ipnet = { workspace = true }
 turbomcp-core = { workspace = true }
-turbomcp-codec = { workspace = true }
 turbomcp-service = { workspace = true }
 axum = { workspace = true }
 mime = { workspace = true }

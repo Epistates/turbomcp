@@ -1,23 +1,20 @@
-//! # turbomcp-transport-stdio
-//!
 //! The STDIO transport: newline-delimited JSON frames over a process's stdin
 //! (inbound) and stdout (outbound) — the transport Claude Desktop and most local
-//! MCP launchers speak. Framing (split on `\n`) is this crate's job; turning a
+//! MCP launchers speak. Framing (split on `\n`) is this module's job; turning a
 //! frame's bytes into a value is the [`Codec`]'s.
 //!
 //! The framing lives in [`LineTransport`], generic over any async byte streams,
 //! so it is unit-testable over an in-memory pipe. [`StdioTransport`]/[`stdio`]
 //! specialize it to stdin/stdout; [`serve_stdio`] pairs it with a service (the
 //! dispatcher).
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
 
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, Stdin, Stdout,
 };
-use turbomcp_codec::{Codec, CodecError, DefaultCodec, decode_message};
+use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, decode_message};
 use turbomcp_core::{InvalidFrame, JsonRpcMessage};
-use turbomcp_service::{McpService, ServeConfig, Transport};
+
+use crate::{McpService, ProtocolError, ServeConfig, Transport};
 
 /// Failures from the line transport.
 #[derive(Debug, thiserror::Error)]
@@ -276,12 +273,12 @@ pub fn stdio() -> StdioTransport {
 ///
 /// # Errors
 /// Propagates transport and service errors from the driver loop.
-pub async fn serve_stdio<S>(service: S) -> Result<(), turbomcp_service::ProtocolError>
+pub async fn serve_stdio<S>(service: S) -> Result<(), ProtocolError>
 where
     S: McpService + Clone,
     S::Future: Send + 'static,
 {
-    turbomcp_service::serve(stdio(), service).await
+    crate::serve(stdio(), service).await
 }
 
 /// Serve `service` over stdin/stdout with explicit [`ServeConfig`] — the entry
@@ -289,15 +286,12 @@ where
 ///
 /// # Errors
 /// Propagates transport and service errors from the driver loop.
-pub async fn serve_stdio_with<S>(
-    service: S,
-    config: ServeConfig,
-) -> Result<(), turbomcp_service::ProtocolError>
+pub async fn serve_stdio_with<S>(service: S, config: ServeConfig) -> Result<(), ProtocolError>
 where
     S: McpService + Clone,
     S::Future: Send + 'static,
 {
-    turbomcp_service::serve_with(stdio(), service, config).await
+    crate::serve_with(stdio(), service, config).await
 }
 
 #[cfg(test)]

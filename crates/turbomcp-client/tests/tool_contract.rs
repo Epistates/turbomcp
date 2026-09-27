@@ -8,8 +8,8 @@
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
 use turbomcp_client::{Client, ClientBuilder, ClientError, ConnectMode};
-use turbomcp_codec::DefaultCodec;
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_core::codec::DefaultCodec;
+use turbomcp_service::io::LineTransport;
 
 /// Answer each request with `respond(method, frame)`'s `{"result": …}` body;
 /// notifications are consumed silently.

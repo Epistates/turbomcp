@@ -11,7 +11,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_stdio::{LineTransport, StdioError};
+use turbomcp_service::io::{LineTransport, StdioError};
 
 #[derive(Clone)]
 struct Calculator;
@@ -67,7 +67,7 @@ async fn server_handles_discover_list_and_call_over_stdio_framing() {
     let transport = LineTransport::new(
         BufReader::new(server_rx),
         server_tx,
-        turbomcp_codec::SerdeJsonCodec,
+        turbomcp_core::codec::SerdeJsonCodec,
     );
 
     let server_task = tokio::spawn(turbomcp_service::serve(transport, dispatcher));
@@ -147,7 +147,7 @@ async fn malformed_frames_are_answered_and_the_session_survives() {
     let transport = LineTransport::new(
         BufReader::new(server_rx),
         server_tx,
-        turbomcp_codec::SerdeJsonCodec,
+        turbomcp_core::codec::SerdeJsonCodec,
     );
     let server_task = tokio::spawn(turbomcp_service::serve(transport, dispatcher));
 
@@ -202,7 +202,7 @@ async fn malformed_frame_is_a_recoverable_invalid_frame() {
     let mut transport = LineTransport::new(
         BufReader::new(server_rx),
         server_tx,
-        turbomcp_codec::SerdeJsonCodec,
+        turbomcp_core::codec::SerdeJsonCodec,
     );
 
     let (_client_rx, mut client_tx) = tokio::io::split(client);

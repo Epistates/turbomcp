@@ -10,6 +10,9 @@
 //! - [`ProtocolError`] — the service/transport boundary error, with the
 //!   canonical [`mcp_to_jsonrpc_error`] mapping for user errors.
 //! - [`TracingLayer`] — the first shared RPC middleware.
+//! - [`io`] — newline-delimited JSON-RPC over any byte stream
+//!   ([`LineTransport`](io::LineTransport)), specialized to stdin/stdout by
+//!   [`stdio`](io::stdio) and [`serve_stdio`](io::serve_stdio).
 //!
 //! User errors (`McpError`) are *not* `ProtocolError`s: they become JSON-RPC
 //! error responses inside the `Ok` arm. `ProtocolError` is for parse failures,
@@ -19,6 +22,7 @@
 
 mod auth;
 mod error;
+pub mod io;
 pub mod mcp_headers;
 mod middleware;
 pub mod outbound;
@@ -37,7 +41,7 @@ pub use serve::{ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
 pub use transport::{HttpFailure, Transport};
 
-pub use tokio_util::sync::CancellationToken;
+pub use turbomcp_core::CancellationToken;
 
 use turbomcp_core::JsonRpcMessage;
 

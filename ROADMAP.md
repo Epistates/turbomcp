@@ -49,7 +49,7 @@ explicit contracts before support can be claimed.
 
 **The Apps extension** (SEP-1865), currently a skeleton crate.
 
-**Fewer crates.** There are 16 workspace members and two excluded verification crates. Package boundaries must be settled before stable. Removing or moving a public
+**Fewer crates.** There are 13 workspace members and two excluded verification crates (the codec now lives in `turbomcp-core`, the stdio transport in `turbomcp-service`, and the Apps skeleton is out until it is implemented). Package boundaries must be settled before stable. Removing or moving a public
 subcrate API is a breaking change even if the facade stays unchanged.
 
 ## Not planned

@@ -13,14 +13,14 @@ use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
 use turbomcp_client::{Client, ClientBuilder, ClientError, ConnectMode};
-use turbomcp_codec::DefaultCodec;
+use turbomcp_core::codec::DefaultCodec;
 use turbomcp_core::{CancellationToken, Implementation, JsonRpcError, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, LegacySessionAdapter, ListToolsContext, McpServerCore, MethodRouter,
     TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStore, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 // ---- against a real server -----------------------------------------------------
 

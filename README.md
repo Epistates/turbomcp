@@ -98,13 +98,12 @@ users need, so a typical dependency is just `turbomcp`.
 |---|---|
 | `turbomcp` | Main SDK facade — re-exports, prelude, examples |
 | `turbomcp-macros` | `#[server]` / `#[tool]` / `#[resource]` / `#[prompt]` |
-| `turbomcp-core` | `no_std` foundation: `McpError`, `ProtocolVersion`, JSON-RPC, `_meta` |
-| `turbomcp-codec` | Wire codec: bytes ↔ `JsonRpcMessage` (serde_json baseline, opt-in SIMD via sonic-rs) |
+| `turbomcp-core` | `no_std` foundation: `McpError`, `ProtocolVersion`, JSON-RPC, `_meta`, the wire codec (serde_json, opt-in SIMD via sonic-rs) |
 | `turbomcp-protocol` | MCP protocol: neutral types, date-versioned wire shapes, version dispatch |
-| `turbomcp-service` | The `tower`-shaped protocol seam, transport trait, shared RPC middleware |
+| `turbomcp-service` | The `tower`-shaped protocol seam, transport trait, shared RPC middleware, stdio / line-delimited transport |
 | `turbomcp-server` | Handler registry, dispatcher, `ServerBuilder`, graceful shutdown |
 | `turbomcp-client` | Typed client: handshake, version negotiation, neutral API |
-| `turbomcp-transport-stdio` / `-http` / `-ws` | Transport implementations |
+| `turbomcp-transport-http` / `-ws` | Network transports |
 | `turbomcp-auth` | OAuth 2.1 resource-server auth (bearer validation, RFC 9728) |
 | `turbomcp-telemetry` | OpenTelemetry tracing (W3C `_meta` propagation, PII-safe spans) |
 | `turbomcp-ext-tasks` | Draft Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) |

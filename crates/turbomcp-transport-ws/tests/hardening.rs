@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::Service;
-use turbomcp_codec::DefaultCodec;
+use turbomcp_core::codec::DefaultCodec;
 use turbomcp_core::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, meta};
 use turbomcp_service::{AuthDecision, AuthFuture, HttpAuthenticator, ProtocolError, Transport};
 use turbomcp_transport_ws::{WebSocketTransport, WsConfig, serve_websocket_with};

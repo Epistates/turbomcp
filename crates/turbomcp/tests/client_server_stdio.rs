@@ -12,7 +12,7 @@ use turbomcp::client::{Client, ClientBuilder, ConnectMode};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
 use turbomcp_core::ProtocolVersion;
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 #[derive(Clone)]
 struct Demo;

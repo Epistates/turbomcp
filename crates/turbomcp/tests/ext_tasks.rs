@@ -15,7 +15,7 @@ use turbomcp::client::{Client, ClientBuilder, ConnectMode, ElicitationHandler, a
 use turbomcp::ext_tasks::{EXTENSION_ID, TasksExtension};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 #[derive(Clone)]
 struct Workshop;

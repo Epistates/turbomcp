@@ -12,7 +12,7 @@ use tower::ServiceExt; // oneshot
 use turbomcp::http::{HttpConfig, router};
 use turbomcp::prelude::*;
 use turbomcp::{SerdeJsonCodec, serve};
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 #[derive(Clone)]
 struct Demo;

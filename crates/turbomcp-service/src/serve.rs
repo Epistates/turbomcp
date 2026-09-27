@@ -47,7 +47,7 @@ use futures::FutureExt as _;
 use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
-use tokio_util::sync::CancellationToken;
+use turbomcp_core::CancellationToken;
 use turbomcp_core::{JsonRpcMessage, meta};
 
 use crate::{McpService, ProtocolError, Transport, catch_handler_panic};

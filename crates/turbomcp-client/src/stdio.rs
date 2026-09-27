@@ -3,8 +3,8 @@
 
 use tokio::io::BufReader;
 use tokio::process::{Child, Command};
-use turbomcp_codec::DefaultCodec;
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_core::codec::DefaultCodec;
+use turbomcp_service::io::LineTransport;
 
 use crate::client::{Client, ClientBuilder};
 use crate::error::{ClientError, ClientResult};

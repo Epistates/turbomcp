@@ -165,8 +165,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
- "axum-macros",
- "base64 0.22.1",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -185,10 +183,8 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
- "sha1 0.10.6",
  "sync_wrapper",
  "tokio",
- "tokio-tungstenite 0.29.0",
  "tower",
  "tower-layer",
  "tower-service",
@@ -212,17 +208,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "axum-macros"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7aa268c23bfbbd2c4363b9cd302a4f504fb2a9dfe7e3451d66f35dd392e20aca"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
 ]
 
 [[package]]
@@ -2742,13 +2727,11 @@ version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
 dependencies = [
- "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive 1.2.1",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -2911,17 +2894,6 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
-]
-
-[[package]]
-name = "sha1"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.2.17",
- "digest 0.10.7",
 ]
 
 [[package]]
@@ -3374,18 +3346,6 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
-dependencies = [
- "futures-util",
- "log",
- "tokio",
- "tungstenite 0.29.0",
-]
-
-[[package]]
-name = "tokio-tungstenite"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
@@ -3397,7 +3357,7 @@ dependencies = [
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
- "tungstenite 0.30.0",
+ "tungstenite",
 ]
 
 [[package]]
@@ -3704,22 +3664,6 @@ dependencies = [
 
 [[package]]
 name = "tungstenite"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
-dependencies = [
- "bytes",
- "data-encoding",
- "http",
- "httparse",
- "log",
- "rand 0.9.4",
- "sha1 0.10.6",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "tungstenite"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
@@ -3732,7 +3676,7 @@ dependencies = [
  "rand 0.10.2",
  "rustls",
  "rustls-pki-types",
- "sha1 0.11.0",
+ "sha1",
  "thiserror 2.0.20",
 ]
 
@@ -3755,7 +3699,6 @@ dependencies = [
  "trybuild",
  "turbomcp-auth",
  "turbomcp-client",
- "turbomcp-codec",
  "turbomcp-core",
  "turbomcp-ext-tasks",
  "turbomcp-macros",
@@ -3764,7 +3707,6 @@ dependencies = [
  "turbomcp-service",
  "turbomcp-telemetry",
  "turbomcp-transport-http",
- "turbomcp-transport-stdio",
  "turbomcp-transport-ws",
 ]
 
@@ -3808,24 +3750,10 @@ dependencies = [
  "tokio-util",
  "tracing",
  "turbomcp-auth",
- "turbomcp-codec",
  "turbomcp-core",
  "turbomcp-protocol",
  "turbomcp-server",
  "turbomcp-service",
- "turbomcp-transport-stdio",
-]
-
-[[package]]
-name = "turbomcp-codec"
-version = "4.0.0-alpha.5"
-dependencies = [
- "bytes",
- "serde",
- "serde_json",
- "sonic-rs",
- "thiserror 2.0.20",
- "turbomcp-core",
 ]
 
 [[package]]
@@ -3845,17 +3773,12 @@ dependencies = [
 name = "turbomcp-core"
 version = "4.0.0-alpha.5"
 dependencies = [
+ "bytes",
  "hashbrown 0.17.1",
  "serde",
  "serde_json",
+ "sonic-rs",
  "tokio-util",
-]
-
-[[package]]
-name = "turbomcp-ext-apps"
-version = "4.0.0-alpha.5"
-dependencies = [
- "turbomcp-core",
 ]
 
 [[package]]
@@ -3938,7 +3861,6 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
- "turbomcp-codec",
  "turbomcp-core",
 ]
 
@@ -3983,27 +3905,11 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "turbomcp-auth",
- "turbomcp-codec",
  "turbomcp-core",
  "turbomcp-protocol",
  "turbomcp-server",
  "turbomcp-service",
  "uuid",
-]
-
-[[package]]
-name = "turbomcp-transport-stdio"
-version = "4.0.0-alpha.5"
-dependencies = [
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "turbomcp-codec",
- "turbomcp-core",
- "turbomcp-protocol",
- "turbomcp-server",
- "turbomcp-service",
 ]
 
 [[package]]
@@ -4014,10 +3920,9 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
- "tokio-tungstenite 0.30.0",
+ "tokio-tungstenite",
  "tower",
  "tracing",
- "turbomcp-codec",
  "turbomcp-core",
  "turbomcp-service",
 ]

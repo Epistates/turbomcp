@@ -9,13 +9,13 @@
 use serde_json::{Value, json};
 use tokio::io::{BufReader, split};
 use turbomcp_client::{ClientError, Connection};
-use turbomcp_codec::DefaultCodec;
+use turbomcp_core::codec::DefaultCodec;
 use turbomcp_core::{Implementation, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 #[derive(Clone)]
 struct Calculator;

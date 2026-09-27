@@ -1,5 +1,3 @@
-//! # turbomcp-codec
-//!
 //! The wire codec layer: `bytes` ↔ typed values. The transport hands the codec
 //! *complete* messages (line-delimited for stdio, SSE-event-framed for HTTP);
 //! streaming/framing is the transport's job, not the codec's.
@@ -13,29 +11,39 @@
 //!
 //! All codecs are version-independent: they serialize whatever
 //! [`serde::Serialize`] value they are given. The per-version typed modules and
-//! the [`turbomcp_core::JsonRpcMessage`] envelope sit above this layer.
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
+//! the [`JsonRpcMessage`] envelope sit above this layer.
+
+use alloc::string::{String, ToString};
 
 use bytes::Bytes;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use turbomcp_core::{InvalidFrame, JsonRpcMessage};
+
+use crate::{InvalidFrame, JsonRpcMessage};
 
 /// Errors produced while encoding to or decoding from the wire.
 ///
 /// A transport decoding a *message* uses [`decode_message`] instead, which
 /// says which of the two JSON-RPC errors a bad frame is owed.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum CodecError {
     /// The value could not be serialized to the wire format.
-    #[error("encode failed: {0}")]
     Encode(String),
     /// The bytes could not be deserialized into the target type.
-    #[error("decode failed: {0}")]
     Decode(String),
 }
+
+impl core::fmt::Display for CodecError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Encode(e) => write!(f, "encode failed: {e}"),
+            Self::Decode(e) => write!(f, "decode failed: {e}"),
+        }
+    }
+}
+
+impl core::error::Error for CodecError {}
 
 /// Bytes ↔ typed value, in a single wire format.
 ///
@@ -130,7 +138,8 @@ pub type DefaultCodec = SerdeJsonCodec;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turbomcp_core::{JsonRpcMessage, JsonRpcRequest};
+    use crate::{JsonRpcMessage, JsonRpcRequest};
+    use alloc::{vec, vec::Vec};
 
     fn sample() -> JsonRpcMessage {
         JsonRpcRequest::new(1, "tools/list", Some(serde_json::json!({"cursor": "abc"}))).into()
@@ -174,7 +183,7 @@ mod tests {
 
     #[test]
     fn decode_message_says_which_error_a_bad_frame_is_owed() {
-        use turbomcp_core::{RequestId, codes};
+        use crate::{RequestId, codes};
         let codec = DefaultCodec::default();
 
         let garbage = decode_message(&codec, b"Server starting...").unwrap_err();

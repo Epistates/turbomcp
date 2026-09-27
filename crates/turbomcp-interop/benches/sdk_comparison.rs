@@ -31,7 +31,7 @@ use tokio::io::{BufReader, split};
 use turbomcp::client::{Client, ClientBuilder, ConnectMode};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_service::io::LineTransport;
 
 // ---- an rmcp server with one `add` tool (mirrors the interop test) ----------
 

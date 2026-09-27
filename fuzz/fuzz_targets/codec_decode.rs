@@ -4,8 +4,8 @@
 //! and any decoded value must re-encode cleanly (round-trip stability).
 
 use libfuzzer_sys::fuzz_target;
-use turbomcp_codec::{Codec, SerdeJsonCodec};
 use turbomcp_core::JsonRpcMessage;
+use turbomcp_core::codec::{Codec, SerdeJsonCodec};
 
 fuzz_target!(|data: &[u8]| {
     let codec = SerdeJsonCodec;

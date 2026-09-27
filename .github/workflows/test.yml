@@ -331,10 +331,10 @@ jobs:
     # (std feature disabled, codec without sonic-rs). Guards the cfg(not(std))
     # code paths that the default build never compiles.
     - name: Build no-default-features foundation for wasm32
-      run: cargo build -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features --target wasm32-unknown-unknown
+      run: cargo build -p turbomcp-core -p turbomcp-protocol --no-default-features --target wasm32-unknown-unknown
 
     - name: Test non-default foundation configs on the host
-      run: cargo test -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features
+      run: cargo test -p turbomcp-core -p turbomcp-protocol --no-default-features
 
   coverage:
     name: Coverage
@@ -556,10 +556,9 @@ jobs:
   semver:
     name: SemVer (public API)
     runs-on: ubuntu-latest
-    # Self-activating: cargo-semver-checks needs a published baseline in the
-    # same major to compare against, and 4.x has not shipped yet. Until it has,
-    # the step reports that and passes; the first 4.x release on crates.io turns
-    # it into a real gate with no further edits.
+    # Each crate is compared with its latest published 4.x. While the version
+    # is a pre-release, semver-checks treats the bump as major and passes; it
+    # becomes a real gate for patch and minor releases from 4.0.0 on.
     steps:
     - uses: actions/checkout@v7
 
@@ -571,18 +570,27 @@ jobs:
       with:
         tool: cargo-semver-checks
 
-    - name: Check the public API against the last published 4.x
+    - name: Check every published crate against its last published 4.x
+      # Every published crate's API is public, not just the facade's: a user
+      # can depend on turbomcp-server directly, and VERSIONING.md promises
+      # them the same review. A crate with no 4.x on crates.io yet (new, or
+      # never released) has nothing to compare against and is skipped.
       run: |
-        BASELINE=$(curl -sSf -H 'User-Agent: turbomcp-ci (nick@epistates.com)' \
-          https://crates.io/api/v1/crates/turbomcp \
-          | jq -r '[.versions[] | select(.yanked == false) | .num
-                   | select(startswith("4."))] | first // empty')
-        if [ -z "$BASELINE" ]; then
-          echo "No published 4.x baseline yet — nothing to compare against."
-          echo "This job becomes a real gate on the first 4.x crates.io release."
-          exit 0
-        fi
-        echo "Comparing the public API against turbomcp $BASELINE"
-        cargo semver-checks check-release \
-          --package turbomcp \
-          --baseline-version "$BASELINE"
+        crates=$(cargo metadata --no-deps --format-version 1 \
+          | jq -r '.packages[] | select(.publish != []) | .name')
+        failed=0
+        for crate in $crates; do
+          baseline=$(curl -sSf -H 'User-Agent: turbomcp-ci (nick@epistates.com)' \
+            "https://crates.io/api/v1/crates/$crate" 2>/dev/null \
+            | jq -r '[.versions[] | select(.yanked == false) | .num
+                     | select(startswith("4."))] | first // empty')
+          if [ -z "$baseline" ]; then
+            echo "::notice::$crate has no published 4.x baseline; skipped"
+            continue
+          fi
+          echo "::group::$crate against $baseline"
+          cargo semver-checks check-release --package "$crate" \
+            --baseline-version "$baseline" || failed=1
+          echo "::endgroup::"
+        done
+        exit $failed

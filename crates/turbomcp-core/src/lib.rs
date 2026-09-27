@@ -17,6 +17,8 @@
 //! - [`RequestContext`] — read-only request metadata + [`Extensions`] type-map.
 //! - [`CancellationToken`] — always-present per-request cancellation.
 //! - [`meta`] — `_meta` well-known keys and propagation policy.
+//! - [`codec`] — bytes ↔ [`JsonRpcMessage`] (serde_json, or sonic-rs with
+//!   `simd`), and the classification of a frame that isn't a message.
 //!
 //! Per-version *semantic* wire types (`CallToolRequest`, …) are codegenned into
 //! `turbomcp-protocol`, not here.
@@ -27,6 +29,7 @@
 extern crate alloc;
 
 mod cancellation;
+pub mod codec;
 mod context;
 mod error;
 mod identity;

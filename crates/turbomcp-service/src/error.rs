@@ -1,7 +1,7 @@
 //! The service-layer error type and the canonical `McpError → JsonRpcError`
 //! mapping used everywhere a user error must become a wire response.
 
-use turbomcp_codec::CodecError;
+use turbomcp_core::codec::CodecError;
 use turbomcp_core::{JsonRpcError, JsonRpcResponse, McpError, ProtocolVersion, RequestId};
 
 /// Errors at the service/transport boundary — *not* normal protocol responses.

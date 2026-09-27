@@ -14,7 +14,6 @@ categories = ["network-programming", "web-programming::websocket", "asynchronous
 
 [dependencies]
 turbomcp-core = { workspace = true, features = ["std"] }
-turbomcp-codec = { workspace = true }
 turbomcp-service = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tokio = { workspace = true, features = ["rt", "net", "time"] }

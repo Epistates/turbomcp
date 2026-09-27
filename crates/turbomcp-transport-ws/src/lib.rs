@@ -62,7 +62,7 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 use tokio_tungstenite::tungstenite::protocol::frame::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
-use turbomcp_codec::{Codec, CodecError, DefaultCodec, decode_message};
+use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, decode_message};
 use turbomcp_core::{InvalidFrame, JsonRpcMessage};
 use turbomcp_service::{
     AuthDecision, HttpAuthenticator, McpService, ProtocolError, ServeConfig, Transport,

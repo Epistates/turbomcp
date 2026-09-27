@@ -134,7 +134,7 @@ pub use turbomcp_server::{ComponentKind, Visibility, VisibilityPolicy, VisibleCo
 
 // ---- service seam + codec ---------------------------------------------------
 
-pub use turbomcp_codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
+pub use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
 pub use turbomcp_service::{
     CancellationToken, McpService, ProtocolError, ServeConfig, Transport, serve, serve_with,
 };
@@ -233,7 +233,7 @@ pub use schemars;
 /// stamps its session onto later requests. Wrap the dispatcher in
 /// [`LegacySessionAdapter`] (outermost, around any middleware), or use
 /// [`ServeStdio::run_stdio`], which does.
-pub use turbomcp_transport_stdio::{serve_stdio, serve_stdio_with, stdio};
+pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, stdio};
 
 /// One-call stdio serving for a [`ServerBuilder`] (the value
 /// `MyServer.into_server()` produces), dual-stack like the macro's

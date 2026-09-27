@@ -95,7 +95,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use serde_json::json;
 use tower_http::cors::CorsLayer;
-use turbomcp_codec::{Codec, DefaultCodec};
+use turbomcp_core::codec::{Codec, DefaultCodec};
 use turbomcp_core::{
     InvalidFrame, JsonRpcMessage, JsonRpcResponse, ProtocolVersion, RequestId, meta,
 };
@@ -797,7 +797,7 @@ where
     };
     let subject = authenticated.as_ref().and_then(|a| a.subject.clone());
 
-    let mut msg = match turbomcp_codec::decode_message(&state.codec, &body) {
+    let mut msg = match turbomcp_core::codec::decode_message(&state.codec, &body) {
         Ok(msg) => msg,
         Err(bad) => return invalid_frame_response(&bad),
     };

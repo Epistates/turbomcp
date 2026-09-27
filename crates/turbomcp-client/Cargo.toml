@@ -25,9 +25,7 @@ bytes = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
 turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-protocol = { workspace = true }
-turbomcp-codec = { workspace = true }
 turbomcp-service = { workspace = true }
-turbomcp-transport-stdio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

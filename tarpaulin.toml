@@ -39,7 +39,6 @@ include = [
     "turbomcp/*",
     "turbomcp-macros/*",
     "turbomcp-core/*",
-    "turbomcp-codec/*",
     "turbomcp-protocol/*",
     "turbomcp-service/*",
     "turbomcp-server/*",
@@ -47,7 +46,6 @@ include = [
     "turbomcp-auth/*",
     "turbomcp-telemetry/*",
     "turbomcp-ext-tasks/*",
-    "turbomcp-transport-stdio/*",
     "turbomcp-transport-http/*"
 ]
 

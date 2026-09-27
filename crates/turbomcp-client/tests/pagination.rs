@@ -8,8 +8,8 @@
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
 use turbomcp_client::{Client, ClientBuilder, ClientError};
-use turbomcp_codec::SerdeJsonCodec;
-use turbomcp_transport_stdio::LineTransport;
+use turbomcp_core::codec::SerdeJsonCodec;
+use turbomcp_service::io::LineTransport;
 
 /// Spawn a line-delimited scripted server (see `negotiation_and_recovery.rs`).
 fn spawn_scripted<F>(server_io: tokio::io::DuplexStream, mut respond: F)
