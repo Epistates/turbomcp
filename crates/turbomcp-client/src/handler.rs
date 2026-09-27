@@ -138,6 +138,9 @@ pub trait NotificationHandler: Send + Sync + 'static {
     async fn on_notification(&self, method: String, params: Option<Value>);
 }
 
+/// How many URL-mode elicitation ids a client remembers awaiting completion.
+const MAX_OUTSTANDING_ELICITATIONS: usize = 1024;
+
 /// The handlers a client registered, and the capability declaration derived
 /// from them.
 ///
@@ -195,8 +198,23 @@ impl ClientHandlers {
     /// the completion may follow the request immediately, and registering on
     /// the task would lose the race for exactly the server that is quickest to
     /// tell us the user is done.
-    pub(crate) fn expect_elicitation(&self, method: &str, params: Option<&Value>) {
-        if method != request::ELICITATION_CREATE {
+    pub(crate) fn expect_elicitation(
+        &self,
+        version: &ProtocolVersion,
+        method: &str,
+        params: Option<&Value>,
+    ) {
+        // Only an id a completion could ever arrive for: `elicitation/complete`
+        // exists on 2025-11-25 alone, and a URL-mode request this client will
+        // refuse (it declared no URL mode) completes nothing. Recording those
+        // grew the set without bound, at the server's pace.
+        if method != request::ELICITATION_CREATE
+            || *version != ProtocolVersion::V2025_11_25
+            || !self
+                .elicitation
+                .as_ref()
+                .is_some_and(|h| h.supports_url_mode())
+        {
             return;
         }
         let Some(params) = params else { return };
@@ -204,10 +222,18 @@ impl ClientHandlers {
             return;
         }
         if let Some(id) = params.get("elicitationId").and_then(Value::as_str) {
-            self.outstanding_elicitations
+            let mut outstanding = self
+                .outstanding_elicitations
                 .lock()
-                .expect("elicitation registry poisoned")
-                .insert(id.to_owned());
+                .expect("elicitation registry poisoned");
+            // A completion is a MAY, so some ids are never claimed; a bound
+            // keeps a long-lived client from holding them all.
+            if outstanding.len() >= MAX_OUTSTANDING_ELICITATIONS
+                && let Some(oldest) = outstanding.iter().next().cloned()
+            {
+                outstanding.remove(&oldest);
+            }
+            outstanding.insert(id.to_owned());
         }
     }
 
@@ -753,8 +779,12 @@ mod must_tests {
             "url": "https://e.example",
             "elicitationId": "eid-1",
         });
-        handlers.expect_elicitation(request::ELICITATION_CREATE, Some(&params));
-        dispatch(&handlers, request::ELICITATION_CREATE, Some(params))
+        handlers.expect_elicitation(
+            &ProtocolVersion::V2025_11_25,
+            request::ELICITATION_CREATE,
+            Some(&params),
+        );
+        dispatch(&handlers, request::ELICITATION_CREATE, Some(params.clone()))
             .await
             .expect("a url-mode client answers this");
 
@@ -763,6 +793,29 @@ mod must_tests {
             !handlers.claim_elicitation("eid-1"),
             "and only once: the second notification is already-completed"
         );
+
+        // No completion can come on 2026-07-28, which has no
+        // `elicitation/complete`, so nothing is remembered there.
+        handlers.expect_elicitation(
+            &ProtocolVersion::V2026_07_28,
+            request::ELICITATION_CREATE,
+            Some(&params),
+        );
+        assert!(!handlers.claim_elicitation("eid-1"));
+    }
+
+    /// A client that declared no URL mode refuses URL-mode requests, so no
+    /// completion can follow; remembering their ids grew the set at the
+    /// server's pace.
+    #[test]
+    fn a_client_without_url_mode_remembers_no_elicitation_ids() {
+        let handlers = ClientHandlers::default();
+        handlers.expect_elicitation(
+            &ProtocolVersion::V2025_11_25,
+            request::ELICITATION_CREATE,
+            Some(&json!({ "mode": "url", "elicitationId": "eid-2" })),
+        );
+        assert!(!handlers.claim_elicitation("eid-2"));
     }
 
     /// Roots that are not `file://` URIs never reach the server: the scheme is

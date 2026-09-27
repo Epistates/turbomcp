@@ -38,8 +38,10 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::{AbortHandle, JoinSet};
 use turbomcp_core::{
-    JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, ProtocolVersion, RequestId, meta,
+    JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    ProtocolVersion, RequestId, meta,
 };
 use turbomcp_protocol::methods::{notification, request};
 use turbomcp_service::Transport;
@@ -403,16 +405,22 @@ async fn actor<T>(
 {
     let (shutdown, done) = lifecycle;
     let _done = done.drop_guard();
-    let mut callbacks = tokio::task::JoinSet::new();
     // The `io.turbomcp.internal/*` signals exist for Streamable HTTP, which
     // turns them into headers and strips them itself. Any other transport
     // would ship this crate's bookkeeping to a peer that has never heard of
     // it, so the driver takes them off on the way out.
     let strip_internal_meta = !transport.consumes_internal_meta();
+    let mut dispatch = Dispatch::new(&state.handler, transport.consumes_internal_meta());
     loop {
         tokio::select! {
             () = shutdown.cancelled() => break,
-            Some(_) = callbacks.join_next(), if !callbacks.is_empty() => {},
+            Some(finished) = dispatch.requests.join_next(), if !dispatch.requests.is_empty() => {
+                // An aborted task (the server cancelled it) was already
+                // forgotten when it was aborted.
+                if let Ok(id) = finished {
+                    dispatch.inflight.remove(&id);
+                }
+            },
             // Outbound: a frame to put on the wire.
             out = outbound.recv() => {
                 match out {
@@ -442,15 +450,11 @@ async fn actor<T>(
             frame = transport.recv() => {
                 match frame {
                     Ok(Some(msg)) => {
-                        if callbacks.len() >= 128 && !matches!(msg, JsonRpcMessage::Response(_)) {
-                            tracing::warn!("client callback capacity exceeded; closing peer");
-                            break;
-                        }
                         let failure = match &msg {
                             JsonRpcMessage::Response(r) => transport.take_http_failure(&r.id),
                             _ => None,
                         };
-                        if let Some(reply) = route_inbound(msg, failure, &state, &mut callbacks) {
+                        if let Some(reply) = route_inbound(msg, failure, &state, &mut dispatch) {
                             tokio::select! {
                                 () = shutdown.cancelled() => break,
                                 result = tokio::time::timeout(Duration::from_secs(30), transport.send(reply)) => {
@@ -489,9 +493,73 @@ async fn actor<T>(
     // it, a long-lived server accumulates one session per client that ever
     // connected), and WebSocket sends its Close frame. Best-effort — the
     // connection is already going away, so a failure here has no one to tell.
-    callbacks.abort_all();
-    while callbacks.join_next().await.is_some() {}
+    dispatch.requests.abort_all();
+    while dispatch.requests.join_next().await.is_some() {}
+    if let Some(notifier) = dispatch.notifier.take() {
+        notifier.abort();
+    }
     let _ = tokio::time::timeout(Duration::from_secs(5), transport.close()).await;
+}
+
+/// How many server→client requests may be in handlers at once. Past it a
+/// request is answered `-32603` at once, rather than the connection closing.
+const MAX_INBOUND_REQUESTS: usize = 64;
+
+/// How many notifications may wait for the handler. Past it one is dropped
+/// with a warning, rather than the connection closing.
+const NOTIFICATION_QUEUE: usize = 1024;
+
+/// Where inbound work goes once the actor has read it.
+struct Dispatch {
+    /// Notifications, in arrival order, for the one task that delivers them.
+    /// Each used to be its own task, so progress could reach the handler at
+    /// 90% before 10%, and a burst past 128 closed the connection.
+    notes: Option<mpsc::Sender<(JsonRpcNotification, Option<String>)>>,
+    notifier: Option<tokio::task::JoinHandle<()>>,
+    /// Server→client requests in their handlers, each task yielding its id.
+    requests: JoinSet<RequestId>,
+    /// The same requests by id, so a `notifications/cancelled` can stop one.
+    inflight: HashMap<RequestId, AbortHandle>,
+    /// Whether the transport is Streamable HTTP, where on 2026-07-28 "The
+    /// client MUST NOT send JSON-RPC responses".
+    http: bool,
+}
+
+impl Dispatch {
+    fn new(handler: &ClientHandlers, http: bool) -> Self {
+        let (notes, notifier) = if handler.elicitation.is_some() || handler.notifications.is_some()
+        {
+            let (tx, rx) = mpsc::channel(NOTIFICATION_QUEUE);
+            let task = tokio::spawn(deliver_notifications(rx, handler.clone()));
+            (Some(tx), Some(task))
+        } else {
+            (None, None)
+        };
+        Self {
+            notes,
+            notifier,
+            requests: JoinSet::new(),
+            inflight: HashMap::new(),
+            http,
+        }
+    }
+}
+
+/// Hand each notification to the handlers, one at a time, in order.
+async fn deliver_notifications(
+    mut notes: mpsc::Receiver<(JsonRpcNotification, Option<String>)>,
+    handler: ClientHandlers,
+) {
+    while let Some((n, completed_elicitation)) = notes.recv().await {
+        // `elicitation/complete` reaches the elicitation handler's dedicated
+        // hook; everything reaches the notification observer.
+        if let (Some(h), Some(id)) = (&handler.elicitation, completed_elicitation) {
+            h.on_elicitation_complete(id).await;
+        }
+        if let Some(h) = &handler.notifications {
+            h.on_notification(n.method, n.params).await;
+        }
+    }
 }
 
 /// Route one inbound frame. Returns `Some(reply)` for an *inline* reply the
@@ -502,7 +570,7 @@ fn route_inbound(
     msg: JsonRpcMessage,
     failure: Option<turbomcp_service::HttpFailure>,
     state: &SessionState,
-    callbacks: &mut tokio::task::JoinSet<()>,
+    dispatch: &mut Dispatch,
 ) -> Option<JsonRpcMessage> {
     let SessionState {
         pending,
@@ -531,11 +599,20 @@ fn route_inbound(
             if let Some(cache) = cache {
                 cache.on_notification(&n.method, n.params.as_ref());
             }
-            // `elicitation/complete` reaches the elicitation handler's
-            // dedicated hook; everything reaches the notification observer.
-            // The two are registered independently, so each runs on its own.
-            let elicitation = handler.elicitation.clone();
-            let observer = handler.notifications.clone();
+            // "Receivers of cancellation notifications SHOULD: Stop processing
+            // the cancelled request; Free associated resources; Not send a
+            // response for the cancelled request." The server gave up on one
+            // of its own requests to us: stop the handler, and its reply with it.
+            if n.method == notification::CANCELLED
+                && let Some(id) = n
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("requestId"))
+                    .and_then(|id| serde_json::from_value::<RequestId>(id.clone()).ok())
+                && let Some(task) = dispatch.inflight.remove(&id)
+            {
+                task.abort();
+            }
             // "Clients MUST ignore completion notifications for unknown or
             // already-completed elicitation IDs." Claiming the id here, once,
             // is what makes both halves of that true: an id this client was
@@ -551,19 +628,18 @@ fn route_inbound(
                         .map(ToOwned::to_owned)
                 })
                 .flatten();
-            if elicitation.is_none() && observer.is_none() {
-                tracing::trace!(method = %n.method, "client received notification (no handler)");
-            } else {
-                callbacks.spawn(async move {
-                    if let Some(h) = elicitation
-                        && let Some(id) = recognized
+            match &dispatch.notes {
+                None => {
+                    tracing::trace!(method = %n.method, "client received notification (no handler)");
+                }
+                Some(notes) => {
+                    if let Err(mpsc::error::TrySendError::Full(_)) = notes.try_send((n, recognized))
                     {
-                        h.on_elicitation_complete(id).await;
+                        tracing::warn!(
+                            "notification handler is {NOTIFICATION_QUEUE} behind; dropped a notification"
+                        );
                     }
-                    if let Some(h) = observer {
-                        h.on_notification(n.method, n.params).await;
-                    }
-                });
+                }
             }
             None
         }
@@ -574,8 +650,31 @@ fn route_inbound(
         // asking a human something, which would defeat the point of a ping.
         // `2026-07-28` dropped `ping`; answering a server that sends it anyway
         // costs nothing and beats claiming the method does not exist.
+        JsonRpcMessage::Request(req)
+            if dispatch.http
+                && *negotiated
+                    .lock()
+                    .expect("negotiated version mutex poisoned")
+                    == ProtocolVersion::V2026_07_28 =>
+        {
+            // Only a non-compliant server sends a request here, and there is
+            // no way to answer it that the spec allows.
+            tracing::debug!(method = %req.method, "server request on a wire with no replies; ignored");
+            None
+        }
         JsonRpcMessage::Request(req) if req.method == request::PING => {
             Some(JsonRpcResponse::success(req.id, serde_json::json!({})).into())
+        }
+        JsonRpcMessage::Request(req) if dispatch.inflight.len() >= MAX_INBOUND_REQUESTS => {
+            tracing::warn!(method = %req.method, "too many server requests in flight; refusing one");
+            Some(JsonRpcMessage::Response(JsonRpcResponse::error(
+                req.id,
+                JsonRpcError {
+                    code: -32603,
+                    message: "client is busy: too many server requests in flight".to_owned(),
+                    data: None,
+                },
+            )))
         }
         JsonRpcMessage::Request(req) => match handler.is_empty() {
             // Dispatch on a task so a slow handler (user interaction) doesn't
@@ -587,14 +686,15 @@ fn route_inbound(
                 // Claim the id before the dispatch task starts: a server that
                 // answers its own URL-mode elicitation immediately would
                 // otherwise race the registration and lose the completion.
-                handler.expect_elicitation(&req.method, req.params.as_ref());
-                let handlers = handler.clone();
-                let weak_out = weak_out.clone();
                 let version = negotiated
                     .lock()
                     .expect("negotiated version mutex poisoned")
                     .clone();
-                callbacks.spawn(async move {
+                handler.expect_elicitation(&version, &req.method, req.params.as_ref());
+                let handlers = handler.clone();
+                let weak_out = weak_out.clone();
+                let request_id = req.id.clone();
+                let task = dispatch.requests.spawn(async move {
                     let id = req.id.clone();
                     // A user handler that panics used to take the reply down
                     // with it: the task unwound before the send below, and the
@@ -621,13 +721,15 @@ fn route_inbound(
                         })
                     });
                     let reply = match outcome {
-                        Ok(value) => JsonRpcResponse::success(id, value),
-                        Err(err) => JsonRpcResponse::error(id, err),
+                        Ok(value) => JsonRpcResponse::success(id.clone(), value),
+                        Err(err) => JsonRpcResponse::error(id.clone(), err),
                     };
                     if let Some(tx) = weak_out.upgrade() {
                         let _ = tx.send(JsonRpcMessage::Response(reply)).await;
                     }
+                    id
                 });
+                dispatch.inflight.insert(request_id, task);
                 None
             }
             // No handler configured: refuse politely rather than hang the server.

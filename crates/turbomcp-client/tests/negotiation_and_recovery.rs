@@ -678,18 +678,21 @@ async fn elicitation_complete_reaches_the_typed_hook() {
         let mut lines = BufReader::new(rd).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             let frame: Value = serde_json::from_str(&line).expect("valid json");
-            let Some(id) = frame.get("id").cloned() else {
-                continue;
-            };
-            if frame.get("method").and_then(Value::as_str) != Some("server/discover") {
+            let method = frame.get("method").and_then(Value::as_str);
+            if method == Some("initialize") {
+                let reply = json!({ "jsonrpc": "2.0", "id": frame["id"], "result": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "serverInfo": { "name": "ec", "version": "1.0" }
+                }});
+                wr.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
                 continue;
             }
-            let mut reply = json!({ "jsonrpc": "2.0", "id": id });
-            reply
-                .as_object_mut()
-                .unwrap()
-                .extend(discover_ok().as_object().unwrap().clone());
-            wr.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            // `elicitation/complete` exists on 2025-11-25 only, and a compliant
+            // server asks nothing before the client says it is initialized.
+            if method != Some("notifications/initialized") {
+                continue;
+            }
 
             // Only `eid-7` is ever asked of this client.
             let ask = json!({
@@ -723,7 +726,7 @@ async fn elicitation_complete_reaches_the_typed_hook() {
 
     let spy = CompletionSpy::default();
     let _client = ClientBuilder::new("ec", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Legacy)
         .with_elicitation(spy.clone())
         .with_notifications(spy.clone())
         .connect(transport_for(client_io))
@@ -830,4 +833,155 @@ async fn a_roots_client_declares_and_emits_list_changed() {
         }
     }
     panic!("no notifications/roots/list_changed; saw {seen:?}");
+}
+
+// ---- inbound ordering, overload and cancellation ------------------------------------
+
+/// Records progress values in the order the handler sees them; slow on
+/// purpose, so a burst piles up behind it.
+#[derive(Clone, Default)]
+struct ProgressSpy {
+    seen: Arc<Mutex<Vec<i64>>>,
+}
+
+#[async_trait]
+impl NotificationHandler for ProgressSpy {
+    async fn on_notification(&self, _method: String, params: Option<Value>) {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        if let Some(p) = params.and_then(|p| p["progress"].as_i64()) {
+            self.seen.lock().unwrap().push(p);
+        }
+    }
+}
+
+/// Each notification used to be its own task, so progress could reach the
+/// handler out of order, and a burst of more than 128 outstanding closed the
+/// connection. Now one task delivers them, in order, and a burst is just a
+/// queue.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn notifications_arrive_in_order_and_a_burst_does_not_disconnect() {
+    let (client_io, server_io) = tokio::io::duplex(1024 * 1024);
+    tokio::spawn(async move {
+        let (rd, mut wr) = split(server_io);
+        let mut lines = BufReader::new(rd).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let frame: Value = serde_json::from_str(&line).unwrap();
+            match frame.get("method").and_then(Value::as_str) {
+                Some("server/discover") => {
+                    let mut reply = json!({ "jsonrpc": "2.0", "id": frame["id"] });
+                    reply
+                        .as_object_mut()
+                        .unwrap()
+                        .extend(discover_ok().as_object().unwrap().clone());
+                    let mut out = format!("{reply}\n");
+                    for p in 0..300 {
+                        let note = json!({
+                            "jsonrpc": "2.0",
+                            "method": "notifications/progress",
+                            "params": { "progressToken": "t", "progress": p },
+                        });
+                        out.push_str(&format!("{note}\n"));
+                    }
+                    wr.write_all(out.as_bytes()).await.unwrap();
+                }
+                Some("tools/list") => {
+                    let reply = json!({ "jsonrpc": "2.0", "id": frame["id"], "result": {
+                        "resultType": "complete", "ttlMs": 0, "cacheScope": "private", "tools": []
+                    }});
+                    wr.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                }
+                _ => {}
+            }
+        }
+    });
+    let spy = ProgressSpy::default();
+    let client = ClientBuilder::new("bursty", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .with_notifications(spy.clone())
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        if spy.seen.lock().unwrap().len() == 300 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let seen = spy.seen.lock().unwrap().clone();
+    assert_eq!(seen, (0..300).collect::<Vec<_>>(), "every one, in order");
+    client.list_tools(None).await.expect("still connected");
+}
+
+/// Holds its elicitation open until cancelled.
+#[derive(Clone, Default)]
+struct Hangs {
+    started: Arc<AtomicUsize>,
+    finished: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl ElicitationHandler for Hangs {
+    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+        self.started.fetch_add(1, SeqCst);
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        self.finished.fetch_add(1, SeqCst);
+        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+    }
+}
+
+/// "Receivers of cancellation notifications SHOULD: Stop processing the
+/// cancelled request … Not send a response for the cancelled request." A
+/// server that gave up on its elicitation used to get the answer anyway, once
+/// the user finally submitted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_the_server_cancels_is_stopped_and_never_answered() {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let answered = Arc::new(Mutex::new(Vec::<Value>::new()));
+    {
+        let answered = Arc::clone(&answered);
+        tokio::spawn(async move {
+            let (rd, mut wr) = split(server_io);
+            let mut lines = BufReader::new(rd).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let frame: Value = serde_json::from_str(&line).unwrap();
+                match frame.get("method").and_then(Value::as_str) {
+                    Some("initialize") => {
+                        let reply = json!({ "jsonrpc": "2.0", "id": frame["id"], "result": {
+                            "protocolVersion": "2025-11-25", "capabilities": {},
+                            "serverInfo": { "name": "s", "version": "1" }
+                        }});
+                        wr.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                    }
+                    Some("notifications/initialized") => {
+                        let ask = json!({ "jsonrpc": "2.0", "id": "srv-1", "method": "elicitation/create",
+                            "params": { "mode": "form", "message": "?",
+                                "requestedSchema": { "type": "object", "properties": {} } } });
+                        wr.write_all(format!("{ask}\n").as_bytes()).await.unwrap();
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        let cancel = json!({ "jsonrpc": "2.0", "method": "notifications/cancelled",
+                            "params": { "requestId": "srv-1", "reason": "timed out" } });
+                        wr.write_all(format!("{cancel}\n").as_bytes())
+                            .await
+                            .unwrap();
+                    }
+                    None if frame.get("id").is_some() => answered.lock().unwrap().push(frame),
+                    _ => {}
+                }
+            }
+        });
+    }
+    let hangs = Hangs::default();
+    let _client = ClientBuilder::new("cancellable", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .with_elicitation(hangs.clone())
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(hangs.started.load(SeqCst), 1, "the handler ran");
+    assert_eq!(hangs.finished.load(SeqCst), 0, "and was stopped");
+    assert!(
+        answered.lock().unwrap().is_empty(),
+        "no reply to a cancelled request"
+    );
 }

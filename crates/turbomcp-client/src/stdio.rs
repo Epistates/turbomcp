@@ -40,6 +40,15 @@ pub async fn connect_child(
         .ok_or_else(|| ClientError::Protocol("child stdout not captured".into()))?;
 
     let transport = LineTransport::new(BufReader::new(stdout), stdin, DefaultCodec::default());
-    let client = builder.connect(transport).await?;
-    Ok((client, child))
+    match builder.connect(transport).await {
+        Ok(client) => Ok((client, child)),
+        Err(e) => {
+            // The caller never gets the `Child`, so nobody else can stop it,
+            // and tokio does not kill on drop: every failed attempt used to
+            // leave a server process running. Kill it, and reap it.
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            Err(e)
+        }
+    }
 }

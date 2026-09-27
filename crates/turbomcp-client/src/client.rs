@@ -477,6 +477,10 @@ impl ClientBuilder {
         // the version here is also what lets the transport open its
         // server→client stream now rather than waiting for a request the
         // client may never make.
+        // The actor shapes its replies to server requests by revision, and a
+        // compliant server may send one the moment `initialized` arrives — so
+        // it learns the revision first.
+        conn.set_negotiated_version(negotiated.clone());
         conn.notify(
             notification::INITIALIZED,
             Some(json!({
