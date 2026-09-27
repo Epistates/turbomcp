@@ -120,7 +120,7 @@ impl Transport for FaultyTransport {
 // ---- mock service ------------------------------------------------------------
 
 /// Replies to every request after acquiring one permit from `gate` (so the test
-/// controls when a handler may finish), bumping `started` on entry.
+/// controls when a handler may finish), bumping `started` when called.
 #[derive(Clone)]
 struct GatedService {
     gate: Arc<Semaphore>,
@@ -140,13 +140,17 @@ impl Service<JsonRpcMessage> for GatedService {
 
     fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
         let gate = Arc::clone(&self.gate);
-        let started = Arc::clone(&self.started);
         let fast = self.fast_method;
+        // Counted when the driver calls, which it does in arrival order on
+        // the reader, so the count doesn't depend on when the runtime gets
+        // round to polling each handler.
+        if matches!(msg, JsonRpcMessage::Request(_)) {
+            self.started.fetch_add(1, Ordering::SeqCst);
+        }
         Box::pin(async move {
             let JsonRpcMessage::Request(req) = msg else {
                 return Ok(None);
             };
-            started.fetch_add(1, Ordering::SeqCst);
             if fast != Some(req.method.as_str()) {
                 // Block until the test grants a permit.
                 let _permit = gate.acquire().await.expect("gate open");
