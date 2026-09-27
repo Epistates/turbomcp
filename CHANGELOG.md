@@ -19,6 +19,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   elicitation or sampling sub-capabilities and `2026-07-28` has no
   `roots.listChanged`, so one declaration is now correct on all three wires
   instead of the same hand-written blob going to each.
+- `UriTemplate`: RFC 6570 parsing and matching for every operator (`{#f}`,
+  `{.l}`, `{/p}`, `{;p}`, `{?q}`, `{&c}`, lists, explode and prefix), with
+  percent-decoded captures. The resource matcher modeled only `{var}` and
+  `{+var}` and never decoded, so `notes://Q3%20plan` reached the handler
+  encoded and `search://items{?q}` was listed but unreadable. The macro checks
+  the same grammar at compile time; a variable a URI may omit must be
+  `Option<String>`.
+- `ServeStdio::run_stdio` / `run_stdio_with` for builders, in the prelude:
+  dual-stack stdio serving once a builder setting takes you off the macro's
+  `run_stdio()`.
+- `ClientBuilder::with_log_level`: opts into server logs on either wire (the
+  per-request `_meta` level on `2026-07-28`, `logging/setLevel` at connect
+  before).
+- HTTP client: `with_client(reqwest::Client)` and `with_headers` for proxies,
+  private CAs, mTLS and gateway headers.
+- `HttpConfig::with_ip_rate_limiter`: a per-IP gate that runs before the body
+  is read or a token verified.
+- `MetricsLayer::with_methods`, `ClientHandle::clear_state`,
+  `VersionDispatcher`/`ServerBuilder::request_state_limit` and
+  `request_state_ttl`, `TaskStore::with_session_limit`,
+  `TasksExtension::owner_limit`, `ProtocolVersion::is_stateless`.
+- `tests/schema_oracle.rs` validates every emitted wire value against the
+  revision's `schema.json`, decodes it back, and replays all 88 of the
+  `2026-07-28` schema's examples. `just codegen` vendors the schemas.
 
 ### Security
 
@@ -27,8 +51,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plaintext what should have been encrypted. The transcript stays
   authenticated, so this does not let an attacker alter or complete a
   handshake. Pulls `aws-lc-rs` 1.18.1 and `rustls-webpki` 0.103.15 with it.
+- The OAuth client engine defaults to `NetworkPolicy::public_only()`.
+  Discovery follows URLs the MCP server chooses, so under the old
+  allow-everything default a hostile server could aim a client at the network
+  it runs on, loopback HTTP included. Opt out for a trusted internal server
+  with `with_network_policy`. A challenge's off-origin `resource_metadata` URL
+  is ignored in favour of the resource's own well-known locations.
+- One slow subscriber no longer stalls notifications for everyone. Broadcast
+  delivery awaited each subscriber's queue in turn, so a client that stopped
+  reading its stream silenced every tenant. A full queue now drops that
+  connection's notification with a warning.
+- Per-requestor task limits: each session (2025-11-25) and principal
+  (2026-07-28 extension) may run 64 tasks, full stores evict their oldest
+  finished task, and ending a session releases its tasks. One client could
+  fill the store and starve everyone else.
+- `X-Forwarded-For` is read from every header line, and trusted proxies can
+  be CIDR ranges. Reading only the first line let a client behind an
+  appending proxy pick its own rate-limit bucket.
+- `MetricsLayer` labels by a closed set of method names (`_OTHER` otherwise).
+  The raw method string let any caller mint unbounded metric series.
+- `init_otlp` logs to stderr. On stdio, stdout is the MCP channel, and one log
+  line there dropped the client.
 
 ### Fixed
+
+Protocol and wire fidelity:
+
+- The generator dropped facts the schema states. `const` discriminators
+  became strings in untagged unions, so every inbound audio block decoded as
+  an image and every request after `initialize` as `PingRequest`. Optional
+  open objects were skipped when empty, so `initialize` erased a client's
+  `elicitation.url` and `sampling.tools`. A boolean property subschema
+  (schemars emits one for `serde_json::Value`) failed a whole legacy
+  `tools/list`. `resultType`, `ttlMs` and `cacheScope` were required though
+  clients must default them.
+- One bad frame costs one frame. A malformed line (`"params": "x"`, a batch, a
+  BOM, a server's stdout banner) used to end a stdio or WebSocket connection
+  and every request on it. It is answered `-32700` or `-32600` (echoing a
+  readable id) and reading continues; broken responses are never answered, and
+  an overlong stdio line is skipped. The HTTP runner uses the same
+  classification and echoes the request id instead of `"id": null`.
+- The serve driver answers a request whose service call fails; it logged and
+  dropped it. It calls the service in arrival order, and in-flight requests
+  register at call time, so a cancellation written right behind its request
+  can no longer run first and be ignored.
+- `server/discover` checks the requested version (`-32022`), and a server with
+  no stateless revision answers `-32601` as a legacy server does, which is
+  what dual-era clients fall back on. `-32021` is never sent on the stateful
+  wires, which don't define it.
+- A hidden component is indistinguishable from an absent one on every path:
+  `tools/list` with 2025-11-25 Tasks on, `resources/subscribe`, the listen
+  acknowledgment, and completion refs.
+- Core Tasks (2025-11-25): `tasks/result` carries the required related-task
+  `_meta`; `taskSupport` is enforced both ways; `isError` ends a task
+  `failed`; a panicking task handler fails its task instead of leaving it
+  `working`. The 2026-07-28 extension marks an overdue task `failed` rather
+  than deleting it, and answers `-32021` to a client that didn't declare it.
+- MRTR flows can finish: the `requestState` cap is 256 KiB and configurable
+  (a handler that sampled a long answer used to fail every retry), resume
+  state carries forward, and accepted elicitation answers are checked against
+  the requested schema.
+- `Mcp-Param-*` headers are checked against the argument their annotation
+  names, nested or renamed, and integers compare numerically. The transport
+  matched headers to top-level arguments by name.
+- A non-string cursor is `-32602`; a tool schema that fails to compile is
+  `-32603` instead of an endless "invalid arguments" loop for the model.
+
+Client:
+
+- `ConnectMode::Auto` falls back to `initialize` on any non-modern error or
+  silence, as the spec requires, instead of three specific codes: the default
+  client could not reach python-sdk, FastMCP or go-sdk servers.
+- The header-mismatch retry is keyed to `-32020` only; on `-32001` (FastMCP's
+  "Not found") it ran a tool twice.
+- HTTP: a 404 on the standalone stream recovers instead of breaking the
+  connection for good; recovery sends `notifications/initialized`; a response
+  stream that drops early fails at once, and reads are re-issued; running out
+  of POST slots fails one call instead of the connection; `DELETE` carries
+  `MCP-Protocol-Version`; bodies may be 64 MiB.
+- Notifications reach the handler in order, and a server's cancellation of its
+  own request aborts the handler.
+- Task augmentation follows the server's `tasks.requests.tools.call` and each
+  tool's `taskSupport`; a `required` tool is always augmented. Task polls send
+  `Mcp-Name` for routing, `input_required` calls `tasks/result` early, and an
+  abandoned task call sends `tasks/cancel`.
+- `structuredContent` is validated against the tool's `outputSchema`
+  (`ClientError::OutputSchema`).
+- `x-mcp-header` rejection applies only on `2026-07-28` Streamable HTTP and
+  accepts nullable primitives; it dropped TurboMCP's own optional header
+  tools everywhere.
+- `connect_child` kills and reaps the child when the handshake fails.
+
+Macros and runtime:
+
+- `#[mcp_header]` accepts only string, integer and bool parameters (or an
+  `Option` of one), checked at compile time.
+- `schema_extend` merges instead of replacing top-level keys, which could make
+  a tool's schema unsatisfiable.
+- `#[turbomcp::tool]` and other path-qualified markers register; a second
+  marker on one method, or a marker outside `#[server]`, is a compile error.
+- The histogram buckets are in seconds; everything under 5s shared one.
+- A Client ID Metadata Document URL must be `https` with a path.
+
+Earlier in this cycle:
 
 - An expired legacy HTTP session is re-established instead of failing the call.
   There was no 404 branch at all: the failure reached the caller and the dead
@@ -84,6 +209,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `JsonRpcResponse::id` is `Option<RequestId>`, for the
+  schema's id-less error response (`id?` in `JSONRPCErrorResponse`), which
+  used to be undecodable. `JsonRpcResponse::error_without_id` builds one; the
+  success/error constructors are unchanged.
+- **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
+  served a bare dispatcher to `2026-07-28` clients only. Use
+  `ServeStdio::run_stdio`, or `turbomcp::serve_stdio` with a
+  `LegacySessionAdapter` around the dispatcher.
+- **Breaking:** `TaskBackend::complete` takes a `TaskOutcome` (a failed tool
+  result is `failed` with its result, not `completed`), and gains
+  `end_session` (default no-op).
+- **Breaking:** `ConnectMode` is `#[non_exhaustive]`. `ToolResult`'s
+  `structured_content` is any JSON value. `HttpConfig::with_trusted_proxies`
+  is generic over `Into<IpNet>` (an `IpAddr` still works).
+- The client refuses locally, naming the replacement, methods the negotiated
+  revision lacks: `subscribe_resource`, `unsubscribe_resource`, `set_level`,
+  `task_list` and `ping` on `2026-07-28`; `listen` and `task_update` before
+  it. They used to go out and come back `-32601`.
 - **Breaking:** `ClientHandler` is replaced by four per-feature traits —
   `ElicitationHandler`, `SamplingHandler`, `RootsHandler`, `NotificationHandler`
   — registered individually (`with_elicitation`, `with_sampling`, `with_roots`,
