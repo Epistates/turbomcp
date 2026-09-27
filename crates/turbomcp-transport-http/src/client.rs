@@ -70,6 +70,11 @@ pub enum HttpClientError {
     ReservedHeader(String),
 }
 
+/// A request's share of [`HttpClientLimits::max_posts`], held from admission
+/// until its answer is handed over (`None` for notifications and responses,
+/// which aren't counted).
+type Slot = Option<tokio::sync::OwnedSemaphorePermit>;
+
 /// Why a POST's pump stopped without delivering its response.
 enum PumpFailure {
     /// The request failed: network, HTTP status, decode.
@@ -667,10 +672,9 @@ impl Transport for HttpClientTransport {
         };
         let shutdown = shared.shutdown.clone();
         self.shared.tasks.spawn(async move {
-            let _permit = permit;
             tokio::select! {
                 () = shutdown.cancelled() => {}
-                () = post_and_pump(shared, msg, version, mirrors, cancel) => {}
+                () = post_and_pump(shared, msg, version, mirrors, cancel, permit) => {}
             }
         });
         Ok(())
@@ -715,12 +719,17 @@ impl Transport for HttpClientTransport {
 /// the request, which drops the `pump` future and with it the response stream —
 /// the disconnect a server reads as cancellation. The registration is cleared
 /// on every exit path, so the map holds only in-flight POSTs.
+///
+/// `slot` is released before the answer is handed over, never after: a caller
+/// holding its response can send its next request at once, and releasing
+/// after delivery let that request find the slot still taken and be refused.
 async fn post_and_pump(
     shared: Arc<Shared>,
     msg: JsonRpcMessage,
     version: Option<String>,
     mirrors: ParamHeaders,
     cancel: Option<(RequestId, CancellationToken)>,
+    mut slot: Slot,
 ) {
     // The request id (if this is a request) so a failure can be reported to just
     // this caller as an error response rather than killing the connection.
@@ -735,10 +744,11 @@ async fn post_and_pump(
             // caller has already stopped waiting, and `Connection` has taken
             // its pending entry.
             () = token.cancelled() => None,
-            result = pump(&shared, msg, version, mirrors) => Some(result),
+            result = pump(&shared, msg, version, mirrors, &mut slot) => Some(result),
         },
-        None => Some(pump(&shared, msg, version, mirrors).await),
+        None => Some(pump(&shared, msg, version, mirrors, &mut slot).await),
     };
+    drop(slot);
     if let Some((id, _)) = &cancel {
         shared.finish_post(id);
     }
@@ -793,6 +803,7 @@ async fn pump(
     msg: JsonRpcMessage,
     version: Option<String>,
     mirrors: ParamHeaders,
+    slot: &mut Slot,
 ) -> Result<(), PumpFailure> {
     let body = serde_json::to_string(&msg).map_err(|e| format!("encode failed: {e}"))?;
 
@@ -976,6 +987,7 @@ async fn pump(
             stateful && !is_draft,
             version.as_deref(),
             stateful && is_initialize,
+            slot,
         )
         .await?;
     } else {
@@ -997,6 +1009,7 @@ async fn pump(
         if stateful && is_initialize {
             ensure_listening(shared).await;
         }
+        slot.take();
         let _ = shared.inbound_tx.send(frame).await;
     }
     Ok(())
@@ -1048,6 +1061,7 @@ async fn pump_sse(
     stateful: bool,
     version: Option<&str>,
     open_stream_on_answer: bool,
+    slot: &mut Slot,
 ) -> Result<(), PumpFailure> {
     let mut cursor = None;
     let mut retry = DEFAULT_SSE_RETRY;
@@ -1073,6 +1087,7 @@ async fn pump_sse(
                 if open_stream_on_answer {
                     ensure_listening(shared).await;
                 }
+                slot.take();
             }
             if shared.inbound_tx.send(frame).await.is_err() || finished {
                 return Ok(());

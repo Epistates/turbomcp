@@ -141,6 +141,10 @@ Client:
   accepts nullable primitives; it dropped TurboMCP's own optional header
   tools everywhere.
 - `connect_child` kills and reaps the child when the handshake fails.
+- HTTP: a request's `max_posts` slot is released before its answer is
+  handed over. It was released after, so a caller that sent its next
+  request straight away could find the slot still taken and be refused,
+  with nothing else in flight.
 
 Macros and runtime:
 

@@ -338,10 +338,15 @@ async fn running_out_of_post_slots_fails_one_call_not_the_client() {
     let (first, second) = tokio::join!(client.call_tool("a", Map::new()), async {
         // Wait until the first call holds the slot. A fixed head start lost
         // the race on a loaded CI runner, and then the *first* call was the
-        // one refused.
-        while mock.seen("tools/call").is_empty() {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        // one refused. Bounded, so a first call that never reaches the
+        // server fails the test instead of hanging it.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while mock.seen("tools/call").is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the first call reached the server");
         client.call_tool("b", Map::new()).await
     });
     assert!(first.is_ok(), "{first:?}");
@@ -352,4 +357,32 @@ async fn running_out_of_post_slots_fails_one_call_not_the_client() {
         .call_tool("c", Map::new())
         .await
         .expect("the client is still connected");
+}
+
+/// A slot is free again by the time its caller has the response: with one
+/// slot, back-to-back calls never collide with the call before them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sequential_calls_never_find_their_own_slot_taken() {
+    let mock = Mock::new(|_, rpc, msg, _| match rpc {
+        "server/discover" => discover(&msg["id"]),
+        "tools/call" => result(
+            &msg["id"],
+            json!({ "resultType": "complete", "content": [], "isError": false }),
+        ),
+        _ => StatusCode::ACCEPTED.into_response(),
+    });
+    let url = serve(Arc::clone(&mock)).await;
+    let mut limits = HttpClientLimits::default();
+    limits.max_posts = 1;
+    let client = ClientBuilder::new("sequential", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .connect(HttpClientTransport::new(&url).unwrap().with_limits(limits))
+        .await
+        .unwrap();
+    for n in 0..300 {
+        client
+            .call_tool("t", Map::new())
+            .await
+            .unwrap_or_else(|e| panic!("call {n} was refused: {e}"));
+    }
 }
