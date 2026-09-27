@@ -246,51 +246,9 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
         }
     }
 
-    // Every `Mcp-Param-{name}` naming a `tools/call` argument must match it
-    // after decoding and type rendering. A header matching no argument is
-    // unrecognized here (it may use a custom `x-mcp-header` name mapping) and
-    // is ignored, per the intermediary forwarding rule.
-    if req.method == "tools/call"
-        && let Some(args) = req
-            .params
-            .as_ref()
-            .and_then(|p| p.get("arguments"))
-            .and_then(serde_json::Value::as_object)
-    {
-        for (name, value) in headers {
-            let Some(param) = name.as_str().strip_prefix(MCP_PARAM_PREFIX) else {
-                continue;
-            };
-            let Some((_, body_value)) = args.iter().find(|(k, _)| k.eq_ignore_ascii_case(param))
-            else {
-                continue;
-            };
-            let Ok(raw) = value.to_str() else {
-                return Some(header_mismatch_rejection(
-                    id,
-                    &format!("Mcp-Param-{param} header contains invalid characters"),
-                ));
-            };
-            let Some(decoded) = mcp_headers::decode_value(raw) else {
-                return Some(header_mismatch_rejection(
-                    id,
-                    &format!("malformed Base64 sentinel in Mcp-Param-{param} header"),
-                ));
-            };
-            let Some(rendered) = mcp_headers::render_argument(body_value) else {
-                return Some(header_mismatch_rejection(
-                    id,
-                    &format!("Mcp-Param-{param} mirrors a non-primitive body argument"),
-                ));
-            };
-            if decoded != rendered {
-                return Some(header_mismatch_rejection(
-                    id,
-                    &format!("Mcp-Param-{param} header does not match the request body argument"),
-                ));
-            }
-        }
-    }
+    // `Mcp-Param-*` values are checked by the dispatcher, which knows the
+    // tool's schema and so which argument each header actually mirrors (see
+    // the observed-header hand-off in the endpoint).
 
     None
 }
@@ -838,20 +796,28 @@ where
         return envelope_rejection(&r.id, field);
     }
 
-    // Tell the dispatcher which `Mcp-Param-*` mirrors arrived. It knows which
-    // arguments are annotated `x-mcp-header`; only we know which headers the
-    // client actually sent, and an *omitted* mirror is a validation failure
-    // (SEP-2243 §Server Validation) the body alone cannot reveal.
+    // Hand the dispatcher the `Mcp-Param-*` mirrors that arrived, name
+    // (lowercased) to raw value. It knows the tool's schema, so it is the one
+    // that can tell which argument each mirrors and check the value; only we
+    // know which headers were sent, and an *omitted* mirror is a validation
+    // failure (SEP-2243 §Server Validation) the body alone cannot reveal. A
+    // value that isn't visible ASCII is passed as `null`, which the dispatcher
+    // refuses if the header is one the tool declares.
     if stateless_request {
-        let observed: Vec<serde_json::Value> = headers
-            .keys()
-            .filter_map(|n| n.as_str().strip_prefix(MCP_PARAM_PREFIX))
-            .map(|p| serde_json::Value::String(p.to_ascii_lowercase()))
+        let observed: serde_json::Map<String, serde_json::Value> = headers
+            .iter()
+            .filter_map(|(name, value)| {
+                let param = name.as_str().strip_prefix(MCP_PARAM_PREFIX)?;
+                let value = value.to_str().map_or(serde_json::Value::Null, |v| {
+                    serde_json::Value::String(v.to_owned())
+                });
+                Some((param.to_ascii_lowercase(), value))
+            })
             .collect();
         meta::set_request_meta(
             &mut msg,
             meta::internal::OBSERVED_HEADER_PARAMS,
-            serde_json::Value::Array(observed),
+            serde_json::Value::Object(observed),
         );
     }
 
@@ -2010,47 +1976,6 @@ mod tests {
                 ])
             )
             .is_some()
-        );
-    }
-
-    #[test]
-    fn mcp_param_headers_are_validated_never_merged() {
-        let msg = draft_call("body-value");
-        // A mismatching mirror is rejected…
-        assert!(
-            validate_request_headers(
-                &msg,
-                &headers(&draft_call_headers(&[("Mcp-Param-region", "header-value")])),
-            )
-            .is_some()
-        );
-        // …a Base64-sentinel-encoded matching mirror is accepted…
-        let unicode = draft_call("Hello, 世界");
-        assert!(
-            validate_request_headers(
-                &unicode,
-                &headers(&draft_call_headers(&[(
-                    "Mcp-Param-region",
-                    "=?base64?SGVsbG8sIOS4lueVjA==?="
-                )])),
-            )
-            .is_none()
-        );
-        // …a header naming no body argument is unrecognized and ignored…
-        assert!(
-            validate_request_headers(
-                &msg,
-                &headers(&draft_call_headers(&[("Mcp-Param-unknown", "x")])),
-            )
-            .is_none()
-        );
-        // …and the body is never mutated (headers are mirrors, not sources).
-        let JsonRpcMessage::Request(req) = &msg else {
-            unreachable!()
-        };
-        assert_eq!(
-            req.params.as_ref().unwrap()["arguments"]["region"],
-            "body-value"
         );
     }
 }

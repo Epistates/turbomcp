@@ -90,16 +90,18 @@ pub mod internal {
     pub const IDENTITY: &str = "io.turbomcp.internal/identity";
 
     /// The `Mcp-Param-{name}` mirrors that actually arrived on this request,
-    /// as an array of the lowercased `{name}` portions. Injected by the HTTP
+    /// as an object from the lowercased `{name}` portion to the raw header
+    /// value (`null` when it wasn't visible ASCII). Injected by the HTTP
     /// transport (other transports have no headers and omit it, which reads as
     /// "no mirroring in effect").
     ///
-    /// The dispatcher needs the *absence* of a mirror, not just a mismatch: a
-    /// tool argument annotated `x-mcp-header` whose header was omitted is the
-    /// case where a gateway routes on a default while the server executes on
-    /// the body — the divergence SEP-2243's validation exists to prevent. Only
-    /// the transport can observe that, and only the dispatcher knows which
-    /// arguments are annotated, so the fact has to cross the seam.
+    /// The dispatcher checks both the values and the *absence* of a mirror: a
+    /// tool argument annotated `x-mcp-header` whose header was omitted or
+    /// disagrees is the case where a gateway routes on one value while the
+    /// server executes on another, the divergence SEP-2243's validation exists
+    /// to prevent. Only the transport can observe the headers, and only the
+    /// dispatcher knows which argument each annotation names, so the fact has
+    /// to cross the seam.
     pub const OBSERVED_HEADER_PARAMS: &str = "io.turbomcp.internal/observedHeaderParams";
 
     /// Whether `key` is in the internal (in-process only) namespace.

@@ -22,6 +22,7 @@ use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
 use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_protocol::{methods, neutral};
+use turbomcp_service::mcp_headers;
 
 use crate::context::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext,
@@ -194,22 +195,23 @@ enum Component<'a> {
     Prompt(&'a str),
 }
 
-/// Whether the installed policy hides the component a call is addressing.
+/// Enforce SEP-2243's mirror rules for one `tools/call`: for every
+/// `x-mcp-header` argument the tool declares, a value in `arguments` must
+/// arrive with its `Mcp-Param-*` header, the header must decode to that value,
+/// and a header with no value behind it is a mismatch too. "Any server that
+/// processes the message body MUST validate that encoded header values, after
+/// decoding if Base64-encoded, match the corresponding values in the request
+/// body."
 ///
-/// A policy decides on a component's *metadata*, but a `tools/call` carries
-/// only a name — so this lists the corresponding capability to find it. That
-/// extra list is the price of "hidden means unreachable"; it is paid only when
-/// a policy is installed, and skipped entirely otherwise.
+/// This is the one place that knows the schema, so it is the one place that
+/// can check: the annotation may name a nested property, or one whose header
+/// name differs from the property name. (The transport used to match headers
+/// to top-level arguments by name, which waved a mismatched nested value
+/// through and refused a correctly mirrored renamed one.) Headers the tool
+/// doesn't declare are ignored, per the forwarding rule for intermediaries.
 ///
-/// A component no list mentions is **not** treated as hidden: the handler owns
-/// that answer, and it already produces the right unknown-tool /
-/// unknown-prompt / not-found reply.
-/// Enforce SEP-2243's mirror requirement for one `tools/call`: every
-/// `x-mcp-header` argument the tool declares, whose value is present in this
-/// call's `arguments`, must have arrived with its `Mcp-Param-*` header.
-///
-/// Skipped entirely unless the transport reported which mirrors it saw — only
-/// Streamable HTTP has headers, and on stdio the annotation is inert (the
+/// Skipped entirely unless the transport reported the mirrors it saw: only
+/// Streamable HTTP has headers, and elsewhere the annotation is inert (the
 /// spec lets non-HTTP transports ignore it).
 fn check_header_mirrors(
     req: &JsonRpcRequest,
@@ -221,7 +223,7 @@ fn check_header_mirrors(
         .as_ref()
         .and_then(|p| p.get("_meta"))
         .and_then(|m| m.get(meta::internal::OBSERVED_HEADER_PARAMS))
-        .and_then(Value::as_array)
+        .and_then(Value::as_object)
     else {
         return Ok(());
     };
@@ -229,19 +231,45 @@ fn check_header_mirrors(
     collect_header_params(&tool.input_schema, &mut Vec::new(), &mut declared);
     let arguments = Value::Object(params.arguments.clone());
     for param in declared {
-        if argument_at(&arguments, &param.path).is_some()
-            && !observed
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|h| h.eq_ignore_ascii_case(&param.header))
-        {
-            return Err(McpError::HeaderMismatch(format!(
-                "Mcp-Param-{} header is missing",
-                param.header
-            )));
+        let header = &param.header;
+        let mismatch = |why: &str| {
+            Err(McpError::HeaderMismatch(format!(
+                "Mcp-Param-{header} {why}"
+            )))
+        };
+        match (argument_at(&arguments, &param.path), observed.get(header)) {
+            (None, None) => {}
+            (Some(_), None) => return mismatch("header is missing"),
+            (None, Some(_)) => return mismatch("header has no matching value in the request body"),
+            (Some(_), Some(Value::Null)) => return mismatch("header contains invalid characters"),
+            (Some(body), Some(raw)) => {
+                let Some(decoded) = raw.as_str().and_then(mcp_headers::decode_value) else {
+                    return mismatch("header has a malformed Base64 sentinel");
+                };
+                if !mirrors(body, &decoded) {
+                    return mismatch("header does not match the request body");
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Whether a decoded header value mirrors `body`. Integers compare
+/// numerically: "servers SHOULD compare the header value and the body value
+/// numerically rather than as strings (e.g., `42.0` and `42` are considered
+/// equal)", so a Python client's `42.0` isn't a spurious mismatch.
+fn mirrors(body: &Value, header: &str) -> bool {
+    match body {
+        Value::Number(n) => {
+            const JS_SAFE: f64 = 9_007_199_254_740_991.0;
+            let (Some(body), Ok(header)) = (n.as_f64(), header.trim().parse::<f64>()) else {
+                return false;
+            };
+            body.fract() == 0.0 && body.abs() <= JS_SAFE && body == header
+        }
+        other => mcp_headers::render_argument(other).is_some_and(|rendered| rendered == header),
+    }
 }
 
 /// [`hidden`] for a resource URI, for the paths that address one without going
@@ -262,6 +290,16 @@ pub(super) async fn resource_hidden<S: McpServerCore>(
     hidden(shared, router, server, ctx, Component::Resource(uri)).await
 }
 
+/// Whether the installed policy hides the component a call is addressing.
+///
+/// A policy decides on a component's *metadata*, but a `tools/call` carries
+/// only a name — so this lists the corresponding capability to find it. That
+/// extra list is the price of "hidden means unreachable"; it is paid only when
+/// a policy is installed, and skipped entirely otherwise.
+///
+/// A component no list mentions is **not** treated as hidden: the handler owns
+/// that answer, and it already produces the right unknown-tool /
+/// unknown-prompt / not-found reply.
 async fn hidden<S: McpServerCore>(
     shared: &Shared,
     router: &MethodRouter<S>,
@@ -1061,4 +1099,101 @@ fn progress_reporter<W: WireFamily>(req: &JsonRpcRequest) -> ProgressReporter {
             .to_owned()
     };
     ProgressReporter::new(token.clone(), connection, session)
+}
+
+#[cfg(test)]
+mod header_mirror_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A tool whose `inputSchema` annotates a nested property and a renamed
+    /// one, next to an unannotated argument that shares the renamed header's
+    /// name.
+    fn tool() -> neutral::Tool {
+        neutral::Tool::new(
+            "route",
+            json!({
+                "type": "object",
+                "properties": {
+                    "cfg": {
+                        "type": "object",
+                        "properties": { "region": { "type": "string", "x-mcp-header": "Region" } }
+                    },
+                    "target_zone": { "type": "string", "x-mcp-header": "Zone" },
+                    "zone": { "type": "string" },
+                    "count": { "type": "integer", "x-mcp-header": "Count" }
+                }
+            }),
+        )
+    }
+
+    fn check(arguments: Value, observed: Value) -> McpResult<()> {
+        let params = neutral::CallToolParams::new(
+            "route",
+            arguments.as_object().cloned().unwrap_or_default(),
+        );
+        let req = JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "_meta": { meta::internal::OBSERVED_HEADER_PARAMS: observed } })),
+        );
+        check_header_mirrors(&req, &params, &tool())
+    }
+
+    #[test]
+    fn a_nested_mirror_is_checked_against_the_nested_value() {
+        let args = json!({ "cfg": { "region": "us-east" } });
+        assert!(check(args.clone(), json!({ "region": "us-east" })).is_ok());
+        // The split-brain the rule exists for: routed as eu-west, run as us-east.
+        assert!(check(args, json!({ "region": "eu-west" })).is_err());
+    }
+
+    /// The header mirrors the property its annotation is on, not whichever
+    /// argument happens to share the header's name.
+    #[test]
+    fn a_renamed_mirror_is_checked_against_its_own_property() {
+        let args = json!({ "target_zone": "a", "zone": "b" });
+        assert!(check(args.clone(), json!({ "zone": "a" })).is_ok());
+        assert!(check(args, json!({ "zone": "b" })).is_err());
+    }
+
+    #[test]
+    fn missing_extra_and_unreadable_mirrors_are_mismatches() {
+        let args = json!({ "target_zone": "a" });
+        assert!(check(args.clone(), json!({})).is_err(), "missing");
+        assert!(
+            check(json!({}), json!({ "zone": "a" })).is_err(),
+            "no body value"
+        );
+        assert!(
+            check(args, json!({ "zone": null })).is_err(),
+            "invalid characters"
+        );
+        // A header the tool doesn't declare is someone else's business.
+        assert!(check(json!({}), json!({ "trace": "x" })).is_ok());
+    }
+
+    #[test]
+    fn a_base64_mirror_is_decoded_first() {
+        let args = json!({ "target_zone": "Hello, 世界" });
+        assert!(check(args, json!({ "zone": "=?base64?SGVsbG8sIOS4lueVjA==?=" })).is_ok());
+    }
+
+    /// "Servers SHOULD compare the header value and the body value
+    /// numerically rather than as strings (e.g., `42.0` and `42` are
+    /// considered equal)."
+    #[test]
+    fn integers_compare_numerically() {
+        assert!(check(json!({ "count": 42.0 }), json!({ "count": "42" })).is_ok());
+        assert!(check(json!({ "count": 42 }), json!({ "count": "42.0" })).is_ok());
+        assert!(check(json!({ "count": 42 }), json!({ "count": "43" })).is_err());
+        assert!(check(json!({ "count": 42.5 }), json!({ "count": "42.5" })).is_err());
+    }
+
+    #[test]
+    fn no_observed_headers_means_no_mirroring_in_effect() {
+        let params = neutral::CallToolParams::new("route", Map::new());
+        let req = JsonRpcRequest::new(1, "tools/call", None);
+        assert!(check_header_mirrors(&req, &params, &tool()).is_ok());
+    }
 }
