@@ -11,11 +11,16 @@
 //!
 //! ## Label cardinality is bounded and PII-safe
 //!
-//! Every metric is labeled by `mcp.method` (a fixed method name), the negotiated
-//! `mcp.protocol_version`, and an `outcome` of `ok`/`error`/`cancelled` — all
-//! low-cardinality and free of caller data. Identity is deliberately **not** a
-//! metric label (it would be unbounded and would leak PII); identity lives on
-//! spans, redacted.
+//! Every metric is labeled by `mcp.method`, the negotiated
+//! `mcp.protocol_version`, and an `outcome` of `ok`/`error`/`cancelled`. The
+//! method comes off the wire, so it is checked against the spec's method
+//! names (plus any registered with [`MetricsLayer::with_methods`]) and
+//! anything else is recorded as `_OTHER`, the way HTTP semantic conventions
+//! bucket unknown methods: one series per made-up name would let any caller
+//! blow up the backend's cardinality with cheap `-32601`s. The version label
+//! is likewise one of the supported revisions or `other`. Identity is
+//! deliberately **not** a metric label (it would be unbounded and would leak
+//! PII); identity lives on spans, redacted.
 
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -26,6 +31,19 @@ use opentelemetry::{KeyValue, global};
 use pin_project_lite::pin_project;
 use tower::{Layer, Service};
 use turbomcp_core::{JsonRpcMessage, ProtocolVersion, meta};
+use turbomcp_protocol::methods::request;
+
+/// The label for a method outside the known set.
+const OTHER_METHOD: &str = "_OTHER";
+
+/// Bucket boundaries for the duration histogram, in seconds. The SDK's
+/// defaults are millisecond-scale (`0, 5, 10, 25, …`), so every request under
+/// five seconds landed in one bucket and percentiles were unrecoverable.
+/// These are the ones the OpenTelemetry MCP conventions specify for
+/// operation duration.
+const DURATION_BOUNDARIES: [f64; 14] = [
+    0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0,
+];
 
 /// The instruments, built once and shared (cheap clones — the OTel handles are
 /// `Arc`-backed).
@@ -48,6 +66,7 @@ impl Instruments {
                 .f64_histogram("mcp.server.request.duration")
                 .with_description("MCP request handling duration.")
                 .with_unit("s")
+                .with_boundaries(DURATION_BOUNDARIES.to_vec())
                 .build(),
             in_flight: meter
                 .i64_up_down_counter("mcp.server.active_requests")
@@ -63,6 +82,7 @@ impl Instruments {
 #[derive(Clone)]
 pub struct MetricsLayer {
     instruments: Arc<Instruments>,
+    extra_methods: Arc<[String]>,
 }
 
 impl MetricsLayer {
@@ -71,7 +91,22 @@ impl MetricsLayer {
     pub fn new() -> Self {
         Self {
             instruments: Arc::new(Instruments::new()),
+            extra_methods: Arc::from([]),
         }
+    }
+
+    /// Label these methods by name too, alongside the spec's own: an
+    /// extension's methods, say. Anything outside the set is `_OTHER`.
+    #[must_use]
+    pub fn with_methods<I, M>(mut self, methods: I) -> Self
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<String>,
+    {
+        let mut all: Vec<String> = self.extra_methods.to_vec();
+        all.extend(methods.into_iter().map(Into::into));
+        self.extra_methods = all.into();
+        self
     }
 }
 
@@ -94,6 +129,7 @@ impl<S> Layer<S> for MetricsLayer {
         Metrics {
             inner,
             instruments: Arc::clone(&self.instruments),
+            extra_methods: Arc::clone(&self.extra_methods),
         }
     }
 }
@@ -103,6 +139,19 @@ impl<S> Layer<S> for MetricsLayer {
 pub struct Metrics<S> {
     inner: S,
     instruments: Arc<Instruments>,
+    extra_methods: Arc<[String]>,
+}
+
+/// The `mcp.method` label for `method`: its own name when it is one this
+/// layer knows, `_OTHER` otherwise.
+fn method_label(method: &str, extra: &[String]) -> opentelemetry::Value {
+    if let Some(known) = request::ALL.iter().find(|m| **m == method) {
+        return (*known).into();
+    }
+    if let Some(known) = extra.iter().find(|m| *m == method) {
+        return known.clone().into();
+    }
+    OTHER_METHOD.into()
 }
 
 impl<S> core::fmt::Debug for Metrics<S> {
@@ -128,7 +177,10 @@ where
         // requests carry a method worth a metric label.
         let base_labels = match &req {
             JsonRpcMessage::Request(r) => {
-                let mut labels = vec![KeyValue::new("mcp.method", r.method.clone())];
+                let mut labels = vec![KeyValue::new(
+                    "mcp.method",
+                    method_label(&r.method, &self.extra_methods),
+                )];
                 labels.push(KeyValue::new(
                     "mcp.protocol_version",
                     protocol_version_label(&req),
@@ -219,10 +271,13 @@ fn protocol_version_label(req: &JsonRpcMessage) -> &'static str {
     let JsonRpcMessage::Request(r) = req else {
         return "unknown";
     };
+    // Every supported revision by name (`2025-06-18` used to be `other`),
+    // and never the raw string: the client chose it.
     match turbomcp_protocol_version(r.params.as_ref()) {
-        Some(ProtocolVersion::V2025_11_25) => "2025-11-25",
-        Some(ProtocolVersion::V2026_07_28) => "2026-07-28",
-        Some(_) => "other",
+        Some(version) => ProtocolVersion::SUPPORTED
+            .iter()
+            .find(|v| **v == version)
+            .map_or("other", ProtocolVersion::as_str),
         None => "unknown",
     }
 }
@@ -305,6 +360,36 @@ mod tests {
             panic!("expected response")
         };
         assert!(r.error.is_some());
+    }
+
+    /// A method off the wire is a label only if it is one we know, or the
+    /// series count is whatever a caller wants it to be.
+    #[test]
+    fn unknown_methods_share_one_label() {
+        assert_eq!(method_label("tools/call", &[]).as_str(), "tools/call");
+        assert_eq!(method_label("x/made-up-1", &[]).as_str(), "_OTHER");
+        let extra = vec!["acme/export".to_owned()];
+        assert_eq!(method_label("acme/export", &extra).as_str(), "acme/export");
+    }
+
+    #[test]
+    fn every_supported_revision_is_labelled_by_name() {
+        for version in ProtocolVersion::SUPPORTED {
+            let req: JsonRpcMessage = JsonRpcRequest::new(
+                1,
+                "ping",
+                Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": version.as_str() } })),
+            )
+            .into();
+            assert_eq!(protocol_version_label(&req), version.as_str());
+        }
+        let odd: JsonRpcMessage = JsonRpcRequest::new(
+            1,
+            "ping",
+            Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "1999-01-01" } })),
+        )
+        .into();
+        assert_eq!(protocol_version_label(&odd), "other");
     }
 
     #[test]
@@ -404,7 +489,9 @@ mod tests {
 
         // Instruments bind to the (now SDK-backed) global provider at layer
         // construction.
-        let mut svc = MetricsLayer::new().layer(Never);
+        let mut svc = MetricsLayer::new()
+            .with_methods(["drop-probe"])
+            .layer(Never);
         let req: JsonRpcMessage = JsonRpcRequest::new(1, "drop-probe", None).into();
         let fut = svc.call(req); // in-flight +1
         drop(fut); // abandoned before completion
@@ -430,6 +517,23 @@ mod tests {
             0,
             "the in-flight gauge returns to zero — no drift under cancellation"
         );
+
+        // The duration histogram buckets in seconds, not the SDK's
+        // millisecond-scale defaults.
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+        let snapshot = finished.last().expect("a snapshot");
+        let bounds: Vec<f64> = snapshot
+            .scope_metrics()
+            .flat_map(|scope| scope.metrics())
+            .filter(|m| m.name() == "mcp.server.request.duration")
+            .find_map(|m| match m.data() {
+                AggregatedMetrics::F64(MetricData::Histogram(h)) => {
+                    h.data_points().next().map(|dp| dp.bounds().collect())
+                }
+                _ => None,
+            })
+            .expect("a duration data point");
+        assert_eq!(bounds, DURATION_BOUNDARIES.to_vec());
     }
 
     #[test]

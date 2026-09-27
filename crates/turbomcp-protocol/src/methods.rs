@@ -74,6 +74,35 @@ pub mod request {
     /// `roots/list` — ask the client which filesystem roots the server may
     /// operate on. Deprecated upstream but functional on both versions.
     pub const ROOTS_LIST: &str = "roots/list";
+
+    /// Every request method above, in both directions. A closed set is what
+    /// lets telemetry label by method without letting a caller mint a new
+    /// metric series per made-up method name.
+    pub const ALL: &[&str] = &[
+        DISCOVER,
+        INITIALIZE,
+        PING,
+        TOOLS_LIST,
+        TOOLS_CALL,
+        RESOURCES_LIST,
+        RESOURCES_TEMPLATES_LIST,
+        RESOURCES_READ,
+        PROMPTS_LIST,
+        PROMPTS_GET,
+        COMPLETION_COMPLETE,
+        TASKS_LIST,
+        TASKS_GET,
+        TASKS_CANCEL,
+        TASKS_UPDATE,
+        TASKS_RESULT,
+        SUBSCRIPTIONS_LISTEN,
+        RESOURCES_SUBSCRIBE,
+        RESOURCES_UNSUBSCRIBE,
+        LOGGING_SET_LEVEL,
+        ELICITATION_CREATE,
+        SAMPLING_CREATE_MESSAGE,
+        ROOTS_LIST,
+    ];
 }
 
 /// Notification method names (no response).

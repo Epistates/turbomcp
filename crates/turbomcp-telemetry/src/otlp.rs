@@ -122,7 +122,11 @@ pub fn init_otlp(config: OtlpConfig) -> Result<TelemetryGuard, TelemetryError> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(filter)
-        .with(fmt::layer())
+        // stderr, never stdout: on stdio, stdout *is* the MCP channel ("The
+        // server MUST NOT write anything to its stdout that is not a valid
+        // MCP message"), and one log line there drops the client's
+        // connection. The spec names stderr as the logging channel.
+        .with(fmt::layer().with_writer(std::io::stderr))
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .try_init()
         .map_err(|e| TelemetryError::Subscriber(e.to_string()))?;
