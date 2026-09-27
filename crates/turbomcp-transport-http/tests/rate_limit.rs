@@ -181,3 +181,46 @@ async fn unauthenticated_request_is_challenged_before_rate_limit() {
     let resp = app.oneshot(call_request(None)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// A flood of bad tokens never reaches the per-subject limiter, since there
+/// is no subject until a token verifies. The per-IP gate runs before any of
+/// that, so it throttles the flood itself: past the budget the answer is
+/// `429`, and no signature is checked.
+#[tokio::test]
+async fn the_ip_gate_throttles_bad_tokens_before_they_are_verified() {
+    let k = URL_SAFE_NO_PAD.encode(SECRET);
+    let jwks = StaticJwks::from_json(
+        &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
+    )
+    .unwrap();
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let rs = ResourceServer::new(
+        validator,
+        ResourceMetadata::new(RESOURCE, [ISSUER]),
+        METADATA_URL,
+    );
+    let app = router(
+        dispatcher(),
+        HttpConfig::new()
+            .with_authenticator(Arc::new(rs))
+            .with_ip_rate_limiter(Arc::new(GovernorRateLimiter::per_second_burst(
+                nz(1),
+                nz(2),
+            ))),
+    );
+
+    for _ in 0..2 {
+        let resp = app
+            .clone()
+            .oneshot(call_request(Some("Bearer not-a-jwt")))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+    let resp = app
+        .clone()
+        .oneshot(call_request(Some("Bearer not-a-jwt")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+}

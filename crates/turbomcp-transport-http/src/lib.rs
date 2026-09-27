@@ -79,6 +79,8 @@ use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::future::{Future, poll_fn};
 use std::net::{IpAddr, SocketAddr};
+
+use ipnet::IpNet;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -302,8 +304,9 @@ pub struct HttpConfig {
     sse_keepalive: Duration,
     authenticator: Option<Arc<dyn HttpAuthenticator>>,
     rate_limiter: Option<Arc<dyn RateLimiter>>,
+    ip_rate_limiter: Option<Arc<dyn RateLimiter>>,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
-    trusted_proxies: Vec<IpAddr>,
+    trusted_proxies: Vec<IpNet>,
     supported_versions: Vec<ProtocolVersion>,
 }
 
@@ -318,6 +321,7 @@ impl core::fmt::Debug for HttpConfig {
             .field("sse_keepalive", &self.sse_keepalive)
             .field("authenticator", &self.authenticator.is_some())
             .field("rate_limiter", &self.rate_limiter.is_some())
+            .field("ip_rate_limiter", &self.ip_rate_limiter.is_some())
             .field("session_terminator", &self.session_terminator.is_some())
             .field("trusted_proxies", &self.trusted_proxies)
             .field("supported_versions", &self.supported_versions)
@@ -340,6 +344,7 @@ impl Default for HttpConfig {
             sse_keepalive: DEFAULT_SSE_KEEPALIVE,
             authenticator: None,
             rate_limiter: None,
+            ip_rate_limiter: None,
             session_terminator: None,
             trusted_proxies: Vec::new(),
             supported_versions: ProtocolVersion::SUPPORTED.to_vec(),
@@ -495,15 +500,41 @@ impl HttpConfig {
         self
     }
 
-    /// Trust these proxy IPs to set `X-Forwarded-For`. When the direct socket
-    /// peer is one of them, the client IP used for rate limiting is taken from
-    /// the right of the `X-Forwarded-For` chain (the first hop not itself
-    /// trusted) instead of the proxy's own address. Spoofable if you list an
-    /// address that isn't actually your proxy — list only your real front ends.
-    /// Empty (default) means the raw socket peer is always used.
+    /// Rate-limit by source IP *before* anything else happens: before the
+    /// body is read, before a bearer token is verified. Every request is
+    /// charged against [`RateKey::Ip`] (or [`RateKey::Global`] with no peer
+    /// address), and an over-budget one gets `429` + `Retry-After`.
+    ///
+    /// [`with_rate_limiter`](Self::with_rate_limiter) charges authenticated
+    /// callers per subject, which only works once the token is verified, so a
+    /// flood of bad tokens never reaches it: each still costs a signature
+    /// check (and a body parse) and is never throttled. This is the cheap
+    /// first gate for that. Keep its quota generous, since callers behind one
+    /// NAT share it.
     #[must_use]
-    pub fn with_trusted_proxies(mut self, proxies: impl IntoIterator<Item = IpAddr>) -> Self {
-        self.trusted_proxies = proxies.into_iter().collect();
+    pub fn with_ip_rate_limiter(mut self, rate_limiter: Arc<dyn RateLimiter>) -> Self {
+        self.ip_rate_limiter = Some(rate_limiter);
+        self
+    }
+
+    /// Trust these proxies to set `X-Forwarded-For`: addresses or CIDR ranges
+    /// (anything that converts into an [`IpNet`], so a plain [`IpAddr`] works
+    /// too). When the direct socket peer is one of them, the client IP used
+    /// for rate limiting is taken from the right of the `X-Forwarded-For`
+    /// chain (the first hop not itself trusted) instead of the proxy's own
+    /// address. Every `X-Forwarded-For` line counts, in order: a proxy that
+    /// appends a new line rather than extending the client's is common, and
+    /// reading only the first let a client name any address it liked.
+    /// Spoofable if you list an address that isn't actually your proxy; list
+    /// only your real front ends. Empty (default) means the raw socket peer is
+    /// always used.
+    #[must_use]
+    pub fn with_trusted_proxies<I, N>(mut self, proxies: I) -> Self
+    where
+        I: IntoIterator<Item = N>,
+        N: Into<IpNet>,
+    {
+        self.trusted_proxies = proxies.into_iter().map(Into::into).collect();
         self
     }
 
@@ -553,7 +584,7 @@ struct HttpState<S> {
     authenticator: Option<Arc<dyn HttpAuthenticator>>,
     rate_limiter: Option<Arc<dyn RateLimiter>>,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
-    trusted_proxies: Arc<[IpAddr]>,
+    trusted_proxies: Arc<[IpNet]>,
     /// The revisions this endpoint serves, for the `MCP-Protocol-Version`
     /// check and the `supported` list its rejection carries.
     supported_versions: Arc<[ProtocolVersion]>,
@@ -595,6 +626,8 @@ where
 {
     let admission = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_requests));
     let request_timeout = config.request_timeout;
+    let ip_rate_limiter = config.ip_rate_limiter.clone();
+    let gate_proxies: Arc<[IpNet]> = config.trusted_proxies.clone().into();
     let state = HttpState {
         service,
         codec: DefaultCodec::default(),
@@ -631,28 +664,54 @@ where
     app.layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
             let admission = admission.clone();
+            let ip_rate_limiter = ip_rate_limiter.clone();
+            let gate_proxies = Arc::clone(&gate_proxies);
             async move {
-                let Ok(permit) = admission.try_acquire_owned() else {
-                    return too_many_requests(Duration::from_secs(1));
-                };
-                let response = match tokio::time::timeout(request_timeout, next.run(request)).await
-                {
-                    Ok(response) => response,
-                    Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
-                };
-                let (parts, body) = response.into_parts();
-                let stream = futures::stream::unfold(
-                    (body.into_data_stream(), permit),
-                    |(mut stream, permit)| async move {
-                        use futures::StreamExt as _;
-                        stream.next().await.map(|chunk| (chunk, (stream, permit)))
-                    },
-                );
-                Response::from_parts(parts, axum::body::Body::from_stream(stream))
+                // The per-IP gate runs first, before the body is read or a
+                // token verified: it is what makes a flood cheap to refuse.
+                if let Some(limiter) = &ip_rate_limiter {
+                    let (parts, body) = request.into_parts();
+                    let key = PeerIp::from_parts(&parts)
+                        .client_ip(&gate_proxies)
+                        .map_or(RateKey::Global, RateKey::Ip);
+                    if let Err(retry_after) = limiter.check(&key) {
+                        return too_many_requests(retry_after);
+                    }
+                    let request = axum::extract::Request::from_parts(parts, body);
+                    admit(admission, request_timeout, request, next).await
+                } else {
+                    admit(admission, request_timeout, request, next).await
+                }
             }
         },
     ))
     .with_state(state)
+}
+
+/// The admission pool: a permit per in-flight request, held until its body
+/// has been streamed out.
+async fn admit(
+    admission: Arc<tokio::sync::Semaphore>,
+    request_timeout: Duration,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Ok(permit) = admission.try_acquire_owned() else {
+        return too_many_requests(Duration::from_secs(1));
+    };
+    let response = match tokio::time::timeout(request_timeout, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+    };
+    let (parts, body) = response.into_parts();
+    let stream = futures::stream::unfold(
+        (body.into_data_stream(), permit),
+        |(mut stream, permit)| async move {
+            use futures::StreamExt as _;
+            stream.next().await.map(|chunk| (chunk, (stream, permit)))
+        },
+    );
+    Response::from_parts(parts, axum::body::Body::from_stream(stream))
 }
 
 /// Serve `service` over Streamable HTTP on `addr` until the configured shutdown
@@ -722,22 +781,27 @@ where
         );
     }
 
+    // Resource-server auth (if configured), before the body is decoded: an
+    // unauthenticated caller shouldn't get to spend a JSON parse. A rejected
+    // request never dispatches.
+    let authenticated = match enforce_auth(&state, &headers).await {
+        Ok(authenticated) => authenticated,
+        Err(rejection) => return *rejection,
+    };
+    let subject = authenticated.as_ref().and_then(|a| a.subject.clone());
+
     let mut msg = match turbomcp_codec::decode_message(&state.codec, &body) {
         Ok(msg) => msg,
         Err(bad) => return invalid_frame_response(&bad),
     };
 
     // Internal `_meta` is transport-owned: strip anything the client forged
-    // before asserting our own (see `turbomcp_core::meta::internal`).
+    // before asserting our own (see `turbomcp_core::meta::internal`), then
+    // inject the verified principal, so a forged identity can't survive.
     meta::sanitize_inbound(&mut msg);
-
-    // Resource-server auth (if configured): validate the bearer token and
-    // inject the principal into internal `_meta` — after sanitize, so a
-    // forged identity can't survive. A rejected request never dispatches.
-    let subject = match enforce_auth(&state, &headers, Some(&mut msg)).await {
-        Ok(subject) => subject,
-        Err(rejection) => return *rejection,
-    };
+    if let Some(authenticated) = authenticated {
+        meta::set_request_meta(&mut msg, meta::internal::IDENTITY, authenticated.principal);
+    }
 
     // Rate limit (if configured) per identity: authenticated → per-subject,
     // anonymous → per source IP. Over budget → 429 + Retry-After, before any
@@ -1317,8 +1381,8 @@ where
         return rejection;
     }
     // The GET stream is part of the protected resource; require auth too.
-    let subject = match enforce_auth(&state, &headers, None).await {
-        Ok(subject) => subject,
+    let subject = match enforce_auth(&state, &headers).await {
+        Ok(authenticated) => authenticated.and_then(|a| a.subject),
         Err(rejection) => return *rejection,
     };
     if let Some(rejection) = enforce_rate_limit(
@@ -1381,8 +1445,8 @@ where
     if let Some(rejection) = state.reject_version_header(&headers) {
         return rejection;
     }
-    let subject = match enforce_auth(&state, &headers, None).await {
-        Ok(subject) => subject,
+    let subject = match enforce_auth(&state, &headers).await {
+        Ok(authenticated) => authenticated.and_then(|a| a.subject),
         Err(rejection) => return *rejection,
     };
     // Rate-limit termination like POST/GET — otherwise it's an unthrottled
@@ -1436,22 +1500,26 @@ where
 
 // ---- auth --------------------------------------------------------------------
 
-/// Enforce resource-server auth when configured. `Err(challenge)` rejects the
-/// request (401/403 + `WWW-Authenticate`). `Ok(subject)` allows it, yielding the
-/// authenticated subject (`None` = anonymous, i.e. no authenticator configured)
-/// and — when a message is given — injecting the validated principal into its
-/// internal `_meta` so the dispatcher lifts it into the request's identity. A
-/// `None` authenticator is an open endpoint (allow, anonymous).
+/// A caller the authenticator let in.
+struct Authenticated {
+    /// The rate-limit identity (issuer + subject), when the principal names one.
+    subject: Option<String>,
+    /// The validated principal, for the dispatcher's request identity.
+    principal: serde_json::Value,
+}
+
+/// Run the configured authenticator. `Err` carries the challenge response
+/// (401/403 + `WWW-Authenticate`); `Ok(None)` is an open endpoint (no
+/// authenticator configured, so anonymous).
 ///
-/// The rejection is boxed: an axum `Response` is 128 bytes against a 24-byte
-/// `Ok`, and this is awaited on the request path of three handlers, so the
-/// unboxed `Result` would widen each of their futures for a branch that only
-/// runs when auth fails. The allocation lands on the failure path alone.
+/// The rejection is boxed: an axum `Response` is 128 bytes, and this is
+/// awaited on the request path of three handlers, so the unboxed `Result`
+/// would widen each of their futures for a branch that only runs when auth
+/// fails. The allocation lands on the failure path alone.
 async fn enforce_auth<S>(
     state: &HttpState<S>,
     headers: &HeaderMap,
-    msg: Option<&mut JsonRpcMessage>,
-) -> Result<Option<String>, Box<Response>> {
+) -> Result<Option<Authenticated>, Box<Response>> {
     let Some(authenticator) = state.authenticator.as_ref() else {
         return Ok(None);
     };
@@ -1473,10 +1541,7 @@ async fn enforce_auth<S>(
                     ))
                     .expect("string principal serialization")
                 });
-            if let Some(msg) = msg {
-                meta::set_request_meta(msg, meta::internal::IDENTITY, principal);
-            }
-            Ok(subject)
+            Ok(Some(Authenticated { subject, principal }))
         }
         AuthDecision::Challenge {
             status,
@@ -1511,9 +1576,10 @@ impl PeerIp {
     /// The effective client IP for rate limiting. If the direct socket peer is a
     /// trusted proxy, walk `X-Forwarded-For` from the right to the first hop that
     /// isn't itself trusted; otherwise use the socket peer as-is.
-    fn client_ip(&self, trusted: &[IpAddr]) -> Option<IpAddr> {
+    fn client_ip(&self, trusted: &[IpNet]) -> Option<IpAddr> {
         let socket = self.socket?;
-        if trusted.is_empty() || !trusted.contains(&socket) {
+        let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
+        if !is_trusted(&socket) {
             return Some(socket);
         }
         let mut candidate = socket;
@@ -1523,11 +1589,35 @@ impl PeerIp {
                 return Some(socket);
             };
             candidate = hop;
-            if !trusted.contains(&hop) {
+            if !is_trusted(&hop) {
                 return Some(hop);
             }
         }
         Some(candidate)
+    }
+
+    /// Read the socket peer and every `X-Forwarded-For` line, joined in
+    /// order (RFC 9110 §5.3: several field lines are one comma-separated
+    /// list). A line that isn't text makes the whole chain unusable, which
+    /// the walk above treats as "stop at the socket".
+    fn from_parts(parts: &Parts) -> Self {
+        let lines: Option<Vec<&str>> = parts
+            .headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .map(|v| v.to_str().ok())
+            .collect();
+        PeerIp {
+            socket: parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|ConnectInfo(addr)| addr.ip()),
+            forwarded: match lines {
+                Some(lines) if !lines.is_empty() => Some(lines.join(",")),
+                Some(_) => None,
+                None => Some("\u{0}".to_owned()),
+            },
+        }
     }
 }
 
@@ -1535,17 +1625,7 @@ impl<St: Send + Sync> FromRequestParts<St> for PeerIp {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &St) -> Result<Self, Infallible> {
-        Ok(PeerIp {
-            socket: parts
-                .extensions
-                .get::<ConnectInfo<SocketAddr>>()
-                .map(|ConnectInfo(addr)| addr.ip()),
-            forwarded: parts
-                .headers
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned),
-        })
+        Ok(PeerIp::from_parts(parts))
     }
 }
 
@@ -1829,6 +1909,36 @@ mod tests {
         s.parse().unwrap()
     }
 
+    fn net(s: &str) -> IpNet {
+        s.parse::<IpNet>().unwrap_or_else(|_| ip(s).into())
+    }
+
+    /// A trusted range covers every address in it: a pod network or a cloud
+    /// load balancer's subnet, which a list of single addresses can't name.
+    #[test]
+    fn client_ip_trusts_a_proxy_range() {
+        let p = peer("10.1.2.3", Some("203.0.113.7, 10.9.8.7"));
+        assert_eq!(p.client_ip(&[net("10.0.0.0/8")]), Some(ip("203.0.113.7")));
+    }
+
+    /// Every `X-Forwarded-For` line counts. A proxy that appends its own line
+    /// puts the trustworthy entry in the *last* one; reading only the first
+    /// line took whatever the client wrote there.
+    #[test]
+    fn client_ip_reads_every_forwarded_line() {
+        let mut headers = HeaderMap::new();
+        headers.append("x-forwarded-for", HeaderValue::from_static("6.6.6.6"));
+        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.7"));
+        let mut request = axum::http::Request::builder().body(()).unwrap();
+        *request.headers_mut() = headers;
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([10, 0, 0, 1], 443))));
+        let (parts, ()) = request.into_parts();
+        let p = PeerIp::from_parts(&parts);
+        assert_eq!(p.client_ip(&[net("10.0.0.1")]), Some(ip("203.0.113.7")));
+    }
+
     fn peer(socket: &str, xff: Option<&str>) -> PeerIp {
         PeerIp {
             socket: Some(ip(socket)),
@@ -1846,27 +1956,27 @@ mod tests {
     #[test]
     fn client_ip_ignores_xff_from_untrusted_peer() {
         let p = peer("203.0.113.9", Some("1.2.3.4"));
-        assert_eq!(p.client_ip(&[ip("10.0.0.1")]), Some(ip("203.0.113.9")));
+        assert_eq!(p.client_ip(&[net("10.0.0.1")]), Some(ip("203.0.113.9")));
     }
 
     #[test]
     fn client_ip_uses_xff_behind_trusted_proxy() {
         // Peer is the trusted LB; the real client is the rightmost untrusted hop.
         let p = peer("10.0.0.1", Some("9.9.9.9, 203.0.113.7"));
-        assert_eq!(p.client_ip(&[ip("10.0.0.1")]), Some(ip("203.0.113.7")));
+        assert_eq!(p.client_ip(&[net("10.0.0.1")]), Some(ip("203.0.113.7")));
     }
 
     #[test]
     fn client_ip_skips_trusted_hops_in_xff() {
         // Two trusted proxies chained: skip both, take the client.
         let p = peer("10.0.0.1", Some("203.0.113.7, 10.0.0.2"));
-        let trusted = [ip("10.0.0.1"), ip("10.0.0.2")];
+        let trusted = [net("10.0.0.1"), net("10.0.0.2")];
         assert_eq!(p.client_ip(&trusted), Some(ip("203.0.113.7")));
     }
 
     #[test]
     fn client_ip_does_not_skip_malformed_proxy_boundaries() {
-        let trusted = [ip("10.0.0.1"), ip("10.0.0.2")];
+        let trusted = [net("10.0.0.1"), net("10.0.0.2")];
         for header in ["1.2.3.4, unknown", "1.2.3.4,,10.0.0.2", "1.2.3.4, [::1]"] {
             assert_eq!(
                 peer("10.0.0.1", Some(header)).client_ip(&trusted),

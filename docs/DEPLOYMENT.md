@@ -137,7 +137,15 @@ replayed. Longer retry delays end recovery rather than reconnecting too early. C
 response ends pumping. Modern streams do not use this legacy recovery path.
 
 Trusted reverse proxies must append or replace `X-Forwarded-For` correctly.
-Forwarded addresses are used only when the socket peer is explicitly trusted;
-parsing stops at the first untrusted hop. A malformed hop inside the trusted
-chain falls back to the socket peer rather than skipping to attacker input.
-This HTTP reverse-proxy support is distinct from a standalone MCP proxy product.
+`with_trusted_proxies` takes addresses or CIDR ranges (a pod network, a load
+balancer subnet). Forwarded addresses are used only when the socket peer is
+trusted; every `X-Forwarded-For` line is read, in order, and parsing stops at
+the first untrusted hop. A malformed hop inside the trusted chain falls back
+to the socket peer rather than skipping to attacker input. This HTTP
+reverse-proxy support is distinct from a standalone MCP proxy product.
+
+`with_rate_limiter` charges authenticated callers per subject, which needs a
+verified token, so requests that fail authentication never reach it.
+`with_ip_rate_limiter` is the cheap first gate: it charges every request per
+client IP before the body is read or a token checked. Give it a generous
+quota, since callers behind one NAT share it.
