@@ -163,7 +163,7 @@ fn request(id: i64, method: &str) -> JsonRpcMessage {
 
 fn reply_id(msg: &JsonRpcMessage) -> Option<RequestId> {
     match msg {
-        JsonRpcMessage::Response(r) => Some(r.id.clone()),
+        JsonRpcMessage::Response(r) => r.id.clone(),
         _ => None,
     }
 }
@@ -646,7 +646,7 @@ async fn a_panicking_handler_answers_and_the_connection_survives() {
     let JsonRpcMessage::Response(r) = &reply else {
         panic!("expected a response, got {reply:?}");
     };
-    assert_eq!(r.id, RequestId::from(1i64));
+    assert_eq!(r.id, Some(RequestId::from(1i64)));
     assert_eq!(r.error.as_ref().expect("error response").code, -32603);
 
     // The connection is still usable.
@@ -659,4 +659,95 @@ async fn a_panicking_handler_answers_and_the_connection_survives() {
 
     drop(in_tx);
     driver.await.unwrap().expect("clean shutdown on EOF");
+}
+
+/// "The Server MUST reply with a Response, except for in the case of
+/// Notifications": a service that fails a request still answers it, with the
+/// request's id. It used to be logged and dropped, so the peer waited out its
+/// own timeout (an evicted legacy session on stdio did exactly this).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failing_service_still_answers_the_request() {
+    #[derive(Clone)]
+    struct Forgetful;
+
+    impl Service<JsonRpcMessage> for Forgetful {
+        type Response = Option<JsonRpcMessage>;
+        type Error = ProtocolError;
+        type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _msg: JsonRpcMessage) -> Self::Future {
+            Box::pin(async { Err(ProtocolError::UnknownSession("evicted".into())) })
+        }
+    }
+
+    let (in_tx, in_rx) = mpsc::channel(8);
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+    let driver = tokio::spawn(serve_with(
+        MockTransport::new(in_rx, out_tx),
+        Forgetful,
+        ServeConfig::default(),
+    ));
+
+    in_tx.send(request(9, "tools/list")).await.unwrap();
+    let reply = tokio::time::timeout(Duration::from_secs(5), out_rx.recv())
+        .await
+        .expect("a failed request is still answered")
+        .unwrap();
+    let JsonRpcMessage::Response(r) = &reply else {
+        panic!("expected a response, got {reply:?}");
+    };
+    assert_eq!(r.id, Some(RequestId::from(9i64)));
+    assert_eq!(
+        r.error.as_ref().expect("an error").code,
+        turbomcp_core::codes::NO_ACTIVE_SESSION
+    );
+
+    drop(in_tx);
+    driver.await.unwrap().expect("clean shutdown on EOF");
+}
+
+/// The service sees frames in the order they arrived. Each used to be called
+/// from its own spawned task, in whatever order the runtime ran them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_service_is_called_in_arrival_order() {
+    #[derive(Clone)]
+    struct Recorder(Arc<std::sync::Mutex<Vec<RequestId>>>);
+
+    impl Service<JsonRpcMessage> for Recorder {
+        type Response = Option<JsonRpcMessage>;
+        type Error = ProtocolError;
+        type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
+            if let JsonRpcMessage::Request(req) = &msg {
+                self.0.lock().unwrap().push(req.id.clone());
+            }
+            Box::pin(async { Ok(None) })
+        }
+    }
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (in_tx, in_rx) = mpsc::channel(512);
+    let (out_tx, _out_rx) = mpsc::unbounded_channel();
+    let driver = tokio::spawn(serve_with(
+        MockTransport::new(in_rx, out_tx),
+        Recorder(Arc::clone(&seen)),
+        ServeConfig::default(),
+    ));
+    for id in 0..500 {
+        in_tx.send(request(id, "x")).await.unwrap();
+    }
+    drop(in_tx);
+    driver.await.unwrap().expect("clean shutdown on EOF");
+
+    let expected: Vec<RequestId> = (0..500).map(RequestId::from).collect();
+    assert_eq!(*seen.lock().unwrap(), expected);
 }

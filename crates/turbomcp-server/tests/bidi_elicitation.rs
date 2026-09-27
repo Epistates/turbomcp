@@ -176,7 +176,7 @@ async fn inline_elicitation_round_trip_on_one_pipe() {
     let JsonRpcMessage::Response(done) = recv(&mut p.out_rx).await else {
         panic!("expected the tools/call response");
     };
-    assert_eq!(done.id, RequestId::from(2i64));
+    assert_eq!(done.id, Some(RequestId::from(2i64)));
     let result = done.result.expect("tool result");
     assert_eq!(result["content"][0]["text"], "confirmed=true");
 
@@ -219,7 +219,7 @@ async fn client_error_answer_fails_the_handler_not_the_connection() {
     let JsonRpcMessage::Response(pong) = recv(&mut p.out_rx).await else {
         panic!("expected pong");
     };
-    assert_eq!(pong.id, RequestId::from(3i64));
+    assert_eq!(pong.id, Some(RequestId::from(3i64)));
 
     drop(p.in_tx);
     p.driver.await.unwrap().expect("clean shutdown");

@@ -11,8 +11,8 @@
 use alloc::string::{String, ToString};
 use core::fmt;
 
-/// The JSON-RPC error codes the MCP spec allocates by name, as opposed to the
-/// four JSON-RPC base codes and the `-32000` implementation-defined floor.
+/// The JSON-RPC error codes: JSON-RPC 2.0's own, and the ones the MCP spec
+/// allocates by name.
 ///
 /// One definition each: these numbers appear on the wire from the dispatcher,
 /// the HTTP transport, and [`McpError::jsonrpc_code`], and they have already
@@ -20,8 +20,20 @@ use core::fmt;
 /// frozen spec moved the block to `-3202x`). Naming them keeps the next
 /// reallocation a one-line change instead of a grep.
 ///
-/// All three are `2026-07-28` concepts — no earlier schema defines them.
+/// The MCP-allocated three are `2026-07-28` concepts; no earlier schema
+/// defines them.
 pub mod codes {
+    /// JSON-RPC 2.0: the bytes were not valid JSON.
+    pub const PARSE_ERROR: i32 = -32700;
+    /// JSON-RPC 2.0: valid JSON, but not a valid request object.
+    pub const INVALID_REQUEST: i32 = -32600;
+    /// JSON-RPC 2.0: the method does not exist or is not available.
+    pub const METHOD_NOT_FOUND: i32 = -32601;
+    /// JSON-RPC 2.0: invalid method parameters.
+    pub const INVALID_PARAMS: i32 = -32602;
+    /// JSON-RPC 2.0: internal error.
+    pub const INTERNAL_ERROR: i32 = -32603;
+
     /// An HTTP header disagreed with the request body, or a required header is
     /// missing or malformed (transports spec §Server Validation). HTTP 400.
     pub const HEADER_MISMATCH: i32 = -32020;

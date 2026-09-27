@@ -40,8 +40,8 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
 use turbomcp_core::{
-    JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
-    ProtocolVersion, RequestId, meta,
+    InvalidFrame, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
+    JsonRpcResponse, ProtocolVersion, RequestId, meta,
 };
 use turbomcp_protocol::methods::{notification, request};
 use turbomcp_service::Transport;
@@ -464,7 +464,10 @@ async fn actor<T>(
                 match frame {
                     Ok(Some(msg)) => {
                         let failure = match &msg {
-                            JsonRpcMessage::Response(r) => transport.take_http_failure(&r.id),
+                            JsonRpcMessage::Response(r) => r
+                                .id
+                                .as_ref()
+                                .and_then(|id| transport.take_http_failure(id)),
                             _ => None,
                         };
                         if let Some(reply) = route_inbound(msg, failure, &state, &mut dispatch) {
@@ -477,10 +480,22 @@ async fn actor<T>(
                         }
                     }
                     Ok(None) => break, // clean EOF
-                    Err(e) => {
-                        tracing::debug!(error = %e, "client transport recv failed; closing");
-                        break;
-                    }
+                    Err(e) => match T::invalid_frame(e) {
+                        Ok(bad) => {
+                            if let Some(reply) = invalid_from_server(&bad, &state.pending) {
+                                tokio::select! {
+                                    () = shutdown.cancelled() => break,
+                                    result = tokio::time::timeout(Duration::from_secs(30), transport.send(reply)) => {
+                                        if !matches!(result, Ok(Ok(()))) { break; }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(error = %e, "client transport recv failed; closing");
+                            break;
+                        }
+                    },
                 }
             }
         }
@@ -779,16 +794,45 @@ fn complete_pending_ok(id: &RequestId, value: Value, pending: &Arc<Pending>) {
     }
 }
 
+/// What a client does with one bad frame from the server, which never costs
+/// it the connection: a stdio server that prints a banner, or answers with a
+/// shape this SDK can't decode, is still a server worth talking to.
+///
+/// - A broken *response* fails the request waiting on its id right away,
+///   rather than leaving the caller to wait out its timeout.
+/// - A broken *request* the server can be told about (its id was readable)
+///   gets its Invalid Request answer, which is the reply returned here.
+/// - Anything else (a banner line, an unreadable id) is skipped. Answering
+///   stray stdout noise with error frames would only give the server
+///   something to choke on.
+fn invalid_from_server(bad: &InvalidFrame, pending: &Arc<Pending>) -> Option<JsonRpcMessage> {
+    tracing::warn!(error = %bad, "invalid frame from server; skipping it");
+    let id = bad.id.as_ref()?;
+    if bad.is_response {
+        let waiter = pending.lock().expect("pending mutex poisoned").remove(id);
+        if let Some(waiter) = waiter {
+            let _ = waiter.send(Err(ClientError::Decode(format!(
+                "the server's response was not a valid JSON-RPC message: {bad}"
+            ))));
+        }
+        return None;
+    }
+    bad.response().map(Into::into)
+}
+
 /// Deliver a response to the request waiting on its id, if any.
 fn complete_pending(
     resp: JsonRpcResponse,
     pending: &Arc<Pending>,
     failure: Option<turbomcp_service::HttpFailure>,
 ) {
-    let waiter = pending
-        .lock()
-        .expect("pending mutex poisoned")
-        .remove(&resp.id);
+    let Some(id) = &resp.id else {
+        // The server couldn't read a frame of ours well enough to find its
+        // id. Nothing is waiting on "no id", so all that's left is to say so.
+        tracing::warn!(error = ?resp.error, "server answered an unreadable frame");
+        return;
+    };
+    let waiter = pending.lock().expect("pending mutex poisoned").remove(id);
     let Some(waiter) = waiter else {
         tracing::debug!(id = ?resp.id, "response for unknown/duplicate request id (dropped)");
         return;

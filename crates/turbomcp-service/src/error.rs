@@ -50,7 +50,7 @@ impl ProtocolError {
     #[must_use]
     pub fn jsonrpc_code(&self) -> i32 {
         match self {
-            Self::Parse(_) => -32700,
+            Self::Parse(_) => turbomcp_core::codes::PARSE_ERROR,
             // Spec-allocated codes (`turbomcp_core::codes` owns the numbers).
             Self::UnsupportedVersion { .. } => turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION,
             Self::MissingCapability(_) => turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
@@ -67,6 +67,13 @@ impl ProtocolError {
     /// mismatch on a request). Pure transport death has no response.
     #[must_use]
     pub fn into_response(self, id: RequestId) -> JsonRpcResponse {
+        JsonRpcResponse::error(id, self.to_jsonrpc_error())
+    }
+
+    /// This error as a JSON-RPC error object, with the `data` the spec
+    /// requires for the codes that carry one.
+    #[must_use]
+    pub fn to_jsonrpc_error(&self) -> JsonRpcError {
         let code = self.jsonrpc_code();
         let message = self.to_string();
         // `UnsupportedProtocolVersionError` requires
@@ -81,14 +88,11 @@ impl ProtocolError {
             })),
             _ => None,
         };
-        JsonRpcResponse::error(
-            id,
-            JsonRpcError {
-                code,
-                message,
-                data,
-            },
-        )
+        JsonRpcError {
+            code,
+            message,
+            data,
+        }
     }
 }
 

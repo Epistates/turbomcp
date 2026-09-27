@@ -10,8 +10,10 @@
 //! must never interleave on the wire. The driver therefore separates the two
 //! halves:
 //!
-//! - **Reader / dispatch:** each inbound frame is handed to a *cloned* service
-//!   on its own spawned task, so N requests are in flight concurrently.
+//! - **Reader / dispatch:** the reader calls a *cloned* service for each
+//!   inbound frame, in arrival order, and spawns the returned future, so N
+//!   requests are in flight concurrently while the service still sees them in
+//!   the order they came.
 //! - **Writer actor:** every task funnels its response through a single
 //!   `mpsc` channel, and one arm of the [`tokio::select!`] loop is the sole
 //!   writer to the transport — frames are serialized, never interleaved. The
@@ -41,6 +43,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use futures::FutureExt as _;
 use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
@@ -85,8 +88,9 @@ impl Default for ServeConfig {
 /// default [`ServeConfig`].
 ///
 /// Returns `Ok(())` on a clean end-of-stream. A transport failure becomes
-/// [`ProtocolError::Transport`]. Per-request handler errors are logged, not
-/// fatal — one bad request must not tear down the connection.
+/// [`ProtocolError::Transport`]. Neither a service error nor a malformed frame
+/// is fatal: each is answered with a JSON-RPC error and reading continues, so
+/// one bad request can't tear down the connection.
 ///
 /// # Errors
 /// Propagates transport I/O failures and the service's readiness error, if any.
@@ -166,7 +170,21 @@ where
             // 4. Read the next inbound frame.
             frame = transport.recv() => {
                 match frame {
-                    Err(e) => break Err(ProtocolError::Transport(e.to_string())),
+                    // One bad frame is the peer's bug, not a dead stream:
+                    // answer it (unless it was a response) and read on.
+                    // Tearing down here used to abort every request in flight
+                    // on the connection over one malformed line.
+                    Err(e) => match T::invalid_frame(e) {
+                        Ok(bad) => {
+                            tracing::warn!(error = %bad, "invalid frame from peer");
+                            if let Some(reply) = bad.response()
+                                && tx.try_send(reply.into()).is_err()
+                            {
+                                break Err(ProtocolError::Transport("outbound capacity exceeded".into()));
+                            }
+                        }
+                        Err(e) => break Err(ProtocolError::Transport(e.to_string())),
+                    },
                     Ok(None) => break Ok(()), // clean EOF
                     Ok(Some(mut msg)) => {
                         // Trust boundary: strip forged internal keys, then
@@ -204,24 +222,49 @@ where
                         };
                         let mut ready = svc.clone();
                         let out_tx = tx.clone();
-                        // Kept for the panic path: a handler that unwinds still
-                        // owes this request a response (see `catch_handler_panic`).
+                        // Kept for the error and panic paths: a request whose
+                        // handler fails or unwinds is still owed a response.
                         let reply_id = match &msg {
                             JsonRpcMessage::Request(r) => Some(r.id.clone()),
                             _ => None,
                         };
+                        // `call` runs here, on the reader, whenever the service
+                        // is ready without waiting (the dispatcher always is):
+                        // that keeps the service seeing frames in arrival
+                        // order, so a cancellation can't overtake the request
+                        // it cancels. A service that isn't ready yet is driven
+                        // to readiness on the handler task instead, never on
+                        // the reader, which also has to keep writing.
+                        let call: futures::future::BoxFuture<'static, _> =
+                            match poll_fn(|cx| ready.poll_ready(cx)).now_or_never() {
+                                Some(Ok(())) => {
+                                    let fut = ready.call(msg);
+                                    Box::pin(fut)
+                                }
+                                Some(Err(e)) => Box::pin(async move { Err(e) }),
+                                None => Box::pin(async move {
+                                    poll_fn(|cx| ready.poll_ready(cx)).await?;
+                                    ready.call(msg).await
+                                }),
+                            };
                         handlers.spawn(async move {
                             let _permit = permit; // released when the handler ends
-                            let call = async move {
-                                poll_fn(|cx| ready.poll_ready(cx)).await?;
-                                ready.call(msg).await
-                            };
-                            match catch_handler_panic(reply_id, call).await {
+                            match catch_handler_panic(reply_id.clone(), call).await {
                                 Ok(Some(reply)) => {
                                     let _ = out_tx.send(reply).await;
                                 }
                                 Ok(None) => {} // notification: no reply
-                                Err(e) => tracing::warn!(error = %e, "rpc handler failed"),
+                                // "The Server MUST reply with a Response,
+                                // except for in the case of Notifications":
+                                // a service error is still an answer. It used
+                                // to be logged and dropped, leaving the peer
+                                // to wait out its timeout.
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "rpc handler failed");
+                                    if let Some(id) = reply_id {
+                                        let _ = out_tx.send(e.into_response(id).into()).await;
+                                    }
+                                }
                             }
                         });
                     }

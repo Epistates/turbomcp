@@ -128,12 +128,12 @@ async fn oversized_frames_end_the_connection() {
     }
 }
 
-/// A text frame that isn't JSON ends the connection (the transport is the
-/// trust boundary; there is no resync on a corrupted stream) — it is never
-/// answered and never crashes the server.
+/// A text frame that isn't JSON is answered with a Parse error and costs
+/// nothing else: WebSocket framing delivers the next message intact, so the
+/// same connection goes on to serve a well-formed request.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn malformed_text_frame_ends_the_connection() {
-    use futures::{SinkExt, StreamExt};
+async fn a_malformed_text_frame_is_answered_and_the_connection_survives() {
+    use futures::SinkExt;
     use tokio_tungstenite::tungstenite::Message;
 
     let addr = spawn_server(WsConfig::new()).await;
@@ -143,25 +143,18 @@ async fn malformed_text_frame_ends_the_connection() {
         .send(Message::text("!!! not json !!!"))
         .await
         .unwrap();
-    // The next frame (if any) must be a Close — never a served response.
-    loop {
-        match stream.next().await {
-            None | Some(Err(_)) => break,
-            Some(Ok(Message::Close(_))) => break,
-            Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
-            Some(Ok(other)) => panic!("malformed frame was served: {other:?}"),
-        }
-    }
-
-    // The listener survives: a fresh, well-formed connection is served.
-    let req = format!("ws://{addr}").into_client_request().unwrap();
-    let (stream, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let mut client = WebSocketTransport::new(stream, DefaultCodec::default());
+    let Some(JsonRpcMessage::Response(parse)) = client.recv().await.unwrap() else {
+        panic!("expected the parse error");
+    };
+    assert!(parse.id.is_none());
+    assert_eq!(parse.error.expect("an error").code, -32700);
+
     client
         .send(JsonRpcMessage::Request(JsonRpcRequest::new(1, "ok", None)))
         .await
         .unwrap();
-    assert!(client.recv().await.unwrap().is_some());
+    assert!(client.recv().await.unwrap().is_some(), "still serving");
 }
 
 /// Binary frames carry the same JSON payload as text frames and decode

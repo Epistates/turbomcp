@@ -39,6 +39,7 @@ pub use context::{Extensions, Implementation, LogLevel, RequestContext, TraceCon
 pub use error::{McpError, McpResult, codes};
 pub use identity::{Claims, Identity, IdentityClaims, RedactedSubject};
 pub use jsonrpc::{
-    JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId,
+    InvalidFrame, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
+    JsonRpcResponse, RequestId,
 };
 pub use protocol_version::ProtocolVersion;

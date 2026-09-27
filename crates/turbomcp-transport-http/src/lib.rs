@@ -94,7 +94,9 @@ use axum::{Json, Router};
 use serde_json::json;
 use tower_http::cors::CorsLayer;
 use turbomcp_codec::{Codec, DefaultCodec};
-use turbomcp_core::{JsonRpcMessage, ProtocolVersion, RequestId, meta};
+use turbomcp_core::{
+    InvalidFrame, JsonRpcMessage, JsonRpcResponse, ProtocolVersion, RequestId, meta,
+};
 use turbomcp_service::{
     AuthDecision, CancellationToken, HttpAuthenticator, McpService, ProtocolError, RateKey,
     RateLimiter, SessionTerminator, catch_handler_panic, mcp_headers, outbound,
@@ -762,9 +764,9 @@ where
         );
     }
 
-    let mut msg: JsonRpcMessage = match state.codec.decode(&body) {
+    let mut msg = match turbomcp_codec::decode_message(&state.codec, &body) {
         Ok(msg) => msg,
-        Err(e) => return parse_error_response(&e.to_string()),
+        Err(bad) => return invalid_frame_response(&bad),
     };
 
     // Internal `_meta` is transport-owned: strip anything the client forged
@@ -938,11 +940,12 @@ where
         return request_post(&state, msg, stateless_request).await;
     }
 
+    let id = request_id(&msg);
     let mut svc = state.service.clone();
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
-        return protocol_error_response(&e);
+        return protocol_error_response(&e, id);
     }
-    match catch_handler_panic(request_id(&msg), svc.call(msg)).await {
+    match catch_handler_panic(id.clone(), svc.call(msg)).await {
         Ok(Some(reply)) => {
             let mut resp = encode_json_response(&state.codec, &reply);
             // `initialize` reaches this inline path rather than `request_post`,
@@ -960,7 +963,7 @@ where
             resp
         }
         Ok(None) => StatusCode::ACCEPTED.into_response(), // notification: no body
-        Err(e) => protocol_error_response(&e),
+        Err(e) => protocol_error_response(&e, id),
     }
 }
 
@@ -1022,17 +1025,18 @@ where
         json!(connection_id),
     );
 
+    let id = request_id(&msg);
     let mut svc = state.service.clone();
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
-        return protocol_error_response(&e);
+        return protocol_error_response(&e, id);
     }
-    match catch_handler_panic(request_id(&msg), svc.call(msg)).await {
+    match catch_handler_panic(id.clone(), svc.call(msg)).await {
         // Accepted: no JSON-RPC response; the ack notification is already in
         // the channel as the stream's first event.
         Ok(None) => {}
         // Rejected in-band (bad filter, legacy path, unsupported version).
         Ok(Some(reply)) => return encode_json_response(&state.codec, &reply),
-        Err(e) => return protocol_error_response(&e),
+        Err(e) => return protocol_error_response(&e, id),
     }
 
     sse_response(
@@ -1089,7 +1093,7 @@ where
 
     let mut svc = state.service.clone();
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
-        return protocol_error_response(&e);
+        return protocol_error_response(&e, Some(request_id));
     }
     // Wrapped at construction, not at each await: this future is polled from
     // here *and* from the upgraded SSE stream below, and a handler panic must
@@ -1117,15 +1121,18 @@ where
                 // arms are defensive.
                 Ok(None) if events.is_empty() => StatusCode::ACCEPTED.into_response(),
                 Ok(None) => finished_sse(state.codec, events),
-                Err(e) => protocol_error_response(&e),
+                Err(e) => protocol_error_response(&e, Some(request_id.clone())),
             }
         }
         first = rx.recv() => {
             let Some(first) = first else {
                 // Unreachable while `registration` holds the sender.
-                return protocol_error_response(&ProtocolError::Internal(
-                    "per-request channel closed while registered".to_owned(),
-                ));
+                return protocol_error_response(
+                    &ProtocolError::Internal(
+                        "per-request channel closed while registered".to_owned(),
+                    ),
+                    Some(request_id.clone()),
+                );
             };
             streaming_post_sse(
                 state.codec,
@@ -1780,24 +1787,33 @@ fn encode_json_response(codec: &DefaultCodec, msg: &JsonRpcMessage) -> Response 
             bytes,
         )
             .into_response(),
-        Err(e) => protocol_error_response(&ProtocolError::from(e)),
+        Err(e) => {
+            let id = match msg {
+                JsonRpcMessage::Response(r) => r.id.clone(),
+                _ => None,
+            };
+            protocol_error_response(&ProtocolError::from(e), id)
+        }
     }
 }
 
-/// A malformed body has no usable id; answer `400` with a JSON-RPC parse error.
-fn parse_error_response(detail: &str) -> Response {
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": null,
-        "error": { "code": -32700, "message": format!("parse error: {detail}") },
-    });
+/// A body that isn't a valid message: `400` with the JSON-RPC error it is owed
+/// (Parse error, or Invalid Request echoing the id when one was readable).
+/// "The HTTP response body MAY comprise a JSON-RPC error response that has no
+/// `id`", which covers a broken POSTed response too.
+fn invalid_frame_response(bad: &InvalidFrame) -> Response {
+    let body = bad
+        .response()
+        .unwrap_or_else(|| JsonRpcResponse::error_without_id(bad.error()));
     (StatusCode::BAD_REQUEST, Json(body)).into_response()
 }
 
 /// Map a service/transport [`ProtocolError`] to an HTTP status + JSON-RPC error
 /// body (PLAN §4.10). User `McpError`s never reach here — the dispatcher renders
 /// them as `Ok` error *responses*; this is for parse/version/shutdown conditions.
-fn protocol_error_response(err: &ProtocolError) -> Response {
+/// The request's id is echoed whenever the caller has it: a multiplexing
+/// client can't correlate an error that doesn't name its request.
+fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>) -> Response {
     let status = match err {
         ProtocolError::Parse(_)
         | ProtocolError::UnsupportedVersion { .. }
@@ -1810,11 +1826,11 @@ fn protocol_error_response(err: &ProtocolError) -> Response {
         }
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": null,
-        "error": { "code": err.jsonrpc_code(), "message": err.to_string() },
-    });
+    let error = err.to_jsonrpc_error();
+    let body = match id {
+        Some(id) => JsonRpcResponse::error(id, error),
+        None => JsonRpcResponse::error_without_id(error),
+    };
     (status, Json(body)).into_response()
 }
 

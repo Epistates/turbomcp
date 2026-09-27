@@ -20,11 +20,12 @@
 use bytes::Bytes;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use turbomcp_core::{InvalidFrame, JsonRpcMessage};
 
 /// Errors produced while encoding to or decoding from the wire.
 ///
-/// Decoding failures map to JSON-RPC parse errors (`-32700`) one layer up
-/// (`turbomcp-service`'s `ProtocolError::Parse`).
+/// A transport decoding a *message* uses [`decode_message`] instead, which
+/// says which of the two JSON-RPC errors a bad frame is owed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CodecError {
@@ -53,6 +54,30 @@ pub trait Codec: Send + Sync + 'static {
     /// # Errors
     /// Returns [`CodecError::Decode`] on malformed input or type mismatch.
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, CodecError>;
+}
+
+/// Decode one complete frame into a message, or classify why it isn't one.
+///
+/// Bytes that aren't JSON are a Parse error (`-32700`) with no id; JSON that
+/// isn't a valid message (a batch, `"params": "x"`, a fractional id) is an
+/// Invalid Request (`-32600`) that echoes the id when it can be read. A
+/// leading UTF-8 byte-order mark is skipped: some Windows tooling writes
+/// one, and it is never part of a JSON text.
+///
+/// The fast path is one decode. Only a frame that fails it is parsed again,
+/// as a plain value, to find out which error it is owed.
+///
+/// # Errors
+/// The [`InvalidFrame`] describing the error response this frame is owed.
+pub fn decode_message<C: Codec>(codec: &C, bytes: &[u8]) -> Result<JsonRpcMessage, InvalidFrame> {
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    match codec.decode::<JsonRpcMessage>(bytes) {
+        Ok(msg) => Ok(msg),
+        Err(first) => match codec.decode::<serde_json::Value>(bytes) {
+            Ok(value) => JsonRpcMessage::from_value(value),
+            Err(_) => Err(InvalidFrame::unparseable(first)),
+        },
+    }
 }
 
 /// `serde_json`-backed codec. The portable baseline: available on every target,
@@ -148,9 +173,37 @@ mod tests {
     }
 
     #[test]
+    fn decode_message_says_which_error_a_bad_frame_is_owed() {
+        use turbomcp_core::{RequestId, codes};
+        let codec = DefaultCodec::default();
+
+        let garbage = decode_message(&codec, b"Server starting...").unwrap_err();
+        assert_eq!(garbage.code, codes::PARSE_ERROR);
+        assert!(garbage.id.is_none());
+
+        let bad_params = decode_message(
+            &codec,
+            br#"{"jsonrpc":"2.0","id":7,"method":"x","params":"s"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(bad_params.code, codes::INVALID_REQUEST);
+        assert_eq!(bad_params.id, Some(RequestId::Number(7)));
+
+        let batch =
+            decode_message(&codec, br#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#).unwrap_err();
+        assert_eq!(batch.code, codes::INVALID_REQUEST);
+
+        let with_bom = decode_message(
+            &codec,
+            b"\xEF\xBB\xBF{\"jsonrpc\":\"2.0\",\"method\":\"x\"}",
+        );
+        assert!(matches!(with_bom, Ok(JsonRpcMessage::Notification(_))));
+    }
+
+    #[test]
     fn batch_array_is_decode_error() {
         // No `Batch` variant by design (PLAN.md §13.1): a received JSON-RPC
-        // batch must be a decode error here, mapping to `-32700` one layer up.
+        // batch is a decode error here (`decode_message` answers it `-32600`).
         let batch = br#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#;
         assert!(matches!(
             SerdeJsonCodec.decode::<JsonRpcMessage>(batch),

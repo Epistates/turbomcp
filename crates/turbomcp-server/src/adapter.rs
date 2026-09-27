@@ -24,11 +24,13 @@
 //! driver's per-connection id must survive this adapter). Compose the adapter
 //! under one of those boundaries, never directly against raw client input.
 
+use std::future::poll_fn;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use futures::future::BoxFuture;
 use serde_json::json;
+use tokio::sync::watch;
 use tower::Service;
 use turbomcp_core::{JsonRpcMessage, ProtocolVersion, meta};
 use turbomcp_protocol::{methods, version};
@@ -43,6 +45,10 @@ pub struct LegacySessionAdapter<S> {
     inner: S,
     /// `Some(_)` once an `initialize` on this connection succeeded.
     session: Arc<Mutex<Option<Session>>>,
+    /// Set while an `initialize` is being answered; its sender drops once the
+    /// outcome is committed, which is what a message pipelined behind the
+    /// handshake waits on.
+    handshake: Arc<Mutex<Option<watch::Receiver<()>>>>,
 }
 
 impl<S> core::fmt::Debug for LegacySessionAdapter<S> {
@@ -71,7 +77,42 @@ impl<S> LegacySessionAdapter<S> {
         Self {
             inner,
             session: Arc::new(Mutex::new(None)),
+            handshake: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The handshake a message must wait behind, if one is still in flight.
+    fn pending_handshake(&self) -> Option<watch::Receiver<()>> {
+        let mut gate = self.handshake.lock().expect("handshake gate poisoned");
+        match gate.as_ref() {
+            // `Err` means the sender dropped: the handshake is settled.
+            Some(rx) if rx.has_changed().is_ok() => gate.clone(),
+            _ => {
+                *gate = None;
+                None
+            }
+        }
+    }
+}
+
+/// Stamp a version-less message with the connection's session, if it has one.
+fn stamp(session: &Mutex<Option<Session>>, msg: &mut JsonRpcMessage) {
+    let session = session.lock().expect("session state lock poisoned").clone();
+    let Some(session) = session else { return };
+    let params = match &*msg {
+        JsonRpcMessage::Request(r) => r.params.as_ref(),
+        JsonRpcMessage::Notification(n) => n.params.as_ref(),
+        JsonRpcMessage::Response(_) => None,
+    };
+    // Stamp only version-less messages: a modern stateless client sharing
+    // the pipe keeps working, per-request version wins.
+    if version::request_protocol_version(params).is_none() {
+        meta::set_request_meta(
+            msg,
+            meta::keys::PROTOCOL_VERSION,
+            json!(session.version.as_str()),
+        );
+        meta::set_request_meta(msg, meta::internal::SESSION_ID, json!(session.id));
     }
 }
 
@@ -80,13 +121,17 @@ impl<S: Clone> Clone for LegacySessionAdapter<S> {
         Self {
             inner: self.inner.clone(),
             session: Arc::clone(&self.session),
+            handshake: Arc::clone(&self.handshake),
         }
     }
 }
 
 impl<S> Service<JsonRpcMessage> for LegacySessionAdapter<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
+    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>
+        + Clone
+        + Send
+        + 'static,
     S::Future: Send + 'static,
 {
     type Response = Option<JsonRpcMessage>;
@@ -109,8 +154,12 @@ where
             let candidate = Uuid::new_v4().to_string();
             meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(candidate));
             let session = Arc::clone(&self.session);
+            let (done, waiters) = watch::channel(());
+            *self.handshake.lock().expect("handshake gate poisoned") = Some(waiters);
             let fut = self.inner.call(msg);
             return Box::pin(async move {
+                // Dropped on every way out, after the outcome is committed.
+                let _done = done;
                 let out = fut.await?;
                 if let Some(JsonRpcMessage::Response(resp)) = &out
                     && !resp.is_error()
@@ -133,28 +182,21 @@ where
             });
         }
 
-        let session = self
-            .session
-            .lock()
-            .expect("session state lock poisoned")
-            .clone();
-        if let Some(session) = session {
-            let params = match &msg {
-                JsonRpcMessage::Request(r) => r.params.as_ref(),
-                JsonRpcMessage::Notification(n) => n.params.as_ref(),
-                JsonRpcMessage::Response(_) => None,
-            };
-            // Stamp only version-less messages: a modern stateless client
-            // sharing the pipe keeps working, per-request version wins.
-            if version::request_protocol_version(params).is_none() {
-                meta::set_request_meta(
-                    &mut msg,
-                    meta::keys::PROTOCOL_VERSION,
-                    json!(session.version.as_str()),
-                );
-                meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(session.id));
-            }
+        // A message pipelined behind an `initialize` that hasn't been
+        // answered yet (`printf '%s\n' "$init" "$list" | server` does exactly
+        // this) waits for it, then takes the session it established. Drivers
+        // call in arrival order, so reading the session now would find none.
+        if let Some(mut handshake) = self.pending_handshake() {
+            let session = Arc::clone(&self.session);
+            let mut inner = self.inner.clone();
+            return Box::pin(async move {
+                let _ = handshake.changed().await; // `Err` once it settles
+                stamp(&session, &mut msg);
+                poll_fn(|cx| inner.poll_ready(cx)).await?;
+                inner.call(msg).await
+            });
         }
+        stamp(&self.session, &mut msg);
         Box::pin(self.inner.call(msg))
     }
 }

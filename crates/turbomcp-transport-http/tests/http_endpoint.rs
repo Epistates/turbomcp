@@ -173,7 +173,27 @@ async fn malformed_body_is_400_parse_error() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let v = body_json(resp).await;
     assert_eq!(v["error"]["code"], -32700);
-    assert!(v["id"].is_null());
+    assert!(
+        v.get("id").is_none(),
+        "no id could be read, so none is sent"
+    );
+}
+
+/// Well-formed JSON that isn't a valid request is an Invalid Request, not a
+/// parse error, and it names the request whose id was readable: a client
+/// multiplexing requests can't correlate an error that doesn't.
+#[tokio::test]
+async fn an_invalid_envelope_is_400_invalid_request_with_its_id() {
+    let resp = app(HttpConfig::new())
+        .oneshot(post(
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":"nope"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = body_json(resp).await;
+    assert_eq!(v["error"]["code"], -32600);
+    assert_eq!(v["id"], 7);
 }
 
 /// Draft transport rule: an unimplemented RPC method answers HTTP 404 with the

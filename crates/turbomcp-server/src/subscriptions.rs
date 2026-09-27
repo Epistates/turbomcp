@@ -540,12 +540,13 @@ mod tests {
         let mut closed = Vec::new();
         while let Ok(JsonRpcMessage::Response(r)) = rx.try_recv() {
             let result = r.result.expect("a result");
+            let id = r.id.expect("correlated to the listen request");
             assert_eq!(result["resultType"], "complete");
             assert_eq!(
                 result["_meta"]["io.modelcontextprotocol/subscriptionId"],
-                subscription_id_value(&r.id)
+                subscription_id_value(&id)
             );
-            closed.push(r.id);
+            closed.push(id);
         }
         assert_eq!(closed.len(), 2, "every live subscription is answered");
         assert!(closed.contains(&RequestId::from(7i64)));

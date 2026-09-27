@@ -552,7 +552,24 @@ impl<S: McpServerCore> Service<JsonRpcMessage> for VersionDispatcher<S> {
         let router = Arc::clone(&self.router);
         let supported = self.supported.clone();
         let shared = self.shared.clone();
-        Box::pin(async move { handle(server, router, supported, shared, msg).await })
+        // Track the request for `notifications/cancelled` *now*, not on the
+        // future's first poll. Drivers call in arrival order but poll in
+        // whatever order the runtime picks, and tokio runs the most recently
+        // spawned task first: a cancel written right behind its request used
+        // to run before the request had registered, found nothing, and the
+        // request ran to completion and answered anyway. The scope is
+        // whichever the transport identified; see [`cancel_scope`] for why
+        // that is the session where there is one.
+        let tracked = match &msg {
+            JsonRpcMessage::Request(req) if msg.has_valid_version() => {
+                let cancel = CancellationToken::new();
+                let guard = cancel_scope(req.params.as_ref())
+                    .map(|scope| shared.inflight.register(scope, &req.id, cancel.clone()));
+                Some((cancel, guard))
+            }
+            _ => None,
+        };
+        Box::pin(async move { handle(server, router, supported, shared, msg, tracked).await })
     }
 }
 
@@ -562,6 +579,7 @@ async fn handle<S: McpServerCore>(
     supported: Vec<ProtocolVersion>,
     shared: Shared,
     msg: JsonRpcMessage,
+    tracked: Option<(CancellationToken, Option<crate::inflight::InFlightGuard>)>,
 ) -> Result<Option<JsonRpcMessage>, ProtocolError> {
     // JSON-RPC 2.0 §4: a frame declaring a version other than "2.0" is an
     // Invalid Request (`-32600`). A frame *omitting* the field is tolerated —
@@ -585,12 +603,8 @@ async fn handle<S: McpServerCore>(
     }
     match msg {
         JsonRpcMessage::Request(req) => {
-            // Track the request for `notifications/cancelled` while it
-            // dispatches, in whichever scope the transport identified — see
-            // [`cancel_scope`] for why that is the session where there is one.
-            let cancel = CancellationToken::new();
-            let _guard = cancel_scope(req.params.as_ref())
-                .map(|scope| shared.inflight.register(scope, &req.id, cancel.clone()));
+            // Registered in `call`; held until the request finishes.
+            let (cancel, _guard) = tracked.unwrap_or_default();
 
             // `subscriptions/listen` is the one MCP request with no JSON-RPC
             // response: its stream begins with an acknowledged *notification*

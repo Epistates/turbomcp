@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
 use tokio::sync::mpsc;
 use turbomcp::SerdeJsonCodec;
@@ -28,8 +28,10 @@ enum OnList {
     StaySilent,
     /// Write a response with an id nobody asked for, then the real answer.
     UnknownIdFirst,
-    /// Write a non-JSON line.
+    /// Write a non-JSON line (a stray banner), then the real answer.
     Garbage,
+    /// Answer with a response that isn't a valid JSON-RPC message.
+    BrokenResponse,
     /// Send the client a `ping` request before answering, then answer.
     PingFirst,
 }
@@ -84,6 +86,14 @@ fn spawn_scripted_server(
                     OnList::StaySilent => continue,
                     OnList::Garbage => {
                         wr.write_all(b"!!! not json !!!\n").await.unwrap();
+                        json!({ "tools": [], "resultType": "complete",
+                                "cacheScope": "private", "ttlMs": 0 })
+                    }
+                    OnList::BrokenResponse => {
+                        let broken = json!({ "jsonrpc": "2.0", "id": id, "error": null });
+                        wr.write_all(format!("{broken}\n").as_bytes())
+                            .await
+                            .unwrap();
                         continue;
                     }
                     OnList::UnknownIdFirst => {
@@ -207,22 +217,41 @@ async fn unknown_response_id_is_ignored_and_correlation_survives() {
     assert!(tools.tools.is_empty());
 }
 
-/// A frame that fails to decode ends the connection (the transport is the
-/// trust boundary — there is no resync on a corrupted stream) and pending
-/// requests fail `Closed` rather than hanging.
+/// A stray non-JSON line (a server printing a banner to stdout) costs one
+/// frame, not the connection: newline framing resynchronizes at the next line,
+/// so the real answer behind it still arrives. Nothing is written back, since
+/// answering noise with error frames only gives the server something to choke
+/// on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn garbage_frame_ends_the_connection_and_fails_pending() {
-    let client = connect(OnList::Garbage, Duration::from_secs(60)).await;
+async fn a_garbage_line_is_skipped_and_the_connection_survives() {
+    let (client, mut seen) =
+        connect_observed(OnList::Garbage, ConnectMode::Modern, Duration::from_secs(5)).await;
+    let tools = tokio::time::timeout(Duration::from_secs(2), client.list_tools(None))
+        .await
+        .expect("the answer behind the garbage arrives")
+        .expect("and decodes");
+    assert!(tools.tools.is_empty());
+    client.close().await;
+    while let Some(frame) = seen.recv().await {
+        assert!(
+            frame.get("error").is_none(),
+            "answered the garbage: {frame}"
+        );
+    }
+}
+
+/// A response that decodes as JSON but not as a message fails the request it
+/// names right away, instead of leaving it to wait out the 60s timeout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broken_response_fails_its_request_promptly() {
+    let client = connect(OnList::BrokenResponse, Duration::from_secs(60)).await;
     let result = tokio::time::timeout(Duration::from_secs(2), client.list_tools(None))
         .await
         .expect("failure arrives promptly");
     assert!(
-        matches!(result, Err(ClientError::Closed)),
-        "expected Closed, got {result:?}"
+        matches!(result, Err(ClientError::Decode(_))),
+        "expected Decode, got {result:?}"
     );
-    // The client object itself stays safe to use: further calls fail cleanly.
-    let again = client.request("tools/list", Map::new()).await;
-    assert!(again.is_err());
 }
 
 /// Giving up locally is only half of it. The server is still working on a

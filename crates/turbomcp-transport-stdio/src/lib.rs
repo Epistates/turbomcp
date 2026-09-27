@@ -15,8 +15,8 @@
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, Stdin, Stdout,
 };
-use turbomcp_codec::{Codec, CodecError, DefaultCodec};
-use turbomcp_core::JsonRpcMessage;
+use turbomcp_codec::{Codec, CodecError, DefaultCodec, decode_message};
+use turbomcp_core::{InvalidFrame, JsonRpcMessage};
 use turbomcp_service::{McpService, ServeConfig, Transport};
 
 /// Failures from the line transport.
@@ -26,11 +26,16 @@ pub enum StdioError {
     /// An I/O error on the underlying stream.
     #[error("stdio i/o error: {0}")]
     Io(#[from] std::io::Error),
-    /// A frame could not be encoded/decoded.
+    /// A frame could not be encoded.
     #[error("codec error: {0}")]
     Codec(#[from] CodecError),
-    /// A single inbound line exceeded [`LineTransport`]'s configured maximum;
-    /// the connection is aborted rather than buffering it unbounded.
+    /// One inbound line wasn't a valid message. Recoverable: the next line is
+    /// the next frame.
+    #[error("invalid frame: {0}")]
+    InvalidFrame(InvalidFrame),
+    /// A single inbound line exceeded [`LineTransport`]'s configured maximum.
+    /// Recoverable: the rest of the line is discarded unread, never buffered,
+    /// and reading resumes after its newline.
     #[error("inbound line exceeded the {max}-byte maximum")]
     LineTooLong {
         /// The configured per-line cap, in bytes.
@@ -40,10 +45,9 @@ pub enum StdioError {
 
 /// Default cap on one inbound line (a single JSON-RPC frame), in bytes.
 ///
-/// A line longer than this ends the stream with [`StdioError::LineTooLong`]
-/// instead of growing the read buffer without bound — defense-in-depth so a
-/// peer that streams bytes and never sends `\n` can't force an unbounded
-/// allocation. 64 MiB clears any realistic MCP frame (including base64
+/// A line longer than this is refused with [`StdioError::LineTooLong`] and
+/// skipped rather than growing the read buffer without bound, so a peer that
+/// streams bytes and never sends `\n` can't force an unbounded allocation. 64 MiB clears any realistic MCP frame (including base64
 /// image/audio payloads) while bounding the worst case; tune with
 /// [`LineTransport::with_max_line_bytes`].
 pub const DEFAULT_MAX_LINE_BYTES: usize = 64 * 1024 * 1024;
@@ -63,6 +67,9 @@ pub struct LineTransport<R, W, C = DefaultCodec> {
     codec: C,
     buf: Vec<u8>,
     max_line_bytes: usize,
+    /// Set after an overlong line: skip to its newline before reading on. A
+    /// field, not a local, so a `recv` dropped mid-skip resumes it.
+    discarding: bool,
 }
 
 impl<R, W, C> core::fmt::Debug for LineTransport<R, W, C> {
@@ -87,11 +94,12 @@ impl<R, W, C: Codec> LineTransport<R, W, C> {
             codec,
             buf: Vec::new(),
             max_line_bytes: DEFAULT_MAX_LINE_BYTES,
+            discarding: false,
         }
     }
 
-    /// Cap a single inbound line at `max` bytes; a longer line aborts the
-    /// connection with [`StdioError::LineTooLong`]. Lower this when serving
+    /// Cap a single inbound line at `max` bytes; a longer line is refused with
+    /// [`StdioError::LineTooLong`] and skipped. Lower this when serving
     /// untrusted peers with small expected frames; raise it for large trusted
     /// payloads. `0` is treated as `1` (a cap of at least one byte).
     #[must_use]
@@ -109,6 +117,30 @@ enum LineRead {
     Eof,
     /// The line would exceed the cap; reading stopped.
     TooLong,
+}
+
+/// Consume bytes up to and including the next `\n` without keeping them.
+/// `Ok(true)` once the newline is found, `Ok(false)` at end of stream.
+async fn skip_line<R>(reader: &mut R) -> Result<bool, std::io::Error>
+where
+    R: AsyncBufRead + Unpin,
+{
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(false);
+        }
+        match available.iter().position(|&b| b == b'\n') {
+            Some(i) => {
+                reader.consume(i + 1);
+                return Ok(true);
+            }
+            None => {
+                let n = available.len();
+                reader.consume(n);
+            }
+        }
+    }
 }
 
 /// Read one `\n`-terminated line into `buf`, never letting `buf` grow past
@@ -156,6 +188,14 @@ where
 {
     type Error = StdioError;
 
+    fn invalid_frame(error: Self::Error) -> Result<InvalidFrame, Self::Error> {
+        match error {
+            StdioError::InvalidFrame(frame) => Ok(frame),
+            StdioError::LineTooLong { max } => Ok(InvalidFrame::too_large(max)),
+            other => Err(other),
+        }
+    }
+
     async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
         let bytes = self.codec.encode(&msg)?;
         self.writer.write_all(bytes.as_ref()).await?;
@@ -170,14 +210,22 @@ where
     /// both drivers poll this as one branch of a `select!` in a loop, so the
     /// future is dropped every time another branch wins, and `read_line_capped`
     /// has already consumed those bytes from the reader. Clearing on entry
-    /// would discard them and hand the next call a truncated line — which
-    /// decodes as garbage and takes the whole connection down with it.
+    /// would discard them and hand the next call a truncated line, which
+    /// decodes as garbage. The same goes for skipping an overlong line:
+    /// `discarding` is a field so a dropped skip picks up where it left off.
     async fn recv(&mut self) -> Result<Option<JsonRpcMessage>, Self::Error> {
         loop {
+            if self.discarding {
+                if !skip_line(&mut self.reader).await? {
+                    return Ok(None);
+                }
+                self.discarding = false;
+            }
             match read_line_capped(&mut self.reader, &mut self.buf, self.max_line_bytes).await? {
                 LineRead::Eof => return Ok(None),
                 LineRead::TooLong => {
                     self.buf.clear();
+                    self.discarding = true;
                     return Err(StdioError::LineTooLong {
                         max: self.max_line_bytes,
                     });
@@ -188,12 +236,13 @@ where
                     // allocation for the next one.
                     let decoded = match self.buf.trim_ascii() {
                         [] => None, // tolerate blank keep-alive lines
-                        trimmed => Some(self.codec.decode(trimmed)),
+                        trimmed => Some(decode_message(&self.codec, trimmed)),
                     };
                     self.buf.clear();
                     match decoded {
                         None => continue,
-                        Some(result) => return Ok(Some(result?)),
+                        Some(Ok(msg)) => return Ok(Some(msg)),
+                        Some(Err(frame)) => return Err(StdioError::InvalidFrame(frame)),
                     }
                 }
             }
@@ -288,6 +337,48 @@ mod tests {
     #[tokio::test]
     async fn blank_keepalive_lines_are_skipped() {
         let mut t = transport(b"\n  \n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n");
+        assert!(matches!(
+            t.recv().await.unwrap(),
+            Some(JsonRpcMessage::Request(_))
+        ));
+    }
+
+    /// One bad line costs one frame: the error is recoverable and the next
+    /// line reads normally.
+    #[tokio::test]
+    async fn a_bad_line_is_recoverable_and_the_next_one_reads() {
+        let mut t = transport(
+            b"Server starting...\n{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"x\",\"params\":\"s\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n",
+        );
+        let banner =
+            LineTransport::<BufReader<&[u8]>, Vec<u8>>::invalid_frame(t.recv().await.unwrap_err())
+                .expect("recoverable");
+        assert_eq!(banner.code, turbomcp_core::codes::PARSE_ERROR);
+        let params =
+            LineTransport::<BufReader<&[u8]>, Vec<u8>>::invalid_frame(t.recv().await.unwrap_err())
+                .expect("recoverable");
+        assert_eq!(params.id, Some(turbomcp_core::RequestId::Number(7)));
+        assert!(matches!(
+            t.recv().await.unwrap(),
+            Some(JsonRpcMessage::Request(_))
+        ));
+    }
+
+    /// An overlong line is refused without being buffered, and the frame
+    /// after it still arrives.
+    #[tokio::test]
+    async fn an_overlong_line_is_skipped_and_reading_resumes() {
+        let mut input = vec![b'a'; 4096];
+        input.push(b'\n');
+        input.extend_from_slice(PING);
+        let input: &'static [u8] = input.leak();
+        let mut t = LineTransport::new(BufReader::new(input), Vec::new(), DefaultCodec::default())
+            .with_max_line_bytes(64);
+        assert!(matches!(
+            t.recv().await.unwrap_err(),
+            StdioError::LineTooLong { max: 64 }
+        ));
+        assert!(t.buf.capacity() <= 64, "the flood was never buffered");
         assert!(matches!(
             t.recv().await.unwrap(),
             Some(JsonRpcMessage::Request(_))

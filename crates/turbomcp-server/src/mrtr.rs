@@ -239,11 +239,12 @@ impl PendingRequests {
     /// Deliver a client response to its awaiting handler. `false` if nothing
     /// was waiting (late, duplicate, or unsolicited — ignored per JSON-RPC).
     pub(crate) fn complete(&self, response: JsonRpcResponse) -> bool {
-        let sender = self
-            .map
-            .lock()
-            .expect("pending map poisoned")
-            .remove(&response.id);
+        // An id-less error answers a frame the client couldn't read; there is
+        // no request of ours to hand it to.
+        let Some(id) = &response.id else {
+            return false;
+        };
+        let sender = self.map.lock().expect("pending map poisoned").remove(id);
         match sender {
             Some(tx) => tx.send(response).is_ok(),
             None => false,
@@ -1594,7 +1595,7 @@ mod tests {
         let req = next_request(&mut rx).await;
         pending.complete(JsonRpcResponse {
             jsonrpc: "2.0".into(),
-            id: req.id,
+            id: Some(req.id),
             result: None,
             error: None,
         });

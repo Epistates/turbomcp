@@ -101,7 +101,7 @@ mod tests {
         let Some(JsonRpcMessage::Response(r)) = out else {
             panic!("expected a response");
         };
-        assert_eq!(r.id, id);
+        assert_eq!(r.id, Some(id));
         let err = r.error.expect("error response");
         assert_eq!(err.code, -32603);
         // The payload ("boom") stays in the log, not on the wire.

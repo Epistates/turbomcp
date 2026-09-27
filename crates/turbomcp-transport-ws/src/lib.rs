@@ -62,8 +62,8 @@ use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, 
 use tokio_tungstenite::tungstenite::protocol::frame::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
-use turbomcp_codec::{Codec, CodecError, DefaultCodec};
-use turbomcp_core::JsonRpcMessage;
+use turbomcp_codec::{Codec, CodecError, DefaultCodec, decode_message};
+use turbomcp_core::{InvalidFrame, JsonRpcMessage};
 use turbomcp_service::{
     AuthDecision, HttpAuthenticator, McpService, ProtocolError, ServeConfig, Transport,
 };
@@ -84,6 +84,10 @@ pub enum WsError {
     /// An outbound frame was not valid UTF-8 (encodings are always JSON text).
     #[error("frame was not valid UTF-8")]
     Utf8,
+    /// One inbound message wasn't a valid JSON-RPC message. Recoverable:
+    /// WebSocket framing delivers the next one intact.
+    #[error("invalid frame: {0}")]
+    InvalidFrame(InvalidFrame),
 }
 
 /// Erase into the service-layer boundary error so a binary that serves over
@@ -96,6 +100,7 @@ impl From<WsError> for ProtocolError {
             WsError::Ws(e) => ProtocolError::Transport(format!("websocket: {e}")),
             WsError::Codec(e) => ProtocolError::Parse(e.to_string()),
             WsError::Utf8 => ProtocolError::Internal("websocket frame was not valid UTF-8".into()),
+            WsError::InvalidFrame(frame) => ProtocolError::Parse(frame.to_string()),
         }
     }
 }
@@ -324,6 +329,13 @@ where
 {
     type Error = WsError;
 
+    fn invalid_frame(error: Self::Error) -> Result<InvalidFrame, Self::Error> {
+        match error {
+            WsError::InvalidFrame(frame) => Ok(frame),
+            other => Err(other),
+        }
+    }
+
     async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
         let bytes = self.codec.encode(&msg)?;
         let text = String::from_utf8(bytes.to_vec()).map_err(|_| WsError::Utf8)?;
@@ -368,8 +380,16 @@ where
                 return Ok(None);
             };
             match frame? {
-                Message::Text(t) => return Ok(Some(self.codec.decode(t.as_bytes())?)),
-                Message::Binary(b) => return Ok(Some(self.codec.decode(&b)?)),
+                Message::Text(t) => {
+                    return decode_message(&self.codec, t.as_bytes())
+                        .map(Some)
+                        .map_err(WsError::InvalidFrame);
+                }
+                Message::Binary(b) => {
+                    return decode_message(&self.codec, &b)
+                        .map(Some)
+                        .map_err(WsError::InvalidFrame);
+                }
                 Message::Close(_) => return Ok(None),
                 // Ping/Pong are answered by the library; ignore and read on.
                 Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,

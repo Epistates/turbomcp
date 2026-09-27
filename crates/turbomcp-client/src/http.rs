@@ -979,7 +979,7 @@ async fn pump(
 fn learn_negotiated_version(shared: &Shared, sent: &JsonRpcMessage, frame: &JsonRpcMessage) {
     if let (JsonRpcMessage::Request(q), JsonRpcMessage::Response(r)) = (sent, frame)
         && q.method == request::INITIALIZE
-        && q.id == r.id
+        && r.id.as_ref() == Some(&q.id)
         && let Some(version) = r
             .result
             .as_ref()
@@ -1036,7 +1036,7 @@ async fn pump_sse(
             let frame: JsonRpcMessage = serde_json::from_str(&event.data)
                 .map_err(|e| format!("sse frame decode failed: {e}"))?;
             let finished = matches!(&frame, JsonRpcMessage::Response(r)
-                if matches!(request, JsonRpcMessage::Request(q) if q.id == r.id));
+                if matches!(request, JsonRpcMessage::Request(q) if r.id.as_ref() == Some(&q.id)));
             if finished {
                 learn_negotiated_version(shared, request, &frame);
                 if open_stream_on_answer {

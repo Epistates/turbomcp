@@ -47,7 +47,8 @@ impl Transport for MockTransport {
 // ---- server under test ---------------------------------------------------------
 
 /// `block` parks until its context token fires (signalling `cancelled` on the
-/// way out via the test channel); `fast` answers immediately.
+/// way out via the test channel); `slow` answers after 300ms; `fast` answers
+/// immediately.
 #[derive(Clone)]
 struct Blocker {
     /// Receives `()` once the blocked handler has started.
@@ -71,6 +72,7 @@ impl WithTools for Blocker {
         Ok(neutral::ListToolsResult::new(vec![
             neutral::Tool::new("block", serde_json::json!({"type":"object"})),
             neutral::Tool::new("fast", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("slow", serde_json::json!({"type":"object"})),
         ]))
     }
 
@@ -93,6 +95,9 @@ impl WithTools for Blocker {
             // Park forever; only cancellation ends this call.
             Notify::new().notified().await;
             unreachable!("the blocked tool never completes");
+        }
+        if params.name == "slow" {
+            tokio::time::sleep(Duration::from_millis(300)).await;
         }
         Ok(neutral::CallToolResult::text("fast-result"))
     }
@@ -190,7 +195,7 @@ async fn cancelled_request_fires_token_and_suppresses_response() {
     // suppressed response simply never appears ahead of id 2).
     h.in_tx.send(call_tool(2, "fast")).await.unwrap();
     let reply = recv_reply(&mut h.out_rx).await;
-    assert_eq!(reply.id, RequestId::from(2i64));
+    assert_eq!(reply.id, Some(RequestId::from(2i64)));
     assert!(reply.error.is_none());
 
     drop(h.in_tx);
@@ -204,7 +209,7 @@ async fn cancel_after_completion_and_unknown_ids_are_ignored() {
     // A request that already finished…
     h.in_tx.send(call_tool(1, "fast")).await.unwrap();
     let reply = recv_reply(&mut h.out_rx).await;
-    assert_eq!(reply.id, RequestId::from(1i64));
+    assert_eq!(reply.id, Some(RequestId::from(1i64)));
 
     // …and one that never existed: both cancels are silently ignored.
     h.in_tx.send(cancelled_note(json!(1))).await.unwrap();
@@ -216,7 +221,7 @@ async fn cancel_after_completion_and_unknown_ids_are_ignored() {
 
     h.in_tx.send(call_tool(2, "fast")).await.unwrap();
     let reply = recv_reply(&mut h.out_rx).await;
-    assert_eq!(reply.id, RequestId::from(2i64));
+    assert_eq!(reply.id, Some(RequestId::from(2i64)));
     assert!(reply.error.is_none());
 
     drop(h.in_tx);
@@ -249,4 +254,29 @@ async fn cancelled_without_connection_identity_is_inert() {
         cancelled.try_recv().is_err(),
         "no token may fire without a matching in-flight registration"
     );
+}
+
+/// A cancellation written right behind its request, before the request has
+/// had a chance to run, still cancels it. The driver calls the service in
+/// arrival order and the dispatcher registers the request inside `call`, so
+/// the cancel always finds it. It used to register on the future's first
+/// poll, and tokio runs the most recently spawned task first: the cancel ran
+/// first, found nothing, and the request answered anyway.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancel_right_behind_its_request_still_cancels_it() {
+    for _ in 0..5 {
+        let mut h = spawn_harness();
+        h.in_tx.send(call_tool(1, "slow")).await.unwrap();
+        h.in_tx.send(cancelled_note(json!(1))).await.unwrap();
+        h.in_tx.send(call_tool(2, "fast")).await.unwrap();
+
+        let reply = recv_reply(&mut h.out_rx).await;
+        assert_eq!(reply.id, Some(RequestId::from(2i64)));
+        // Well past the slow tool's 300ms: a lost cancel would answer by now.
+        let late = tokio::time::timeout(Duration::from_millis(600), h.out_rx.recv()).await;
+        assert!(late.is_err(), "the cancelled request answered: {late:?}");
+
+        drop(h.in_tx);
+        h.driver.await.unwrap().expect("clean shutdown on EOF");
+    }
 }

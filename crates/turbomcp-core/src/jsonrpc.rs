@@ -5,8 +5,9 @@
 //! (`CallToolRequest` etc.) live in `turbomcp-protocol`, not here.
 //!
 //! **No `Batch` variant.** JSON-RPC batches were added in MCP `2025-03-26` and
-//! removed in `2025-06-18`; neither supported version includes them. A received
-//! batch is a parse error (`-32700`) at the codec layer (PLAN.md §13.1).
+//! removed in `2025-06-18`; no supported revision includes them. A received
+//! batch is well-formed JSON that is not a valid message: an
+//! [`InvalidFrame`] answered with Invalid Request (`-32600`).
 
 use alloc::string::String;
 use serde_json::Value;
@@ -114,12 +115,20 @@ pub struct JsonRpcError {
 ///
 /// The "exactly one" invariant is enforced by the [`JsonRpcResponse::success`]
 /// and [`JsonRpcResponse::error`] constructors.
+///
+/// The `id` is optional for one case only: an error answering a frame whose
+/// id couldn't be read ("except in error cases where the ID could not be read
+/// due a malformed request"; the schema's `JSONRPCErrorResponse` has
+/// `id?: RequestId`). A success always has one, and decoding enforces that.
+/// `"id": null`, which JSON-RPC 2.0 uses for the same case, decodes to `None`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct JsonRpcResponse {
     /// Always `"2.0"`.
     pub jsonrpc: String,
-    /// Correlation id (matches the originating request).
-    pub id: RequestId,
+    /// Correlation id (matches the originating request); `None` only on an
+    /// error answering a frame whose id was unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<RequestId>,
     /// Success payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
@@ -133,7 +142,7 @@ impl JsonRpcResponse {
     pub fn success(id: impl Into<RequestId>, result: Value) -> Self {
         Self {
             jsonrpc: jsonrpc_version(),
-            id: id.into(),
+            id: Some(id.into()),
             result: Some(result),
             error: None,
         }
@@ -143,7 +152,19 @@ impl JsonRpcResponse {
     pub fn error(id: impl Into<RequestId>, error: JsonRpcError) -> Self {
         Self {
             jsonrpc: jsonrpc_version(),
-            id: id.into(),
+            id: Some(id.into()),
+            result: None,
+            error: Some(error),
+        }
+    }
+
+    /// Build an error response for a frame whose id couldn't be read (it
+    /// wasn't JSON, or its `id` wasn't a string or integer). The `id` is
+    /// omitted, as the schema's `id?: RequestId` allows.
+    pub fn error_without_id(error: JsonRpcError) -> Self {
+        Self {
+            jsonrpc: jsonrpc_version(),
+            id: None,
             result: None,
             error: Some(error),
         }
@@ -206,6 +227,9 @@ impl<'de> serde::Deserialize<'de> for JsonRpcMessage {
                     "response requires exactly one of result or error",
                 ));
             }
+            if map.contains_key("result") && map.get("id").is_none_or(Value::is_null) {
+                return Err(D::Error::custom("a result response requires an id"));
+            }
             let result = map.get("result").cloned();
             let has_error = map.contains_key("error");
             let mut response: JsonRpcResponse =
@@ -220,6 +244,17 @@ impl<'de> serde::Deserialize<'de> for JsonRpcMessage {
 }
 
 impl JsonRpcMessage {
+    /// Decode a message from an already-parsed JSON value, or say why it isn't
+    /// one in a form that can be answered: the salvaged id and an Invalid
+    /// Request (`-32600`) error.
+    ///
+    /// # Errors
+    /// An [`InvalidFrame`] when `value` is JSON but not a valid message.
+    pub fn from_value(value: Value) -> Result<Self, InvalidFrame> {
+        use serde::Deserialize;
+        Self::deserialize(&value).map_err(|e| InvalidFrame::invalid(&value, &e))
+    }
+
     /// Validate the `jsonrpc` version field, if present.
     #[must_use]
     pub fn has_valid_version(&self) -> bool {
@@ -241,6 +276,105 @@ impl JsonRpcMessage {
         }
     }
 }
+
+/// A frame that arrived whole but isn't a JSON-RPC message this SDK can act
+/// on: unparseable bytes, or JSON with the wrong shape.
+///
+/// One bad frame is the peer's bug, not a broken stream. Newline and message
+/// framing both resynchronize at the next frame, so the driver answers this
+/// one (when it deserves an answer) and keeps reading, instead of dropping
+/// the connection and every request in flight on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InvalidFrame {
+    /// The frame's `id`, when it was readable as a string or integer.
+    pub id: Option<RequestId>,
+    /// Whether the frame looked like a response (`result` or `error`, no
+    /// `method`). Nothing answers a response, however broken: doing so is
+    /// how two peers end up trading error frames forever.
+    pub is_response: bool,
+    /// The JSON-RPC error code it is owed: Parse error (`-32700`) or
+    /// Invalid Request (`-32600`).
+    pub code: i32,
+    /// What was wrong.
+    pub message: String,
+}
+
+impl InvalidFrame {
+    /// Bytes that aren't JSON at all: Parse error (`-32700`), no id.
+    #[must_use]
+    pub fn unparseable(detail: impl core::fmt::Display) -> Self {
+        Self {
+            id: None,
+            is_response: false,
+            code: crate::codes::PARSE_ERROR,
+            message: alloc::format!("Parse error: {detail}"),
+        }
+    }
+
+    /// JSON that isn't a valid message: Invalid Request (`-32600`), echoing
+    /// the id when one can be read.
+    #[must_use]
+    pub fn invalid(value: &Value, detail: impl core::fmt::Display) -> Self {
+        let map = value.as_object();
+        let field = |key: &str| map.and_then(|m| m.get(key));
+        let id = field("id").and_then(|id| match id {
+            Value::String(s) => Some(RequestId::String(s.clone())),
+            Value::Number(n) => n.as_i64().map(RequestId::Number),
+            _ => None,
+        });
+        let is_response =
+            field("method").is_none() && (field("result").is_some() || field("error").is_some());
+        Self {
+            id,
+            is_response,
+            code: crate::codes::INVALID_REQUEST,
+            message: alloc::format!("Invalid Request: {detail}"),
+        }
+    }
+
+    /// A frame longer than the transport accepts: Invalid Request, no id
+    /// (nothing of it was parsed).
+    #[must_use]
+    pub fn too_large(max_bytes: usize) -> Self {
+        Self {
+            id: None,
+            is_response: false,
+            code: crate::codes::INVALID_REQUEST,
+            message: alloc::format!("Invalid Request: frame exceeds {max_bytes} bytes"),
+        }
+    }
+
+    /// The error response this frame is owed, or `None` for a broken
+    /// response (which is never answered).
+    #[must_use]
+    pub fn response(&self) -> Option<JsonRpcResponse> {
+        if self.is_response {
+            return None;
+        }
+        Some(match &self.id {
+            Some(id) => JsonRpcResponse::error(id.clone(), self.error()),
+            None => JsonRpcResponse::error_without_id(self.error()),
+        })
+    }
+
+    /// The error object this frame is owed.
+    #[must_use]
+    pub fn error(&self) -> JsonRpcError {
+        JsonRpcError {
+            code: self.code,
+            message: self.message.clone(),
+            data: None,
+        }
+    }
+}
+
+impl core::fmt::Display for InvalidFrame {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl core::error::Error for InvalidFrame {}
 
 impl From<JsonRpcRequest> for JsonRpcMessage {
     fn from(r: JsonRpcRequest) -> Self {
@@ -347,6 +481,68 @@ mod tests {
             let decoded: JsonRpcMessage = serde_json::from_value(raw.clone()).unwrap();
             assert_eq!(serde_json::to_value(decoded).unwrap(), raw);
         }
+    }
+
+    /// "Error responses MUST include the same ID as the request they
+    /// correspond to (except in error cases where the ID could not be read
+    /// due a malformed request)": the schema's `id?` and JSON-RPC's `null`
+    /// both decode, and ours goes out with the id absent.
+    #[test]
+    fn an_error_response_may_omit_its_id() {
+        for raw in [
+            json!({"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"}}),
+            json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}),
+        ] {
+            let JsonRpcMessage::Response(r) = serde_json::from_value(raw).unwrap() else {
+                panic!("an id-less error is a response");
+            };
+            assert!(r.id.is_none() && r.is_error());
+        }
+        let out = JsonRpcResponse::error_without_id(JsonRpcError {
+            code: -32700,
+            message: "Parse error".into(),
+            data: None,
+        });
+        assert!(serde_json::to_value(out).unwrap().get("id").is_none());
+        // A success always correlates to something.
+        for raw in [
+            json!({"jsonrpc":"2.0","result":{}}),
+            json!({"jsonrpc":"2.0","id":null,"result":{}}),
+        ] {
+            assert!(serde_json::from_value::<JsonRpcMessage>(raw).is_err());
+        }
+    }
+
+    #[test]
+    fn an_invalid_frame_keeps_what_it_can() {
+        let bad = JsonRpcMessage::from_value(
+            json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":"x"}),
+        )
+        .unwrap_err();
+        assert_eq!(bad.id, Some(RequestId::Number(7)));
+        assert_eq!(bad.code, crate::codes::INVALID_REQUEST);
+        assert_eq!(bad.response().unwrap().id, Some(RequestId::Number(7)));
+
+        // A batch is JSON, just not a message.
+        let batch = JsonRpcMessage::from_value(json!([{"jsonrpc":"2.0","id":1,"method":"ping"}]))
+            .unwrap_err();
+        assert!(batch.id.is_none() && !batch.is_response);
+
+        // A fractional id can't be echoed.
+        let frac = JsonRpcMessage::from_value(json!({"jsonrpc":"2.0","id":1.5,"method":"ping"}))
+            .unwrap_err();
+        assert!(frac.id.is_none() && frac.response().unwrap().id.is_none());
+
+        // A broken response is never answered.
+        let resp =
+            JsonRpcMessage::from_value(json!({"jsonrpc":"2.0","id":3,"error":null})).unwrap_err();
+        assert!(resp.is_response && resp.response().is_none());
+        assert_eq!(resp.id, Some(RequestId::Number(3)));
+
+        assert_eq!(
+            InvalidFrame::unparseable("eof").code,
+            crate::codes::PARSE_ERROR
+        );
     }
 
     #[test]

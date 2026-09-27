@@ -46,12 +46,13 @@
 use core::future::Future;
 use std::time::Instant;
 
-use turbomcp_core::JsonRpcMessage;
+use turbomcp_core::{InvalidFrame, JsonRpcMessage};
 
 /// A bidirectional channel for JSON-RPC frames.
 ///
 /// `recv` returns `Ok(None)` on a clean end-of-stream (peer closed); `Err` is
-/// reserved for genuine I/O failure. `close` consumes the transport.
+/// a failure, fatal unless [`invalid_frame`](Transport::invalid_frame) says
+/// it cost only one frame. `close` consumes the transport.
 ///
 /// # Cancel safety
 ///
@@ -101,6 +102,24 @@ pub trait Transport: Send + 'static {
     /// response. This side channel cannot be forged through JSON-RPC data.
     fn take_http_failure(&mut self, _id: &turbomcp_core::RequestId) -> Option<HttpFailure> {
         None
+    }
+
+    /// Classify a [`recv`](Transport::recv) error: `Ok` means one frame was
+    /// bad but the stream is intact, so the driver answers the frame (see
+    /// [`InvalidFrame::response`]) and keeps reading. `Err` hands the error
+    /// back as fatal.
+    ///
+    /// The default treats every error as fatal, which is right for a
+    /// transport whose framing can't resynchronize. Newline-delimited stdio
+    /// and message-framed WebSocket both can, and override this.
+    ///
+    /// # Errors
+    /// Returns `error` unchanged when it is fatal.
+    fn invalid_frame(error: Self::Error) -> Result<InvalidFrame, Self::Error>
+    where
+        Self: Sized,
+    {
+        Err(error)
     }
 
     /// Send one frame to the peer.
