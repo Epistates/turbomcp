@@ -47,7 +47,7 @@ use turbomcp_core::{
 use turbomcp_protocol::methods::{notification, request};
 use turbomcp_service::{Transport, mcp_headers};
 
-use crate::client::{Client, ClientBuilder};
+use crate::client::{Client, ClientBuilder, STREAM_LOST};
 use crate::error::{ClientError, ClientResult};
 
 /// Failures specific to the HTTP client transport.
@@ -60,6 +60,26 @@ pub enum HttpClientError {
 }
 
 const SESSION_HEADER: &str = "mcp-session-id";
+
+/// Why a POST's pump stopped without delivering its response.
+enum PumpFailure {
+    /// The request failed: network, HTTP status, decode.
+    Failed(String),
+    /// The response stream ended before the response arrived.
+    StreamLost,
+}
+
+impl From<String> for PumpFailure {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
+impl From<&str> for PumpFailure {
+    fn from(message: &str) -> Self {
+        Self::Failed(message.to_owned())
+    }
+}
 
 /// Re-establish an expired session — once, however many requests noticed it.
 ///
@@ -119,10 +139,42 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
     else {
         return Err("re-initialize established no session".into());
     };
-    *shared.session.lock().expect("session mutex") = Some(sid);
+    *shared.session.lock().expect("session mutex") = Some(sid.clone());
     // Drain the body so the connection can be reused; the frames are a repeat
     // of a handshake the client has already processed.
     let _ = bounded_body(resp, &shared.limits).await;
+    // "After successful initialization, the client MUST send an `initialized`
+    // notification." A new session is a new initialization, and a server may
+    // refuse everything until it arrives.
+    let initialized = serde_json::to_string(&JsonRpcMessage::Notification(
+        turbomcp_core::JsonRpcNotification::new(notification::INITIALIZED, None),
+    ))
+    .map_err(|e| format!("encode failed: {e}"))?;
+    let mut req = shared
+        .http
+        .post(&shared.url)
+        .header(ACCEPT, "application/json, text/event-stream")
+        .header(CONTENT_TYPE, "application/json")
+        .header(SESSION_HEADER, sid)
+        .body(initialized);
+    if let Some(version) = shared.version.lock().expect("version mutex").clone() {
+        req = req.header(mcp_headers::PROTOCOL_VERSION, version);
+    }
+    if let Some(source) = &shared.bearer
+        && let Some(token) = source.bearer().await
+    {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("initialized notification failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "initialized notification answered {}",
+            resp.status()
+        ));
+    }
     Ok(())
 }
 
@@ -194,7 +246,10 @@ impl Default for HttpClientLimits {
     fn default() -> Self {
         Self {
             max_posts: 1024,
-            max_response_bytes: 1024 * 1024,
+            // The same ceiling stdio uses for a line: a screenshot or a large
+            // `resources/read` works over one transport and failed at 1 MiB on
+            // the other.
+            max_response_bytes: 64 * 1024 * 1024,
             body_timeout: Duration::from_secs(30),
         }
     }
@@ -359,11 +414,7 @@ impl HttpClientTransport {
     /// # Errors
     /// [`ClientError::Protocol`] if the underlying HTTP client can't be built.
     pub fn new(url: impl Into<String>) -> ClientResult<Self> {
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|e| ClientError::Protocol(format!("http client build failed: {e}")))?;
+        let http = default_http_client(reqwest::header::HeaderMap::new())?;
         let (inbound_tx, inbound_rx) = mpsc::channel(1024);
         Ok(Self {
             shared: Arc::new(Shared {
@@ -386,6 +437,45 @@ impl HttpClientTransport {
             }),
             inbound_rx,
         })
+    }
+
+    /// Send every request through `http` — a client you built with your own
+    /// proxy, root certificates, client certificate (mTLS), keepalive or
+    /// default headers. The default client follows no redirects, which keeps a
+    /// bearer token on the origin it was issued for; build yours the same way.
+    ///
+    /// # Panics
+    /// If the transport is already connected. Call this first.
+    #[must_use]
+    pub fn with_client(mut self, http: reqwest::Client) -> Self {
+        Arc::get_mut(&mut self.shared)
+            .expect("with_client must be called before the transport is connected")
+            .http = http;
+        self
+    }
+
+    /// Add `headers` to every request this transport sends — POSTs, the
+    /// standalone stream, session recovery and the closing `DELETE` — for the
+    /// API keys, tenant and routing headers gateways ask for. Replaces any
+    /// client given to [`with_client`](Self::with_client).
+    ///
+    /// # Errors
+    /// [`ClientError::Protocol`] for an `Mcp-*` header, which the protocol owns,
+    /// or if the client cannot be rebuilt.
+    ///
+    /// # Panics
+    /// If the transport is already connected. Call this first.
+    pub fn with_headers(self, headers: reqwest::header::HeaderMap) -> ClientResult<Self> {
+        if let Some(reserved) = headers
+            .keys()
+            .find(|name| name.as_str().starts_with("mcp-"))
+        {
+            return Err(ClientError::Protocol(format!(
+                "`{reserved}` is a protocol header; the transport sets it"
+            )));
+        }
+        let http = default_http_client(headers)?;
+        Ok(self.with_client(http))
     }
 
     /// Configure budgets before handing the transport to a connection.
@@ -425,6 +515,17 @@ impl HttpClientTransport {
     }
 }
 
+/// The client [`HttpClientTransport::new`] uses: no redirects (a bearer token
+/// stays on its origin) and a bounded connect.
+fn default_http_client(headers: reqwest::header::HeaderMap) -> ClientResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(10))
+        .default_headers(headers)
+        .build()
+        .map_err(|e| ClientError::Protocol(format!("http client build failed: {e}")))
+}
+
 impl Transport for HttpClientTransport {
     type Error = HttpClientError;
 
@@ -447,7 +548,7 @@ impl Transport for HttpClientTransport {
             .remove(id)
     }
 
-    async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
+    async fn send(&mut self, mut msg: JsonRpcMessage) -> Result<(), Self::Error> {
         // Dropping the POST stops this client waiting on either wire. Whether
         // that also *cancels* is where the two revisions disagree, and the
         // disagreement is explicit on both sides:
@@ -484,6 +585,12 @@ impl Transport for HttpClientTransport {
             *self.shared.handshake.lock().expect("handshake lock") = Some(msg.clone());
         }
 
+        // Learn the negotiated version here, in send order, not in the spawned
+        // task: a task that has not run yet has not recorded it, so a DELETE
+        // straight after the handshake, or a request racing the `initialized`
+        // notification, went out without the version it was owed.
+        let version = extract_protocol_version(&mut msg, &self.shared);
+
         // POST and pump the response in the background so the driver can keep
         // sending; HTTP requests are independent and may run concurrently.
         let shared = Arc::clone(&self.shared);
@@ -502,15 +609,41 @@ impl Transport for HttpClientTransport {
             }
             _ => None,
         };
-        let permit = Arc::clone(&shared.permits)
-            .try_acquire_owned()
-            .map_err(|_| HttpClientError::Closed)?;
+        // Admission fails the one request that did not fit, never the
+        // connection: treating it as a transport failure used to end the whole
+        // client, and every in-flight call with it. Notifications and responses
+        // are small and have no one waiting, so they are not held to the cap.
+        let permit = match Arc::clone(&shared.permits).try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => match cancel {
+                None => None,
+                Some((id, _)) => {
+                    shared.finish_post(&id);
+                    let refused = JsonRpcResponse::error(
+                        id,
+                        JsonRpcError {
+                            code: -32000,
+                            message: format!(
+                                "too many concurrent requests on this HTTP client (max_posts = {})",
+                                shared.limits.max_posts
+                            ),
+                            data: None,
+                        },
+                    );
+                    let _ = shared
+                        .inbound_tx
+                        .send(JsonRpcMessage::Response(refused))
+                        .await;
+                    return Ok(());
+                }
+            },
+        };
         let shutdown = shared.shutdown.clone();
         self.shared.tasks.spawn(async move {
             let _permit = permit;
             tokio::select! {
                 () = shutdown.cancelled() => {}
-                () = post_and_pump(shared, msg, cancel) => {}
+                () = post_and_pump(shared, msg, version, cancel) => {}
             }
         });
         Ok(())
@@ -529,12 +662,18 @@ impl Transport for HttpClientTransport {
         // Best-effort session termination (the spec's explicit DELETE).
         let sid = self.shared.session.lock().expect("session mutex").clone();
         if let Some(sid) = sid {
-            let req = self
+            let mut req = self
                 .shared
                 .http
                 .delete(&self.shared.url)
                 .header(SESSION_HEADER, sid)
                 .timeout(Duration::from_secs(5));
+            // "the client MUST include the `MCP-Protocol-Version` header on all
+            // subsequent requests" — a strict server refuses the DELETE
+            // without it, and the session outlives the client.
+            if let Some(version) = self.shared.version.lock().expect("version mutex").clone() {
+                req = req.header(mcp_headers::PROTOCOL_VERSION, version);
+            }
             // Authenticated too: on a server that requires a bearer, an
             // unauthenticated DELETE is a 401 and the session leaks.
             let _ = self.shared.authorize(req).await.send().await;
@@ -552,6 +691,7 @@ impl Transport for HttpClientTransport {
 async fn post_and_pump(
     shared: Arc<Shared>,
     msg: JsonRpcMessage,
+    version: Option<String>,
     cancel: Option<(RequestId, CancellationToken)>,
 ) {
     // The request id (if this is a request) so a failure can be reported to just
@@ -567,35 +707,41 @@ async fn post_and_pump(
             // caller has already stopped waiting, and `Connection` has taken
             // its pending entry.
             () = token.cancelled() => None,
-            result = pump(&shared, msg) => Some(result),
+            result = pump(&shared, msg, version) => Some(result),
         },
-        None => Some(pump(&shared, msg).await),
+        None => Some(pump(&shared, msg, version).await),
     };
     if let Some((id, _)) = &cancel {
         shared.finish_post(id);
     }
     let Some(result) = outcome else { return };
 
-    if let Err(err) = result {
+    if let Err(failure) = result {
+        let (message, data) = match failure {
+            PumpFailure::Failed(message) => (message, None),
+            PumpFailure::StreamLost => (
+                "the response stream closed before the response arrived".to_owned(),
+                Some(serde_json::json!({ STREAM_LOST: true })),
+            ),
+        };
         match request_id {
             Some(id) => {
                 // Surface the failure to the one waiting caller. This is a
                 // locally synthesized *transport* error, so it takes the
                 // implementation-defined floor — the same code
-                // `McpError::Transport` maps to. (It read `-32001` when that
-                // was our header-mismatch code, which this is not.)
+                // `McpError::Transport` maps to.
                 let resp = JsonRpcResponse::error(
                     id,
                     JsonRpcError {
                         code: -32000,
-                        message: err,
-                        data: None,
+                        message,
+                        data,
                     },
                 );
                 let _ = shared.inbound_tx.send(JsonRpcMessage::Response(resp)).await;
             }
             // Notifications / responses have no waiter — just log.
-            None => tracing::debug!(error = %err, "http client POST failed (no waiter)"),
+            None => tracing::debug!(error = %message, "http client POST failed (no waiter)"),
         }
     }
 }
@@ -608,12 +754,14 @@ fn cancelled_request_id(params: Option<&serde_json::Value>) -> Option<RequestId>
 
 /// The fallible body of a POST + response pump. Errors are returned as a string
 /// for [`post_and_pump`] to route.
-async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), String> {
-    // Lift the transport signals out of the body before serialization so they
-    // never reach the wire: the `x-mcp-header` mirror map and the negotiated
-    // protocol version.
+async fn pump(
+    shared: &Arc<Shared>,
+    mut msg: JsonRpcMessage,
+    version: Option<String>,
+) -> Result<(), PumpFailure> {
+    // Lift the `x-mcp-header` mirror map out of the body before serialization
+    // so it never reaches the wire (`send` already lifted the version signal).
     let mirror_headers = extract_header_params(&mut msg);
-    let version = extract_protocol_version(&mut msg, shared);
 
     let body = serde_json::to_string(&msg).map_err(|e| format!("encode failed: {e}"))?;
 
@@ -748,7 +896,7 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
                 },
             );
         }
-        return Err(message);
+        return Err(message.into());
     };
     // Only successful responses can establish or replace a session.
     if let Some(sid) = resp
@@ -774,18 +922,13 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
         .map(ProtocolVersion::from_wire)
         .is_some_and(|v| v.is_stateful())
         || shared.session.lock().expect("session mutex").is_some();
-    if stateful && !shared.listening.swap(true, Ordering::AcqRel) {
-        let listen_shared = Arc::clone(shared);
-        shared.tasks.spawn(async move {
-            tokio::select! {
-                () = listen_shared.shutdown.cancelled() => {}
-                () = listen_shared.inbound_tx.closed() => {}
-                () = listen(Arc::clone(&listen_shared)) => {}
-            }
-        });
-        // Held here, before this response reaches the caller, so that a client
-        // handed back from the handshake always has a stream behind it.
-        await_stream_ready(shared).await;
+    // The handshake's own stream opens once its answer is read, so that the
+    // negotiated version is known and the stream's GET can carry it; any
+    // other request opens it straight away.
+    let is_initialize =
+        matches!(&msg, JsonRpcMessage::Request(r) if r.method == request::INITIALIZE);
+    if stateful && !is_initialize {
+        ensure_listening(shared).await;
     }
 
     let is_sse = resp
@@ -801,6 +944,7 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
             &msg,
             stateful && !is_draft,
             version.as_deref(),
+            stateful && is_initialize,
         )
         .await?;
     } else {
@@ -808,13 +952,60 @@ async fn pump(shared: &Arc<Shared>, mut msg: JsonRpcMessage) -> Result<(), Strin
         let text = String::from_utf8(bounded_body(resp, &shared.limits).await?)
             .map_err(|e| e.to_string())?;
         if text.trim().is_empty() {
-            return Ok(());
+            // Nothing to wait for after a notification or a response; a
+            // request with no answer would otherwise hang until its timeout.
+            return if matches!(msg, JsonRpcMessage::Request(_)) {
+                Err(PumpFailure::StreamLost)
+            } else {
+                Ok(())
+            };
         }
         let frame: JsonRpcMessage =
             serde_json::from_str(&text).map_err(|e| format!("json decode failed: {e}"))?;
+        learn_negotiated_version(shared, &msg, &frame);
+        if stateful && is_initialize {
+            ensure_listening(shared).await;
+        }
         let _ = shared.inbound_tx.send(frame).await;
     }
     Ok(())
+}
+
+/// Record the version an `initialize` answer negotiated. It is the one frame
+/// that states it outright, and it passes through here before the client sees
+/// it; waiting for the client's `initialized` notification instead left the
+/// version unknown until that notification's POST ran — so a `DELETE` right
+/// after connecting, and the stream's first GET, went out without it.
+fn learn_negotiated_version(shared: &Shared, sent: &JsonRpcMessage, frame: &JsonRpcMessage) {
+    if let (JsonRpcMessage::Request(q), JsonRpcMessage::Response(r)) = (sent, frame)
+        && q.method == request::INITIALIZE
+        && q.id == r.id
+        && let Some(version) = r
+            .result
+            .as_ref()
+            .and_then(|result| result.get("protocolVersion"))
+            .and_then(serde_json::Value::as_str)
+    {
+        *shared.version.lock().expect("version mutex") = Some(version.to_owned());
+    }
+}
+
+/// Open the standalone server→client stream, once per connection, and hold
+/// the caller until the server has answered it — so a client handed back from
+/// the handshake always has a stream behind it.
+async fn ensure_listening(shared: &Arc<Shared>) {
+    if shared.listening.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let listen_shared = Arc::clone(shared);
+    shared.tasks.spawn(async move {
+        tokio::select! {
+            () = listen_shared.shutdown.cancelled() => {}
+            () = listen_shared.inbound_tx.closed() => {}
+            () = listen(Arc::clone(&listen_shared)) => {}
+        }
+    });
+    await_stream_ready(shared).await;
 }
 
 /// Resume a closed legacy response stream without replaying its POST. The
@@ -825,7 +1016,8 @@ async fn pump_sse(
     request: &JsonRpcMessage,
     stateful: bool,
     version: Option<&str>,
-) -> Result<(), String> {
+    open_stream_on_answer: bool,
+) -> Result<(), PumpFailure> {
     let mut cursor = None;
     let mut retry = DEFAULT_SSE_RETRY;
     loop {
@@ -845,19 +1037,31 @@ async fn pump_sse(
                 .map_err(|e| format!("sse frame decode failed: {e}"))?;
             let finished = matches!(&frame, JsonRpcMessage::Response(r)
                 if matches!(request, JsonRpcMessage::Request(q) if q.id == r.id));
+            if finished {
+                learn_negotiated_version(shared, request, &frame);
+                if open_stream_on_answer {
+                    ensure_listening(shared).await;
+                }
+            }
             if shared.inbound_tx.send(frame).await.is_err() || finished {
                 return Ok(());
             }
         }
         // Only legacy request streams carrying a replay cursor are resumable.
+        // Anything else that ends here has lost its response — unless there was
+        // none to wait for.
         let Some(id) = cursor
             .as_deref()
             .filter(|_| stateful && matches!(request, JsonRpcMessage::Request(_)))
         else {
-            return Ok(());
+            return if matches!(request, JsonRpcMessage::Request(_)) {
+                Err(PumpFailure::StreamLost)
+            } else {
+                Ok(())
+            };
         };
         if retry > MAX_SSE_RETRY {
-            return Err("SSE retry delay exceeds recovery limit".into());
+            return Err("SSE retry delay exceeds recovery limit".to_owned().into());
         }
         tokio::time::sleep(retry).await;
         let mut get = shared
@@ -878,7 +1082,7 @@ async fn pump_sse(
             .await
             .map_err(|e| format!("SSE resume failed: {e}"))?;
         if !response.status().is_success() {
-            return Err(format!("SSE resume refused: {}", response.status()));
+            return Err(format!("SSE resume refused: {}", response.status()).into());
         }
         if !response
             .headers()
@@ -916,6 +1120,9 @@ async fn pump_sse(
 async fn listen(shared: Arc<Shared>) {
     let mut last_event_id: Option<String> = None;
     let mut retry = DEFAULT_SSE_RETRY;
+    // Consecutive refusals, for backoff: a GET the server keeps rejecting used
+    // to be re-sent every second for the life of the client.
+    let mut refusals = 0u32;
 
     loop {
         // The connection actor has gone; nobody is left to receive.
@@ -927,7 +1134,8 @@ async fn listen(shared: Arc<Shared>) {
             .http
             .get(&shared.url)
             .header(ACCEPT, "text/event-stream");
-        if let Some(sid) = shared.session.lock().expect("session mutex").clone() {
+        let sent_session = shared.session.lock().expect("session mutex").clone();
+        if let Some(sid) = &sent_session {
             req = req.header(SESSION_HEADER, sid);
         }
         if let Some(v) = shared.version.lock().expect("version mutex").clone() {
@@ -945,6 +1153,7 @@ async fn listen(shared: Arc<Shared>) {
         let _ = shared.stream_ready.send(true);
         match outcome {
             Ok(resp) if resp.status().is_success() => {
+                refusals = 0;
                 let mut events = bounded_sse(resp, shared.limits.max_response_bytes).eventsource();
                 while let Some(event) = events.next().await {
                     let Ok(event) = event else { break };
@@ -978,27 +1187,47 @@ async fn listen(shared: Arc<Shared>) {
                 // permanent. 404 on a session-bearing GET means the *session*
                 // is gone, which is recoverable and must not be mistaken for
                 // the former — doing so silently killed the server→client
-                // channel for the rest of the connection. The next POST
-                // re-handshakes; retrying here picks the stream back up on the
-                // session it establishes.
+                // channel for the rest of the connection.
                 if matches!(status.as_u16(), 405 | 501) {
                     tracing::debug!(%status, "server does not offer a standalone sse stream");
                     return;
                 }
-                if status.as_u16() == 404 {
-                    *shared.session.lock().expect("session mutex") = None;
-                    tracing::debug!("standalone sse stream: session expired; awaiting a new one");
+                // "When a client receives HTTP 404 in response to a request
+                // containing an `MCP-Session-Id`, it MUST start a new session."
+                // Through the same single-flight path the POSTs use: clearing
+                // the id here instead left every later POST sessionless, so
+                // each got a 400 rather than the 404 that triggers recovery,
+                // and the client stayed broken for good.
+                if status.as_u16() == 404 && sent_session.is_some() {
+                    match recover_session(&shared, sent_session.as_deref()).await {
+                        Ok(true) => {
+                            refusals = 0;
+                            continue; // reopen at once, on the new session
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            tracing::debug!(error = %e, "standalone sse stream: session recovery failed");
+                        }
+                    }
                 }
+                refusals = refusals.saturating_add(1);
                 tracing::debug!(%status, "standalone sse stream rejected; retrying");
             }
-            Err(e) => tracing::debug!(error = %e, "standalone sse stream failed; retrying"),
+            Err(e) => {
+                refusals = refusals.saturating_add(1);
+                tracing::debug!(error = %e, "standalone sse stream failed; retrying");
+            }
         }
 
         if retry > MAX_SSE_RETRY {
             tracing::debug!("standalone SSE retry exceeds recovery limit");
             return;
         }
-        tokio::time::sleep(retry).await;
+        // Never sooner than the server asked; longer the more it refuses.
+        let backoff = retry
+            .saturating_mul(1 << refusals.min(5))
+            .min(MAX_SSE_RETRY.max(retry));
+        tokio::time::sleep(backoff).await;
     }
 }
 

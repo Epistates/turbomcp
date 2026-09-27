@@ -71,6 +71,26 @@ pub(crate) const HEADER_PARAMS_META_KEY: &str = "io.turbomcp.internal/headerPara
 /// every server boundary otherwise.
 pub(crate) const NEGOTIATED_VERSION_META_KEY: &str = "io.turbomcp.internal/negotiatedVersion";
 
+/// Marks a transport-synthesized error as "the response stream ended before
+/// the response" (set in its `data`). 2026-07-28: "A broken response stream
+/// loses the in-flight request; clients MUST re-issue it as a new request with
+/// a new request ID."
+pub(crate) const STREAM_LOST: &str = "io.turbomcp.internal/streamLost";
+
+/// Methods safe to re-issue after their response stream was lost: they change
+/// nothing on the server. `tools/call` is not among them — re-running a tool
+/// could repeat its side effect — so its caller sees the error instead.
+const REISSUABLE: &[&str] = &[
+    request::TOOLS_LIST,
+    request::RESOURCES_LIST,
+    request::RESOURCES_TEMPLATES_LIST,
+    request::RESOURCES_READ,
+    request::PROMPTS_LIST,
+    request::PROMPTS_GET,
+    request::COMPLETION_COMPLETE,
+    request::DISCOVER,
+];
+
 /// How long [`ConnectMode::Auto`] waits for its `server/discover` probe (or the
 /// request timeout, if shorter) before concluding the server is legacy.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -466,6 +486,15 @@ impl ClientBuilder {
         .await?;
         Ok(Handshake::from_result(negotiated, &result))
     }
+}
+
+/// Whether `error` is the transport's "the response stream ended first".
+fn stream_lost(error: &ClientError) -> bool {
+    error
+        .as_rpc()
+        .and_then(|rpc| rpc.data.as_ref())
+        .and_then(|data| data.get(STREAM_LOST))
+        .is_some_and(|flag| flag == true)
 }
 
 /// What a failed `server/discover` probe says about the server.
@@ -1812,7 +1841,18 @@ impl Client {
                 }
             }
         }
-        self.conn.request(method, Some(Value::Object(params))).await
+        let params = Value::Object(params);
+        match self.conn.request(method, Some(params.clone())).await {
+            // The stream carrying the response broke first. `Connection` mints
+            // a fresh id per request, which is what "re-issue it as a new
+            // request with a new request ID" asks for; once is enough to ride
+            // out a proxy or load balancer dropping one stream.
+            Err(error) if stream_lost(&error) && REISSUABLE.contains(&method) => {
+                tracing::debug!(method, "response stream lost; re-issuing once");
+                self.conn.request(method, Some(params)).await
+            }
+            other => other,
+        }
     }
 
     /// Decode a result into a [`neutral`] type via the negotiated version's wire
