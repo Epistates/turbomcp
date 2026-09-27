@@ -221,14 +221,21 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
     }
 
     // `Mcp-Name` is required for `tools/call`/`resources/read`/`prompts/get`
-    // and mirrors `params.name`/`params.uri` (Base64 sentinel decoded).
-    if let Some(field) = mcp_headers::name_field_for(&req.method) {
+    // and mirrors `params.name`/`params.uri` (Base64 sentinel decoded). On the
+    // Tasks extension's methods it mirrors `params.taskId`; the core spec
+    // doesn't require it there, so it is checked only when sent.
+    if let Some(field) = mcp_headers::routing_name_field(&req.method) {
+        let required = mcp_headers::name_field_for(&req.method).is_some();
         let body_value = req
             .params
             .as_ref()
             .and_then(|p| p.get(field))
             .and_then(serde_json::Value::as_str);
-        let Some(raw) = headers.get(&HEADER_MCP_NAME).and_then(|v| v.to_str().ok()) else {
+        let sent = headers.get(&HEADER_MCP_NAME);
+        if sent.is_none() && !required {
+            return None;
+        }
+        let Some(raw) = sent.and_then(|v| v.to_str().ok()) else {
             return Some(header_mismatch_rejection(
                 id,
                 "missing required Mcp-Name header",
@@ -2019,6 +2026,32 @@ mod tests {
         ];
         all.extend_from_slice(extra);
         all
+    }
+
+    /// On `tasks/*`, `Mcp-Name` is the task id: optional for the server, but
+    /// when a client sends one it has to be right, or a load balancer routed
+    /// the poll by a different task than the body names.
+    #[test]
+    fn a_task_poll_mcp_name_is_checked_when_present() {
+        let poll = JsonRpcMessage::Request(JsonRpcRequest::new(
+            1,
+            "tasks/get",
+            Some(json!({
+                "taskId": "t-1",
+                "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            })),
+        ));
+        let base = [
+            ("MCP-Protocol-Version", "2026-07-28"),
+            ("Mcp-Method", "tasks/get"),
+        ];
+        assert!(validate_request_headers(&poll, &headers(&base)).is_none());
+        let mut named = base.to_vec();
+        named.push(("Mcp-Name", "t-1"));
+        assert!(validate_request_headers(&poll, &headers(&named)).is_none());
+        let mut wrong = base.to_vec();
+        wrong.push(("Mcp-Name", "t-2"));
+        assert!(validate_request_headers(&poll, &headers(&wrong)).is_some());
     }
 
     #[test]

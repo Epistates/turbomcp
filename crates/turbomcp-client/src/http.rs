@@ -782,14 +782,14 @@ async fn pump(
     }
     // The draft's standard request headers mirror body fields for
     // intermediaries: `Mcp-Method` on every request POST, `Mcp-Name` for
-    // `tools/call`/`resources/read`/`prompts/get`. `2025-11-25` doesn't
-    // define them.
+    // `tools/call`/`resources/read`/`prompts/get` and the Tasks extension's
+    // `tasks/*` (its task id, for routing). `2025-11-25` doesn't define them.
     let is_draft = version
         .as_deref()
         .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28);
     if is_draft && let JsonRpcMessage::Request(r) = &msg {
         req = req.header(mcp_headers::MCP_METHOD, &r.method);
-        if let Some(field) = mcp_headers::name_field_for(&r.method)
+        if let Some(field) = mcp_headers::routing_name_field(&r.method)
             && let Some(value) = r
                 .params
                 .as_ref()

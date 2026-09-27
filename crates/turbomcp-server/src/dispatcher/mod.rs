@@ -746,9 +746,12 @@ async fn handle_request<S: McpServerCore>(
     {
         let ctx = build_context(&req);
         if !context_declares_extension(&ctx, ext.id()) {
-            // SEP-2663: a client that didn't declare the extension capability
-            // gets `-32601` for the extension's methods.
-            return Ok(error_response(id, &McpError::method_not_found(method)));
+            // "Servers MUST return this error [-32021] for non-declaring
+            // clients issuing `tasks/get`, `tasks/update`, and `tasks/cancel`
+            // requests." `-32601` (a 404 over HTTP) told a client that forgot
+            // to re-declare on this request that the server had no Tasks at
+            // all; this names what to declare.
+            return Ok(missing_capability_response(id, ext.id()));
         }
         let connection_id = connection_id(req.params.as_ref()).map(str::to_owned);
         return Ok(ext

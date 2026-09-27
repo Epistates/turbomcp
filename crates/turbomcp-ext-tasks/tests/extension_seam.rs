@@ -83,7 +83,7 @@ async fn call(svc: &mut VersionDispatcher<Adder>, req: JsonRpcRequest) -> Value 
     };
     json!({
         "result": r.result,
-        "error": r.error.map(|e| json!({ "code": e.code, "message": e.message })),
+        "error": r.error.map(|e| json!({ "code": e.code, "message": e.message, "data": e.data })),
     })
 }
 
@@ -126,19 +126,26 @@ async fn declaring_client_reaches_the_extension_and_gets_task_not_found() {
 }
 
 #[tokio::test]
-async fn non_declaring_client_gets_method_not_found() {
+async fn non_declaring_client_gets_missing_capability() {
     let mut svc = dispatcher();
     // Same request, but the client did NOT declare the extension capability.
-    let req = JsonRpcRequest::new(
-        3,
-        "tasks/get",
-        Some(json!({ "taskId": "nope", "_meta": draft_meta(false) })),
-    );
-    let out = call(&mut svc, req).await;
-    assert_eq!(
-        out["error"]["code"], -32601,
-        "SEP-2663: non-declaring clients get -32601 for tasks/*"
-    );
+    for method in ["tasks/get", "tasks/update", "tasks/cancel"] {
+        let req = JsonRpcRequest::new(
+            3,
+            method,
+            Some(json!({ "taskId": "nope", "_meta": draft_meta(false) })),
+        );
+        let out = call(&mut svc, req).await;
+        // "Servers MUST return this error for non-declaring clients issuing
+        // `tasks/get`, `tasks/update`, and `tasks/cancel` requests."
+        assert_eq!(out["error"]["code"], -32021, "{method}");
+        assert!(
+            out["error"]["data"]["requiredCapabilities"]["extensions"]
+                ["io.modelcontextprotocol/tasks"]
+                .is_object(),
+            "names what to declare: {out}"
+        );
+    }
 }
 
 #[tokio::test]

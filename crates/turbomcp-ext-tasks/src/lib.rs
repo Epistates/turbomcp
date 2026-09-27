@@ -30,7 +30,7 @@
 //! declaring the extension in its per-request capabilities
 //! (`_meta.io.modelcontextprotocol/clientCapabilities.extensions`), and the
 //! server decides per request whether to materialize a task. A client that has
-//! not declared the extension capability gets `-32601` for `tasks/*` (enforced
+//! not declared the extension capability gets `-32021` for `tasks/*` (enforced
 //! by the dispatcher before [`TasksExtension::dispatch`]) and is never returned
 //! a `CreateTaskResult` (it always runs the call synchronously).
 //!

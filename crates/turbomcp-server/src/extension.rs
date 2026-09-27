@@ -195,8 +195,8 @@ pub trait Extension: Send + Sync + 'static {
 
     /// The request methods this extension owns. On the modern path the
     /// dispatcher routes these to [`dispatch`](Extension::dispatch); a client
-    /// that has not declared the extension capability gets `-32601` for them
-    /// (SEP-2663 capability negotiation).
+    /// that has not declared the extension capability gets `-32021` (Missing
+    /// Required Client Capability) naming it, so it can declare and retry.
     fn methods(&self) -> &'static [&'static str];
 
     /// Handle one of the extension's [`methods`](Extension::methods) and return

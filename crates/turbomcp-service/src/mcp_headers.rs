@@ -30,7 +30,8 @@ pub const MCP_NAME: &str = "Mcp-Name";
 pub const MCP_PARAM_PREFIX: &str = "Mcp-Param-";
 
 /// The methods whose requests must carry an `Mcp-Name` header, with the body
-/// field it mirrors (`params.name` or `params.uri`).
+/// field it mirrors (`params.name` or `params.uri`). This is the set a server
+/// requires; see [`routing_name_field`] for what a client sends.
 #[must_use]
 pub fn name_field_for(method: &str) -> Option<&'static str> {
     match method {
@@ -38,6 +39,21 @@ pub fn name_field_for(method: &str) -> Option<&'static str> {
         "resources/read" => Some("uri"),
         _ => None,
     }
+}
+
+/// The body field an `Mcp-Name` header mirrors for `method`, whether or not
+/// the core spec requires it: [`name_field_for`]'s methods, plus the Tasks
+/// extension's `tasks/get`/`tasks/update`/`tasks/cancel`, where "the client
+/// MUST set the `Mcp-Name` header to the value of `params.taskId`" so a load
+/// balancer can route a poll to the replica holding the task. A client sends
+/// it for all of these; a server requires only the core ones, and checks the
+/// rest when present.
+#[must_use]
+pub fn routing_name_field(method: &str) -> Option<&'static str> {
+    name_field_for(method).or(match method {
+        "tasks/get" | "tasks/update" | "tasks/cancel" => Some("taskId"),
+        _ => None,
+    })
 }
 
 /// Whether `value` can ride in an HTTP header as-is: visible ASCII, interior
@@ -136,6 +152,19 @@ pub fn is_valid_header_name(name: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A client routes task polls by id; a server requires `Mcp-Name` only
+    /// where the core spec does.
+    #[test]
+    fn task_methods_route_by_task_id_but_are_not_required() {
+        for method in ["tasks/get", "tasks/update", "tasks/cancel"] {
+            assert_eq!(routing_name_field(method), Some("taskId"), "{method}");
+            assert_eq!(name_field_for(method), None, "{method}");
+        }
+        assert_eq!(routing_name_field("tools/call"), Some("name"));
+        assert_eq!(routing_name_field("resources/read"), Some("uri"));
+        assert_eq!(routing_name_field("tools/list"), None);
+    }
 
     /// The spec's §Value Encoding examples table, verbatim.
     #[test]
