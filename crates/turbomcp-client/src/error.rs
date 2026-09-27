@@ -31,6 +31,12 @@ pub enum ClientError {
     #[error("request timed out")]
     Timeout,
 
+    /// The response stream ended before the response arrived (a proxy idle
+    /// timeout, a load balancer drain). The request may or may not have run;
+    /// reads and lists are re-issued once automatically, `tools/call` is not.
+    #[error("the response stream closed before the response arrived")]
+    StreamLost,
+
     /// A successful result could not be deserialized into the expected type.
     #[error("could not decode result: {0}")]
     Decode(String),

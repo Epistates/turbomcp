@@ -151,6 +151,15 @@ Macros and runtime:
 - `#[turbomcp::tool]` and other path-qualified markers register; a second
   marker on one method, or a marker outside `#[server]`, is a compile error.
 - The histogram buckets are in seconds; everything under 5s shared one.
+- stdio writes run on a task of their own. A frame bigger than the pipe
+  buffer used to block the writer's side from reading, so two peers each
+  writing a large frame (a file argument one way, a big result the other)
+  waited on each other until the write deadline killed the connection. The
+  serve loop also no longer polls outbound first: a handler emitting
+  notifications faster than the peer read them kept the reader from ever
+  running, so the peer's cancellation of that handler went unread.
+  `ServeConfig::write_timeout` is the per-frame write deadline, which
+  `drain_timeout` used to double as.
 - A Client ID Metadata Document URL must be `https` with a path.
 
 Earlier in this cycle:
@@ -228,6 +237,15 @@ Earlier in this cycle:
   session's current `GET` stream. `Extension::on_subscribe` takes the
   listen stream's `Peer`, and `ExtensionRequest`/`CallAugmentRequest` lost
   `connection_id` (the context's extensions carry it).
+- **Breaking:** the client tells its transport what it needs in typed facts
+  beside each frame (`Transport::send_with`, with `WireVersion` and
+  `ParamHeaders`), and hears back through `Transport::take_failure`
+  (`TransportFailure::{Http, StreamLost}`). These were
+  `io.turbomcp.internal/*` `_meta` keys that every non-HTTP transport had to
+  strip before writing, and a stream that ended early was flagged in the
+  synthesized error's `data`, where a server could forge it. The namespace
+  and `meta::sanitize_outbound` are gone; `consumes_internal_meta` is
+  `carries_headers`; a lost stream is `ClientError::StreamLost`.
 - **Breaking:** fewer crates. `turbomcp-codec` is now `turbomcp_core::codec`
   (the `simd` feature moved with it), `turbomcp-transport-stdio` is now
   `turbomcp_service::io` (`LineTransport`, `stdio`, `serve_stdio`), and the

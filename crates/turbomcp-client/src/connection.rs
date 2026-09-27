@@ -40,7 +40,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
 use turbomcp_core::{
-    InvalidFrame, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
+    Extensions, InvalidFrame, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, ProtocolVersion, RequestId, meta,
 };
 use turbomcp_protocol::methods::{notification, request};
@@ -57,11 +57,15 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// The waiting side of in-flight requests: id → the oneshot its caller awaits.
 type Pending = Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, ClientError>>>>;
 
+/// One outbound frame and the facts meant for the transport alone (the
+/// revision it goes out under, `Mcp-Param-*` mirrors).
+type Frame = (JsonRpcMessage, Extensions);
+
 /// Shared connection state, held by every [`Connection`] clone.
 struct Inner {
     /// Frames the client wants to send (the actor owns the receiver). The actor
     /// holds only a `WeakSender`, so dropping all handles closes the channel.
-    outbound: mpsc::Sender<JsonRpcMessage>,
+    outbound: mpsc::Sender<Frame>,
     /// In-flight requests awaiting a response (shared with the actor).
     pending: Arc<Pending>,
     /// Monotonic request-id source (process-local; integer ids).
@@ -78,10 +82,9 @@ struct Inner {
     shutdown: tokio_util::sync::CancellationToken,
     done: tokio_util::sync::CancellationToken,
     admission: tokio::sync::Semaphore,
-    /// Whether the transport turns the `io.turbomcp.internal/*` signals into
-    /// something on the wire (Streamable HTTP headers) rather than having
-    /// them stripped.
-    consumes_internal_meta: bool,
+    /// Whether the transport is Streamable HTTP, where header-level features
+    /// (`x-mcp-header` mirrors, `MCP-Protocol-Version`) apply.
+    carries_headers: bool,
 }
 
 impl Drop for Inner {
@@ -161,13 +164,13 @@ impl Connection {
         T: Transport,
     {
         // Capacity mirrors the server driver's default outbound buffer.
-        let (tx, rx) = mpsc::channel::<JsonRpcMessage>(1024);
+        let (tx, rx) = mpsc::channel::<Frame>(1024);
         let pending: Arc<Pending> = Arc::new(Mutex::new(HashMap::new()));
         let weak_out = tx.downgrade();
         let shutdown = tokio_util::sync::CancellationToken::new();
         let done = tokio_util::sync::CancellationToken::new();
         let negotiated = Arc::new(Mutex::new(ProtocolVersion::LATEST));
-        let consumes_internal_meta = transport.consumes_internal_meta();
+        let carries_headers = transport.carries_headers();
         tokio::spawn(actor(
             transport,
             rx,
@@ -190,7 +193,7 @@ impl Connection {
                 shutdown,
                 done,
                 admission: tokio::sync::Semaphore::new(1024),
-                consumes_internal_meta,
+                carries_headers,
             }),
         }
     }
@@ -205,11 +208,10 @@ impl Connection {
             .expect("negotiated version mutex poisoned") = version;
     }
 
-    /// Whether this connection runs over a transport that consumes the
-    /// internal `_meta` signals itself (Streamable HTTP), which is where the
+    /// Whether this connection runs over Streamable HTTP, which is where the
     /// spec's HTTP-only rules (`x-mcp-header` mirroring) apply.
-    pub(crate) fn consumes_internal_meta(&self) -> bool {
-        self.inner.consumes_internal_meta
+    pub(crate) fn carries_headers(&self) -> bool {
+        self.inner.carries_headers
     }
 
     /// Cancel this connection and wait for its owned tasks and transport to
@@ -229,6 +231,22 @@ impl Connection {
         &self,
         method: impl Into<String>,
         params: Option<Value>,
+    ) -> ClientResult<Value> {
+        self.request_with(method, params, Extensions::new()).await
+    }
+
+    /// [`request`](Self::request), with facts for the transport: the
+    /// revision the request goes out under
+    /// ([`WireVersion`](turbomcp_service::WireVersion)) and any `Mcp-Param-*`
+    /// mirrors ([`ParamHeaders`](turbomcp_service::ParamHeaders)).
+    ///
+    /// # Errors
+    /// As [`request`](Self::request).
+    pub async fn request_with(
+        &self,
+        method: impl Into<String>,
+        params: Option<Value>,
+        facts: Extensions,
     ) -> ClientResult<Value> {
         let deadline = tokio::time::Instant::now() + self.inner.request_timeout;
         let _admission = tokio::time::timeout_at(deadline, self.inner.admission.acquire())
@@ -254,7 +272,7 @@ impl Connection {
         let method = method.into();
         let notify_on_abandon = cancellable(&method, params.as_ref());
         let msg = JsonRpcMessage::Request(JsonRpcRequest::new(id.clone(), method, params));
-        match tokio::time::timeout_at(deadline, self.inner.outbound.send(msg)).await {
+        match tokio::time::timeout_at(deadline, self.inner.outbound.send((msg, facts))).await {
             Ok(Ok(())) => abandon.notify = notify_on_abandon,
             Ok(Err(_)) => return Err(ClientError::Closed),
             Err(_) => return Err(ClientError::Timeout),
@@ -285,11 +303,25 @@ impl Connection {
         method: impl Into<String>,
         params: Option<Value>,
     ) -> ClientResult<()> {
+        self.notify_with(method, params, Extensions::new()).await
+    }
+
+    /// [`notify`](Self::notify), with facts for the transport (see
+    /// [`request_with`](Self::request_with)).
+    ///
+    /// # Errors
+    /// [`ClientError::Closed`] if the connection is gone.
+    pub async fn notify_with(
+        &self,
+        method: impl Into<String>,
+        params: Option<Value>,
+        facts: Extensions,
+    ) -> ClientResult<()> {
         use turbomcp_core::JsonRpcNotification;
         let msg = JsonRpcMessage::Notification(JsonRpcNotification::new(method, params));
         self.inner
             .outbound
-            .send(msg)
+            .send((msg, facts))
             .await
             .map_err(|_| ClientError::Closed)
     }
@@ -302,7 +334,7 @@ impl Connection {
     pub async fn send_message(&self, msg: JsonRpcMessage) -> ClientResult<()> {
         self.inner
             .outbound
-            .send(msg)
+            .send((msg, Extensions::new()))
             .await
             .map_err(|_| ClientError::Closed)
     }
@@ -329,7 +361,7 @@ impl Connection {
             notification::CANCELLED,
             Some(params),
         ));
-        match self.inner.outbound.try_send(msg) {
+        match self.inner.outbound.try_send((msg, Extensions::new())) {
             Ok(()) => {}
             Err(mpsc::error::TrySendError::Full(_)) => {
                 // No detached waiters during cancellation storms. Closing the
@@ -397,7 +429,7 @@ struct SessionState {
     handler: ClientHandlers,
     /// Where a spawned handler task writes its reply. Weak so that dropping
     /// every `Connection` still closes the channel.
-    weak_out: mpsc::WeakSender<JsonRpcMessage>,
+    weak_out: mpsc::WeakSender<Frame>,
     /// The SEP-2549 response cache, invalidated on inbound notifications.
     cache: Option<Arc<ResponseCache>>,
     /// The revision the handshake settled on: written once, read per inbound
@@ -407,7 +439,7 @@ struct SessionState {
 
 async fn actor<T>(
     mut transport: T,
-    mut outbound: mpsc::Receiver<JsonRpcMessage>,
+    mut outbound: mpsc::Receiver<Frame>,
     state: SessionState,
     lifecycle: (
         tokio_util::sync::CancellationToken,
@@ -418,12 +450,7 @@ async fn actor<T>(
 {
     let (shutdown, done) = lifecycle;
     let _done = done.drop_guard();
-    // The `io.turbomcp.internal/*` signals exist for Streamable HTTP, which
-    // turns them into headers and strips them itself. Any other transport
-    // would ship this crate's bookkeeping to a peer that has never heard of
-    // it, so the driver takes them off on the way out.
-    let strip_internal_meta = !transport.consumes_internal_meta();
-    let mut dispatch = Dispatch::new(&state.handler, transport.consumes_internal_meta());
+    let mut dispatch = Dispatch::new(&state.handler, transport.carries_headers());
     loop {
         tokio::select! {
             () = shutdown.cancelled() => break,
@@ -444,13 +471,10 @@ async fn actor<T>(
                     // not an oversight: `close()` is documented as "cancel this
                     // connection", so it has to return promptly rather than
                     // wait out a stalled peer for the write timeout below.
-                    Some(mut msg) => {
-                        if strip_internal_meta {
-                            meta::sanitize_outbound(&mut msg);
-                        }
+                    Some((msg, facts)) => {
                         tokio::select! {
                             () = shutdown.cancelled() => break,
-                            result = tokio::time::timeout(Duration::from_secs(30), transport.send(msg)) => {
+                            result = tokio::time::timeout(Duration::from_secs(30), transport.send_with(msg, facts)) => {
                                 if !matches!(result, Ok(Ok(()))) { break; }
                             }
                         }
@@ -467,7 +491,7 @@ async fn actor<T>(
                             JsonRpcMessage::Response(r) => r
                                 .id
                                 .as_ref()
-                                .and_then(|id| transport.take_http_failure(id)),
+                                .and_then(|id| transport.take_failure(id)),
                             _ => None,
                         };
                         if let Some(reply) = route_inbound(msg, failure, &state, &mut dispatch) {
@@ -596,7 +620,7 @@ async fn deliver_notifications(
 /// `weak_out`.
 fn route_inbound(
     msg: JsonRpcMessage,
-    failure: Option<turbomcp_service::HttpFailure>,
+    failure: Option<turbomcp_service::TransportFailure>,
     state: &SessionState,
     dispatch: &mut Dispatch,
 ) -> Option<JsonRpcMessage> {
@@ -753,7 +777,9 @@ fn route_inbound(
                         Err(err) => JsonRpcResponse::error(id.clone(), err),
                     };
                     if let Some(tx) = weak_out.upgrade() {
-                        let _ = tx.send(JsonRpcMessage::Response(reply)).await;
+                        let _ = tx
+                            .send((JsonRpcMessage::Response(reply), Extensions::new()))
+                            .await;
                     }
                     id
                 });
@@ -824,7 +850,7 @@ fn invalid_from_server(bad: &InvalidFrame, pending: &Arc<Pending>) -> Option<Jso
 fn complete_pending(
     resp: JsonRpcResponse,
     pending: &Arc<Pending>,
-    failure: Option<turbomcp_service::HttpFailure>,
+    failure: Option<turbomcp_service::TransportFailure>,
 ) {
     let Some(id) = &resp.id else {
         // The server couldn't read a frame of ours well enough to find its
@@ -838,7 +864,11 @@ fn complete_pending(
         return;
     };
     let outcome = match (failure, resp.error) {
-        (Some(err), _) => Err(ClientError::Http(Box::new(err))),
+        (Some(turbomcp_service::TransportFailure::StreamLost), _) => Err(ClientError::StreamLost),
+        (Some(turbomcp_service::TransportFailure::Http(err)), _) => {
+            Err(ClientError::Http(Box::new(err)))
+        }
+        (Some(other), _) => Err(ClientError::Protocol(other.to_string())),
         (None, Some(err)) => Err(ClientError::Rpc(err)),
         (None, None) => Ok(resp.result.unwrap_or(Value::Null)),
     };

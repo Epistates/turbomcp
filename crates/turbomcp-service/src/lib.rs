@@ -43,7 +43,7 @@ pub use peer::{Delivery, Peer, PeerClosed, SessionStreams, StreamGuard};
 pub use ratelimit::{GovernorRateLimiter, RateKey, RateLimiter};
 pub use serve::{ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
-pub use transport::{HttpFailure, Transport};
+pub use transport::{HttpFailure, ParamHeaders, Transport, TransportFailure, WireVersion};
 
 pub use turbomcp_core::CancellationToken;
 

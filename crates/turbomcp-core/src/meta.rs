@@ -62,22 +62,6 @@ pub mod keys {
     pub const SCOPES: &str = "io.turbomcp/scopes";
 }
 
-/// The `io.turbomcp.internal/*` namespace: signals between this SDK's client
-/// and its own transports (the negotiated version, `#[mcp_header]` mirrors),
-/// never meant for a peer. Streamable HTTP turns them into headers and strips
-/// them; every other transport strips them with [`sanitize_outbound`].
-///
-/// Server-side facts (session, connection, identity, observed headers) no
-/// longer ride here: they travel typed in [`McpRequest`](crate::McpRequest)'s
-/// extensions, where a client can't forge them.
-pub mod internal {
-    /// Whether `key` is in the internal (in-process only) namespace.
-    #[must_use]
-    pub fn is_internal_key(key: &str) -> bool {
-        key.starts_with("io.turbomcp.internal/")
-    }
-}
-
 /// The first required `_meta` field a `2026-07-28` request is missing, or
 /// `None` if the envelope is complete.
 ///
@@ -125,7 +109,7 @@ pub fn is_framework_key(key: &str) -> bool {
             | keys::CLIENT_INFO
             | keys::CLIENT_CAPABILITIES
             | keys::LOG_LEVEL
-    ) || internal::is_internal_key(key)
+    )
 }
 
 /// Extract the per-request protocol version from a `_meta` map (draft model).
@@ -203,76 +187,10 @@ pub fn extract_trace_context(meta: &Map<String, Value>) -> Option<TraceContext> 
     })
 }
 
-/// Strip all [`internal`] keys from an outbound message's `params._meta`,
-/// dropping the `_meta` object when that empties it.
-///
-/// The internal namespace is in-process bookkeeping between this crate's
-/// client and its own transports. Streamable HTTP consumes it — the negotiated
-/// version becomes a header — and strips it itself; on every other transport
-/// the keys would ride the wire to a peer that has never heard of this crate.
-/// An emptied `_meta` is removed rather than sent as `"_meta": {}`, which
-/// asserts nothing.
-pub fn sanitize_outbound(msg: &mut JsonRpcMessage) {
-    let params = match msg {
-        JsonRpcMessage::Request(r) => r.params.as_mut(),
-        JsonRpcMessage::Notification(n) => n.params.as_mut(),
-        JsonRpcMessage::Response(_) => return,
-    };
-    let Some(params) = params.and_then(Value::as_object_mut) else {
-        return;
-    };
-    let Some(meta) = params.get_mut("_meta").and_then(Value::as_object_mut) else {
-        return;
-    };
-    meta.retain(|k, _| !internal::is_internal_key(k));
-    if meta.is_empty() {
-        params.remove("_meta");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    /// A key in the client's in-process namespace.
-    const INTERNAL: &str = "io.turbomcp.internal/negotiatedVersion";
-
-    /// The internal namespace never reaches a peer that cannot consume it, and
-    /// an emptied `_meta` goes with it.
-    #[test]
-    fn outbound_sanitizing_drops_internal_keys_and_an_emptied_meta() {
-        use crate::{JsonRpcRequest, RequestId};
-        let mut msg: JsonRpcMessage = JsonRpcRequest::new(
-            RequestId::from(1i64),
-            "tools/call",
-            Some(json!({ "_meta": { INTERNAL: "s-1" } })),
-        )
-        .into();
-        sanitize_outbound(&mut msg);
-        let JsonRpcMessage::Request(r) = &msg else {
-            panic!("expected a request")
-        };
-        assert_eq!(r.params, Some(json!({})), "the emptied `_meta` goes too");
-
-        // A caller's own `_meta` survives alongside.
-        let mut msg: JsonRpcMessage = JsonRpcRequest::new(
-            RequestId::from(2i64),
-            "tools/call",
-            Some(json!({
-                "_meta": { INTERNAL: "s-1", "acme.dev/trace": "t" },
-            })),
-        )
-        .into();
-        sanitize_outbound(&mut msg);
-        let JsonRpcMessage::Request(r) = &msg else {
-            panic!("expected a request")
-        };
-        assert_eq!(
-            r.params,
-            Some(json!({ "_meta": { "acme.dev/trace": "t" } }))
-        );
-    }
 
     #[test]
     fn extracts_draft_version() {
@@ -289,10 +207,8 @@ mod tests {
         let mut meta = Map::new();
         meta.insert(keys::TRACEPARENT.into(), json!("00-abc-def-01"));
         meta.insert("com.acme/tenant".into(), json!("t-42"));
-        meta.insert(INTERNAL.into(), json!("s-1"));
         let (consumed, propagated) = partition(meta);
         assert!(consumed.contains_key(keys::TRACEPARENT));
-        assert!(consumed.contains_key(INTERNAL));
         assert!(propagated.contains_key("com.acme/tenant"));
         assert_eq!(propagated.len(), 1);
     }
@@ -311,7 +227,6 @@ mod tests {
             keys::CLIENT_INFO,
             keys::CLIENT_CAPABILITIES,
             keys::LOG_LEVEL,
-            INTERNAL,
         ];
         let mut meta = Map::new();
         for k in framework {
@@ -330,13 +245,13 @@ mod tests {
     fn set_request_meta_creates_params_and_meta() {
         use crate::JsonRpcRequest;
         let mut msg: JsonRpcMessage = JsonRpcRequest::new(1, "tools/list", None).into();
-        set_request_meta(&mut msg, INTERNAL, json!("s-1"));
+        set_request_meta(&mut msg, "com.acme/tenant", json!("t-1"));
         set_request_meta(&mut msg, keys::PROTOCOL_VERSION, json!("2025-11-25"));
         let JsonRpcMessage::Request(r) = &msg else {
             unreachable!()
         };
         let meta = &r.params.as_ref().unwrap()["_meta"];
-        assert_eq!(meta[INTERNAL], "s-1");
+        assert_eq!(meta["com.acme/tenant"], "t-1");
         assert_eq!(meta[keys::PROTOCOL_VERSION], "2025-11-25");
     }
 

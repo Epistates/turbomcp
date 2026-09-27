@@ -60,6 +60,9 @@ pub struct ServeConfig {
     /// On shutdown, how long in-flight handlers have to finish and flush before
     /// they are aborted. Default: 30s.
     pub drain_timeout: Duration,
+    /// How long one outbound frame may wait on the transport before the peer
+    /// is treated as gone (it stopped reading). Default: 30s.
+    pub write_timeout: Duration,
     /// Fire to begin graceful shutdown. Default: a token that is never fired
     /// (the driver runs until the peer closes the stream).
     pub shutdown: CancellationToken,
@@ -75,6 +78,7 @@ impl Default for ServeConfig {
         Self {
             max_in_flight: 1024,
             drain_timeout: Duration::from_secs(30),
+            write_timeout: Duration::from_secs(30),
             shutdown: CancellationToken::new(),
             identity: None,
         }
@@ -117,6 +121,7 @@ where
     let ServeConfig {
         max_in_flight,
         drain_timeout,
+        write_timeout,
         shutdown,
         identity,
     } = config;
@@ -145,30 +150,32 @@ where
     let svc = service;
 
     let result = loop {
+        // Unbiased on purpose. Polling outbound first let a handler that
+        // emits notifications faster than the peer reads keep this branch
+        // winning, so the reader never ran and the peer's
+        // `notifications/cancelled` for that very handler sat unread.
         tokio::select! {
-            biased;
-            // 1. Flush outbound first so replies stay prompt and writes ordered.
+            // Writes stay ordered: this is the only branch that writes.
             //
             // Once a frame is out of `rx` it has to be written: nothing else
             // holds a copy. Racing the shutdown token against the write here
             // dropped it instead, and — since an abandoned write may have
             // emitted a partial frame — also marked the stream unusable, which
             // skips the drain and aborts every other in-flight handler. The
-            // write is already bounded by `drain_timeout`, which is the same
-            // budget the drain itself gets, so shutdown loses nothing by
-            // letting it finish and the loop breaks on branch 3 straight after.
+            // write is bounded by `write_timeout`, so shutdown loses little by
+            // letting it finish.
             Some(out) = rx.recv() => {
-                match tokio::time::timeout(drain_timeout, transport.send(out)).await {
+                match tokio::time::timeout(write_timeout, transport.send(out)).await {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => break Err(ProtocolError::Transport(e.to_string())),
                     Err(_) => break Err(ProtocolError::Transport("write deadline exceeded".into())),
                 }
             }
-            // 2. Reap finished handlers so the JoinSet can't grow unbounded.
+            // Reap finished handlers so the JoinSet can't grow unbounded.
             Some(_joined) = handlers.join_next(), if !handlers.is_empty() => {}
-            // 3. Begin graceful shutdown.
+            // Begin graceful shutdown.
             () = shutdown.cancelled() => break Ok(()),
-            // 4. Read the next inbound frame.
+            // Read the next inbound frame.
             frame = transport.recv() => {
                 match frame {
                     // One bad frame is the peer's bug, not a dead stream:

@@ -42,12 +42,15 @@ use futures::StreamExt;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use tokio::sync::{mpsc, watch};
 use turbomcp_core::{
-    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcResponse, ProtocolVersion, RequestId,
+    CancellationToken, Extensions, JsonRpcError, JsonRpcMessage, JsonRpcResponse, ProtocolVersion,
+    RequestId,
 };
 use turbomcp_protocol::methods::{notification, request};
-use turbomcp_service::{Transport, mcp_headers};
+use turbomcp_service::{
+    HttpFailure, ParamHeaders, Transport, TransportFailure, WireVersion, mcp_headers,
+};
 
-use crate::client::{Client, ClientBuilder, STREAM_LOST};
+use crate::client::{Client, ClientBuilder};
 use crate::error::{ClientError, ClientResult};
 
 /// Failures specific to the HTTP client transport.
@@ -288,7 +291,9 @@ struct Shared {
     /// one it names. Every task clears its own entry on the way out, so this
     /// holds only genuinely in-flight requests.
     posts: Mutex<HashMap<RequestId, CancellationToken>>,
-    failures: Mutex<HashMap<RequestId, turbomcp_service::HttpFailure>>,
+    /// Why a request's POST failed, for the connection to read when the
+    /// synthesized error response for it arrives.
+    failures: Mutex<HashMap<RequestId, TransportFailure>>,
     shutdown: CancellationToken,
     tasks: tokio_util::task::TaskTracker,
     permits: Arc<tokio::sync::Semaphore>,
@@ -533,14 +538,13 @@ impl Transport for HttpClientTransport {
         self.shared.bearer.is_none()
     }
 
-    /// This transport is the reason the internal `_meta` signals exist: the
-    /// negotiated version becomes `MCP-Protocol-Version` and the
-    /// `#[mcp_header]` mirrors become `Mcp-Param-*`. It strips both itself.
-    fn consumes_internal_meta(&self) -> bool {
+    /// The negotiated version becomes `MCP-Protocol-Version` and the
+    /// `#[mcp_header]` mirrors become `Mcp-Param-*`.
+    fn carries_headers(&self) -> bool {
         true
     }
 
-    fn take_http_failure(&mut self, id: &RequestId) -> Option<turbomcp_service::HttpFailure> {
+    fn take_failure(&mut self, id: &RequestId) -> Option<TransportFailure> {
         self.shared
             .failures
             .lock()
@@ -548,7 +552,15 @@ impl Transport for HttpClientTransport {
             .remove(id)
     }
 
-    async fn send(&mut self, mut msg: JsonRpcMessage) -> Result<(), Self::Error> {
+    async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
+        self.send_with(msg, Extensions::new()).await
+    }
+
+    async fn send_with(
+        &mut self,
+        msg: JsonRpcMessage,
+        facts: Extensions,
+    ) -> Result<(), Self::Error> {
         // Dropping the POST stops this client waiting on either wire. Whether
         // that also *cancels* is where the two revisions disagree, and the
         // disagreement is explicit on both sides:
@@ -589,7 +601,12 @@ impl Transport for HttpClientTransport {
         // task: a task that has not run yet has not recorded it, so a DELETE
         // straight after the handshake, or a request racing the `initialized`
         // notification, went out without the version it was owed.
-        let version = extract_protocol_version(&mut msg, &self.shared);
+        let version = resolve_protocol_version(
+            &msg,
+            facts.get::<WireVersion>().map(|v| v.0.clone()),
+            &self.shared,
+        );
+        let mirrors = facts.get::<ParamHeaders>().cloned().unwrap_or_default();
 
         // POST and pump the response in the background so the driver can keep
         // sending; HTTP requests are independent and may run concurrently.
@@ -643,7 +660,7 @@ impl Transport for HttpClientTransport {
             let _permit = permit;
             tokio::select! {
                 () = shutdown.cancelled() => {}
-                () = post_and_pump(shared, msg, version, cancel) => {}
+                () = post_and_pump(shared, msg, version, mirrors, cancel) => {}
             }
         });
         Ok(())
@@ -692,6 +709,7 @@ async fn post_and_pump(
     shared: Arc<Shared>,
     msg: JsonRpcMessage,
     version: Option<String>,
+    mirrors: ParamHeaders,
     cancel: Option<(RequestId, CancellationToken)>,
 ) {
     // The request id (if this is a request) so a failure can be reported to just
@@ -707,9 +725,9 @@ async fn post_and_pump(
             // caller has already stopped waiting, and `Connection` has taken
             // its pending entry.
             () = token.cancelled() => None,
-            result = pump(&shared, msg, version) => Some(result),
+            result = pump(&shared, msg, version, mirrors) => Some(result),
         },
-        None => Some(pump(&shared, msg, version).await),
+        None => Some(pump(&shared, msg, version, mirrors).await),
     };
     if let Some((id, _)) = &cancel {
         shared.finish_post(id);
@@ -717,12 +735,18 @@ async fn post_and_pump(
     let Some(result) = outcome else { return };
 
     if let Err(failure) = result {
-        let (message, data) = match failure {
-            PumpFailure::Failed(message) => (message, None),
-            PumpFailure::StreamLost => (
-                "the response stream closed before the response arrived".to_owned(),
-                Some(serde_json::json!({ STREAM_LOST: true })),
-            ),
+        let message = match failure {
+            PumpFailure::Failed(message) => message,
+            PumpFailure::StreamLost => {
+                if let Some(id) = &request_id {
+                    shared
+                        .failures
+                        .lock()
+                        .expect("failure lock")
+                        .insert(id.clone(), TransportFailure::StreamLost);
+                }
+                TransportFailure::StreamLost.to_string()
+            }
         };
         match request_id {
             Some(id) => {
@@ -735,7 +759,7 @@ async fn post_and_pump(
                     JsonRpcError {
                         code: -32000,
                         message,
-                        data,
+                        data: None,
                     },
                 );
                 let _ = shared.inbound_tx.send(JsonRpcMessage::Response(resp)).await;
@@ -756,13 +780,10 @@ fn cancelled_request_id(params: Option<&serde_json::Value>) -> Option<RequestId>
 /// for [`post_and_pump`] to route.
 async fn pump(
     shared: &Arc<Shared>,
-    mut msg: JsonRpcMessage,
+    msg: JsonRpcMessage,
     version: Option<String>,
+    mirrors: ParamHeaders,
 ) -> Result<(), PumpFailure> {
-    // Lift the `x-mcp-header` mirror map out of the body before serialization
-    // so it never reaches the wire (`send` already lifted the version signal).
-    let mirror_headers = extract_header_params(&mut msg);
-
     let body = serde_json::to_string(&msg).map_err(|e| format!("encode failed: {e}"))?;
 
     let mut req = shared
@@ -799,7 +820,7 @@ async fn pump(
             req = req.header(mcp_headers::MCP_NAME, mcp_headers::encode_value(value));
         }
     }
-    for (name, value) in mirror_headers {
+    for (name, value) in mirrors.0 {
         req = req.header(format!("{}{name}", mcp_headers::MCP_PARAM_PREFIX), value);
     }
 
@@ -887,13 +908,13 @@ async fn pump(
         if let JsonRpcMessage::Request(r) = &msg {
             shared.failures.lock().expect("failure lock").insert(
                 r.id.clone(),
-                turbomcp_service::HttpFailure {
+                TransportFailure::Http(HttpFailure {
                     status: status.as_u16(),
                     message: message.clone(),
                     rpc,
                     www_authenticate,
                     retry_after,
-                },
+                }),
             );
         }
         return Err(message.into());
@@ -1231,84 +1252,36 @@ async fn listen(shared: Arc<Shared>) {
     }
 }
 
-/// Pull the `x-mcp-header` mirror signal — a map of header-name portion →
-/// already-encoded value, built by the typed client from the tool's schema —
-/// out of a request's `_meta`.
-///
-/// Mutates `msg`: removes the [`HEADER_PARAMS_META_KEY`](crate::client::HEADER_PARAMS_META_KEY)
-/// entry so it never reaches the wire. The param values stay in `arguments`
-/// (mirroring — the header is an HTTP-visible copy, not a move).
-fn extract_header_params(msg: &mut JsonRpcMessage) -> Vec<(String, String)> {
-    let JsonRpcMessage::Request(req) = msg else {
-        return Vec::new();
-    };
-    req.params
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .and_then(|params| params.get_mut("_meta"))
-        .and_then(serde_json::Value::as_object_mut)
-        .and_then(|meta| meta.remove(crate::client::HEADER_PARAMS_META_KEY))
-        .and_then(|v| match v {
-            serde_json::Value::Object(map) => Some(
-                map.into_iter()
-                    .filter_map(|(name, value)| match value {
-                        serde_json::Value::String(s) => Some((name, s)),
-                        _ => None,
-                    })
-                    .collect(),
-            ),
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
-/// Resolve the `MCP-Protocol-Version` header value for `msg` and strip the
-/// internal signal from the body: the typed client's negotiated-version
-/// signal first, else the body's public `_meta` protocol version (draft
-/// requests), else the last version seen on this connection (covers
-/// responses to server requests and notifications, which carry no signal).
-/// Remembers whatever it resolves. An emptied `_meta` is dropped entirely.
-fn extract_protocol_version(msg: &mut JsonRpcMessage, shared: &Shared) -> Option<String> {
+/// Resolve the `MCP-Protocol-Version` header value for `msg`: the revision
+/// the client says it goes out under, else the body's `_meta` protocol version
+/// (draft requests), else the last version seen on this connection (covers
+/// responses to server requests, which the client sends without one).
+/// Remembers whatever it resolves.
+fn resolve_protocol_version(
+    msg: &JsonRpcMessage,
+    explicit: Option<ProtocolVersion>,
+    shared: &Shared,
+) -> Option<String> {
     // `initialize` *is* the negotiation: nothing has been agreed yet, so it
     // carries no version header and forgets any it inherited. After a failed
     // `server/discover` probe the remembered value was that probe's
     // `2026-07-28`, and the fallback `initialize` went out claiming it — a
     // strict legacy server refuses exactly that.
-    if matches!(msg, JsonRpcMessage::Request(r) if r.method == turbomcp_protocol::methods::request::INITIALIZE)
-    {
+    if matches!(msg, JsonRpcMessage::Request(r) if r.method == request::INITIALIZE) {
         *shared.version.lock().expect("version mutex") = None;
         return None;
     }
-    let params = match msg {
-        JsonRpcMessage::Request(r) => r.params.as_mut(),
-        JsonRpcMessage::Notification(n) => n.params.as_mut(),
-        JsonRpcMessage::Response(_) => None,
-    }
-    .and_then(serde_json::Value::as_object_mut);
-
-    let mut version = None;
-    if let Some(params) = params {
-        if let Some(meta) = params
-            .get_mut("_meta")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            version = meta
-                .remove(crate::client::NEGOTIATED_VERSION_META_KEY)
-                .and_then(|v| v.as_str().map(str::to_owned))
-                .or_else(|| {
-                    meta.get(turbomcp_core::meta::keys::PROTOCOL_VERSION)
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned)
-                });
-        }
-        if params
-            .get("_meta")
-            .and_then(serde_json::Value::as_object)
-            .is_some_and(serde_json::Map::is_empty)
-        {
-            params.remove("_meta");
-        }
-    }
+    let version = explicit.map(|v| v.as_str().to_owned()).or_else(|| {
+        match msg {
+            JsonRpcMessage::Request(r) => r.params.as_ref(),
+            JsonRpcMessage::Notification(n) => n.params.as_ref(),
+            JsonRpcMessage::Response(_) => None,
+        }?
+        .get("_meta")?
+        .get(turbomcp_core::meta::keys::PROTOCOL_VERSION)?
+        .as_str()
+        .map(str::to_owned)
+    });
 
     let mut last = shared.version.lock().expect("version mutex");
     match version {
@@ -1374,99 +1347,7 @@ mod tests {
     use turbomcp_core::JsonRpcRequest;
 
     #[test]
-    fn extracts_marked_header_params_and_strips_the_signal() {
-        // The signal is a map of header-name portion → already-encoded value.
-        let mut msg = JsonRpcMessage::Request(JsonRpcRequest::new(
-            1,
-            "tools/call",
-            Some(json!({
-                "name": "locate",
-                "arguments": { "city": "SF", "region": "us-west", "n": 3 },
-                "_meta": {
-                    crate::client::HEADER_PARAMS_META_KEY: { "region": "us-west", "n": "3" },
-                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                },
-            })),
-        ));
-
-        let mut headers = extract_header_params(&mut msg);
-        headers.sort();
-        assert_eq!(
-            headers,
-            vec![
-                ("n".to_owned(), "3".to_owned()),
-                ("region".to_owned(), "us-west".to_owned()),
-            ]
-        );
-
-        // The signal is stripped; the values remain in `arguments`; other `_meta`
-        // keys are untouched.
-        let JsonRpcMessage::Request(req) = &msg else {
-            unreachable!()
-        };
-        let params = req.params.as_ref().unwrap();
-        assert!(
-            params["_meta"]
-                .get(crate::client::HEADER_PARAMS_META_KEY)
-                .is_none()
-        );
-        assert_eq!(
-            params["_meta"]["io.modelcontextprotocol/protocolVersion"],
-            "2026-07-28"
-        );
-        assert_eq!(params["arguments"]["region"], "us-west");
-    }
-
-    /// The signal is built by the typed client, but it rides in `_meta` where
-    /// anything can put a value. A non-string entry is dropped rather than
-    /// stringified: `reqwest` would reject (or mangle) a header built from an
-    /// object, and a silently coerced `"[object]"` is worse than an absent
-    /// header. A signal that isn't a map at all yields nothing.
-    #[test]
-    fn malformed_header_signals_are_dropped_not_coerced() {
-        let mut msg = JsonRpcMessage::Request(JsonRpcRequest::new(
-            1,
-            "tools/call",
-            Some(json!({
-                "name": "locate",
-                "arguments": {},
-                "_meta": {
-                    crate::client::HEADER_PARAMS_META_KEY: {
-                        "good": "kept",
-                        "nested": { "not": "a header" },
-                        "numeric": 7,
-                    },
-                },
-            })),
-        ));
-        assert_eq!(
-            extract_header_params(&mut msg),
-            vec![("good".to_owned(), "kept".to_owned())]
-        );
-
-        let mut msg = JsonRpcMessage::Request(JsonRpcRequest::new(
-            2,
-            "tools/call",
-            Some(json!({
-                "name": "locate",
-                "_meta": { crate::client::HEADER_PARAMS_META_KEY: "not-a-map" },
-            })),
-        ));
-        assert!(extract_header_params(&mut msg).is_empty());
-    }
-
-    #[test]
-    fn no_signal_yields_no_headers() {
-        let mut msg = JsonRpcMessage::Request(JsonRpcRequest::new(
-            1,
-            "tools/call",
-            Some(json!({ "name": "x", "arguments": { "a": 1 } })),
-        ));
-        assert!(extract_header_params(&mut msg).is_empty());
-    }
-
-    #[test]
-    fn protocol_version_signal_is_lifted_and_remembered() {
+    fn the_stated_version_is_used_and_remembered() {
         let shared = Shared {
             http: reqwest::Client::new(),
             limits: HttpClientLimits::default(),
@@ -1486,36 +1367,33 @@ mod tests {
             permits: Arc::new(tokio::sync::Semaphore::new(1024)),
         };
 
-        // A legacy request carries only the internal signal — lifted,
-        // stripped, and the emptied `_meta` dropped from the wire body.
-        let mut msg = JsonRpcMessage::Request(JsonRpcRequest::new(
-            1,
-            "tools/list",
-            Some(json!({
-                "_meta": { crate::client::NEGOTIATED_VERSION_META_KEY: "2025-11-25" },
-            })),
-        ));
+        // A legacy request states its revision as a transport fact.
+        let msg = JsonRpcMessage::Request(JsonRpcRequest::new(1, "tools/list", None));
         assert_eq!(
-            extract_protocol_version(&mut msg, &shared).as_deref(),
+            resolve_protocol_version(&msg, Some(ProtocolVersion::V2025_11_25), &shared).as_deref(),
             Some("2025-11-25")
         );
-        let JsonRpcMessage::Request(req) = &msg else {
-            unreachable!()
-        };
-        assert!(
-            req.params.as_ref().unwrap().get("_meta").is_none(),
-            "an emptied _meta is dropped"
+
+        // A draft request carries it in the body's `_meta`.
+        let draft = JsonRpcMessage::Request(JsonRpcRequest::new(
+            2,
+            "tools/list",
+            Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } })),
+        ));
+        assert_eq!(
+            resolve_protocol_version(&draft, None, &shared).as_deref(),
+            Some("2026-07-28")
         );
 
-        // A signal-less follow-up (e.g. a response to a server request) falls
-        // back to the remembered version.
-        let mut response = JsonRpcMessage::Response(JsonRpcResponse::success(
-            turbomcp_core::RequestId::from(2),
+        // A follow-up that states nothing (a response to a server request)
+        // falls back to the remembered version.
+        let response = JsonRpcMessage::Response(JsonRpcResponse::success(
+            turbomcp_core::RequestId::from(3),
             json!({}),
         ));
         assert_eq!(
-            extract_protocol_version(&mut response, &shared).as_deref(),
-            Some("2025-11-25")
+            resolve_protocol_version(&response, None, &shared).as_deref(),
+            Some("2026-07-28")
         );
     }
 

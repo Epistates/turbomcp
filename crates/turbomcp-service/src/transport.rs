@@ -7,7 +7,7 @@
 //!
 //! # The production parity contract
 //!
-//! Every bundled server transport — stdio (`turbomcp-transport-stdio`),
+//! Every bundled server transport — stdio ([`io::LineTransport`](crate::io::LineTransport)),
 //! WebSocket (`turbomcp-transport-ws`), and Streamable HTTP
 //! (`turbomcp-transport-http`, a runner rather than a `Transport`) — must
 //! uphold the same production guarantees. A new transport (or a change to one)
@@ -47,7 +47,9 @@
 use core::future::Future;
 use std::time::Instant;
 
-use turbomcp_core::{InvalidFrame, JsonRpcMessage};
+use std::collections::BTreeMap;
+
+use turbomcp_core::{Extensions, InvalidFrame, JsonRpcMessage, ProtocolVersion, RequestId};
 
 /// A bidirectional channel for JSON-RPC frames.
 ///
@@ -86,23 +88,31 @@ pub trait Transport: Send + 'static {
         true
     }
 
-    /// Whether this transport reads the client's internal `_meta` signals
-    /// (`io.turbomcp.internal/*`) off outbound frames and strips them itself.
-    ///
-    /// Only Streamable HTTP does: it turns the negotiated version into the
-    /// `MCP-Protocol-Version` header and the `#[mcp_header]` mirrors into
-    /// `Mcp-Param-*`. Every other transport has no headers to put them in, so
-    /// the keys are pure leak — the connection actor removes them on the way
-    /// out rather than shipping this crate's internals to a peer that has
-    /// never heard of it.
-    fn consumes_internal_meta(&self) -> bool {
+    /// Whether messages ride HTTP requests, so the header-level features of
+    /// Streamable HTTP apply: `MCP-Protocol-Version`, `x-mcp-header`
+    /// mirroring. Only Streamable HTTP says yes.
+    fn carries_headers(&self) -> bool {
         false
     }
 
-    /// Retrieve a locally observed HTTP failure accompanying a synthetic
-    /// response. This side channel cannot be forged through JSON-RPC data.
-    fn take_http_failure(&mut self, _id: &turbomcp_core::RequestId) -> Option<HttpFailure> {
+    /// What this transport observed locally about the request `id` when it
+    /// answered it with a synthesized error (the HTTP status, a stream that
+    /// ended early). Read beside the response, never from it, so a peer can't
+    /// forge one through JSON-RPC data.
+    fn take_failure(&mut self, _id: &RequestId) -> Option<TransportFailure> {
         None
+    }
+
+    /// Send one frame with facts for the transport alone: the revision it goes
+    /// out under ([`WireVersion`]), the `Mcp-Param-*` mirrors ([`ParamHeaders`]).
+    /// A transport with nowhere to put them ignores them, which is the
+    /// default.
+    fn send_with(
+        &mut self,
+        msg: JsonRpcMessage,
+        _facts: Extensions,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        self.send(msg)
     }
 
     /// Classify a [`recv`](Transport::recv) error: `Ok` means one frame was
@@ -139,9 +149,9 @@ pub trait Transport: Send + 'static {
     /// pending writes should complete (PLAN §4.13).
     ///
     /// The default flushes-and-closes via [`Transport::close`], ignoring the
-    /// deadline — correct for transports whose `send` already flushes each frame
-    /// (e.g. stdio's line writer). Transports that buffer or own a long-lived
-    /// outbound stream (HTTP SSE, in Phase 6) override this to honor the bound.
+    /// deadline; the driver bounds the whole call by it anyway. Override it
+    /// when the transport can do better than being cut off at the deadline
+    /// (a WebSocket close handshake, say).
     fn graceful_shutdown(
         self,
         _deadline: Instant,
@@ -151,6 +161,29 @@ pub trait Transport: Send + 'static {
     {
         self.close()
     }
+}
+
+/// The revision an outbound message goes out under, for transports that say
+/// so outside the message (Streamable HTTP's `MCP-Protocol-Version` header).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WireVersion(pub ProtocolVersion);
+
+/// The `x-mcp-header` mirrors for an outbound `tools/call`: header-name
+/// portion to its already-encoded value, sent as `Mcp-Param-{name}`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParamHeaders(pub BTreeMap<String, String>);
+
+/// A failure a transport observed locally while answering a request.
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum TransportFailure {
+    /// The server answered with an HTTP error.
+    #[error(transparent)]
+    Http(HttpFailure),
+    /// The response stream ended before the response arrived (a proxy idle
+    /// timeout, a load balancer drain). The request may or may not have run.
+    #[error("the response stream closed before the response arrived")]
+    StreamLost,
 }
 
 /// Structured HTTP failure, preserving protocol errors and retry challenges.

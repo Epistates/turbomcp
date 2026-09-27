@@ -24,12 +24,12 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use turbomcp_core::meta::keys;
-use turbomcp_core::{Implementation, LogLevel, ProtocolVersion, codes};
+use turbomcp_core::{Extensions, Implementation, LogLevel, ProtocolVersion, codes};
 use turbomcp_protocol::methods::{notification, request};
 use turbomcp_protocol::neutral;
 use turbomcp_protocol::v2025_11_25::types as legacy;
 use turbomcp_protocol::v2026_07_28::types as v0728;
-use turbomcp_service::{Transport, mcp_headers};
+use turbomcp_service::{ParamHeaders, Transport, WireVersion, mcp_headers};
 
 use crate::cache::ResponseCache;
 use crate::connection::Connection;
@@ -61,25 +61,6 @@ const MIN_TASK_POLL_MS: u64 = 10;
 /// What replaced per-resource subscriptions in `2026-07-28`.
 const LISTEN_INSTEAD: &str =
     "use `listen` with `SubscriptionFilter::with_resource` on this revision";
-
-/// Internal `_meta` key carrying the `#[mcp_header]` mirror map — header-name
-/// portion → already-encoded header value — to emit as `Mcp-Param-*` headers.
-/// Consumed and stripped by the HTTP transport (and sanitized server-side as
-/// an `io.turbomcp.internal/*` key on other transports), so it never reaches
-/// a handler.
-pub(crate) const HEADER_PARAMS_META_KEY: &str = "io.turbomcp.internal/headerParams";
-
-/// Internal `_meta` key carrying the negotiated protocol version for the HTTP
-/// transport's `MCP-Protocol-Version` header (required on every POST by both
-/// versions' transports specs). Stripped by the HTTP transport; sanitized at
-/// every server boundary otherwise.
-pub(crate) const NEGOTIATED_VERSION_META_KEY: &str = "io.turbomcp.internal/negotiatedVersion";
-
-/// Marks a transport-synthesized error as "the response stream ended before
-/// the response" (set in its `data`). 2026-07-28: "A broken response stream
-/// loses the in-flight request; clients MUST re-issue it as a new request with
-/// a new request ID."
-pub(crate) const STREAM_LOST: &str = "io.turbomcp.internal/streamLost";
 
 /// Methods safe to re-issue after their response stream was lost: they change
 /// nothing on the server. `tools/call` is not among them — re-running a tool
@@ -518,24 +499,14 @@ impl ClientBuilder {
         // compliant server may send one the moment `initialized` arrives — so
         // it learns the revision first.
         conn.set_negotiated_version(negotiated.clone());
-        conn.notify(
+        conn.notify_with(
             notification::INITIALIZED,
-            Some(json!({
-                "_meta": { NEGOTIATED_VERSION_META_KEY: negotiated.as_str() },
-            })),
+            None,
+            Extensions::new().with(WireVersion(negotiated.clone())),
         )
         .await?;
         Ok(Handshake::from_result(negotiated, &result))
     }
-}
-
-/// Whether `error` is the transport's "the response stream ended first".
-fn stream_lost(error: &ClientError) -> bool {
-    error
-        .as_rpc()
-        .and_then(|rpc| rpc.data.as_ref())
-        .and_then(|data| data.get(STREAM_LOST))
-        .is_some_and(|flag| flag == true)
 }
 
 /// What a failed `server/discover` probe says about the server.
@@ -903,7 +874,7 @@ impl Client {
         // MUST be excluded (with a warning) so one bad definition doesn't
         // block the rest. Applying that everywhere dropped perfectly good
         // tools over stdio. (Last-seen page wins; tools paginate cleanly.)
-        let mirrors_headers = self.version.is_stateless() && self.conn.consumes_internal_meta();
+        let mirrors_headers = self.version.is_stateless() && self.conn.carries_headers();
         let mut known = self.tools.lock().expect("tool facts poisoned");
         result.tools.retain(|tool| {
             let headers = if mirrors_headers {
@@ -1042,16 +1013,20 @@ impl Client {
         self.require_server_capability("tools", request::TOOLS_CALL)?;
         let task = self.task_augmentation(name, task).await?;
         let build = |client: &Self| {
-            let mut params = client.tool_call_params(name, arguments);
+            let (mut params, facts) = client.tool_call_params(name, arguments);
             if let Some(token) = progress_token {
                 with_progress_token(&mut params, token.clone());
             }
             if let Some(task) = &task {
                 params.insert("task".into(), task.clone());
             }
-            params
+            (params, facts)
         };
-        let v = match self.mrtr_request(request::TOOLS_CALL, build(self)).await {
+        let (params, facts) = build(self);
+        let v = match self
+            .mrtr_request_with(request::TOOLS_CALL, params, facts)
+            .await
+        {
             // HeaderMismatch: our mirror headers may be built from a stale
             // schema. Per the transports spec, refresh `tools/list` (which
             // rebuilds the header cache) and retry once. Re-issuing is safe
@@ -1072,7 +1047,9 @@ impl Client {
                 );
                 self.clear_response_cache();
                 self.list_all_tools().await?;
-                self.mrtr_request(request::TOOLS_CALL, build(self)).await?
+                let (params, facts) = build(self);
+                self.mrtr_request_with(request::TOOLS_CALL, params, facts)
+                    .await?
             }
             other => other?,
         };
@@ -1193,14 +1170,18 @@ impl Client {
             .map_err(|e| violation(e.to_string()))
     }
 
-    /// Build `tools/call` params, attaching the `x-mcp-header` mirror signal
-    /// (header-name → encoded value, from the `list_tools` cache) for the HTTP
-    /// transport to emit as `Mcp-Param-*` headers. Values stay in `arguments`
-    /// — headers are copies, the body is authoritative. A parameter absent
-    /// from `arguments` (or non-primitive) is simply not mirrored, per the
+    /// Build `tools/call` params, and the `x-mcp-header` mirrors (header-name
+    /// → encoded value, from the `list_tools` cache) for the HTTP transport
+    /// to send as `Mcp-Param-*` headers. Values stay in `arguments`: headers
+    /// are copies, the body is authoritative. A parameter absent from
+    /// `arguments` (or non-primitive) is simply not mirrored, per the
     /// extraction rule.
-    fn tool_call_params(&self, name: &str, arguments: &Map<String, Value>) -> Map<String, Value> {
-        let mut mirrors = Map::new();
+    fn tool_call_params(
+        &self,
+        name: &str,
+        arguments: &Map<String, Value>,
+    ) -> (Map<String, Value>, Extensions) {
+        let mut mirrors = std::collections::BTreeMap::new();
         if let Some(facts) = self.tools.lock().expect("tool facts poisoned").get(name) {
             for param in &facts.headers {
                 let mut value: Option<&Value> = None;
@@ -1212,10 +1193,7 @@ impl Client {
                     };
                 }
                 if let Some(rendered) = value.and_then(mcp_headers::render_argument) {
-                    mirrors.insert(
-                        param.header.clone(),
-                        json!(mcp_headers::encode_value(&rendered)),
-                    );
+                    mirrors.insert(param.header.clone(), mcp_headers::encode_value(&rendered));
                 }
             }
         }
@@ -1223,12 +1201,11 @@ impl Client {
         let mut params = Map::new();
         params.insert("name".into(), json!(name));
         params.insert("arguments".into(), Value::Object(arguments.clone()));
+        let mut facts = Extensions::new();
         if !mirrors.is_empty() {
-            let mut meta = Map::new();
-            meta.insert(HEADER_PARAMS_META_KEY.into(), Value::Object(mirrors));
-            params.insert("_meta".into(), Value::Object(meta));
+            facts.insert(ParamHeaders(mirrors));
         }
-        params
+        (params, facts)
     }
 
     /// List the server's resources (one page; pass a `cursor` to continue).
@@ -1934,10 +1911,24 @@ impl Client {
         method: &str,
         original: Map<String, Value>,
     ) -> ClientResult<Value> {
+        self.mrtr_request_with(method, original, Extensions::new())
+            .await
+    }
+
+    /// [`mrtr_request`](Self::mrtr_request), with transport facts sent on
+    /// every round.
+    async fn mrtr_request_with(
+        &self,
+        method: &str,
+        original: Map<String, Value>,
+        facts: Extensions,
+    ) -> ClientResult<Value> {
         let mut params = original.clone();
         let mut state_only_rounds = 0u32;
         for _ in 0..MAX_MRTR_ROUNDS {
-            let result = self.versioned_request(method, params).await?;
+            let result = self
+                .versioned_request_with(method, params, facts.clone())
+                .await?;
             if !self.result_is_input_required(&result)? {
                 return Ok(result);
             }
@@ -2034,42 +2025,55 @@ impl Client {
             .is_some_and(|extensions| extensions.contains_key(id))
     }
 
-    /// Issue a request, stamping the modern `_meta` envelope when the negotiated
-    /// version is the stateless draft (legacy carries identity in the session).
-    /// Every request also carries the internal negotiated-version signal for
-    /// the HTTP transport's `MCP-Protocol-Version` header (required on all
-    /// post-negotiation requests by both versions' transports specs); other
-    /// transports sanitize it at the server boundary.
+    /// Issue a request stamped with the negotiated version: the modern
+    /// `_meta` envelope on `2026-07-28`, and on every revision a
+    /// [`WireVersion`] fact for transports that state it outside the message
+    /// (Streamable HTTP's `MCP-Protocol-Version`, required on all
+    /// post-negotiation requests by both revisions' transports specs).
     async fn versioned_request(
         &self,
         method: &str,
-        mut params: Map<String, Value>,
+        params: Map<String, Value>,
     ) -> ClientResult<Value> {
-        let meta = params
-            .entry("_meta")
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Some(meta) = meta.as_object_mut() {
-            meta.insert(
-                NEGOTIATED_VERSION_META_KEY.into(),
-                json!(self.version.as_str()),
-            );
-            if self.version == ProtocolVersion::V2026_07_28 {
-                // Merge the version envelope into any existing `_meta` (e.g. the
-                // `#[mcp_header]` mirror signal) rather than clobbering it.
-                for (key, value) in &self.request_meta {
-                    meta.entry(key.clone()).or_insert_with(|| value.clone());
-                }
+        self.versioned_request_with(method, params, Extensions::new())
+            .await
+    }
+
+    /// [`versioned_request`](Self::versioned_request), plus facts of the
+    /// caller's for the transport (the `Mcp-Param-*` mirrors of a
+    /// `tools/call`).
+    async fn versioned_request_with(
+        &self,
+        method: &str,
+        mut params: Map<String, Value>,
+        mut facts: Extensions,
+    ) -> ClientResult<Value> {
+        if self.version == ProtocolVersion::V2026_07_28
+            && let Some(meta) = params
+                .entry("_meta")
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+        {
+            // Merge the version envelope into any `_meta` the caller set (a
+            // progress token) rather than clobbering it.
+            for (key, value) in &self.request_meta {
+                meta.entry(key.clone()).or_insert_with(|| value.clone());
             }
         }
+        facts.insert(WireVersion(self.version.clone()));
         let params = Value::Object(params);
-        match self.conn.request(method, Some(params.clone())).await {
+        match self
+            .conn
+            .request_with(method, Some(params.clone()), facts.clone())
+            .await
+        {
             // The stream carrying the response broke first. `Connection` mints
             // a fresh id per request, which is what "re-issue it as a new
             // request with a new request ID" asks for; once is enough to ride
             // out a proxy or load balancer dropping one stream.
-            Err(error) if stream_lost(&error) && REISSUABLE.contains(&method) => {
+            Err(ClientError::StreamLost) if REISSUABLE.contains(&method) => {
                 tracing::debug!(method, "response stream lost; re-issuing once");
-                self.conn.request(method, Some(params)).await
+                self.conn.request_with(method, Some(params), facts).await
             }
             other => other,
         }

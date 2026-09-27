@@ -11,7 +11,9 @@
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, Stdin, Stdout,
 };
-use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, decode_message};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use turbomcp_core::codec::{Bytes, Codec, CodecError, DefaultCodec, decode_message};
 use turbomcp_core::{InvalidFrame, JsonRpcMessage};
 
 use crate::{McpService, ProtocolError, ServeConfig, Transport};
@@ -49,18 +51,29 @@ pub enum StdioError {
 /// [`LineTransport::with_max_line_bytes`].
 pub const DEFAULT_MAX_LINE_BYTES: usize = 64 * 1024 * 1024;
 
+/// How many encoded frames may wait for the writer before
+/// [`send`](Transport::send) waits too.
+const WRITE_QUEUE_FRAMES: usize = 64;
+
 /// Newline-delimited JSON-RPC over any async reader/writer pair.
 ///
 /// Each inbound line is one complete frame (blank lines are skipped); each
-/// outbound frame is written followed by `\n` and flushed. Stdio is the
+/// outbound frame is written followed by `\n`. Stdio is the
 /// `R = BufReader<Stdin>`, `W = Stdout` specialization ([`StdioTransport`]).
+///
+/// Writes happen on a task of their own, started by the first `send`, so a
+/// frame bigger than the pipe buffer never stops this side reading. When both
+/// peers wrote inline, each could block writing a large frame to a peer that
+/// was itself blocked writing, and neither drained its input. `send` queues up
+/// to a bounded number of frames and then waits, which is the backpressure;
+/// [`close`](Transport::close) writes out whatever is queued.
 ///
 /// Inbound lines are bounded by [`DEFAULT_MAX_LINE_BYTES`] (override with
 /// [`with_max_line_bytes`](Self::with_max_line_bytes)) so a peer cannot exhaust
 /// memory with an endless unterminated line.
 pub struct LineTransport<R, W, C = DefaultCodec> {
     reader: R,
-    writer: W,
+    writer: Writer<W>,
     codec: C,
     buf: Vec<u8>,
     max_line_bytes: usize,
@@ -81,13 +94,82 @@ impl<R, W, C> core::fmt::Debug for LineTransport<R, W, C> {
     }
 }
 
+/// The outbound half: the byte stream until the first `send`, then the queue
+/// in front of the task that owns it.
+enum Writer<W> {
+    Idle(W),
+    Running {
+        queue: mpsc::Sender<Bytes>,
+        task: JoinHandle<std::io::Result<()>>,
+    },
+    /// The task has ended and its error was reported.
+    Stopped,
+}
+
+impl<W: AsyncWrite + Unpin + Send + 'static> Writer<W> {
+    /// The queue to the writer task, starting the task on first use. Started
+    /// lazily so a transport can be built before a runtime exists.
+    fn queue(&mut self) -> Result<&mpsc::Sender<Bytes>, StdioError> {
+        if matches!(self, Self::Idle(_)) {
+            let Self::Idle(writer) = std::mem::replace(self, Self::Stopped) else {
+                unreachable!()
+            };
+            let (queue, frames) = mpsc::channel(WRITE_QUEUE_FRAMES);
+            let task = tokio::spawn(write_frames(writer, frames));
+            *self = Self::Running { queue, task };
+        }
+        match self {
+            Self::Running { queue, .. } => Ok(queue),
+            _ => Err(writer_stopped()),
+        }
+    }
+
+    /// Why the writer task ended, once it has.
+    async fn failure(&mut self) -> StdioError {
+        match std::mem::replace(self, Self::Stopped) {
+            Self::Running { queue, task } => {
+                drop(queue);
+                match task.await {
+                    Ok(Err(e)) => StdioError::Io(e),
+                    Ok(Ok(())) => writer_stopped(),
+                    Err(join) => StdioError::Io(std::io::Error::other(join)),
+                }
+            }
+            _ => writer_stopped(),
+        }
+    }
+}
+
+fn writer_stopped() -> StdioError {
+    StdioError::Io(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "the line writer has stopped",
+    ))
+}
+
+/// Write queued frames until the queue closes. Flushes whenever the queue runs
+/// dry, so a burst goes out in one flush and a lone frame isn't held back.
+async fn write_frames<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    mut frames: mpsc::Receiver<Bytes>,
+) -> std::io::Result<()> {
+    while let Some(frame) = frames.recv().await {
+        writer.write_all(&frame).await?;
+        writer.write_all(b"\n").await?;
+        if frames.is_empty() {
+            writer.flush().await?;
+        }
+    }
+    writer.flush().await
+}
+
 impl<R, W, C: Codec> LineTransport<R, W, C> {
     /// Build a transport over `reader`/`writer` with the given codec and the
     /// default per-line cap ([`DEFAULT_MAX_LINE_BYTES`]).
     pub fn new(reader: R, writer: W, codec: C) -> Self {
         Self {
             reader,
-            writer,
+            writer: Writer::Idle(writer),
             codec,
             buf: Vec::new(),
             max_line_bytes: DEFAULT_MAX_LINE_BYTES,
@@ -193,11 +275,13 @@ where
         }
     }
 
+    /// Queues the frame for the writer task; waits only while the queue is
+    /// full. A write error surfaces on the next `send` (or `close`).
     async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
-        let bytes = self.codec.encode(&msg)?;
-        self.writer.write_all(bytes.as_ref()).await?;
-        self.writer.write_all(b"\n").await?;
-        self.writer.flush().await?;
+        let frame = self.codec.encode(&msg)?;
+        if self.writer.queue()?.send(frame).await.is_err() {
+            return Err(self.writer.failure().await);
+        }
         Ok(())
     }
 
@@ -246,8 +330,16 @@ where
         }
     }
 
-    async fn close(mut self) -> Result<(), Self::Error> {
-        self.writer.flush().await?;
+    /// Writes out everything queued, then flushes.
+    async fn close(self) -> Result<(), Self::Error> {
+        match self.writer {
+            Writer::Idle(mut writer) => writer.flush().await?,
+            Writer::Running { queue, task } => {
+                drop(queue);
+                task.await.map_err(std::io::Error::other)??;
+            }
+            Writer::Stopped => {}
+        }
         Ok(())
     }
 }
@@ -405,6 +497,71 @@ mod tests {
             t.recv().await.unwrap(),
             Some(JsonRpcMessage::Request(_))
         ));
+    }
+
+    /// A frame far bigger than the pipe doesn't stop this side reading: the
+    /// peer here writes before it reads, as a sequential server loop does,
+    /// and when `send` wrote inline both sides blocked on a full pipe.
+    #[tokio::test]
+    async fn a_large_write_does_not_block_reading() {
+        let (ours, theirs) = tokio::io::duplex(8 * 1024);
+        let (our_read, our_write) = tokio::io::split(ours);
+        let (their_read, mut their_write) = tokio::io::split(theirs);
+        let mut t =
+            LineTransport::new(BufReader::new(our_read), our_write, DefaultCodec::default());
+
+        let big = "x".repeat(1024 * 1024);
+        let peer = tokio::spawn(async move {
+            let reply =
+                format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"blob\":\"{big}\"}}}}\n");
+            their_write.write_all(reply.as_bytes()).await.unwrap();
+            let mut line = String::new();
+            BufReader::new(their_read)
+                .read_line(&mut line)
+                .await
+                .unwrap();
+            line.len()
+        });
+
+        let request = JsonRpcMessage::Request(turbomcp_core::JsonRpcRequest::new(
+            2,
+            "tools/call",
+            Some(serde_json::json!({ "blob": "y".repeat(1024 * 1024) })),
+        ));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            t.send(request).await.expect("queued");
+            let reply = t.recv().await.expect("read").expect("a frame");
+            assert!(matches!(reply, JsonRpcMessage::Response(_)));
+        })
+        .await
+        .expect("both directions progressed");
+        assert!(
+            peer.await.unwrap() > 1024 * 1024,
+            "the peer got the whole frame"
+        );
+        t.close().await.expect("closed");
+    }
+
+    /// `close` writes out what is still queued.
+    #[tokio::test]
+    async fn close_flushes_the_queue() {
+        let (ours, mut theirs) = tokio::io::duplex(64 * 1024);
+        let mut t = LineTransport::new(
+            BufReader::new(tokio::io::empty()),
+            ours,
+            DefaultCodec::default(),
+        );
+        for id in 0..10 {
+            t.send(turbomcp_core::JsonRpcRequest::new(id, "ping", None).into())
+                .await
+                .unwrap();
+        }
+        t.close().await.unwrap();
+        let mut out = String::new();
+        tokio::io::AsyncReadExt::read_to_string(&mut theirs, &mut out)
+            .await
+            .unwrap();
+        assert_eq!(out.lines().count(), 10);
     }
 
     /// `recv` must be cancel safe, because both drivers poll it as one branch

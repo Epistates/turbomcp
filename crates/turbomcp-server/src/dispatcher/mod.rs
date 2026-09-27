@@ -10,8 +10,8 @@
 //! Two dispatch models, three revisions. The modern `2026-07-28` path is
 //! stateless (version in each request's `_meta`). The stateful path serves
 //! both `2025-06-18` and `2025-11-25`: `initialize` negotiates a version and
-//! mints a session (via the transport-supplied internal session id, see
-//! [`turbomcp_core::meta::internal`]), and later requests are dispatched with
+//! mints a session (under the [`SessionId`] the transport attaches to the
+//! request's extensions), and later requests are dispatched with
 //! the session's negotiated client info/capabilities injected into their
 //! [`RequestContext`]. The two stateful revisions share this path entirely and
 //! differ only in the wire types results widen to — plus the methods

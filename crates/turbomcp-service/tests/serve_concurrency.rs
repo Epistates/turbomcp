@@ -764,3 +764,104 @@ async fn the_service_is_called_in_arrival_order() {
     let expected: Vec<RequestId> = (0..500).map(RequestId::from).collect();
     assert_eq!(*seen.lock().unwrap(), expected);
 }
+
+/// A handler that floods its connection with notifications doesn't starve the
+/// reader. When outbound was polled first, a queue that never emptied meant
+/// `recv` never ran, so the peer's next frame (in practice, its
+/// `notifications/cancelled` for the flooding handler) sat unread.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_notification_flood_does_not_starve_the_reader() {
+    use std::sync::atomic::AtomicBool;
+    use turbomcp_core::JsonRpcNotification;
+    use turbomcp_service::Peer;
+
+    /// `flood` pushes notifications through its peer until `stop`; anything
+    /// else is answered at once.
+    #[derive(Clone)]
+    struct Flooder {
+        stop: Arc<AtomicBool>,
+    }
+
+    impl Service<McpRequest> for Flooder {
+        type Response = Option<JsonRpcMessage>;
+        type Error = ProtocolError;
+        type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, request: McpRequest) -> Self::Future {
+            let stop = Arc::clone(&self.stop);
+            let peer = request.extensions.get::<Peer>().cloned();
+            Box::pin(async move {
+                let JsonRpcMessage::Request(req) = request.message else {
+                    return Ok(None);
+                };
+                if req.method == "flood" {
+                    let peer = peer.expect("the driver attaches a peer");
+                    while !stop.load(Ordering::SeqCst) {
+                        let note = JsonRpcNotification::new("notifications/message", None);
+                        if peer.send(note.into()).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                Ok(Some(
+                    JsonRpcResponse::success(req.id, serde_json::json!({})).into(),
+                ))
+            })
+        }
+    }
+
+    // Writes slower than the handler produces, so the outbound queue never
+    // empties: the condition that starved the reader.
+    let pace = Arc::new(Semaphore::new(0));
+    let pacer = {
+        let pace = Arc::clone(&pace);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                pace.add_permits(1);
+            }
+        })
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let (in_tx, in_rx) = mpsc::channel(8);
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+    let driver = tokio::spawn(serve_with(
+        MockTransport::new(in_rx, out_tx).gated_writes(pace),
+        Flooder {
+            stop: Arc::clone(&stop),
+        },
+        ServeConfig {
+            max_in_flight: 16,
+            ..ServeConfig::default()
+        },
+    ));
+
+    in_tx.send(request(1, "flood")).await.unwrap();
+    // Wait for the flood to be under way before the frame it must not starve.
+    assert!(matches!(
+        out_rx.recv().await,
+        Some(JsonRpcMessage::Notification(_))
+    ));
+    in_tx.send(request(2, "ping")).await.unwrap();
+
+    let answered = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(msg) = out_rx.recv().await {
+            if reply_id(&msg) == Some(RequestId::from(2)) {
+                return;
+            }
+        }
+        panic!("the driver stopped writing");
+    })
+    .await;
+    stop.store(true, Ordering::SeqCst);
+    assert!(answered.is_ok(), "the ping was never read during the flood");
+
+    drop(in_tx);
+    tokio::spawn(async move { while out_rx.recv().await.is_some() {} });
+    driver.await.unwrap().expect("clean shutdown on EOF");
+    pacer.abort();
+}

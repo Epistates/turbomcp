@@ -15,7 +15,7 @@
 
 use alloc::string::{String, ToString};
 
-use bytes::Bytes;
+pub use bytes::Bytes;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
