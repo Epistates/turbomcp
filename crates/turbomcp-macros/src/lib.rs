@@ -6,8 +6,10 @@
 //! and the `into_server()` / `run_stdio()` entry points.
 //!
 //! `#[tool]`, `#[resource]`, `#[prompt]`, `#[completion]`, and `#[mcp_header]`
-//! are inert markers: `#[server]` consumes them. They are defined as pass-through
-//! attribute macros only so the names resolve and tooling recognizes them.
+//! are markers that `#[server]` consumes. `#[server]` is an outer attribute,
+//! so it always expands first and removes them; a marker macro that runs at
+//! all was never consumed (it sits outside a `#[server]` impl), and it says
+//! so with a compile error instead of quietly registering nothing.
 //!
 //! The three handler markers share one argument grammar — an optional bare
 //! string (the URI on `#[resource]`, a description shorthand elsewhere) followed
@@ -36,17 +38,18 @@ mod server;
 /// - `title` — a human-facing display name.
 /// - `instructions` — guidance returned during discovery.
 /// - `protocols("…", …)` — the protocol revisions this server accepts.
-///   Defaults to every version the build supports (currently `"2025-11-25"`
-///   and `"2026-07-28"`). All three are frozen revisions; narrow this set
-///   when an application intentionally supports fewer peers:
+///   Defaults to every version the build supports (currently `"2025-06-18"`,
+///   `"2025-11-25"` and `"2026-07-28"`). All three are frozen revisions;
+///   narrow this set when an application intentionally supports fewer peers:
 ///
 ///   ```ignore
 ///   #[server(name = "prod", version = "1.0.0", protocols("2025-11-25"))]
 ///   impl Prod {}
 ///   ```
 ///
-///   A request naming an excluded version is refused with `-32004` and the
-///   list of versions that *are* served.
+///   A request naming an excluded version is refused with `-32022`
+///   (`UnsupportedProtocolVersion`) and the list of versions that *are*
+///   served.
 ///
 /// The `impl` block must be for a concrete type; generic `impl` blocks are
 /// rejected, since the generated trait impls name one type.
@@ -84,7 +87,7 @@ pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// must be unique within the server.
 #[proc_macro_attribute]
 pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
+    unconsumed("tool", item)
 }
 
 /// Marker: declares a method as an MCP resource. Consumed by [`macro@server`].
@@ -111,7 +114,7 @@ pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// be unique within the server.
 #[proc_macro_attribute]
 pub fn resource(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
+    unconsumed("resource", item)
 }
 
 /// Marker: declares a method as an MCP prompt. Consumed by [`macro@server`].
@@ -134,14 +137,14 @@ pub fn resource(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// nothing by itself. `#[tool(scopes(…))]` is the authorization mechanism.
 #[proc_macro_attribute]
 pub fn prompt(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
+    unconsumed("prompt", item)
 }
 
 /// Marker: mirrors a tool parameter into an MCP request header (SEP-2243).
 /// Consumed by [`macro@server`].
 #[proc_macro_attribute]
 pub fn mcp_header(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
+    unconsumed("mcp_header", item)
 }
 
 /// Marker: declares the server's `completion/complete` handler. At most one per
@@ -150,7 +153,18 @@ pub fn mcp_header(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Consumed by [`macro@server`].
 #[proc_macro_attribute]
 pub fn completion(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
+    unconsumed("completion", item)
+}
+
+/// A marker that expanded on its own: `#[server]` would have removed it, so
+/// it isn't inside a `#[server]` impl and would register nothing.
+fn unconsumed(name: &str, item: TokenStream) -> TokenStream {
+    let message = format!(
+        "#[{name}] only works on a method inside a #[server] impl block; \
+         here it would register nothing"
+    );
+    let item = proc_macro2::TokenStream::from(item);
+    quote::quote!(::core::compile_error!(#message); #item).into()
 }
 
 // Rewrite only generated absolute paths and generated Serde/Schemars crate

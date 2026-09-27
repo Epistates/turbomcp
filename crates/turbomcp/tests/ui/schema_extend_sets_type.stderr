@@ -1,0 +1,5 @@
+error: `schema_extend` can't set `type`: a tool's input schema is always an object
+ --> tests/ui/schema_extend_sets_type.rs:9:28
+  |
+9 |     #[tool(schema_extend = r#"{"type": "array"}"#)]
+  |                            ^^^^^^^^^^^^^^^^^^^^^^

@@ -15,7 +15,7 @@
 //! downstream crate.
 
 use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens as _, format_ident, quote};
+use quote::{ToTokens as _, format_ident, quote, quote_spanned};
 use syn::ext::IdentExt as _;
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
@@ -128,11 +128,11 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
             /// [`LegacySessionAdapter`](::turbomcp::LegacySessionAdapter), so
             /// both stateless `2026-07-28` clients and stateful
             /// `2025-11-25` (`initialize`-handshake) clients are served.
+            ///
+            /// Needs a builder setting? `into_server()…run_stdio()` via
+            /// [`ServeStdio`](::turbomcp::ServeStdio) serves the same way.
             pub async fn run_stdio(self) -> ::core::result::Result<(), ::turbomcp::ProtocolError> {
-                ::turbomcp::serve_stdio(::turbomcp::LegacySessionAdapter::new(
-                    self.into_server().build(),
-                ))
-                .await
+                ::turbomcp::ServeStdio::run_stdio(self.into_server()).await
             }
         }
     };
@@ -625,7 +625,22 @@ fn name_value_str(meta: &Meta, key: &str) -> syn::Result<String> {
 fn validate_schema_extend(lit: &LitStr) -> syn::Result<()> {
     let text = lit.value();
     match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(serde_json::Value::Object(_)) => Ok(()),
+        // An input schema is `type: "object"` by definition; overriding that
+        // (or the dialect) can only produce a schema no client accepts.
+        Ok(serde_json::Value::Object(map)) => {
+            match ["type", "$schema"]
+                .into_iter()
+                .find(|k| map.contains_key(*k))
+            {
+                Some(key) => Err(syn::Error::new(
+                    lit.span(),
+                    format!(
+                        "`schema_extend` can't set `{key}`: a tool's input schema is always an object"
+                    ),
+                )),
+                None => Ok(()),
+            }
+        }
         Ok(_) => Err(syn::Error::new(
             lit.span(),
             "`schema_extend` must be a JSON object of schema keywords, e.g. \
@@ -721,27 +736,40 @@ impl MarkerArgs {
     }
 }
 
+/// Whether `attr` is the helper attribute `name`, however it is spelled:
+/// `#[tool]`, `#[turbomcp::tool]`, or through a renamed dependency
+/// (`#[sdk::tool]`). Matching the bare identifier alone let the qualified
+/// spellings through as plain methods that registered nothing.
+fn attr_named(attr: &Attribute, name: &str) -> bool {
+    attr.path().segments.last().is_some_and(|s| s.ident == name)
+}
+
+const MARKERS: [&str; 4] = ["tool", "prompt", "resource", "completion"];
+
 /// Find and remove a `#[tool]` / `#[prompt]` / `#[resource(...)]` / `#[completion]`
 /// marker from a method's attributes, returning its parsed form (and `None` for
 /// plain methods).
 fn take_marker(attrs: &mut Vec<Attribute>) -> syn::Result<Option<Marker>> {
-    let Some(pos) = attrs.iter().position(|a| {
-        let p = &a.path();
-        p.is_ident("tool")
-            || p.is_ident("prompt")
-            || p.is_ident("resource")
-            || p.is_ident("completion")
-    }) else {
+    let is_marker = |a: &Attribute| MARKERS.iter().any(|m| attr_named(a, m));
+    let Some(pos) = attrs.iter().position(is_marker) else {
         return Ok(None);
     };
     let attr = attrs.remove(pos);
+    // One method is one component. A second marker used to be left on the
+    // method, where it did nothing: `#[tool] #[prompt]` registered a tool.
+    if let Some(extra) = attrs.iter().find(|a| is_marker(a)) {
+        return Err(syn::Error::new(
+            extra.span(),
+            "a method takes one of #[tool], #[resource], #[prompt] or #[completion], not several",
+        ));
+    }
     let doc = doc_comment(attrs);
-    if attr.path().is_ident("completion") {
+    if attr_named(&attr, "completion") {
         return Ok(Some(Marker::Completion));
     }
-    let marker = if attr.path().is_ident("tool") {
+    let marker = if attr_named(&attr, "tool") {
         MarkerKind::Tool
-    } else if attr.path().is_ident("prompt") {
+    } else if attr_named(&attr, "prompt") {
         MarkerKind::Prompt
     } else {
         MarkerKind::Resource
@@ -907,7 +935,7 @@ impl Handler {
                         ));
                     };
                     let description = param_description(&pt.attrs)?;
-                    let is_header = pt.attrs.iter().any(|a| a.path().is_ident("mcp_header"));
+                    let is_header = pt.attrs.iter().any(|a| attr_named(a, "mcp_header"));
                     let is_option = type_is_option(&pt.ty);
                     slots.push(Slot::Arg(args.len()));
                     args.push(ArgParam {
@@ -1146,7 +1174,14 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
         .map(|d| quote!(.with_description(#d)));
     let header_marks = t.args.iter().filter(|a| a.is_header).map(|a| {
         let prop = a.ident.to_string();
-        quote!(::turbomcp::__macros::mark_mcp_header(&mut __schema, #prop);)
+        // Spanned at the parameter's type, so a `#[mcp_header] lat: f64` is
+        // an error on `f64` naming the rule, not a tool that every conforming
+        // HTTP client has to drop from `tools/list`.
+        let ty = &a.ty;
+        let check = quote_spanned!(ty.span()=>
+            ::turbomcp::__macros::assert_header_param::<#ty>();
+        );
+        quote!(#check ::turbomcp::__macros::mark_mcp_header(&mut __schema, #prop);)
     });
     // A `-> Json<T>` (optionally inside `McpResult<_>`) return produces the
     // tool's outputSchema from `T` (requires `T: schemars::JsonSchema`).
@@ -1684,7 +1719,7 @@ fn doc_comment(attrs: &[Attribute]) -> Option<String> {
 /// `#[description("…")]` on a parameter.
 fn param_description(attrs: &[Attribute]) -> syn::Result<Option<String>> {
     for a in attrs {
-        if a.path().is_ident("description") {
+        if attr_named(a, "description") {
             let s = a.parse_args::<syn::LitStr>()?;
             return Ok(Some(s.value()));
         }
@@ -1698,7 +1733,7 @@ fn strip_param_attrs(f: &mut ImplItemFn) {
     for input in &mut f.sig.inputs {
         if let FnArg::Typed(pt) = input {
             pt.attrs
-                .retain(|a| !a.path().is_ident("description") && !a.path().is_ident("mcp_header"));
+                .retain(|a| !attr_named(a, "description") && !attr_named(a, "mcp_header"));
         }
     }
 }

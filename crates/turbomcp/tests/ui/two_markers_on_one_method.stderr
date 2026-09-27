@@ -1,0 +1,5 @@
+error: a method takes one of #[tool], #[resource], #[prompt] or #[completion], not several
+  --> tests/ui/two_markers_on_one_method.rs:10:5
+   |
+10 |     #[prompt]
+   |     ^

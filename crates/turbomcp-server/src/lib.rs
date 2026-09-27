@@ -107,24 +107,77 @@ pub mod __macro_support {
     /// Merge the `#[tool(schema_extend = "…")]` keywords into a generated
     /// `inputSchema`.
     ///
-    /// Top-level keys only, and the caller's keys win — the point is to state
-    /// what a Rust signature can't (cross-field rules like `allOf` / `anyOf` /
-    /// `if` / `then` / `else`, or an `$anchor`), which SEP-2106 requires a
-    /// server to carry through untouched. The macro already parsed `extra` at
-    /// compile time, so a parse failure here is unreachable and leaves the
-    /// schema as-is rather than panicking in a handler's list path.
+    /// The point is to state what a Rust signature can't (cross-field rules
+    /// like `allOf` / `anyOf` / `if` / `then` / `else`, per-property
+    /// constraints, an `$anchor`), which SEP-2106 requires a server to carry
+    /// through untouched. Objects merge recursively and the caller's value
+    /// wins at the leaves, so `{"properties":{"age":{"minimum":18}}}` adds a
+    /// bound to `age` and keeps every other property. (A top-level replace
+    /// used to swap out the whole `properties` map, leaving the others
+    /// required but forbidden by `additionalProperties: false`: a tool no
+    /// call could satisfy.) `required` is the union of both lists. The macro
+    /// already parsed `extra` at compile time, so a parse failure here is
+    /// unreachable and leaves the schema as-is rather than panicking in a
+    /// handler's list path.
     #[must_use]
     pub fn extend_object_schema(mut v: Value, extra: &str) -> Value {
-        let (Some(obj), Ok(Value::Object(add))) =
-            (v.as_object_mut(), serde_json::from_str::<Value>(extra))
-        else {
+        let Ok(add @ Value::Object(_)) = serde_json::from_str::<Value>(extra) else {
             return v;
         };
-        for (key, value) in add {
-            obj.insert(key, value);
+        merge(&mut v, add);
+        return v;
+
+        fn merge(base: &mut Value, add: Value) {
+            let (Value::Object(base), Value::Object(add)) = (&mut *base, &add) else {
+                *base = add;
+                return;
+            };
+            for (key, value) in add {
+                match (key.as_str(), base.get_mut(key)) {
+                    ("required", Some(Value::Array(have))) => {
+                        for name in value.as_array().into_iter().flatten() {
+                            if !have.contains(name) {
+                                have.push(name.clone());
+                            }
+                        }
+                    }
+                    (_, Some(existing)) => merge(existing, value.clone()),
+                    (_, None) => {
+                        base.insert(key.clone(), value.clone());
+                    }
+                }
+            }
         }
-        v
     }
+
+    /// The parameter types `#[mcp_header]` accepts: "MUST only be applied to
+    /// parameters with primitive types (integer, string, boolean). Parameters
+    /// with type `number` are not permitted." `Option` of one is fine too;
+    /// an absent value just omits the header.
+    #[diagnostic::on_unimplemented(
+        message = "`#[mcp_header]` requires a string, integer or bool parameter (or an `Option` of one), not `{Self}`",
+        label = "not a header-safe primitive",
+        note = "headers carry primitives only; `number` (f32/f64) and structured types are not permitted"
+    )]
+    pub trait HeaderParam: sealed::Sealed {}
+
+    mod sealed {
+        pub trait Sealed {}
+    }
+
+    macro_rules! header_params {
+        ($($ty:ty),*) => {$(
+            impl sealed::Sealed for $ty {}
+            impl HeaderParam for $ty {}
+        )*};
+    }
+    header_params!(String, bool, i8, i16, i32, i64, u8, u16, u32);
+    impl<T: HeaderParam> sealed::Sealed for Option<T> {}
+    impl<T: HeaderParam> HeaderParam for Option<T> {}
+
+    /// Compile-time check that a `#[mcp_header]` parameter is a
+    /// [`HeaderParam`]; the macro emits a call spanned at the parameter.
+    pub fn assert_header_param<T: HeaderParam>() {}
 
     /// Mark a property as an MCP header parameter (SEP-2243). The annotation
     /// value is the **name portion** of the mirrored `Mcp-Param-{name}` header
@@ -132,12 +185,31 @@ pub mod __macro_support {
     /// form is obsolete) — we use the property name itself, which satisfies
     /// the spec's constraints (RFC 9110 tchar, case-insensitively unique
     /// within one schema) for any valid Rust identifier.
+    ///
+    /// An `Option<T>` parameter renders as `"type": [T, "null"]`, which a
+    /// strict client reads as "not a primitive" and drops the tool over. The
+    /// parameter is already optional by being absent from `required`, so the
+    /// `null` is removed and the property is typed as the plain primitive.
     pub fn mark_mcp_header(schema: &mut Value, property: &str) {
         if let Some(prop) = schema
             .get_mut("properties")
             .and_then(|p| p.get_mut(property))
             .and_then(Value::as_object_mut)
         {
+            if let Some(Value::Array(types)) = prop.get("type") {
+                let non_null: Vec<&Value> = types.iter().filter(|t| *t != "null").collect();
+                if let [only] = non_null.as_slice() {
+                    let only = (*only).clone();
+                    prop.insert("type".into(), only);
+                }
+            }
+            debug_assert!(
+                matches!(
+                    prop.get("type").and_then(Value::as_str),
+                    Some("string" | "integer" | "boolean")
+                ),
+                "#[mcp_header] on a non-primitive property: {prop:?}"
+            );
             prop.insert("x-mcp-header".into(), Value::String(property.to_owned()));
         }
     }

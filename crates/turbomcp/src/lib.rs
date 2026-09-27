@@ -227,7 +227,60 @@ pub use schemars;
 
 // ---- transports -------------------------------------------------------------
 
+/// The raw stdio driver: serves `service` exactly as given. A bare
+/// dispatcher here answers only stateless `2026-07-28` clients; every
+/// `initialize`-handshake client fails after the handshake, because nothing
+/// stamps its session onto later requests. Wrap the dispatcher in
+/// [`LegacySessionAdapter`] (outermost, around any middleware), or use
+/// [`ServeStdio::run_stdio`], which does.
 pub use turbomcp_transport_stdio::{serve_stdio, serve_stdio_with, stdio};
+
+/// One-call stdio serving for a [`ServerBuilder`] (the value
+/// `MyServer.into_server()` produces), dual-stack like the macro's
+/// `run_stdio()`: every revision this server accepts is served, stateful
+/// clients included. This is the entry point once a builder setting
+/// (`with_logging()`, `with_tasks()`, `with_visibility(…)`) takes you off the
+/// macro's `run_stdio()`.
+///
+/// ```no_run
+/// use turbomcp::prelude::*;
+///
+/// # #[derive(Clone)]
+/// # struct MyServer;
+/// # #[server(name = "my-server", version = "1.0.0")]
+/// # impl MyServer {
+/// #     #[tool]
+/// #     async fn ping(&self) -> String { "pong".into() }
+/// # }
+/// # async fn run() -> Result<(), turbomcp::ProtocolError> {
+/// MyServer.into_server().with_logging().run_stdio().await
+/// # }
+/// ```
+pub trait ServeStdio {
+    /// Build the dispatcher and serve it over stdin/stdout until the peer
+    /// closes stdin.
+    fn run_stdio(self) -> impl std::future::Future<Output = Result<(), ProtocolError>> + Send;
+
+    /// [`run_stdio`](Self::run_stdio) with an explicit [`ServeConfig`]
+    /// (shutdown token, drain timeout, concurrency bound).
+    fn run_stdio_with(
+        self,
+        config: ServeConfig,
+    ) -> impl std::future::Future<Output = Result<(), ProtocolError>> + Send;
+}
+
+impl<S> ServeStdio for ServerBuilder<S>
+where
+    S: McpServerCore + Clone + Send + Sync + 'static,
+{
+    async fn run_stdio(self) -> Result<(), ProtocolError> {
+        self.run_stdio_with(ServeConfig::default()).await
+    }
+
+    async fn run_stdio_with(self, config: ServeConfig) -> Result<(), ProtocolError> {
+        serve_stdio_with(LegacySessionAdapter::new(self.build()), config).await
+    }
+}
 
 /// Streamable HTTP transport (axum 0.8). Enable with the `http` feature.
 ///
@@ -407,13 +460,14 @@ pub mod __macros {
     pub use turbomcp_core::{McpError, McpResult};
     pub use turbomcp_protocol::neutral;
     pub use turbomcp_server::__macro_support::{
-        close_object_schema, extend_object_schema, mark_mcp_header, match_uri_template,
-        normalize_input_schema,
+        assert_header_param, close_object_schema, extend_object_schema, mark_mcp_header,
+        match_uri_template, normalize_input_schema,
     };
 }
 
 /// The common imports for building a server.
 pub mod prelude {
+    pub use crate::ServeStdio;
     pub use crate::neutral;
     pub use turbomcp_core::{Implementation, LogLevel, McpError, McpResult, RequestContext};
     pub use turbomcp_server::{
@@ -422,7 +476,6 @@ pub mod prelude {
         McpServerCore, ReadResourceContext, ServerBuilder, WithCompletions, WithPrompts,
         WithResources, WithTools,
     };
-    pub use turbomcp_transport_stdio::serve_stdio;
 
     /// The HTTP one-liner `builder.run_http(addr, config)` (feature `http`).
     #[cfg(feature = "http")]

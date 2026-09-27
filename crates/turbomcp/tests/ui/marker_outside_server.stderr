@@ -1,0 +1,7 @@
+error: #[tool] only works on a method inside a #[server] impl block; here it would register nothing
+ --> tests/ui/marker_outside_server.rs:8:5
+  |
+8 |     #[turbomcp::tool]
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `turbomcp::tool` (in Nightly builds, run with -Z macro-backtrace for more info)
