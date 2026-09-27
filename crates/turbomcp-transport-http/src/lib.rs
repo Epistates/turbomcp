@@ -45,9 +45,9 @@
 //!
 //! Modern `2026-07-28` requests are stateless (version inside the body's
 //! `_meta`) and pass through untouched. The legacy `2025-11-25` stateful path
-//! is routed from HTTP headers, asserted toward the dispatcher via internal
-//! `_meta` keys (inbound bodies are sanitized first so clients can't forge
-//! them):
+//! is routed from HTTP headers, and what the endpoint learns (the session, the
+//! authenticated identity, the mirrored headers) is attached to the request
+//! beside the message, where a client can't write:
 //!
 //! 1. An explicit but unsupported `MCP-Protocol-Version` header → `400`.
 //! 2. Body is `initialize` → mint a session id, attach it to the message; on
@@ -97,11 +97,12 @@ use serde_json::json;
 use tower_http::cors::CorsLayer;
 use turbomcp_core::codec::{Codec, DefaultCodec};
 use turbomcp_core::{
-    InvalidFrame, JsonRpcMessage, JsonRpcResponse, ProtocolVersion, RequestId, meta,
+    ConnectionId, Extensions, Identity, InvalidFrame, JsonRpcMessage, JsonRpcResponse, McpRequest,
+    ObservedHeaders, ProtocolVersion, RequestId, SessionId, meta,
 };
 use turbomcp_service::{
-    AuthDecision, CancellationToken, HttpAuthenticator, McpService, ProtocolError, RateKey,
-    RateLimiter, SessionTerminator, catch_handler_panic, mcp_headers, outbound,
+    AuthDecision, CancellationToken, HttpAuthenticator, McpService, Peer, ProtocolError, RateKey,
+    RateLimiter, SessionStreams, SessionTerminator, StreamGuard, catch_handler_panic, mcp_headers,
 };
 
 /// The session header of the `2025-11-25` Streamable HTTP transport.
@@ -265,6 +266,37 @@ fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option
 /// Buffered events per SSE stream; a consumer this far behind backpressures
 /// publishers (the registry awaits `send`).
 const SSE_CHANNEL_CAPACITY: usize = 256;
+
+/// What keeps one response stream's queue open: the only strong sender (every
+/// [`Peer`] holds it weakly) and, for a session `GET` stream, its registry
+/// entry. It travels inside the stream state, so a client disconnect (axum
+/// drops the body) closes the queue, and anything still holding the stream's
+/// `Peer` sees it closed.
+struct Outlet {
+    _tx: tokio::sync::mpsc::Sender<JsonRpcMessage>,
+    _guard: Option<StreamGuard>,
+}
+
+impl Outlet {
+    /// Open a stream for `request`: a fresh queue under a minted connection id
+    /// (`prefix-uuid`), attached to the request as its connection and `Peer`.
+    fn open(
+        prefix: &str,
+        request: &mut McpRequest,
+    ) -> (Self, tokio::sync::mpsc::Receiver<JsonRpcMessage>) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
+        let id = ConnectionId::new(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        request.extensions.insert(id.clone());
+        request.extensions.insert(Peer::new(id, &tx));
+        (
+            Self {
+                _tx: tx,
+                _guard: None,
+            },
+            rx,
+        )
+    }
+}
 /// Default keep-alive comment interval — short enough to outlive common
 /// proxy/LB idle timeouts (often 30–60s).
 const DEFAULT_SSE_KEEPALIVE: Duration = Duration::from_secs(15);
@@ -592,6 +624,9 @@ struct HttpState<S> {
     rate_limiter: Option<Arc<dyn RateLimiter>>,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
     trusted_proxies: Arc<[IpNet]>,
+    /// This endpoint's stateful sessions' `GET` streams, attached to every
+    /// request so the dispatcher can reach a session's current stream.
+    streams: SessionStreams,
     /// The revisions this endpoint serves, for the `MCP-Protocol-Version`
     /// check and the `supported` list its rejection carries.
     supported_versions: Arc<[ProtocolVersion]>,
@@ -645,6 +680,7 @@ where
         rate_limiter: config.rate_limiter.clone(),
         session_terminator: config.session_terminator.clone(),
         trusted_proxies: config.trusted_proxies.clone().into(),
+        streams: SessionStreams::new(),
         supported_versions: config.supported_versions.clone().into(),
         shutdown: config.shutdown.clone(),
     };
@@ -802,12 +838,12 @@ where
         Err(bad) => return invalid_frame_response(&bad),
     };
 
-    // Internal `_meta` is transport-owned: strip anything the client forged
-    // before asserting our own (see `turbomcp_core::meta::internal`), then
-    // inject the verified principal, so a forged identity can't survive.
-    meta::sanitize_inbound(&mut msg);
+    // What this endpoint knows about the request travels beside the message,
+    // where the client can't write: the verified identity, the session, the
+    // mirrors that arrived, and where session streams live.
+    let mut ext = Extensions::new().with(state.streams.clone());
     if let Some(authenticated) = authenticated {
-        meta::set_request_meta(&mut msg, meta::internal::IDENTITY, authenticated.principal);
+        ext.insert(authenticated.identity);
     }
 
     // Rate limit (if configured) per identity: authenticated → per-subject,
@@ -875,21 +911,16 @@ where
     // value that isn't visible ASCII is passed as `null`, which the dispatcher
     // refuses if the header is one the tool declares.
     if stateless_request {
-        let observed: serde_json::Map<String, serde_json::Value> = headers
-            .iter()
-            .filter_map(|(name, value)| {
-                let param = name.as_str().strip_prefix(MCP_PARAM_PREFIX)?;
-                let value = value.to_str().map_or(serde_json::Value::Null, |v| {
-                    serde_json::Value::String(v.to_owned())
-                });
-                Some((param.to_ascii_lowercase(), value))
-            })
-            .collect();
-        meta::set_request_meta(
-            &mut msg,
-            meta::internal::OBSERVED_HEADER_PARAMS,
-            serde_json::Value::Object(observed),
-        );
+        ext.insert(ObservedHeaders(
+            headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    let param = name.as_str().strip_prefix(MCP_PARAM_PREFIX)?;
+                    let value = value.to_str().ok().map(str::to_owned);
+                    Some((param.to_ascii_lowercase(), value))
+                })
+                .collect(),
+        ));
     }
 
     let session_header = headers
@@ -897,7 +928,7 @@ where
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
 
-    // Dual-stack routing (module docs): mark legacy traffic via internal meta;
+    // Dual-stack routing (module docs): legacy traffic carries its session;
     // modern stateless bodies pass through untouched.
     let is_initialize = msg.method() == Some("initialize");
     if state.authenticator.is_some()
@@ -913,7 +944,7 @@ where
     let mut minted_session = None;
     if is_initialize {
         let sid = uuid::Uuid::new_v4().to_string();
-        meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(sid));
+        ext.insert(SessionId::new(sid.as_str()));
         minted_session = Some(sid);
     } else if let Some(sid) = session_header {
         if let Some(terminator) = &state.session_terminator
@@ -951,7 +982,7 @@ where
                 json!(session_version.as_str()),
             );
         }
-        meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(sid));
+        ext.insert(SessionId::new(sid));
     } else if header_version
         .map(ProtocolVersion::from_wire)
         .is_some_and(|v| v.is_stateful())
@@ -965,24 +996,30 @@ where
     // stream rather than a JSON body. (A legacy-stamped or malformed listen
     // comes back from the dispatcher as an error *response*, which the SSE
     // path renders as plain JSON — so the divert is safe on method alone.)
-    if msg.method() == Some("subscriptions/listen") {
-        return listen_sse(&state, msg).await;
+    let is_listen = msg.method() == Some("subscriptions/listen");
+    let is_request = matches!(&msg, JsonRpcMessage::Request(_));
+    let id = request_id(&msg);
+    let request = McpRequest {
+        message: msg,
+        extensions: ext,
+    };
+    if is_listen {
+        return listen_sse(&state, request).await;
     }
 
     // Every other *request* takes the lazy-upgrade path: plain JSON unless the
     // handler emits server→client messages mid-flight. `initialize` stays on
     // the inline path below — its response must carry the minted session
     // header, and the handshake never streams.
-    if !is_initialize && matches!(&msg, JsonRpcMessage::Request(_)) {
-        return request_post(&state, msg, stateless_request).await;
+    if !is_initialize && is_request {
+        return request_post(&state, request, stateless_request).await;
     }
 
-    let id = request_id(&msg);
     let mut svc = state.service.clone();
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
         return protocol_error_response(&e, id);
     }
-    match catch_handler_panic(id.clone(), svc.call(msg)).await {
+    match catch_handler_panic(id.clone(), svc.call(request)).await {
         Ok(Some(reply)) => {
             let mut resp = encode_json_response(&state.codec, &reply);
             // `initialize` reaches this inline path rather than `request_post`,
@@ -1048,26 +1085,19 @@ fn apply_stateless_error_status(resp: &mut Response, reply: &JsonRpcMessage, ena
 /// disconnect (axum drops the body) unregisters it; the registry prunes the
 /// subscription at its next publish (transports spec §Cancellation: closing
 /// the stream is the cancellation signal).
-async fn listen_sse<S>(state: &HttpState<S>, mut msg: JsonRpcMessage) -> Response
+async fn listen_sse<S>(state: &HttpState<S>, mut request: McpRequest) -> Response
 where
     S: McpService + Clone + Sync,
     S::Future: Send + 'static,
 {
-    let connection_id = format!("http-sse-{}", uuid::Uuid::new_v4());
-    let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
-    let registration = outbound::register(&connection_id, tx);
-    meta::set_request_meta(
-        &mut msg,
-        meta::internal::CONNECTION_ID,
-        json!(connection_id),
-    );
+    let (outlet, rx) = Outlet::open("http-sse", &mut request);
 
-    let id = request_id(&msg);
+    let id = request_id(&request.message);
     let mut svc = state.service.clone();
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
         return protocol_error_response(&e, id);
     }
-    match catch_handler_panic(id.clone(), svc.call(msg)).await {
+    match catch_handler_panic(id.clone(), svc.call(request)).await {
         // Accepted: no JSON-RPC response; the ack notification is already in
         // the channel as the stream's first event.
         Ok(None) => {}
@@ -1079,7 +1109,7 @@ where
     sse_response(
         state.codec,
         rx,
-        registration,
+        outlet,
         state.sse_keepalive,
         Some(state.shutdown.clone()),
     )
@@ -1089,8 +1119,8 @@ where
 /// (transports spec §Sending Messages: the server answers each POSTed request
 /// with either a single JSON object or an SSE stream scoped to that request).
 ///
-/// The channel is registered in [`outbound`] under a minted per-request
-/// connection id before dispatch, so anything the handler emits mid-flight —
+/// The request carries a [`Peer`] for its own channel under a minted
+/// per-request connection id, so anything the handler emits mid-flight —
 /// inline bidi requests on the legacy path, progress, log messages — reaches
 /// this response. If nothing is emitted the reply stays plain JSON; the first
 /// mid-flight message upgrades the response to `text/event-stream`, carrying
@@ -1099,18 +1129,17 @@ where
 /// HTTP's cancellation signal.
 async fn request_post<S>(
     state: &HttpState<S>,
-    mut msg: JsonRpcMessage,
+    mut request: McpRequest,
     stateless_request: bool,
 ) -> Response
 where
     S: McpService + Clone + Sync,
     S::Future: Send + 'static,
 {
-    let JsonRpcMessage::Request(req) = &msg else {
+    let JsonRpcMessage::Request(req) = &request.message else {
         unreachable!("request_post is only called for requests");
     };
     let request_id = req.id.clone();
-    let connection_id = format!("http-post-{}", uuid::Uuid::new_v4());
     // No event `id` on this stream, because this endpoint does not replay.
     //
     // Attaching one is a MAY, and it belongs entirely to §Resumability and
@@ -1120,13 +1149,7 @@ where
     // disconnect into a silent gap the client believed it had recovered from.
     // A stream with no ids is plainly not resumable, which the spec allows and
     // a client can see.
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
-    let registration = outbound::register(&connection_id, tx);
-    meta::set_request_meta(
-        &mut msg,
-        meta::internal::CONNECTION_ID,
-        json!(connection_id),
-    );
+    let (registration, mut rx) = Outlet::open("http-post", &mut request);
 
     let mut svc = state.service.clone();
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
@@ -1135,7 +1158,10 @@ where
     // Wrapped at construction, not at each await: this future is polled from
     // here *and* from the upgraded SSE stream below, and a handler panic must
     // answer on whichever path is live.
-    let mut call = Box::pin(catch_handler_panic(Some(request_id.clone()), svc.call(msg)));
+    let mut call = Box::pin(catch_handler_panic(
+        Some(request_id.clone()),
+        svc.call(request),
+    ));
 
     tokio::select! {
         biased;
@@ -1195,7 +1221,7 @@ enum PostStream<F> {
         rx: tokio::sync::mpsc::Receiver<JsonRpcMessage>,
         call: Pin<Box<F>>,
         id: RequestId,
-        registration: outbound::WriterGuard,
+        registration: Outlet,
     },
     /// The call finished; flush the remaining events and close.
     Tail(VecDeque<JsonRpcMessage>),
@@ -1315,7 +1341,7 @@ fn sse_event(codec: &DefaultCodec, msg: &JsonRpcMessage) -> Event {
 fn sse_response(
     codec: DefaultCodec,
     rx: tokio::sync::mpsc::Receiver<JsonRpcMessage>,
-    registration: outbound::WriterGuard,
+    registration: Outlet,
     keepalive: Duration,
     shutdown: Option<CancellationToken>,
 ) -> Response {
@@ -1361,9 +1387,9 @@ fn sse_response(
 
 /// The legacy (`2025-11-25`) server→client SSE stream: `GET` with an
 /// `Mcp-Session-Id` opens the session's notification stream (transports spec
-/// §Listening for Messages). The stream's writer is registered under the
-/// session's [`outbound::session_stream_id`]; a newer GET stream replaces an
-/// older one (the spec forbids broadcasting one message across streams).
+/// §Listening for Messages). The stream is registered as the session's in this
+/// endpoint's [`SessionStreams`]; a newer GET stream replaces an older one (the
+/// spec forbids broadcasting one message across streams).
 /// Resumability (`Last-Event-ID`) is not supported.
 ///
 /// The draft never GETs — it subscribes via `subscriptions/listen` over POST —
@@ -1424,8 +1450,15 @@ where
         return (StatusCode::NOT_FOUND, "session not found").into_response();
     }
     let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
-    let registration = outbound::register(outbound::session_stream_id(sid), tx);
-    sse_response(state.codec, rx, registration, state.sse_keepalive, None)
+    // One stream per session: a newer GET replaces this one in the registry
+    // the dispatcher publishes through.
+    let peer = Peer::new(format!("http-get-{}", uuid::Uuid::new_v4()), &tx);
+    let guard = state.streams.register(sid, peer);
+    let outlet = Outlet {
+        _tx: tx,
+        _guard: Some(guard),
+    };
+    sse_response(state.codec, rx, outlet, state.sse_keepalive, None)
 }
 
 /// Client-initiated session termination (`2025-11-25` spec §Session
@@ -1511,8 +1544,8 @@ where
 struct Authenticated {
     /// The rate-limit identity (issuer + subject), when the principal names one.
     subject: Option<String>,
-    /// The validated principal, for the dispatcher's request identity.
-    principal: serde_json::Value,
+    /// Who it is, attached to the request for the dispatcher.
+    identity: Identity,
 }
 
 /// Run the configured authenticator. `Err` carries the challenge response
@@ -1534,22 +1567,10 @@ async fn enforce_auth<S>(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
     match authenticator.authenticate(authorization).await {
-        AuthDecision::Allow(principal) => {
-            let subject = principal
-                .get("sub")
-                .and_then(serde_json::Value::as_str)
-                .map(|sub| {
-                    serde_json::to_string(&(
-                        principal
-                            .get("claims")
-                            .and_then(|c| c.get("iss"))
-                            .and_then(serde_json::Value::as_str),
-                        sub,
-                    ))
-                    .expect("string principal serialization")
-                });
-            Ok(Some(Authenticated { subject, principal }))
-        }
+        AuthDecision::Allow(identity) => Ok(Some(Authenticated {
+            subject: identity.principal_key(),
+            identity,
+        })),
         AuthDecision::Challenge {
             status,
             www_authenticate,

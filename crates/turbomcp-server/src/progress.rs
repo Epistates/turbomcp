@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use turbomcp_core::JsonRpcNotification;
 use turbomcp_protocol::methods;
 
-use crate::subscriptions::request_writer;
+use crate::subscriptions::Route;
 
 /// Reports progress for one in-flight request. Cheap to clone; all clones
 /// share the monotonicity guard.
@@ -41,11 +41,10 @@ pub struct ProgressReporter {
 struct Inner {
     /// The client's opaque token (string or integer), echoed verbatim.
     token: Value,
-    /// The originating request's connection (its own response stream).
-    connection: String,
-    /// Legacy fallback: the session's `GET` stream. Empty on the draft, which
-    /// forbids delivering request-scoped messages anywhere else.
-    session: String,
+    /// Where reports go: the request's own stream, then (legacy only) the
+    /// session's `GET` stream. The draft forbids delivering request-scoped
+    /// messages anywhere but the request's own stream.
+    route: Route,
     /// Last reported value (spec: MUST increase with each notification).
     last: Mutex<Option<f64>>,
 }
@@ -58,15 +57,13 @@ impl ProgressReporter {
         Self { inner: None }
     }
 
-    /// A live reporter for the request identified by `connection` (and, on
-    /// the legacy path, `session`).
+    /// A live reporter delivering along `route`.
     #[must_use]
-    pub(crate) fn new(token: Value, connection: String, session: String) -> Self {
+    pub(crate) fn new(token: Value, route: Route) -> Self {
         Self {
             inner: Some(Arc::new(Inner {
                 token,
-                connection,
-                session,
+                route,
                 last: Mutex::new(None),
             })),
         }
@@ -115,7 +112,7 @@ impl ProgressReporter {
             *last = Some(progress);
         }
 
-        let Some(writer) = request_writer(&inner.connection, &inner.session) else {
+        let Some(writer) = inner.route.peer() else {
             tracing::debug!("no stream for progress notification; dropped");
             return;
         };
@@ -155,8 +152,10 @@ mod tests {
     #[tokio::test]
     async fn non_increasing_reports_are_dropped() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let _guard = turbomcp_service::outbound::register("prog-test-conn", tx);
-        let reporter = ProgressReporter::new(json!("t1"), "prog-test-conn".into(), String::new());
+        let reporter = ProgressReporter::new(
+            json!("t1"),
+            Route::to(turbomcp_service::Peer::new("prog-test-conn", &tx)),
+        );
 
         reporter.report(2.0, Some(10.0), None).await;
         reporter.report(2.0, None, None).await; // equal: dropped
@@ -186,8 +185,10 @@ mod tests {
     #[tokio::test]
     async fn non_finite_progress_is_dropped_and_does_not_disarm_the_guard() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let _guard = turbomcp_service::outbound::register("prog-nan-conn", tx);
-        let reporter = ProgressReporter::new(json!("t2"), "prog-nan-conn".into(), String::new());
+        let reporter = ProgressReporter::new(
+            json!("t2"),
+            Route::to(turbomcp_service::Peer::new("prog-nan-conn", &tx)),
+        );
 
         reporter.report(f64::NAN, None, None).await;
         reporter.report(5.0, Some(f64::INFINITY), None).await;

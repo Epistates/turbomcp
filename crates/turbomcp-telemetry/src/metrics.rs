@@ -30,7 +30,7 @@ use opentelemetry::metrics::{Counter, Histogram, UpDownCounter};
 use opentelemetry::{KeyValue, global};
 use pin_project_lite::pin_project;
 use tower::{Layer, Service};
-use turbomcp_core::{JsonRpcMessage, ProtocolVersion, meta};
+use turbomcp_core::{JsonRpcMessage, McpRequest, ProtocolVersion, meta};
 use turbomcp_protocol::methods::request;
 
 /// The label for a method outside the known set.
@@ -160,9 +160,9 @@ impl<S> core::fmt::Debug for Metrics<S> {
     }
 }
 
-impl<S, E> Service<JsonRpcMessage> for Metrics<S>
+impl<S, E> Service<McpRequest> for Metrics<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = E>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = E>,
 {
     type Response = Option<JsonRpcMessage>;
     type Error = E;
@@ -172,10 +172,10 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
+    fn call(&mut self, req: McpRequest) -> Self::Future {
         // Notifications and responses are not measured as "requests"; only true
         // requests carry a method worth a metric label.
-        let base_labels = match &req {
+        let base_labels = match &req.message {
             JsonRpcMessage::Request(r) => {
                 let mut labels = vec![KeyValue::new(
                     "mcp.method",
@@ -183,7 +183,7 @@ where
                 )];
                 labels.push(KeyValue::new(
                     "mcp.protocol_version",
-                    protocol_version_label(&req),
+                    protocol_version_label(&req.message),
                 ));
                 Some(labels)
             }
@@ -307,7 +307,7 @@ mod tests {
         fail: bool,
     }
 
-    impl Service<JsonRpcMessage> for Inner {
+    impl Service<McpRequest> for Inner {
         type Response = Option<JsonRpcMessage>;
         type Error = Infallible;
         type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
@@ -316,7 +316,8 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
+        fn call(&mut self, request: McpRequest) -> Self::Future {
+            let req = request.message;
             let reply = match req {
                 JsonRpcMessage::Request(r) if self.fail => Some(
                     JsonRpcResponse::error(
@@ -350,12 +351,12 @@ mod tests {
             Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } })),
         )
         .into();
-        let resp = ok.oneshot(req).await.unwrap();
+        let resp = ok.oneshot(req.into()).await.unwrap();
         assert!(matches!(resp, Some(JsonRpcMessage::Response(_))));
 
         let err = MetricsLayer::new().layer(Inner { fail: true });
         let req: JsonRpcMessage = JsonRpcRequest::new(2, "tools/call", None).into();
-        let resp = err.oneshot(req).await.unwrap();
+        let resp = err.oneshot(req.into()).await.unwrap();
         let Some(JsonRpcMessage::Response(r)) = resp else {
             panic!("expected response")
         };
@@ -411,7 +412,7 @@ mod tests {
     #[derive(Clone)]
     struct Never;
 
-    impl Service<JsonRpcMessage> for Never {
+    impl Service<McpRequest> for Never {
         type Response = Option<JsonRpcMessage>;
         type Error = Infallible;
         type Future = std::future::Pending<Result<Self::Response, Self::Error>>;
@@ -420,7 +421,7 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, _: JsonRpcMessage) -> Self::Future {
+        fn call(&mut self, _: McpRequest) -> Self::Future {
             std::future::pending()
         }
     }
@@ -493,7 +494,7 @@ mod tests {
             .with_methods(["drop-probe"])
             .layer(Never);
         let req: JsonRpcMessage = JsonRpcRequest::new(1, "drop-probe", None).into();
-        let fut = svc.call(req); // in-flight +1
+        let fut = svc.call(req.into()); // in-flight +1
         drop(fut); // abandoned before completion
 
         provider.force_flush().unwrap();
@@ -541,14 +542,14 @@ mod tests {
         fn assert_mcp_service<S: turbomcp_service::McpService>(_: &S) {}
         #[derive(Clone)]
         struct Dispatcher;
-        impl Service<JsonRpcMessage> for Dispatcher {
+        impl Service<McpRequest> for Dispatcher {
             type Response = Option<JsonRpcMessage>;
             type Error = turbomcp_service::ProtocolError;
             type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
             fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
                 Poll::Ready(Ok(()))
             }
-            fn call(&mut self, _: JsonRpcMessage) -> Self::Future {
+            fn call(&mut self, _: McpRequest) -> Self::Future {
                 std::future::ready(Ok(None))
             }
         }

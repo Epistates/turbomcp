@@ -8,8 +8,8 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use turbomcp_core::{
-    Implementation, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, ProtocolVersion,
-    RequestId,
+    Extensions, Identity, Implementation, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
+    McpError, ProtocolVersion, RequestId,
 };
 use turbomcp_protocol::neutral;
 use turbomcp_protocol::v2025_06_18::types as v0618;
@@ -34,6 +34,7 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     sessions: &dyn SessionBackend,
     tasks_enabled: bool,
     req: &JsonRpcRequest,
+    ext: &Extensions,
 ) -> JsonRpcMessage {
     let id = req.id.clone();
     let Some(params) = req.params.as_ref() else {
@@ -55,7 +56,7 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         return super::unsupported_version(id, Some(params.protocol_version.clone()), supported);
     };
 
-    if let Some(sid) = session_id(req.params.as_ref()) {
+    if let Some(sid) = session_id(ext) {
         // Keep what the client sent, not a re-serialization of the typed parse:
         // the typed form exists to validate, and anything it doesn't model
         // (`extensions`, a future sub-capability) would not survive the trip.
@@ -69,12 +70,7 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
             .insert(
                 sid,
                 SessionState {
-                    owner: req
-                        .params
-                        .as_ref()
-                        .and_then(|p| p.get("_meta"))
-                        .and_then(Value::as_object)
-                        .and_then(|m| turbomcp_core::meta::extract_identity(m).principal_key()),
+                    owner: ext.get::<Identity>().and_then(Identity::principal_key),
                     version: negotiated.clone(),
                     client_info: from_legacy_impl(params.client_info),
                     client_capabilities,

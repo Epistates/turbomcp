@@ -10,8 +10,8 @@
 //! version-specific `ClientCapabilities` type that would invert the layering).
 
 use crate::{CancellationToken, Identity, ProtocolVersion};
-use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use core::any::{Any, TypeId};
 use core::fmt;
 use hashbrown::HashMap;
@@ -89,14 +89,20 @@ pub struct TraceContext {
     pub baggage: Option<String>,
 }
 
-/// A tower-style type-map for ad-hoc, typed plumbing through the stack.
+/// A type-map for typed facts that travel beside a message: what the transport
+/// knows about a request (who sent it, which connection and session it rode,
+/// where replies go) and anything middleware adds.
 ///
-/// Used (among other things) to carry version-specific negotiated capabilities
-/// from the negotiation/legacy layer down to handlers without coupling
-/// `turbomcp-core` to `turbomcp-protocol`.
-#[derive(Default)]
+/// A client can't write to it. Facts that used to ride in reserved `_meta` keys
+/// had to be stripped from every inbound message first, or a client could
+/// forge them; a Rust type-map has no wire form to forge.
+///
+/// Cloning is cheap and keeps every value: the map is shared, and copied only
+/// when a clone is written to. Values are stored behind `Arc`, so `T` itself
+/// need not be `Clone`.
+#[derive(Clone, Default)]
 pub struct Extensions {
-    map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    map: Arc<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl Extensions {
@@ -106,11 +112,16 @@ impl Extensions {
         Self::default()
     }
 
-    /// Insert a value, returning the previous value of the same type, if any.
-    pub fn insert<T: Any + Send + Sync>(&mut self, val: T) -> Option<T> {
-        self.map
-            .insert(TypeId::of::<T>(), Box::new(val))
-            .and_then(|prev| prev.downcast::<T>().ok().map(|b| *b))
+    /// Insert a value, replacing any previous value of the same type.
+    pub fn insert<T: Any + Send + Sync>(&mut self, val: T) {
+        Arc::make_mut(&mut self.map).insert(TypeId::of::<T>(), Arc::new(val));
+    }
+
+    /// Builder form of [`insert`](Self::insert).
+    #[must_use]
+    pub fn with<T: Any + Send + Sync>(mut self, val: T) -> Self {
+        self.insert(val);
+        self
     }
 
     /// Get a shared reference to a value of type `T`, if present.
@@ -121,18 +132,31 @@ impl Extensions {
             .and_then(|b| b.downcast_ref::<T>())
     }
 
-    /// Get a mutable reference to a value of type `T`, if present.
-    pub fn get_mut<T: Any + Send + Sync>(&mut self) -> Option<&mut T> {
-        self.map
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|b| b.downcast_mut::<T>())
+    /// Remove the value of type `T`, returning whether there was one.
+    pub fn remove<T: Any + Send + Sync>(&mut self) -> bool {
+        if !self.map.contains_key(&TypeId::of::<T>()) {
+            return false;
+        }
+        Arc::make_mut(&mut self.map)
+            .remove(&TypeId::of::<T>())
+            .is_some()
     }
 
-    /// Remove and return the value of type `T`, if present.
-    pub fn remove<T: Any + Send + Sync>(&mut self) -> Option<T> {
-        self.map
-            .remove(&TypeId::of::<T>())
-            .and_then(|b| b.downcast::<T>().ok().map(|b| *b))
+    /// Whether a value of type `T` is present.
+    #[must_use]
+    pub fn contains<T: Any + Send + Sync>(&self) -> bool {
+        self.map.contains_key(&TypeId::of::<T>())
+    }
+
+    /// Copy every value from `other` in, replacing values of the same type.
+    pub fn extend(&mut self, other: &Self) {
+        if other.map.is_empty() {
+            return;
+        }
+        let map = Arc::make_mut(&mut self.map);
+        for (key, value) in other.map.iter() {
+            map.insert(*key, Arc::clone(value));
+        }
     }
 
     /// Number of stored values.
@@ -153,15 +177,6 @@ impl fmt::Debug for Extensions {
         f.debug_struct("Extensions")
             .field("len", &self.map.len())
             .finish()
-    }
-}
-
-impl Clone for Extensions {
-    /// Type-maps of `dyn Any` cannot be deep-cloned; cloning yields an empty
-    /// map. `RequestContext` is per-request and not expected to be cloned with
-    /// its extensions intact; this exists only to keep `RequestContext: Clone`.
-    fn clone(&self) -> Self {
-        Self::new()
     }
 }
 
@@ -190,7 +205,9 @@ pub struct RequestContext {
     pub cancellation: CancellationToken,
     /// `_meta` keys not consumed by the framework (echoed on responses).
     pub propagated_meta: Map<String, Value>,
-    /// Type-map for ad-hoc typed plumbing.
+    /// Typed facts from the transport and middleware: the connection and
+    /// session the request rode, where server-initiated messages go, and
+    /// anything a layer added. See [`crate::envelope`].
     pub extensions: Extensions,
 }
 
@@ -267,25 +284,34 @@ mod tests {
         #[derive(Debug, PartialEq)]
         struct Tenant(u32);
         let mut ext = Extensions::new();
-        assert!(ext.insert(Tenant(42)).is_none());
+        ext.insert(Tenant(42));
         assert_eq!(ext.get::<Tenant>(), Some(&Tenant(42)));
-        assert_eq!(ext.remove::<Tenant>(), Some(Tenant(42)));
+        ext.insert(Tenant(7));
+        assert_eq!(ext.get::<Tenant>(), Some(&Tenant(7)), "insert replaces");
+        assert!(ext.remove::<Tenant>());
+        assert!(!ext.remove::<Tenant>());
         assert!(ext.is_empty());
     }
 
+    /// A clone keeps every value (the old map came back empty, so a cloned
+    /// context silently lost what the transport put there), and writing to
+    /// one copy leaves the other alone.
     #[test]
-    fn extensions_get_mut_and_insert_replace() {
+    fn a_clone_keeps_its_values_and_writes_are_private() {
         #[derive(Debug, PartialEq)]
-        struct Counter(u32);
-        let mut ext = Extensions::new();
-        ext.insert(Counter(1));
-        if let Some(c) = ext.get_mut::<Counter>() {
-            c.0 += 1;
-        }
-        assert_eq!(ext.get::<Counter>(), Some(&Counter(2)));
-        // insert returns the replaced value of the same type.
-        assert_eq!(ext.insert(Counter(9)), Some(Counter(2)));
-        assert_eq!(ext.len(), 1);
+        struct Session(&'static str);
+        #[derive(Debug, PartialEq)]
+        struct Extra(u8);
+        let original = Extensions::new().with(Session("s-1"));
+        let mut copy = original.clone();
+        assert_eq!(copy.get::<Session>(), Some(&Session("s-1")));
+        copy.insert(Extra(1));
+        assert!(original.get::<Extra>().is_none());
+        assert_eq!(copy.len(), 2);
+
+        let mut merged = Extensions::new().with(Session("s-2"));
+        merged.extend(&original);
+        assert_eq!(merged.get::<Session>(), Some(&Session("s-1")));
     }
 
     #[test]

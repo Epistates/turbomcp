@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
 use turbomcp_core::{
     CancellationToken, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcRequest, LogLevel,
-    McpResult,
+    McpRequest, McpResult, SessionId,
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
@@ -264,7 +264,7 @@ async fn session_termination_goes_through_the_custom_backend() {
 
 #[tokio::test]
 async fn sessions_bind_issuer_and_subject_and_keep_anonymous_separate() {
-    use turbomcp_core::{Identity, meta};
+    use turbomcp_core::Identity;
     use turbomcp_service::SessionTerminator;
     let mut dispatcher = ServerBuilder::new(Echo).with_tools().build();
     let terminator = dispatcher.session_terminator();
@@ -274,7 +274,7 @@ async fn sessions_bind_issuer_and_subject_and_keep_anonymous_separate() {
     };
     let alice = identity("issuer-a");
     for (sid, principal) in [("owned", alice.clone()), ("anonymous", Identity::Anonymous)] {
-        let mut msg: JsonRpcMessage = JsonRpcRequest::new(
+        let msg: JsonRpcMessage = JsonRpcRequest::new(
             1,
             "initialize",
             Some(json!({
@@ -283,20 +283,14 @@ async fn sessions_bind_issuer_and_subject_and_keep_anonymous_separate() {
             })),
         )
         .into();
-        meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(sid));
-        meta::set_request_meta(
-            &mut msg,
-            meta::internal::IDENTITY,
-            match principal {
-                Identity::Bearer { sub, claims } => json!({"sub":sub,"claims":claims}),
-                _ => Value::Null,
-            },
-        );
+        let request = McpRequest::new(msg)
+            .with(SessionId::new(sid))
+            .with(principal);
         let reply = dispatcher
             .ready()
             .await
             .unwrap()
-            .call(msg)
+            .call(request)
             .await
             .unwrap()
             .unwrap();

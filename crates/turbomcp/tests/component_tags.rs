@@ -15,7 +15,8 @@ use turbomcp::methods::request;
 use turbomcp::prelude::*;
 use turbomcp::tower::{Service, ServiceExt};
 use turbomcp::{
-    JsonRpcMessage, JsonRpcRequest, LegacySessionAdapter, VersionDispatcher, WithTools, tags,
+    JsonRpcMessage, JsonRpcRequest, LegacySessionAdapter, McpRequest, VersionDispatcher, WithTools,
+    tags,
 };
 
 #[derive(Clone)]
@@ -84,7 +85,7 @@ async fn connect(version: &str) -> LegacySessionAdapter<VersionDispatcher<Catalo
 
 async fn result<S>(svc: &mut S, req: JsonRpcRequest) -> Value
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>> + Clone,
     S::Error: std::fmt::Debug,
 {
     let method = req.method.clone();

@@ -38,11 +38,9 @@ pub struct ExtensionRequest {
     /// The raw JSON-RPC request; its method is one of [`Extension::methods`].
     pub request: JsonRpcRequest,
     /// The per-request context (version, identity, client capabilities, …).
+    /// Its `extensions` carry the transport's facts, including the
+    /// [`Peer`](turbomcp_service::Peer) an extension pushes notifications to.
     pub context: RequestContext,
-    /// The driver-minted connection id, when the transport supplied one — the
-    /// handle an extension uses to push server-initiated notifications back to
-    /// this client via [`turbomcp_service::outbound`].
-    pub connection_id: Option<String>,
 }
 
 /// The in-execution task-input seam (SEP-2663 §Task Update Requests).
@@ -149,10 +147,9 @@ impl CallRunner {
 pub struct CallAugmentRequest {
     /// The `tools/call` request.
     pub request: JsonRpcRequest,
-    /// The per-request context.
+    /// The per-request context. Its `extensions` carry the
+    /// [`Peer`](turbomcp_service::Peer) for pushing `notifications/tasks`.
     pub context: RequestContext,
-    /// The driver-minted connection id, for pushing `notifications/tasks`.
-    pub connection_id: Option<String>,
     /// The prepared underlying call (spawn it if you take over the request).
     pub run: CallRunner,
 }
@@ -224,8 +221,8 @@ pub trait Extension: Send + Sync + 'static {
 
     /// Notification methods this extension may push on `subscriptions/listen`
     /// streams (e.g. `notifications/tasks`). Informational — surfaced for
-    /// introspection; the extension itself pushes via
-    /// [`turbomcp_service::outbound`]. Defaults to none.
+    /// introspection; the extension itself pushes through the subscription's
+    /// [`Peer`](turbomcp_service::Peer). Defaults to none.
     fn notification_topics(&self) -> &'static [&'static str] {
         &[]
     }
@@ -237,11 +234,11 @@ pub trait Extension: Send + Sync + 'static {
     /// pushes on this subscription MUST carry it verbatim in
     /// `_meta["io.modelcontextprotocol/subscriptionId"]`; `client_declared` is
     /// whether the client declared this extension's capability. The extension
-    /// records the subscription against `connection_id` and returns a
-    /// [`SubscribeOutcome`]. Defaults to [`SubscribeOutcome::NotApplicable`].
+    /// records the subscription against `peer` (the listen stream) and returns
+    /// a [`SubscribeOutcome`]. Defaults to [`SubscribeOutcome::NotApplicable`].
     fn on_subscribe(
         &self,
-        _connection_id: &str,
+        _peer: &turbomcp_service::Peer,
         _subscription_id: &turbomcp_core::RequestId,
         _notifications: &Value,
         _client_declared: bool,

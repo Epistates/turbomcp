@@ -5,20 +5,21 @@
 //! the RFC 9728 Protected Resource Metadata document are HTTP responses. stdio
 //! has no auth (the spec says stdio servers retrieve credentials from the
 //! environment instead). So this seam lives at the transport boundary, not in
-//! the `Service<JsonRpcMessage>` RPC stack — the RPC layer never sees the
+//! the RPC stack: the service sees the validated [`Identity`], never the
 //! token.
 //!
 //! An implementation (e.g. `turbomcp_auth::ResourceServer`) validates the
-//! request's `Authorization` header and either authorizes it — yielding a
-//! serializable principal the dispatcher lifts into
-//! [`RequestContext::identity`](turbomcp_core::RequestContext) — or rejects it
-//! with an HTTP challenge. The transport holds it behind an `Arc<dyn …>`, so
+//! request's `Authorization` header and either authorizes it, yielding the
+//! [`Identity`] the transport attaches to the request (and the dispatcher puts
+//! in [`RequestContext::identity`](turbomcp_core::RequestContext)), or rejects
+//! it with an HTTP challenge. The transport holds it behind an `Arc<dyn …>`, so
 //! the trait is dyn-compatible (boxed futures).
 
 use std::future::Future;
 use std::pin::Pin;
 
 use serde_json::Value;
+use turbomcp_core::Identity;
 
 /// Boxed future returned by [`HttpAuthenticator::authenticate`] (keeps the
 /// trait dyn-compatible).
@@ -39,11 +40,9 @@ pub trait HttpAuthenticator: Send + Sync {
 /// The outcome of authenticating one request.
 #[derive(Debug, Clone)]
 pub enum AuthDecision {
-    /// Authorized. The JSON principal — `{ "sub": String, "claims": Object }`
-    /// — is injected into internal `_meta` under
-    /// [`meta::internal::IDENTITY`](turbomcp_core::meta::internal::IDENTITY)
-    /// for the dispatcher to lift into the request's identity.
-    Allow(Value),
+    /// Authorized, as this identity. The transport attaches it to the request
+    /// beside the message, where the client can't forge it.
+    Allow(Identity),
     /// Rejected: answer this HTTP status with this `WWW-Authenticate` header
     /// value. 401 for a missing/invalid token, 403 for insufficient scope
     /// (MCP authorization spec §Access).

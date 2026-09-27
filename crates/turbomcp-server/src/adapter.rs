@@ -10,7 +10,7 @@
 //!    service answers successfully, the connection is marked legacy.
 //! 2. Subsequent messages that don't carry their own protocol version (a
 //!    modern client states it per request) are stamped with the session's
-//!    *negotiated* version and its session id. Which version that is comes
+//!    *negotiated* version, and carry its [`SessionId`]. Which version comes
 //!    from the handshake — a `2025-06-18` client must not have its requests
 //!    stamped `2025-11-25`, or it would be answered in a wire shape it does
 //!    not know.
@@ -18,11 +18,8 @@
 //! The adapter is itself an `McpService`, so it slots into `serve`/
 //! `serve_stdio` wherever a bare dispatcher would.
 //!
-//! **Trust model:** the adapter does *not* sanitize inbound `_meta` — that is
-//! the wire boundary's job (the `serve` driver and the HTTP endpoint both call
-//! [`meta::sanitize_inbound`] before injecting their own internal keys, and the
-//! driver's per-connection id must survive this adapter). Compose the adapter
-//! under one of those boundaries, never directly against raw client input.
+//! The session id travels in the request's extensions, so a client can't name
+//! someone else's session: there is nothing in the message to forge.
 
 use std::future::poll_fn;
 use std::sync::{Arc, Mutex};
@@ -32,12 +29,12 @@ use futures::future::BoxFuture;
 use serde_json::json;
 use tokio::sync::watch;
 use tower::Service;
-use turbomcp_core::{JsonRpcMessage, ProtocolVersion, meta};
+use turbomcp_core::{JsonRpcMessage, McpRequest, ProtocolVersion, SessionId, meta};
 use turbomcp_protocol::{methods, version};
 use turbomcp_service::ProtocolError;
 use uuid::Uuid;
 
-/// Wraps an inner `Service<JsonRpcMessage>` (normally the
+/// Wraps an inner `Service<McpRequest>` (normally the
 /// [`VersionDispatcher`](crate::VersionDispatcher)) with per-connection legacy
 /// session tracking. Construct one adapter per connection; clones share the
 /// connection's session state.
@@ -95,10 +92,13 @@ impl<S> LegacySessionAdapter<S> {
     }
 }
 
-/// Stamp a version-less message with the connection's session, if it has one.
-fn stamp(session: &Mutex<Option<Session>>, msg: &mut JsonRpcMessage) {
+/// Stamp a version-less message with the connection's session, if it has one:
+/// the negotiated version into `_meta` (where the dispatcher reads a
+/// request's version), the session id into the request's extensions.
+fn stamp(session: &Mutex<Option<Session>>, request: &mut McpRequest) {
     let session = session.lock().expect("session state lock poisoned").clone();
     let Some(session) = session else { return };
+    let msg = &mut request.message;
     let params = match &*msg {
         JsonRpcMessage::Request(r) => r.params.as_ref(),
         JsonRpcMessage::Notification(n) => n.params.as_ref(),
@@ -112,7 +112,7 @@ fn stamp(session: &Mutex<Option<Session>>, msg: &mut JsonRpcMessage) {
             meta::keys::PROTOCOL_VERSION,
             json!(session.version.as_str()),
         );
-        meta::set_request_meta(msg, meta::internal::SESSION_ID, json!(session.id));
+        request.extensions.insert(SessionId::new(session.id));
     }
 }
 
@@ -126,9 +126,9 @@ impl<S: Clone> Clone for LegacySessionAdapter<S> {
     }
 }
 
-impl<S> Service<JsonRpcMessage> for LegacySessionAdapter<S>
+impl<S> Service<McpRequest> for LegacySessionAdapter<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>
         + Clone
         + Send
         + 'static,
@@ -142,9 +142,9 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, mut msg: JsonRpcMessage) -> Self::Future {
+    fn call(&mut self, mut msg: McpRequest) -> Self::Future {
         let is_initialize = matches!(
-            &msg,
+            &msg.message,
             JsonRpcMessage::Request(r) if r.method == methods::request::INITIALIZE
         );
         if is_initialize {
@@ -152,7 +152,7 @@ where
             // handshake actually succeeds, so a malformed initialize doesn't
             // flip the connection into legacy mode.
             let candidate = Uuid::new_v4().to_string();
-            meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(candidate));
+            msg.extensions.insert(SessionId::new(candidate.as_str()));
             let session = Arc::clone(&self.session);
             let (done, waiters) = watch::channel(());
             *self.handshake.lock().expect("handshake gate poisoned") = Some(waiters);

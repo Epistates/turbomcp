@@ -22,7 +22,7 @@ use crate::router::MethodRouter;
 use crate::traits::McpServerCore;
 
 use super::params::parse_call_tool_params;
-use super::{connection_id, context_declares_extension, error_response};
+use super::{context_declares_extension, error_response};
 
 // ---- draft Tasks extension augmentation (SEP-2663) -----------------------------
 
@@ -69,12 +69,10 @@ pub(super) async fn try_augment_call<S: McpServerCore>(
             // augmentation (mirrors the normal `dispatch_capability` path).
             Err(e) => return Some(error_response(id.clone(), &e)),
         };
-        let connection_id = connection_id(req.params.as_ref()).map(str::to_owned);
         if let Some(resp) = ext
             .augment_call(CallAugmentRequest {
                 request: req.clone(),
                 context: ctx.clone(),
-                connection_id,
                 run,
             })
             .await

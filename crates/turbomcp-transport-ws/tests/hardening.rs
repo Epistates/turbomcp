@@ -1,6 +1,6 @@
 //! Production guards on the WebSocket server: Origin policy at the upgrade,
 //! bearer auth right after it (close 1008 on rejection), the authenticated
-//! principal stamped into every inbound message, and the inbound
+//! principal attached to every inbound request, and the inbound
 //! message-size cap.
 
 use std::task::{Context, Poll};
@@ -9,16 +9,16 @@ use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::Service;
 use turbomcp_core::codec::DefaultCodec;
-use turbomcp_core::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, meta};
+use turbomcp_core::{Identity, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpRequest};
 use turbomcp_service::{AuthDecision, AuthFuture, HttpAuthenticator, ProtocolError, Transport};
 use turbomcp_transport_ws::{WebSocketTransport, WsConfig, serve_websocket_with};
 
-/// Answers every request with the request's internal identity `_meta` (so the
-/// test can observe what the trust boundary stamped).
+/// Answers every request with the subject of the identity attached to it (so
+/// the test can observe what the transport established).
 #[derive(Clone)]
 struct IdentityEcho;
 
-impl Service<JsonRpcMessage> for IdentityEcho {
+impl Service<McpRequest> for IdentityEcho {
     type Response = Option<JsonRpcMessage>;
     type Error = ProtocolError;
     type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
@@ -27,30 +27,31 @@ impl Service<JsonRpcMessage> for IdentityEcho {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
-        let JsonRpcMessage::Request(req) = msg else {
+    fn call(&mut self, request: McpRequest) -> Self::Future {
+        let JsonRpcMessage::Request(req) = request.message else {
             return std::future::ready(Ok(None));
         };
-        let identity = req
-            .params
-            .as_ref()
-            .and_then(|p| p.get("_meta"))
-            .and_then(|m| m.get(meta::internal::IDENTITY))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let resp = JsonRpcResponse::success(req.id, json!({ "identity": identity }));
+        let subject = request
+            .extensions
+            .get::<Identity>()
+            .and_then(Identity::subject)
+            .map(str::to_owned);
+        let resp = JsonRpcResponse::success(req.id, json!({ "identity": { "sub": subject } }));
         std::future::ready(Ok(Some(resp.into())))
     }
 }
 
-/// Allows exactly `Bearer good` as `{"sub":"tester","claims":{}}`.
+/// Allows exactly `Bearer good`, as subject `tester`.
 struct GoodToken;
 
 impl HttpAuthenticator for GoodToken {
     fn authenticate<'a>(&'a self, authorization: Option<&'a str>) -> AuthFuture<'a> {
         Box::pin(async move {
             if authorization == Some("Bearer good") {
-                AuthDecision::Allow(json!({ "sub": "tester", "claims": {} }))
+                AuthDecision::Allow(Identity::Bearer {
+                    sub: "tester".into(),
+                    claims: serde_json::Map::new(),
+                })
             } else {
                 AuthDecision::Challenge {
                     status: 401,
@@ -239,10 +240,10 @@ async fn bearer_auth_gates_the_connection_and_stamps_identity() {
         .send(JsonRpcMessage::Request(JsonRpcRequest::new(
             1,
             "whoami",
-            // A forged identity in the request must be stripped by the trust
-            // boundary and replaced with the authenticated principal.
+            // An identity written into the request is just data: the one
+            // that counts is what the upgrade authenticated.
             Some(json!({
-                "_meta": { meta::internal::IDENTITY: { "sub": "forged", "claims": {} } }
+                "_meta": { "io.turbomcp.internal/identity": { "sub": "forged", "claims": {} } }
             })),
         )))
         .await

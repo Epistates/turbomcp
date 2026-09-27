@@ -8,7 +8,7 @@
 //! resource_metadata="…"` so the client can discover how to authenticate
 //! (MCP authorization spec §Access).
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use turbomcp_service::{AuthDecision, AuthFuture, HttpAuthenticator};
 
 use crate::error::AuthError;
@@ -104,10 +104,10 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
             if !principal.has_scopes(&self.required_scopes) {
                 return self.forbidden();
             }
-            AuthDecision::Allow(json!({
-                "sub": principal.subject,
-                "claims": principal.claims,
-            }))
+            AuthDecision::Allow(turbomcp_core::Identity::Bearer {
+                sub: principal.subject,
+                claims: principal.claims,
+            })
         })
     }
 

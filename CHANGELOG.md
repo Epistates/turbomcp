@@ -209,6 +209,25 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** the service seam is `Service<McpRequest>`: the message plus
+  the typed facts its transport attached (`ConnectionId`, `SessionId`,
+  `Identity`, `ObservedHeaders`, and a `Peer` for reaching the client), in a
+  type-map (`Extensions`) that clones cheaply and keeps its values. These
+  facts used to ride in reserved `io.turbomcp.internal/*` `_meta` keys that
+  every boundary had to strip from client input first; anyone embedding the
+  dispatcher without doing so let a client assert an identity or session.
+  A client can't write to a type-map, so `meta::sanitize_inbound` and
+  `meta::extract_identity` are gone, `AuthDecision::Allow` carries an
+  `Identity`, and `ServeConfig::identity` is an `Identity`. Middleware reads
+  `request.message` and `request.extensions`.
+- **Breaking:** server-initiated messages go through a per-connection
+  `Peer` instead of a process-global writer table, which any code holding a
+  connection-id string could write through. A `Peer` holds its connection
+  weakly, so a subscription left behind can't keep a connection open;
+  `SessionStreams` (one registry per HTTP endpoint) finds a stateful
+  session's current `GET` stream. `Extension::on_subscribe` takes the
+  listen stream's `Peer`, and `ExtensionRequest`/`CallAugmentRequest` lost
+  `connection_id` (the context's extensions carry it).
 - **Breaking:** fewer crates. `turbomcp-codec` is now `turbomcp_core::codec`
   (the `simd` feature moved with it), `turbomcp-transport-stdio` is now
   `turbomcp_service::io` (`LineTransport`, `stdio`, `serve_stdio`), and the

@@ -6,12 +6,12 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use turbomcp_core::{
-    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
-    JsonRpcResponse, McpError, ProtocolVersion, meta,
+    CancellationToken, Extensions, JsonRpcError, JsonRpcMessage, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcResponse, McpError, ProtocolVersion, meta,
 };
 use turbomcp_protocol::methods;
 use turbomcp_protocol::v2026_07_28::types as v0728;
-use turbomcp_service::ProtocolError;
+use turbomcp_service::{Peer, ProtocolError};
 
 use crate::extension::SubscribeOutcome;
 use crate::router::MethodRouter;
@@ -21,8 +21,8 @@ use crate::traits::McpServerCore;
 use super::capability::resource_hidden;
 use super::params::build_context;
 use super::{
-    Shared, VersionRoute, classify_version, connection_id, context_declares_extension,
-    error_response, invalid_envelope, missing_capability_response, unsupported_version,
+    Shared, VersionRoute, classify_version, context_declares_extension, error_response,
+    invalid_envelope, missing_capability_response, unsupported_version,
 };
 
 // ---- subscriptions (draft `subscriptions/listen`) ------------------------------
@@ -43,6 +43,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     supported: &[ProtocolVersion],
     shared: &Shared,
     req: &JsonRpcRequest,
+    ext: &Extensions,
     cancel: &CancellationToken,
 ) -> Result<Option<JsonRpcMessage>, ProtocolError> {
     let subs = &shared.subs;
@@ -66,9 +67,8 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     }
 
     // Streaming needs an ordered writer for this connection (the serve driver
-    // registers one; the HTTP endpoint registers a per-stream one).
-    let writer = connection_id(req.params.as_ref()).and_then(turbomcp_service::outbound::writer);
-    let Some(writer) = writer else {
+    // attaches one; the HTTP endpoint attaches a per-stream one).
+    let Some(peer) = ext.get::<Peer>().filter(|p| p.is_open()).cloned() else {
         let err = JsonRpcError {
             code: -32600,
             message: "subscriptions/listen requires a connection that can stream notifications"
@@ -77,11 +77,6 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         };
         return Ok(Some(JsonRpcResponse::error(id, err).into()));
     };
-    // `writer` resolving proves the id exists; keep it for the registry key.
-    let conn = connection_id(req.params.as_ref())
-        .unwrap_or_default()
-        .to_owned();
-
     let requested: RawListenParams = match req
         .params
         .as_ref()
@@ -118,7 +113,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         // requested and acknowledged lists enumerates what is hidden. So a
         // hidden URI is acknowledged and simply never watched.
         resource_subscriptions: if router.has_resources() {
-            let ctx = build_context(req);
+            let ctx = build_context(req, ext);
             for uri in &wanted.resource_subscriptions {
                 match resource_hidden(shared, router, server, &ctx, uri).await {
                     Ok(false) => {}
@@ -147,13 +142,13 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
             .and_then(|p| p.get("notifications"))
             .cloned()
             .unwrap_or(Value::Null);
-        let ctx = build_context(req);
-        for ext in extensions {
-            let declared = context_declares_extension(&ctx, ext.id());
-            match ext.on_subscribe(&conn, &id, &raw_notifications, declared, &ctx) {
+        let ctx = build_context(req, ext);
+        for extension in extensions {
+            let declared = context_declares_extension(&ctx, extension.id());
+            match extension.on_subscribe(&peer, &id, &raw_notifications, declared, &ctx) {
                 SubscribeOutcome::NotApplicable => {}
                 SubscribeOutcome::MissingCapability => {
-                    return Ok(Some(missing_capability_response(id, ext.id())));
+                    return Ok(Some(missing_capability_response(id, extension.id())));
                 }
                 SubscribeOutcome::Subscribed(contribution) => {
                     if let (Some(ack_obj), Some(extra)) =
@@ -177,17 +172,17 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
             "notifications": ack_notifications,
         })),
     );
-    if writer.send(ack.into()).await.is_err() {
+    if peer.send(ack.into()).await.is_err() {
         return Ok(None); // connection already gone; nothing to answer
     }
     agreed
         .resource_subscriptions
         .retain(|uri| !unwatched.contains(uri));
-    subs.insert(&conn, &id, agreed);
+    subs.insert(&peer, &id, agreed);
     // A `notifications/cancelled` that raced this dispatch fired our in-flight
     // token before the insert could be seen — honor it now.
     if cancel.is_cancelled() {
-        subs.remove(&conn, &id);
+        subs.remove(peer.id().as_str(), &id);
     }
     Ok(None)
 }

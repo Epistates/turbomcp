@@ -116,7 +116,7 @@ doing before the draft freezes, since its wire shapes can still change.
 v3's `McpMiddleware` was a trait with one hook per operation (`on_call_tool`,
 `on_read_resource`, `on_list_tools`, …), each returning a boxed future, assembled
 into a `MiddlewareStack`. v4 has no MCP-specific middleware trait: the dispatcher
-*is* a `tower::Service<JsonRpcMessage>`, so middleware is a plain
+*is* a `tower::Service<McpRequest>`, so middleware is a plain
 [`tower::Layer`] over it — one `call`, every method, every transport.
 
 The practical differences:

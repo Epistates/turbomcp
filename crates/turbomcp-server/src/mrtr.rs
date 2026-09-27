@@ -42,7 +42,7 @@ use turbomcp_core::{
 use turbomcp_protocol::methods::request;
 use turbomcp_protocol::neutral;
 
-use crate::subscriptions::request_writer;
+use crate::subscriptions::Route;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -275,11 +275,7 @@ enum HandleMode {
     Mrtr,
     /// Legacy path: inline bidirectional requests over the session's
     /// server→client channel.
-    Bidi {
-        session: String,
-        connection: String,
-        pending: Arc<PendingRequests>,
-    },
+    Bidi { pending: Arc<PendingRequests> },
     /// Taskified call (SEP-2663 in-execution input): requests are published
     /// to the task (`input_required` + `inputRequests`) via the attached
     /// [`TaskInputBroker`](crate::TaskInputBroker) and the handler awaits the
@@ -301,10 +297,11 @@ struct Inner {
     /// `2025-06-18`, which differ on what a server→client request may carry.
     /// Without this the older wire silently received `2025-11-25` shapes.
     version: ProtocolVersion,
-    /// The connection this request arrived on (empty when unknown). Used to
-    /// address the initiating client for out-of-band notifications — the
-    /// elicitation spec's MUST ("only ... the client that initiated").
-    connection: String,
+    /// Where this request's server→client messages go: its own stream, then
+    /// (legacy only) the session's `GET` stream. Also how the initiating
+    /// client is addressed for out-of-band notifications, the elicitation
+    /// spec's MUST ("only ... the client that initiated").
+    route: Route,
     /// The client's declared capabilities (gates which input requests may be
     /// sent — SEP-2322 MUST). `None` = nothing declared.
     client_capabilities: Option<Value>,
@@ -350,7 +347,7 @@ impl ClientHandle {
                 // Nothing is ever rendered on this handle; every call fails
                 // before it reaches a wire.
                 version: ProtocolVersion::LATEST,
-                connection: String::new(),
+                route: Route::default(),
                 client_capabilities: None,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
@@ -363,7 +360,7 @@ impl ClientHandle {
 
     /// A draft-path MRTR handle for one request (re)execution.
     pub(crate) fn mrtr(
-        connection: &str,
+        route: Route,
         client_capabilities: Option<Value>,
         responses: BTreeMap<String, Value>,
         state_in: Option<Value>,
@@ -385,7 +382,7 @@ impl ClientHandle {
                 mode: HandleMode::Mrtr,
                 // MRTR is the 2026-07-28 delivery model and no other.
                 version: ProtocolVersion::V2026_07_28,
-                connection: connection.to_owned(),
+                route,
                 client_capabilities,
                 responses: merged,
                 collected: Mutex::new(BTreeMap::new()),
@@ -413,7 +410,7 @@ impl ClientHandle {
                 mode: HandleMode::TaskMediated { slot },
                 // Task-mediated input is the 2026-07-28 Tasks extension.
                 version: ProtocolVersion::V2026_07_28,
-                connection: String::new(),
+                route: Route::default(),
                 client_capabilities,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
@@ -428,21 +425,16 @@ impl ClientHandle {
     /// (`2025-11-25` or `2025-06-18` — the two differ in what a server→client
     /// request may carry, so the handle has to know which).
     pub(crate) fn bidi(
-        session: &str,
-        connection: &str,
+        route: Route,
         pending: Arc<PendingRequests>,
         client_capabilities: Option<Value>,
         version: ProtocolVersion,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
-                mode: HandleMode::Bidi {
-                    session: session.to_owned(),
-                    connection: connection.to_owned(),
-                    pending,
-                },
+                mode: HandleMode::Bidi { pending },
                 version,
-                connection: connection.to_owned(),
+                route,
                 client_capabilities,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
@@ -576,7 +568,7 @@ impl ClientHandle {
         if !self.wire_carries_elicitation_id() {
             return false;
         }
-        let Some(writer) = request_writer(&self.inner.connection, self.session_id()) else {
+        let Some(writer) = self.inner.route.peer() else {
             return false;
         };
         let note = turbomcp_core::JsonRpcNotification::new(
@@ -596,16 +588,6 @@ impl ClientHandle {
     /// inventing protocol.
     fn wire_carries_elicitation_id(&self) -> bool {
         matches!(self.inner.version, ProtocolVersion::V2025_11_25)
-    }
-
-    /// The legacy session this handle is bound to, if any (draft handles are
-    /// sessionless — the draft forbids delivering request-scoped messages on
-    /// any stream but the request's own).
-    fn session_id(&self) -> &str {
-        match &self.inner.mode {
-            HandleMode::Bidi { session, .. } => session,
-            _ => "",
-        }
     }
 
     /// Ask for several inputs in **one** round trip (PLAN MR-4): all missing
@@ -803,11 +785,9 @@ impl ClientHandle {
                 self.record(key, request)?;
                 Err(McpError::InputRequired)
             }
-            HandleMode::Bidi {
-                session,
-                connection,
-                pending,
-            } => send_and_await(session, connection, pending, request).await,
+            HandleMode::Bidi { pending } => {
+                send_and_await(&self.inner.route, pending, request).await
+            }
             // Taskified call: publish to the task and await `tasks/update`.
             HandleMode::TaskMediated { slot } => match slot.get() {
                 Some(broker) => broker.obtain(key, request).await,
@@ -935,12 +915,11 @@ impl StateEnvelope {
 }
 
 /// Send one inline bidi request on the originating request's server→client
-/// channel (the request's own stream first, then the session `GET` stream —
-/// see [`request_writer`](crate::subscriptions::request_writer)) and block
-/// until the client's response routes back (or [`BIDI_TIMEOUT`]).
+/// channel (the request's own stream first, then the session `GET` stream;
+/// see [`Route`]) and block until the client's response routes back (or
+/// [`BIDI_TIMEOUT`]).
 async fn send_and_await(
-    session: &str,
-    connection: &str,
+    route: &Route,
     pending: &Arc<PendingRequests>,
     request: Value,
 ) -> McpResult<Value> {
@@ -955,7 +934,7 @@ async fn send_and_await(
     let id = RequestId::from(format!("srv-{}", uuid::Uuid::new_v4()));
     let (rx, _guard) = pending.register(id.clone());
 
-    let writer = request_writer(connection, session).ok_or_else(|| {
+    let writer = route.peer().ok_or_else(|| {
         McpError::transport(
             "no server→client channel for this session (open the GET stream or keep the pipe alive)",
         )
@@ -1185,7 +1164,13 @@ mod tests {
     /// such affordance.
     #[tokio::test]
     async fn elicit_without_declared_capability_is_an_error_not_an_abort() {
-        let handle = ClientHandle::mrtr("", Some(json!({})), BTreeMap::new(), None, false);
+        let handle = ClientHandle::mrtr(
+            Route::default(),
+            Some(json!({})),
+            BTreeMap::new(),
+            None,
+            false,
+        );
         let err = handle
             .elicit("k", neutral::ElicitParams::new("?", form_schema()))
             .await
@@ -1200,7 +1185,7 @@ mod tests {
     #[tokio::test]
     async fn elicit_url_records_url_mode_request() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             // URL mode is declared explicitly; bare `elicitation` is form.
             Some(json!({ "elicitation": { "url": {} } })),
             BTreeMap::new(),
@@ -1308,8 +1293,7 @@ mod tests {
         // No connection (a handle whose transport never named one) is a no-op,
         // not an error: the notification is a spec MAY.
         let orphan = ClientHandle::bidi(
-            "sess",
-            "",
+            Route::default(),
             Arc::new(PendingRequests::default()),
             None,
             ProtocolVersion::V2025_11_25,
@@ -1323,8 +1307,13 @@ mod tests {
     #[tokio::test]
     async fn elicitation_complete_is_a_no_op_on_the_draft_wire() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
-        let _guard = turbomcp_service::outbound::register("draft-elicit-conn", tx);
-        let handle = ClientHandle::mrtr("draft-elicit-conn", None, BTreeMap::new(), None, false);
+        let handle = ClientHandle::mrtr(
+            Route::to(turbomcp_service::Peer::new("draft-elicit-conn", &tx)),
+            None,
+            BTreeMap::new(),
+            None,
+            false,
+        );
 
         assert!(
             !handle.notify_elicitation_complete("eid-1").await,
@@ -1339,7 +1328,7 @@ mod tests {
     #[tokio::test]
     async fn strict_keys_reject_shape_conflict() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": {} })),
             BTreeMap::new(),
             None,
@@ -1518,14 +1507,12 @@ mod tests {
         ClientHandle,
         Arc<PendingRequests>,
         tokio::sync::mpsc::Receiver<turbomcp_core::JsonRpcMessage>,
-        turbomcp_service::outbound::WriterGuard,
+        tokio::sync::mpsc::Sender<turbomcp_core::JsonRpcMessage>,
     ) {
         let (tx, rx) = tokio::sync::mpsc::channel(4);
-        let guard = turbomcp_service::outbound::register(connection, tx);
         let pending = Arc::new(PendingRequests::default());
         let handle = ClientHandle::bidi(
-            "sess",
-            connection,
+            Route::to(turbomcp_service::Peer::new(connection, &tx)),
             Arc::clone(&pending),
             // A fully-capable client, URL mode included — the bidi tests drive
             // both elicitation modes.
@@ -1536,7 +1523,7 @@ mod tests {
             })),
             ProtocolVersion::V2025_11_25,
         );
-        (handle, pending, rx, guard)
+        (handle, pending, rx, tx)
     }
 
     /// Pull the one server→client request off `rx`.
@@ -1610,8 +1597,7 @@ mod tests {
     async fn an_elicit_with_no_server_to_client_channel_fails_fast() {
         let pending = Arc::new(PendingRequests::default());
         let handle = ClientHandle::bidi(
-            "",
-            "never-registered",
+            Route::default(),
             pending,
             Some(json!({ "elicitation": {} })),
             ProtocolVersion::V2025_11_25,
@@ -1688,7 +1674,7 @@ mod tests {
     #[tokio::test]
     async fn elicit_all_records_every_missing_request_in_one_abort() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": {} })),
             BTreeMap::from([("first".to_owned(), json!({ "action": "accept" }))]),
             None,
@@ -1717,7 +1703,7 @@ mod tests {
     #[tokio::test]
     async fn elicit_all_returns_inline_once_every_answer_is_present() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": {} })),
             BTreeMap::from([
                 (
@@ -1754,7 +1740,7 @@ mod tests {
     #[allow(deprecated)] // still functional on both wires; see the method docs
     async fn tool_enabled_sampling_needs_the_declared_sub_capability() {
         let plain = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "sampling": {} })),
             BTreeMap::new(),
             None,
@@ -1802,7 +1788,7 @@ mod tests {
         }
         // And a client that declared tools gets them.
         let agentic = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "sampling": { "tools": {} } })),
             BTreeMap::new(),
             None,
@@ -1825,7 +1811,7 @@ mod tests {
     #[allow(deprecated)]
     async fn a_request_needing_two_sampling_capabilities_checks_both() {
         let tools_only = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "sampling": { "tools": {} } })),
             BTreeMap::new(),
             None,
@@ -1853,7 +1839,7 @@ mod tests {
         });
         let answered = |content: Value| {
             ClientHandle::mrtr(
-                "",
+                Route::default(),
                 Some(json!({ "elicitation": {} })),
                 BTreeMap::from([(
                     "age".to_owned(),
@@ -1877,7 +1863,7 @@ mod tests {
 
         // A decline carries no content to check.
         let declined = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": {} })),
             BTreeMap::from([("age".to_owned(), json!({ "action": "decline" }))]),
             None,
@@ -1897,7 +1883,7 @@ mod tests {
     #[tokio::test]
     async fn elicit_all_refuses_an_unrenderable_form_like_elicit_does() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": {} })),
             BTreeMap::new(),
             None,
@@ -1931,7 +1917,7 @@ mod tests {
     #[tokio::test]
     async fn a_url_only_client_is_not_sent_a_form() {
         let url_only = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": { "url": {} } })),
             BTreeMap::new(),
             None,
@@ -1951,7 +1937,13 @@ mod tests {
             json!({ "elicitation": { "form": {} } }),
             json!({ "elicitation": {} }),
         ] {
-            let handle = ClientHandle::mrtr("", Some(caps.clone()), BTreeMap::new(), None, false);
+            let handle = ClientHandle::mrtr(
+                Route::default(),
+                Some(caps.clone()),
+                BTreeMap::new(),
+                None,
+                false,
+            );
             assert!(
                 matches!(
                     handle
@@ -1966,8 +1958,7 @@ mod tests {
         // And `2025-06-18` has no sub-capabilities to name, so a sub-capability
         // can never be required of it.
         let older = ClientHandle::bidi(
-            "sess",
-            "no-writer",
+            Route::default(),
             Arc::new(PendingRequests::default()),
             Some(json!({ "elicitation": {} })),
             ProtocolVersion::V2025_06_18,
@@ -1988,7 +1979,7 @@ mod tests {
     #[tokio::test]
     async fn an_unrenderable_elicitation_is_refused_before_it_is_sent() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": { "form": {}, "url": {} } })),
             BTreeMap::new(),
             None,
@@ -2041,8 +2032,7 @@ mod tests {
     async fn the_2025_06_18_wire_refuses_what_it_cannot_express() {
         let caps = json!({ "sampling": { "tools": {}, "context": {} } });
         let older = ClientHandle::bidi(
-            "sess",
-            "no-writer",
+            Route::default(),
             Arc::new(PendingRequests::default()),
             Some(caps.clone()),
             ProtocolVersion::V2025_06_18,
@@ -2071,8 +2061,7 @@ mod tests {
         // The same requests are fine on 2025-11-25: they get as far as the
         // missing server→client channel, which is the next failure along.
         let newer = ClientHandle::bidi(
-            "sess",
-            "no-writer",
+            Route::default(),
             Arc::new(PendingRequests::default()),
             Some(caps),
             ProtocolVersion::V2025_11_25,
@@ -2094,7 +2083,7 @@ mod tests {
     #[allow(deprecated)] // still functional on every wire; see the method docs
     async fn an_unbalanced_tool_conversation_never_reaches_the_client() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "sampling": { "tools": {} } })),
             BTreeMap::new(),
             None,
@@ -2172,7 +2161,7 @@ mod tests {
     #[tokio::test]
     async fn url_mode_is_refused_when_only_form_was_declared() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": { "form": {} } })),
             BTreeMap::new(),
             None,
@@ -2192,7 +2181,7 @@ mod tests {
         // Form mode still works: `2025-06-18` has no sub-capabilities at all,
         // so bare `elicitation` has to keep meaning "I can render a form".
         let form_only = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": {} })),
             BTreeMap::new(),
             None,
@@ -2211,7 +2200,7 @@ mod tests {
     #[tokio::test]
     async fn elicit_url_resolves_from_the_retry_response() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": { "url": {} } })),
             BTreeMap::from([("k".to_owned(), json!({ "action": "accept" }))]),
             None,
@@ -2235,7 +2224,7 @@ mod tests {
     #[allow(deprecated)] // functional in both versions; see the method docs
     async fn sampling_and_roots_record_their_spec_methods() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "sampling": {}, "roots": {} })),
             BTreeMap::new(),
             None,
@@ -2272,7 +2261,7 @@ mod tests {
 
         // Undeclared is refused (SEP-2322 MUST NOT), per capability.
         let bare = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "roots": {} })),
             BTreeMap::new(),
             None,
@@ -2382,7 +2371,7 @@ mod tests {
             order: String,
         }
 
-        let handle = ClientHandle::mrtr("", None, BTreeMap::new(), None, false);
+        let handle = ClientHandle::mrtr(Route::default(), None, BTreeMap::new(), None, false);
         assert!(
             handle.load_state::<Resume>().unwrap().is_none(),
             "a first execution has no inbound state"
@@ -2396,7 +2385,7 @@ mod tests {
         let out = handle.state_out().expect("stored");
 
         // The retry: the dispatcher hands the verified blob back.
-        let retry = ClientHandle::mrtr("", None, BTreeMap::new(), Some(out), false);
+        let retry = ClientHandle::mrtr(Route::default(), None, BTreeMap::new(), Some(out), false);
         assert_eq!(
             retry.load_state::<Resume>().unwrap(),
             Some(Resume {
@@ -2411,7 +2400,13 @@ mod tests {
             Err(McpError::InvalidParams(_))
         ));
         // An explicit JSON null is "no state", the same as absent.
-        let null_state = ClientHandle::mrtr("", None, BTreeMap::new(), Some(Value::Null), false);
+        let null_state = ClientHandle::mrtr(
+            Route::default(),
+            None,
+            BTreeMap::new(),
+            Some(Value::Null),
+            false,
+        );
         assert!(null_state.load_state::<Resume>().unwrap().is_none());
     }
 
@@ -2421,22 +2416,40 @@ mod tests {
     /// and redid whatever the first had done.
     #[test]
     fn resume_state_survives_a_round_that_does_not_store_it() {
-        let first = ClientHandle::mrtr("", None, BTreeMap::new(), None, false);
+        let first = ClientHandle::mrtr(Route::default(), None, BTreeMap::new(), None, false);
         first.store_state(&"created-record-7").unwrap();
-        let second = ClientHandle::mrtr("", None, BTreeMap::new(), first.state_out(), false);
+        let second = ClientHandle::mrtr(
+            Route::default(),
+            None,
+            BTreeMap::new(),
+            first.state_out(),
+            false,
+        );
         assert_eq!(
             second.load_state::<String>().unwrap().as_deref(),
             Some("created-record-7")
         );
         // Round two only reads it.
-        let third = ClientHandle::mrtr("", None, BTreeMap::new(), second.state_out(), false);
+        let third = ClientHandle::mrtr(
+            Route::default(),
+            None,
+            BTreeMap::new(),
+            second.state_out(),
+            false,
+        );
         assert_eq!(
             third.load_state::<String>().unwrap().as_deref(),
             Some("created-record-7")
         );
 
         third.clear_state();
-        let fourth = ClientHandle::mrtr("", None, BTreeMap::new(), third.state_out(), false);
+        let fourth = ClientHandle::mrtr(
+            Route::default(),
+            None,
+            BTreeMap::new(),
+            third.state_out(),
+            false,
+        );
         assert!(
             fourth.load_state::<String>().unwrap().is_none(),
             "cleared means gone"
@@ -2482,7 +2495,7 @@ mod tests {
     #[tokio::test]
     async fn non_strict_keys_only_warn_on_conflict() {
         let handle = ClientHandle::mrtr(
-            "",
+            Route::default(),
             Some(json!({ "elicitation": {} })),
             BTreeMap::new(),
             None,

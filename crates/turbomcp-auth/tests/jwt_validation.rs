@@ -65,9 +65,9 @@ async fn valid_token_is_allowed_with_identity() {
     let decision = rs.authenticate(Some(&bearer(&token))).await;
     match decision {
         AuthDecision::Allow(principal) => {
-            assert_eq!(principal["sub"], "user-42");
-            assert_eq!(principal["claims"]["iss"], ISSUER);
-            assert_eq!(principal["claims"]["aud"], RESOURCE);
+            assert_eq!(principal.subject(), Some("user-42"));
+            assert_eq!(principal.claim("iss"), Some(&json!(ISSUER)));
+            assert_eq!(principal.claim("aud"), Some(&json!(RESOURCE)));
         }
         AuthDecision::Challenge { status, .. } => panic!("expected Allow, got {status}"),
     }
@@ -283,7 +283,7 @@ async fn scp_array_scopes_are_extracted() {
     claims["scp"] = json!(["mcp:use", "files:read"]);
     match rs.authenticate(Some(&bearer(&sign(claims)))).await {
         AuthDecision::Allow(principal) => {
-            assert_eq!(principal["sub"], "user-42");
+            assert_eq!(principal.subject(), Some("user-42"));
         }
         AuthDecision::Challenge { status, .. } => {
             panic!("scp-array scopes must satisfy required_scopes, got {status}")

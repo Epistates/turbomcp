@@ -6,7 +6,8 @@
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
 use turbomcp_core::{
-    Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult, ProtocolVersion, meta,
+    Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpRequest, McpResult,
+    ProtocolVersion, SessionId, meta,
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
@@ -95,9 +96,9 @@ fn initialize_request(id: i64, version: &str) -> JsonRpcRequest {
     )
 }
 
-async fn call<S>(svc: &mut S, msg: impl Into<JsonRpcMessage>) -> Option<JsonRpcMessage>
+async fn call<S>(svc: &mut S, msg: impl Into<McpRequest>) -> Option<JsonRpcMessage>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
 {
     svc.ready()
         .await
@@ -109,7 +110,7 @@ where
 
 async fn call_result<S>(svc: &mut S, req: JsonRpcRequest) -> Value
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
 {
     match call(svc, req).await {
         Some(JsonRpcMessage::Response(r)) => {
@@ -186,39 +187,36 @@ async fn malformed_initialize_does_not_enter_legacy_mode() {
 
 #[tokio::test]
 async fn unknown_session_id_is_a_protocol_error() {
-    // Talk to the bare dispatcher the way a transport would: version + session
-    // id injected via internal meta — but for a session that was never minted.
+    // Talk to the bare dispatcher the way a transport would: version in `_meta`,
+    // session id attached beside the message, for a session never minted.
     let mut svc = VersionDispatcher::new(Echo, MethodRouter::new().with_tools());
     let mut msg: JsonRpcMessage = JsonRpcRequest::new(1, "tools/list", None).into();
     meta::set_request_meta(&mut msg, meta::keys::PROTOCOL_VERSION, json!("2025-11-25"));
-    meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!("never-minted"));
 
     let err = svc
         .ready()
         .await
         .unwrap()
-        .call(msg)
+        .call(McpRequest::new(msg).with(SessionId::new("never-minted")))
         .await
         .expect_err("unknown session must surface as a protocol error");
     assert!(matches!(err, ProtocolError::UnknownSession(id) if id == "never-minted"));
 }
 
 #[tokio::test]
-async fn forged_internal_session_meta_is_stripped_at_the_wire_boundary() {
-    // Sanitization is the wire boundary's job (serve driver / HTTP endpoint),
-    // not the adapter's — this simulates exactly what the driver does before
-    // the adapter sees a frame. The forged key is gone, so the request is
-    // "version present, no session", NOT an unknown-session protocol error
-    // (which would prove the forged id reached the dispatcher).
+async fn a_session_named_in_meta_is_not_a_session() {
+    // The session travels beside the message, so writing the old internal key
+    // into `_meta` asserts nothing: the request is "version present, no
+    // session", NOT an unknown-session protocol error (which would prove the
+    // forged id reached the dispatcher).
     let mut svc = adapter();
     let params = json!({
         "_meta": {
             "io.modelcontextprotocol/protocolVersion": "2025-11-25",
-            meta::internal::SESSION_ID: "forged-id",
+            "io.turbomcp.internal/sessionId": "forged-id",
         }
     });
-    let mut msg: JsonRpcMessage = JsonRpcRequest::new(1, "tools/list", Some(params)).into();
-    meta::sanitize_inbound(&mut msg);
+    let msg: JsonRpcMessage = JsonRpcRequest::new(1, "tools/list", Some(params)).into();
     let Some(JsonRpcMessage::Response(r)) = call(&mut svc, msg).await else {
         panic!("expected response")
     };

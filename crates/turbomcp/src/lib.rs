@@ -79,7 +79,7 @@
 //! ## RPC middleware
 //!
 //! Cross-cutting concerns wrap the built dispatcher as [`tower::Layer`]s over
-//! `Service<JsonRpcMessage>` — one `call` for every method under every
+//! `Service<McpRequest>` — one `call` for every method under every
 //! transport, and the tower ecosystem (`ServiceBuilder`, `timeout`,
 //! `ConcurrencyLimit`, …) composes onto an MCP server unchanged. `tower` itself
 //! is re-exported as [`tower`] so the `Layer` you write is the one the SDK
@@ -101,9 +101,9 @@
 // ---- foundation -------------------------------------------------------------
 
 pub use turbomcp_core::{
-    Claims, Identity, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse, LogLevel, McpError, McpResult, ProtocolVersion,
-    RequestContext, RequestId, codes,
+    Claims, ConnectionId, Extensions, Identity, Implementation, JsonRpcError, JsonRpcMessage,
+    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, LogLevel, McpError, McpRequest,
+    McpResult, ObservedHeaders, ProtocolVersion, RequestContext, RequestId, SessionId, codes,
 };
 
 /// Version-stable, handler-facing types (the surface user handlers speak).
@@ -136,10 +136,11 @@ pub use turbomcp_server::{ComponentKind, Visibility, VisibilityPolicy, VisibleCo
 
 pub use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
 pub use turbomcp_service::{
-    CancellationToken, McpService, ProtocolError, ServeConfig, Transport, serve, serve_with,
+    CancellationToken, Delivery, McpService, Peer, PeerClosed, ProtocolError, ServeConfig,
+    SessionStreams, Transport, serve, serve_with,
 };
 
-/// RPC middleware: [`tower::Layer`]s over the `Service<JsonRpcMessage>` seam,
+/// RPC middleware: [`tower::Layer`]s over the `Service<McpRequest>` seam,
 /// applying identically under stdio, HTTP, and WebSocket.
 ///
 /// [`TracingLayer`] wraps each RPC in a `tracing` span naming the method — it is

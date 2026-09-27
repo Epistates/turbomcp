@@ -5,7 +5,9 @@
 
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
-use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult};
+use turbomcp_core::{
+    Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpRequest, McpResult,
+};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, GetPromptContext, LegacySessionAdapter, ListPromptsContext,
@@ -183,7 +185,7 @@ fn accept() -> Value {
 
 async fn call<S>(svc: &mut S, req: JsonRpcRequest) -> Value
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>>,
     S::Error: std::fmt::Debug,
 {
     let out = svc

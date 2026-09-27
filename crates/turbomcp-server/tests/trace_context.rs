@@ -57,7 +57,13 @@ async fn call_with_meta(meta: Value) -> String {
         Some(json!({ "name": "trace-echo", "arguments": {}, "_meta": meta })),
     )
     .into();
-    let resp = dispatcher.ready().await.unwrap().call(req).await.unwrap();
+    let resp = dispatcher
+        .ready()
+        .await
+        .unwrap()
+        .call(req.into())
+        .await
+        .unwrap();
     let Some(JsonRpcMessage::Response(r)) = resp else {
         panic!("expected a response, got {resp:?}");
     };

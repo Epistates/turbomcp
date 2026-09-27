@@ -6,7 +6,9 @@
 
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
-use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult, codes};
+use turbomcp_core::{
+    Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpRequest, McpResult, codes,
+};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext, ListResourcesContext,
@@ -156,7 +158,7 @@ fn draft_meta() -> Value {
 
 async fn call<S>(svc: &mut S, req: JsonRpcRequest) -> Value
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>>,
     S::Error: std::fmt::Debug,
 {
     let JsonRpcMessage::Response(r) = svc
@@ -456,7 +458,7 @@ async fn wrong_jsonrpc_version_is_invalid_request() {
         .ready()
         .await
         .unwrap()
-        .call(JsonRpcMessage::Notification(note))
+        .call(JsonRpcMessage::Notification(note).into())
         .await
         .unwrap();
     assert!(reply.is_none(), "bad-version notification is dropped");
@@ -572,9 +574,13 @@ async fn an_unsolicited_response_is_ignored() {
         .ready()
         .await
         .unwrap()
-        .call(JsonRpcMessage::Response(
-            turbomcp_core::JsonRpcResponse::success(99, json!({ "action": "accept" })),
-        ))
+        .call(
+            JsonRpcMessage::Response(turbomcp_core::JsonRpcResponse::success(
+                99,
+                json!({ "action": "accept" }),
+            ))
+            .into(),
+        )
         .await
         .unwrap();
     assert!(reply.is_none(), "got {reply:?}");
@@ -609,9 +615,13 @@ async fn malformed_cancellations_are_swallowed() {
             .ready()
             .await
             .unwrap()
-            .call(JsonRpcMessage::Notification(
-                turbomcp_core::JsonRpcNotification::new("notifications/cancelled", params),
-            ))
+            .call(
+                JsonRpcMessage::Notification(turbomcp_core::JsonRpcNotification::new(
+                    "notifications/cancelled",
+                    params,
+                ))
+                .into(),
+            )
             .await
             .unwrap();
         assert!(reply.is_none(), "case {i} drew a reply: {reply:?}");
@@ -643,9 +653,13 @@ async fn roots_list_changed_reaches_a_registered_observer() {
         .ready()
         .await
         .unwrap()
-        .call(JsonRpcMessage::Notification(
-            turbomcp_core::JsonRpcNotification::new("notifications/roots/list_changed", None),
-        ))
+        .call(
+            JsonRpcMessage::Notification(turbomcp_core::JsonRpcNotification::new(
+                "notifications/roots/list_changed",
+                None,
+            ))
+            .into(),
+        )
         .await
         .unwrap();
     assert!(reply.is_none(), "a notification draws no reply");
@@ -656,9 +670,13 @@ async fn roots_list_changed_reaches_a_registered_observer() {
         .ready()
         .await
         .unwrap()
-        .call(JsonRpcMessage::Notification(
-            turbomcp_core::JsonRpcNotification::new("notifications/roots/list_changed", None),
-        ))
+        .call(
+            JsonRpcMessage::Notification(turbomcp_core::JsonRpcNotification::new(
+                "notifications/roots/list_changed",
+                None,
+            ))
+            .into(),
+        )
         .await
         .unwrap();
     assert!(reply.is_none());

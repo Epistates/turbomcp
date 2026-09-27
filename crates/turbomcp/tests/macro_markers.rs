@@ -43,7 +43,7 @@ async fn tools() -> Vec<Value> {
     let reply = Markers
         .into_server()
         .build()
-        .oneshot(msg)
+        .oneshot(msg.into())
         .await
         .unwrap()
         .unwrap();

@@ -243,12 +243,15 @@ async fn cancelled_without_connection_identity_is_inert() {
         MethodRouter::new().with_tools(),
     );
 
-    // Even a forged connection id can't reach the registry from here: nothing
-    // was registered under it. (The real boundaries additionally strip the
-    // forged key before dispatch — see the -service driver tests.)
+    // A connection id written into `_meta` is not a connection: the scope
+    // comes from what the transport attaches, and nothing was attached here.
     let mut note = cancelled_note(json!(1));
-    meta::set_request_meta(&mut note, meta::internal::CONNECTION_ID, json!("conn-1"));
-    let out = svc.ready().await.unwrap().call(note).await.unwrap();
+    meta::set_request_meta(
+        &mut note,
+        "io.turbomcp.internal/connectionId",
+        json!("conn-1"),
+    );
+    let out = svc.ready().await.unwrap().call(note.into()).await.unwrap();
     assert!(out.is_none(), "notifications never produce a reply");
     assert!(
         cancelled.try_recv().is_err(),

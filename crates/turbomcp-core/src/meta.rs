@@ -4,7 +4,7 @@
 //! [`crate::RequestContext::propagated_meta`] and echoed back on responses.
 //! Extensions add keys under their reverse-DNS namespace.
 
-use crate::{Identity, JsonRpcMessage, ProtocolVersion, TraceContext};
+use crate::{JsonRpcMessage, ProtocolVersion, TraceContext};
 use alloc::string::{String, ToString};
 use serde_json::{Map, Value};
 
@@ -62,48 +62,15 @@ pub mod keys {
     pub const SCOPES: &str = "io.turbomcp/scopes";
 }
 
-/// Internal `_meta` keys: the in-process side-channel a transport (or session
-/// adapter) uses to hand the dispatcher facts only it knows — never part of the
-/// wire protocol. Transports **must** strip these from inbound messages (see
-/// [`sanitize_inbound`]) before injecting their own, so a client cannot forge
-/// them; the dispatcher consumes them, so they never echo back out.
+/// The `io.turbomcp.internal/*` namespace: signals between this SDK's client
+/// and its own transports (the negotiated version, `#[mcp_header]` mirrors),
+/// never meant for a peer. Streamable HTTP turns them into headers and strips
+/// them; every other transport strips them with [`sanitize_outbound`].
+///
+/// Server-side facts (session, connection, identity, observed headers) no
+/// longer ride here: they travel typed in [`McpRequest`](crate::McpRequest)'s
+/// extensions, where a client can't forge them.
 pub mod internal {
-    /// The session this message belongs to (legacy `2025-11-25` stateful path).
-    /// Injected by the HTTP transport (from the `Mcp-Session-Id` header) or the
-    /// stdio `LegacySessionAdapter` (per-connection).
-    pub const SESSION_ID: &str = "io.turbomcp.internal/sessionId";
-
-    /// The connection this message arrived on. Injected by the serve driver
-    /// (one id per `serve` call), scoping in-flight request cancellation —
-    /// `notifications/cancelled` can only reach requests from the same
-    /// connection. HTTP deliberately injects none: there, closing the response
-    /// stream is the cancellation signal (transports spec §Cancellation).
-    pub const CONNECTION_ID: &str = "io.turbomcp.internal/connectionId";
-
-    /// The authenticated principal for this request, as
-    /// `{ "sub": String, "claims": Object }`. Injected by the HTTP endpoint
-    /// after it validates the `Authorization` bearer token (auth is
-    /// HTTP-transport-level — the token never rides `_meta`); the dispatcher
-    /// lifts it into [`crate::RequestContext::identity`]. Sanitized from
-    /// inbound client messages like every internal key, so a client cannot
-    /// forge an identity.
-    pub const IDENTITY: &str = "io.turbomcp.internal/identity";
-
-    /// The `Mcp-Param-{name}` mirrors that actually arrived on this request,
-    /// as an object from the lowercased `{name}` portion to the raw header
-    /// value (`null` when it wasn't visible ASCII). Injected by the HTTP
-    /// transport (other transports have no headers and omit it, which reads as
-    /// "no mirroring in effect").
-    ///
-    /// The dispatcher checks both the values and the *absence* of a mirror: a
-    /// tool argument annotated `x-mcp-header` whose header was omitted or
-    /// disagrees is the case where a gateway routes on one value while the
-    /// server executes on another, the divergence SEP-2243's validation exists
-    /// to prevent. Only the transport can observe the headers, and only the
-    /// dispatcher knows which argument each annotation names, so the fact has
-    /// to cross the seam.
-    pub const OBSERVED_HEADER_PARAMS: &str = "io.turbomcp.internal/observedHeaderParams";
-
     /// Whether `key` is in the internal (in-process only) namespace.
     #[must_use]
     pub fn is_internal_key(key: &str) -> bool {
@@ -194,8 +161,9 @@ pub fn partition(meta: Map<String, Value>) -> (Map<String, Value>, Map<String, V
 /// creating `params` and `_meta` as needed. Responses are left untouched, as
 /// are (already-invalid) non-object `params`.
 ///
-/// This is how transports assert per-message facts (session id, protocol
-/// version) toward the dispatcher without changing the service seam.
+/// The session adapter uses it to stamp a legacy session's negotiated
+/// protocol version onto version-less messages; the client, to stamp its own
+/// request envelope.
 pub fn set_request_meta(msg: &mut JsonRpcMessage, key: &str, value: Value) {
     let params = match msg {
         JsonRpcMessage::Request(r) => &mut r.params,
@@ -211,35 +179,6 @@ pub fn set_request_meta(msg: &mut JsonRpcMessage, key: &str, value: Value) {
         .or_insert_with(|| Value::Object(Map::new()));
     if let Some(meta) = meta.as_object_mut() {
         meta.insert(key.to_string(), value);
-    }
-}
-
-/// Lift the HTTP boundary's validated principal — internal key
-/// [`internal::IDENTITY`] = `{ "sub": String, "claims": Object }` — out of a
-/// `_meta` map into an [`Identity`].
-///
-/// Returns [`Identity::Anonymous`] when the key is absent (stdio, or an
-/// unauthenticated HTTP endpoint) or malformed. The key is internal, so the
-/// transport boundary sanitizes any client-forged copy before injecting the
-/// real one — a client can never assert an identity this way. Shared by the
-/// dispatcher (→ `RequestContext.identity`) and the telemetry layer (→ redacted
-/// span attributes) so the two never drift.
-#[must_use]
-pub fn extract_identity(meta: &Map<String, Value>) -> Identity {
-    let Some(principal) = meta.get(internal::IDENTITY) else {
-        return Identity::Anonymous;
-    };
-    let Some(sub) = principal.get("sub").and_then(Value::as_str) else {
-        return Identity::Anonymous;
-    };
-    let claims = principal
-        .get("claims")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    Identity::Bearer {
-        sub: sub.to_string(),
-        claims,
     }
 }
 
@@ -264,26 +203,6 @@ pub fn extract_trace_context(meta: &Map<String, Value>) -> Option<TraceContext> 
     })
 }
 
-/// Strip all [`internal`] keys from an inbound message's `params._meta`.
-///
-/// Transports **must** call this on every message received from a client
-/// before injecting their own internal keys — otherwise a client could forge
-/// a session id or other in-process assertion.
-pub fn sanitize_inbound(msg: &mut JsonRpcMessage) {
-    let params = match msg {
-        JsonRpcMessage::Request(r) => r.params.as_mut(),
-        JsonRpcMessage::Notification(n) => n.params.as_mut(),
-        JsonRpcMessage::Response(_) => None,
-    };
-    if let Some(meta) = params
-        .and_then(Value::as_object_mut)
-        .and_then(|p| p.get_mut("_meta"))
-        .and_then(Value::as_object_mut)
-    {
-        meta.retain(|k, _| !internal::is_internal_key(k));
-    }
-}
-
 /// Strip all [`internal`] keys from an outbound message's `params._meta`,
 /// dropping the `_meta` object when that empties it.
 ///
@@ -291,8 +210,8 @@ pub fn sanitize_inbound(msg: &mut JsonRpcMessage) {
 /// client and its own transports. Streamable HTTP consumes it — the negotiated
 /// version becomes a header — and strips it itself; on every other transport
 /// the keys would ride the wire to a peer that has never heard of this crate.
-/// Unlike [`sanitize_inbound`] this removes an emptied `_meta` rather than
-/// sending `"_meta": {}`, which asserts nothing.
+/// An emptied `_meta` is removed rather than sent as `"_meta": {}`, which
+/// asserts nothing.
 pub fn sanitize_outbound(msg: &mut JsonRpcMessage) {
     let params = match msg {
         JsonRpcMessage::Request(r) => r.params.as_mut(),
@@ -316,6 +235,9 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A key in the client's in-process namespace.
+    const INTERNAL: &str = "io.turbomcp.internal/negotiatedVersion";
+
     /// The internal namespace never reaches a peer that cannot consume it, and
     /// an emptied `_meta` goes with it.
     #[test]
@@ -324,7 +246,7 @@ mod tests {
         let mut msg: JsonRpcMessage = JsonRpcRequest::new(
             RequestId::from(1i64),
             "tools/call",
-            Some(json!({ "_meta": { internal::SESSION_ID: "s-1" } })),
+            Some(json!({ "_meta": { INTERNAL: "s-1" } })),
         )
         .into();
         sanitize_outbound(&mut msg);
@@ -338,7 +260,7 @@ mod tests {
             RequestId::from(2i64),
             "tools/call",
             Some(json!({
-                "_meta": { internal::SESSION_ID: "s-1", "acme.dev/trace": "t" },
+                "_meta": { INTERNAL: "s-1", "acme.dev/trace": "t" },
             })),
         )
         .into();
@@ -367,10 +289,10 @@ mod tests {
         let mut meta = Map::new();
         meta.insert(keys::TRACEPARENT.into(), json!("00-abc-def-01"));
         meta.insert("com.acme/tenant".into(), json!("t-42"));
-        meta.insert(internal::SESSION_ID.into(), json!("s-1"));
+        meta.insert(INTERNAL.into(), json!("s-1"));
         let (consumed, propagated) = partition(meta);
         assert!(consumed.contains_key(keys::TRACEPARENT));
-        assert!(consumed.contains_key(internal::SESSION_ID));
+        assert!(consumed.contains_key(INTERNAL));
         assert!(propagated.contains_key("com.acme/tenant"));
         assert_eq!(propagated.len(), 1);
     }
@@ -389,9 +311,7 @@ mod tests {
             keys::CLIENT_INFO,
             keys::CLIENT_CAPABILITIES,
             keys::LOG_LEVEL,
-            internal::SESSION_ID,
-            internal::CONNECTION_ID,
-            internal::IDENTITY,
+            INTERNAL,
         ];
         let mut meta = Map::new();
         for k in framework {
@@ -410,31 +330,14 @@ mod tests {
     fn set_request_meta_creates_params_and_meta() {
         use crate::JsonRpcRequest;
         let mut msg: JsonRpcMessage = JsonRpcRequest::new(1, "tools/list", None).into();
-        set_request_meta(&mut msg, internal::SESSION_ID, json!("s-1"));
+        set_request_meta(&mut msg, INTERNAL, json!("s-1"));
         set_request_meta(&mut msg, keys::PROTOCOL_VERSION, json!("2025-11-25"));
         let JsonRpcMessage::Request(r) = &msg else {
             unreachable!()
         };
         let meta = &r.params.as_ref().unwrap()["_meta"];
-        assert_eq!(meta[internal::SESSION_ID], "s-1");
+        assert_eq!(meta[INTERNAL], "s-1");
         assert_eq!(meta[keys::PROTOCOL_VERSION], "2025-11-25");
-    }
-
-    #[test]
-    fn extract_identity_lifts_principal_else_anonymous() {
-        let mut meta = Map::new();
-        assert!(matches!(extract_identity(&meta), Identity::Anonymous));
-        meta.insert(
-            internal::IDENTITY.into(),
-            json!({ "sub": "alice", "claims": { "scope": "read" } }),
-        );
-        match extract_identity(&meta) {
-            Identity::Bearer { sub, claims } => {
-                assert_eq!(sub, "alice");
-                assert_eq!(claims["scope"], "read");
-            }
-            other => panic!("expected Bearer, got {other:?}"),
-        }
     }
 
     #[test]
@@ -447,25 +350,5 @@ mod tests {
         assert_eq!(tc.traceparent, "00-abc-def-01");
         assert_eq!(tc.tracestate.as_deref(), Some("vendor=x"));
         assert!(tc.baggage.is_none());
-    }
-
-    #[test]
-    fn sanitize_strips_only_internal_keys() {
-        use crate::JsonRpcRequest;
-        let params = json!({
-            "name": "echo",
-            "_meta": {
-                internal::SESSION_ID: "forged",
-                "com.acme/tenant": "t-42",
-            }
-        });
-        let mut msg: JsonRpcMessage = JsonRpcRequest::new(1, "tools/call", Some(params)).into();
-        sanitize_inbound(&mut msg);
-        let JsonRpcMessage::Request(r) = &msg else {
-            unreachable!()
-        };
-        let meta = r.params.as_ref().unwrap()["_meta"].as_object().unwrap();
-        assert!(!meta.contains_key(internal::SESSION_ID));
-        assert!(meta.contains_key("com.acme/tenant"));
     }
 }

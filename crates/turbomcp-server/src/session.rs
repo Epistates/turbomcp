@@ -5,8 +5,8 @@
 //! state negotiated at `initialize`. *Who mints the id* is the transport's
 //! business (the HTTP runner derives it for the `Mcp-Session-Id` header; the
 //! stdio [`LegacySessionAdapter`] mints one per connection) — the id reaches
-//! the dispatcher via the internal `_meta` side-channel
-//! ([`turbomcp_core::meta::internal::SESSION_ID`]).
+//! the dispatcher as a [`SessionId`](turbomcp_core::SessionId) attached to the
+//! request.
 //!
 //! The dispatcher reaches session state only through the [`SessionBackend`]
 //! trait, so the storage is pluggable (`ServerBuilder::with_session_backend`).

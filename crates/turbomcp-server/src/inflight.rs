@@ -1,7 +1,8 @@
 //! In-flight request registry: `notifications/cancelled` → token.
 //!
-//! Each request arriving on an identified connection (see
-//! [`turbomcp_core::meta::internal::CONNECTION_ID`]) is registered here for
+//! Each request arriving on an identified connection (a
+//! [`ConnectionId`](turbomcp_core::ConnectionId) its transport attached) is
+//! registered here for
 //! the duration of its dispatch. A later `notifications/cancelled` *from the
 //! same connection* fires the request's [`CancellationToken`]; the dispatcher
 //! then drops the handler future and suppresses the response (cancellation

@@ -42,7 +42,7 @@ mod tests {
             ..Default::default()
         };
         let shutdown = config.shutdown.clone();
-        let svc = tower::service_fn(|_: JsonRpcMessage| async {
+        let svc = tower::service_fn(|_: turbomcp::McpRequest| async {
             std::future::pending::<Result<Option<JsonRpcMessage>, ProtocolError>>().await
         });
         let mut job = tokio::spawn(serve_with(
@@ -173,7 +173,7 @@ mod catalog_tests {
             .build();
         let listed = dispatcher
             .clone()
-            .oneshot(request("tools/list", json!({"cursor":"page2"})))
+            .oneshot(request("tools/list", json!({"cursor":"page2"})).into())
             .await
             .unwrap()
             .unwrap();
@@ -182,10 +182,7 @@ mod catalog_tests {
             json!([])
         );
         let result = dispatcher
-            .oneshot(request(
-                "tools/call",
-                json!({"name":"secret","arguments":{}}),
-            ))
+            .oneshot(request("tools/call", json!({"name":"secret","arguments":{}})).into())
             .await
             .unwrap()
             .unwrap();
@@ -206,10 +203,7 @@ mod catalog_tests {
             .with_visibility(Arc::new(|_: &VisibleComponent<'_>| false))
             .build();
         let result = dispatcher
-            .oneshot(request(
-                "tools/call",
-                json!({"name":"secret","arguments":{}}),
-            ))
+            .oneshot(request("tools/call", json!({"name":"secret","arguments":{}})).into())
             .await
             .unwrap()
             .unwrap();
@@ -225,10 +219,7 @@ mod catalog_tests {
         let reply = composite
             .into_server()
             .build()
-            .oneshot(request(
-                "tools/call",
-                json!({"name":"secret","arguments":{}}),
-            ))
+            .oneshot(request("tools/call", json!({"name":"secret","arguments":{}})).into())
             .await
             .unwrap()
             .unwrap();
@@ -267,7 +258,7 @@ mod catalog_tests {
             .with_tools()
             .with_visibility(Arc::new(|_: &VisibleComponent<'_>| true))
             .build()
-            .oneshot(request("tools/call", json!({"name":"secret"})))
+            .oneshot(request("tools/call", json!({"name":"secret"})).into())
             .await
             .unwrap()
             .unwrap();
@@ -289,7 +280,8 @@ mod catalog_tests {
             })),
         )
         .into();
-        let value = serde_json::to_value(dispatcher.oneshot(msg).await.unwrap().unwrap()).unwrap();
+        let value =
+            serde_json::to_value(dispatcher.oneshot(msg.into()).await.unwrap().unwrap()).unwrap();
         assert!(value.get("error").is_some(), "{value}");
     }
 }
@@ -318,7 +310,7 @@ mod schema_tests {
         let dispatcher = Adults.into_server().build();
         let listed = dispatcher
             .clone()
-            .oneshot(request("tools/list", json!({})))
+            .oneshot(request("tools/list", json!({})).into())
             .await
             .unwrap()
             .unwrap();
@@ -328,10 +320,7 @@ mod schema_tests {
             18
         );
         let result = dispatcher
-            .oneshot(request(
-                "tools/call",
-                json!({"name":"adult","arguments":{"age":1}}),
-            ))
+            .oneshot(request("tools/call", json!({"name":"adult","arguments":{"age":1}})).into())
             .await
             .unwrap()
             .unwrap();
@@ -356,7 +345,7 @@ mod schema_tests {
             let result = Adults
                 .into_server()
                 .build()
-                .oneshot(request(method, json!({ "cursor": "made-up" })))
+                .oneshot(request(method, json!({ "cursor": "made-up" })).into())
                 .await
                 .unwrap()
                 .unwrap();
@@ -382,7 +371,7 @@ mod schema_tests {
         let listed = Adults
             .into_server()
             .build()
-            .oneshot(request("tools/list", json!({})))
+            .oneshot(request("tools/list", json!({})).into())
             .await
             .unwrap()
             .unwrap();

@@ -13,11 +13,12 @@
 //! uphold the same production guarantees. A new transport (or a change to one)
 //! is held to this checklist:
 //!
-//! 1. **Trust boundary.** Client input passes
-//!    [`meta::sanitize_inbound`](turbomcp_core::meta::sanitize_inbound) before
-//!    any internal `_meta` key (`connectionId`, `sessionId`, `identity`) is
-//!    injected — a client can never forge them. The serve driver does this for
-//!    `Transport`-based servers; HTTP does it in its endpoint.
+//! 1. **Trust boundary.** What the transport knows about a request (its
+//!    connection, session, authenticated identity, and the [`Peer`](crate::Peer)
+//!    that reaches the client) travels typed in the
+//!    [`McpRequest`](turbomcp_core::McpRequest)'s extensions, never in the
+//!    message, so a client has no way to assert it. The serve driver attaches
+//!    these for `Transport`-based servers; HTTP does it in its endpoint.
 //! 2. **Authentication seam.** Where the deployment is network-reachable, the
 //!    [`HttpAuthenticator`](crate::HttpAuthenticator) seam validates a bearer
 //!    credential (per request on HTTP; at the upgrade for WebSocket, with the

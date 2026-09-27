@@ -24,7 +24,7 @@ use turbomcp::prelude::*;
 use turbomcp::tower::{Layer, Service, ServiceBuilder, ServiceExt};
 use turbomcp::{
     DefaultCodec, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, LegacySessionAdapter,
-    ProtocolError, VersionDispatcher, mcp_to_jsonrpc_error, serve,
+    McpRequest, ProtocolError, VersionDispatcher, mcp_to_jsonrpc_error, serve,
 };
 use turbomcp_service::io::LineTransport;
 
@@ -96,9 +96,9 @@ struct Record<S> {
     seen: Arc<Mutex<Vec<String>>>,
 }
 
-impl<S> Service<JsonRpcMessage> for Record<S>
+impl<S> Service<McpRequest> for Record<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
     S::Future: Send + 'static,
 {
     type Response = Option<JsonRpcMessage>;
@@ -109,11 +109,11 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
+    fn call(&mut self, req: McpRequest) -> Self::Future {
         self.seen
             .lock()
             .expect("poisoned")
-            .push(req.method().unwrap_or("(response)").to_owned());
+            .push(req.message.method().unwrap_or("(response)").to_owned());
         Box::pin(self.inner.call(req))
     }
 }
@@ -140,9 +140,9 @@ struct Refuse<S> {
     tool: &'static str,
 }
 
-impl<S> Service<JsonRpcMessage> for Refuse<S>
+impl<S> Service<McpRequest> for Refuse<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
     S::Future: Send + 'static,
 {
     type Response = Option<JsonRpcMessage>;
@@ -153,8 +153,8 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
-        if let JsonRpcMessage::Request(r) = &req
+    fn call(&mut self, req: McpRequest) -> Self::Future {
+        if let JsonRpcMessage::Request(r) = &req.message
             && r.method == request::TOOLS_CALL
             && r.params
                 .as_ref()

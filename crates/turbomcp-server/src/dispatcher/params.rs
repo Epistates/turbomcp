@@ -8,8 +8,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use turbomcp_core::{
-    Implementation, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError,
-    ProtocolVersion, RequestContext, meta,
+    Extensions, Identity, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcRequest,
+    JsonRpcResponse, McpError, ProtocolVersion, RequestContext, meta,
 };
 use turbomcp_protocol::{methods, neutral, version};
 use turbomcp_service::ProtocolError;
@@ -32,8 +32,9 @@ use super::session_id;
 pub(super) async fn legacy_context(
     sessions: &dyn SessionBackend,
     req: &JsonRpcRequest,
+    ext: &Extensions,
 ) -> Result<Result<RequestContext, JsonRpcMessage>, ProtocolError> {
-    let Some(sid) = session_id(req.params.as_ref()) else {
+    let Some(sid) = session_id(ext) else {
         let err = JsonRpcError {
             code: turbomcp_core::codes::NO_ACTIVE_SESSION,
             message: "server not initialized: send `initialize` first".to_owned(),
@@ -44,25 +45,22 @@ pub(super) async fn legacy_context(
     let Some(state) = sessions.get(sid).await else {
         return Err(ProtocolError::UnknownSession(sid.to_owned()));
     };
-    let owner = req
-        .params
-        .as_ref()
-        .and_then(|p| p.get("_meta"))
-        .and_then(Value::as_object)
-        .and_then(|m| meta::extract_identity(m).principal_key());
-    if state.owner != owner {
+    let identity = ext.get::<Identity>().cloned().unwrap_or_default();
+    if state.owner != identity.principal_key() {
         return Err(ProtocolError::UnknownSession(sid.to_owned()));
     }
-    let mut ctx = RequestContext::new(state.version).with_client_info(state.client_info);
+    let mut ctx = RequestContext::new(state.version)
+        .with_client_info(state.client_info)
+        .with_identity(identity);
     ctx.client_capabilities = Some(state.client_capabilities);
     ctx.log_level = state.log_level;
+    ctx.extensions = ext.clone();
     if let Some(m) = req
         .params
         .as_ref()
         .and_then(|p| p.get("_meta"))
         .and_then(Value::as_object)
     {
-        ctx.identity = meta::extract_identity(m);
         ctx.trace_context = meta::extract_trace_context(m);
         let (_consumed, propagated) = meta::partition(m.clone());
         ctx = ctx.with_propagated_meta(propagated);
@@ -78,20 +76,21 @@ struct RawClientInfo {
     title: Option<String>,
 }
 
-/// Build the per-request context from the wire frame: version, the draft's
-/// per-request client identity/capabilities (`_meta` keys), and propagated
-/// user `_meta`. (Transport identity extraction joins with Auth in Phase 7.)
-pub(super) fn build_context(req: &JsonRpcRequest) -> RequestContext {
+/// Build the per-request context from the wire frame and what its transport
+/// attached: version, the draft's per-request client info/capabilities (`_meta`
+/// keys), propagated user `_meta`, and the transport's identity and facts.
+pub(super) fn build_context(req: &JsonRpcRequest, ext: &Extensions) -> RequestContext {
     let version =
         version::request_protocol_version(req.params.as_ref()).unwrap_or(ProtocolVersion::LATEST);
-    let mut ctx = RequestContext::new(version);
+    let mut ctx = RequestContext::new(version)
+        .with_identity(ext.get::<Identity>().cloned().unwrap_or_default());
+    ctx.extensions = ext.clone();
     if let Some(meta) = req
         .params
         .as_ref()
         .and_then(|p| p.get("_meta"))
         .and_then(Value::as_object)
     {
-        ctx.identity = turbomcp_core::meta::extract_identity(meta);
         ctx.trace_context = turbomcp_core::meta::extract_trace_context(meta);
         let (consumed, propagated) = turbomcp_core::meta::partition(meta.clone());
         if let Some(info) = consumed

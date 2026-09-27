@@ -179,7 +179,7 @@ impl JsonRpcResponse {
 
 /// A single JSON-RPC frame: request, response, or notification.
 ///
-/// The protocol seam is `Service<JsonRpcMessage, Response = Option<JsonRpcMessage>>`
+/// The protocol seam is `Service<McpRequest, Response = Option<JsonRpcMessage>>`
 /// (notifications produce `None`).
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(untagged)]

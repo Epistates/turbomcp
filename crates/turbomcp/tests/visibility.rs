@@ -14,7 +14,7 @@ use turbomcp::methods::request;
 use turbomcp::prelude::*;
 use turbomcp::tower::{Service, ServiceExt};
 use turbomcp::{
-    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, VersionDispatcher, Visibility,
+    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpRequest, VersionDispatcher, Visibility,
     VisibleComponent,
 };
 
@@ -91,44 +91,44 @@ fn dispatcher(policy: Option<Arc<Visibility>>) -> VersionDispatcher<Catalog> {
     }
 }
 
-/// A request as `scopes` (space-separated; empty = anonymous).
-fn as_caller(id: i64, method: &str, params: Value, scopes: &str) -> JsonRpcRequest {
-    let mut meta = json!({
+/// A request as `scopes` (space-separated; empty = anonymous), with the
+/// identity attached the way an authenticating transport attaches it.
+fn as_caller(id: i64, method: &str, params: Value, scopes: &str) -> McpRequest {
+    let mut params = params;
+    params["_meta"] = json!({
         "io.modelcontextprotocol/protocolVersion": DRAFT,
         "io.modelcontextprotocol/clientCapabilities": {},
     });
-    if !scopes.is_empty() {
-        meta["io.turbomcp.internal/identity"] =
-            json!({ "sub": "alice", "claims": { "scope": scopes } });
+    let request = McpRequest::new(JsonRpcRequest::new(id, method, Some(params)));
+    if scopes.is_empty() {
+        return request;
     }
-    let mut params = params;
-    params["_meta"] = meta;
-    JsonRpcRequest::new(id, method, Some(params))
+    request.with(turbomcp::Identity::Bearer {
+        sub: "alice".into(),
+        claims: json!({ "scope": scopes }).as_object().unwrap().clone(),
+    })
 }
 
-async fn respond<S>(svc: &mut S, req: JsonRpcRequest) -> JsonRpcResponse
+async fn respond<S>(svc: &mut S, req: impl Into<McpRequest>) -> JsonRpcResponse
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>> + Clone,
     S::Error: std::fmt::Debug,
 {
-    let method = req.method.clone();
-    match svc
-        .clone()
-        .oneshot(req.into())
-        .await
-        .expect("service failed")
-    {
+    let req = req.into();
+    let method = req.message.method().unwrap_or_default().to_owned();
+    match svc.clone().oneshot(req).await.expect("service failed") {
         Some(JsonRpcMessage::Response(r)) => r,
         other => panic!("expected a response for {method}, got {other:?}"),
     }
 }
 
-async fn result<S>(svc: &mut S, req: JsonRpcRequest) -> Value
+async fn result<S>(svc: &mut S, req: impl Into<McpRequest>) -> Value
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>> + Clone,
     S::Error: std::fmt::Debug,
 {
-    let method = req.method.clone();
+    let req = req.into();
+    let method = req.message.method().unwrap_or_default().to_owned();
     let r = respond(svc, req).await;
     assert!(r.error.is_none(), "{method} failed: {:?}", r.error);
     r.result.expect("a success response has a result")
@@ -136,12 +136,13 @@ where
 
 /// The JSON-RPC error a request answered with. A hidden component is refused
 /// at the protocol level, exactly as a nonexistent one is.
-async fn error<S>(svc: &mut S, req: JsonRpcRequest) -> turbomcp::JsonRpcError
+async fn error<S>(svc: &mut S, req: impl Into<McpRequest>) -> turbomcp::JsonRpcError
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>> + Clone,
     S::Error: std::fmt::Debug,
 {
-    let method = req.method.clone();
+    let req = req.into();
+    let method = req.message.method().unwrap_or_default().to_owned();
     let r = respond(svc, req).await;
     r.error
         .unwrap_or_else(|| panic!("{method} succeeded, expected an error: {:?}", r.result))
@@ -539,8 +540,8 @@ async fn filtering_happens_on_every_revision() {
 /// go through a separate function that never applied the policy, so every
 /// hidden tool was listed in full.
 async fn tasks_session()
--> impl Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = turbomcp::ProtocolError>
-+ Clone {
+-> impl Service<McpRequest, Response = Option<JsonRpcMessage>, Error = turbomcp::ProtocolError> + Clone
+{
     let mut svc = turbomcp::LegacySessionAdapter::new(
         Catalog
             .into_server()

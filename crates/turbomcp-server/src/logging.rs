@@ -19,7 +19,7 @@ use std::sync::Arc;
 use turbomcp_core::{JsonRpcNotification, LogLevel};
 use turbomcp_protocol::methods;
 
-use crate::subscriptions::request_writer;
+use crate::subscriptions::Route;
 
 /// Sends `notifications/message` for one in-flight request. Cheap to clone.
 ///
@@ -34,10 +34,9 @@ pub struct LogSender {
 struct Inner {
     /// The client's requested minimum severity.
     min: LogLevel,
-    /// The originating request's connection (its own response stream).
-    connection: String,
-    /// Legacy fallback: the session's `GET` stream. Empty on the draft.
-    session: String,
+    /// Where its messages go: the request's own stream, then (legacy only)
+    /// the session's `GET` stream.
+    route: Route,
 }
 
 impl LogSender {
@@ -49,13 +48,9 @@ impl LogSender {
 
     /// A live sender filtering below `min`.
     #[must_use]
-    pub(crate) fn new(min: LogLevel, connection: String, session: String) -> Self {
+    pub(crate) fn new(min: LogLevel, route: Route) -> Self {
         Self {
-            inner: Some(Arc::new(Inner {
-                min,
-                connection,
-                session,
-            })),
+            inner: Some(Arc::new(Inner { min, route })),
         }
     }
 
@@ -75,7 +70,7 @@ impl LogSender {
         if level < inner.min {
             return;
         }
-        let Some(writer) = request_writer(&inner.connection, &inner.session) else {
+        let Some(writer) = inner.route.peer() else {
             tracing::debug!("no stream for log notification; dropped");
             return;
         };
@@ -132,8 +127,10 @@ mod tests {
     #[tokio::test]
     async fn severity_filter_and_shape() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let _guard = turbomcp_service::outbound::register("log-test-conn", tx);
-        let sender = LogSender::new(LogLevel::Info, "log-test-conn".into(), String::new());
+        let sender = LogSender::new(
+            LogLevel::Info,
+            Route::to(turbomcp_service::Peer::new("log-test-conn", &tx)),
+        );
 
         assert!(!sender.would_log(LogLevel::Debug));
         assert!(sender.would_log(LogLevel::Error));

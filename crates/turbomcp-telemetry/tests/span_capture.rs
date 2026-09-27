@@ -14,14 +14,14 @@ use serde_json::{Map, Value, json};
 use tower::{Layer as TowerLayer, Service, ServiceExt};
 use tracing::field::{Field, Visit};
 use tracing_subscriber::layer::SubscriberExt;
-use turbomcp_core::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse};
+use turbomcp_core::{Identity, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpRequest};
 use turbomcp_telemetry::{SpanPolicy, TraceContextLayer};
 
 /// Inner service: succeeds, echoing an empty result.
 #[derive(Clone)]
 struct Inner;
 
-impl Service<JsonRpcMessage> for Inner {
+impl Service<McpRequest> for Inner {
     type Response = Option<JsonRpcMessage>;
     type Error = Infallible;
     type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
@@ -30,8 +30,8 @@ impl Service<JsonRpcMessage> for Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
-        let reply = match req {
+    fn call(&mut self, req: McpRequest) -> Self::Future {
+        let reply = match req.message {
             JsonRpcMessage::Request(r) => Some(JsonRpcResponse::success(r.id, json!({})).into()),
             _ => None,
         };
@@ -85,26 +85,21 @@ where
     }
 }
 
-fn identity_request() -> JsonRpcMessage {
-    JsonRpcRequest::new(
-        1,
-        "tools/call",
-        Some(json!({ "_meta": {
-            "io.turbomcp.internal/identity": {
-                "sub": "alice",
-                "claims": { "email": "a@b.example", "scope": "read" },
-            }
-        }})),
-    )
-    .into()
+/// A request whose transport authenticated alice, the way HTTP attaches it.
+fn identity_request() -> McpRequest {
+    let claims = json!({ "email": "a@b.example", "scope": "read" });
+    McpRequest::new(JsonRpcRequest::new(1, "tools/call", None)).with(Identity::Bearer {
+        sub: "alice".into(),
+        claims: claims.as_object().unwrap().clone(),
+    })
 }
 
-async fn drive(policy: SpanPolicy, req: JsonRpcMessage) -> HashMap<String, String> {
+async fn drive(policy: SpanPolicy, req: impl Into<McpRequest>) -> HashMap<String, String> {
     let capture = Capture::default();
     let subscriber = tracing_subscriber::registry().with(capture.clone());
     let _guard = tracing::subscriber::set_default(subscriber);
     let svc = TraceContextLayer::with_policy(policy).layer(Inner);
-    svc.oneshot(req).await.unwrap();
+    svc.oneshot(req.into()).await.unwrap();
     let fields = capture.0.lock().unwrap();
     fields.clone()
 }
@@ -185,7 +180,7 @@ async fn spans_continue_the_callers_trace() {
         }})),
     )
     .into();
-    svc.oneshot(req).await.unwrap();
+    svc.oneshot(req.into()).await.unwrap();
     provider.force_flush().unwrap();
 
     let spans = exporter.get_finished_spans().unwrap();

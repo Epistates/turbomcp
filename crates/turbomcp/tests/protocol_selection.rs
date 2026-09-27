@@ -87,7 +87,7 @@ where
         .ready()
         .await
         .expect("ready")
-        .call(JsonRpcMessage::Request(req))
+        .call(JsonRpcMessage::Request(req).into())
         .await
         .expect("dispatch");
     match resp {

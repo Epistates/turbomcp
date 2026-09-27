@@ -52,7 +52,9 @@ fn types_users_hold_are_debug() {
     assert_debug::<turbomcp_server::ServerNotifier>();
     assert_debug::<turbomcp_server::SessionStore>();
     assert_debug::<turbomcp_server::TaskStore>();
-    assert_debug::<turbomcp_service::outbound::WriterGuard>();
+    assert_debug::<turbomcp_service::Peer>();
+    assert_debug::<turbomcp_service::SessionStreams>();
+    assert_debug::<turbomcp_service::StreamGuard>();
     assert_debug::<turbomcp_service::io::StdioTransport>();
 
     #[cfg(feature = "client")]

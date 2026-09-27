@@ -31,6 +31,7 @@ extern crate alloc;
 mod cancellation;
 pub mod codec;
 mod context;
+pub mod envelope;
 mod error;
 mod identity;
 mod jsonrpc;
@@ -39,6 +40,7 @@ mod protocol_version;
 
 pub use cancellation::CancellationToken;
 pub use context::{Extensions, Implementation, LogLevel, RequestContext, TraceContext};
+pub use envelope::{ConnectionId, McpRequest, ObservedHeaders, SessionId};
 pub use error::{McpError, McpResult, codes};
 pub use identity::{Claims, Identity, IdentityClaims, RedactedSubject};
 pub use jsonrpc::{

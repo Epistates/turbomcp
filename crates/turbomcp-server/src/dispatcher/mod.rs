@@ -32,8 +32,9 @@ use serde_json::Value;
 use tower::Service;
 
 use turbomcp_core::{
-    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
-    JsonRpcResponse, McpError, ProtocolVersion, RequestContext, RequestId, meta,
+    CancellationToken, ConnectionId, Extensions, JsonRpcError, JsonRpcMessage, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcResponse, McpError, McpRequest, ProtocolVersion, RequestContext,
+    RequestId, SessionId, meta,
 };
 use turbomcp_protocol::neutral::{CachePolicy, TaskSupport};
 use turbomcp_protocol::{methods, version};
@@ -64,7 +65,7 @@ use params::{
     build_context, extract_log_level, legacy_context, parse_set_level_params, parse_uri_param,
 };
 
-/// The protocol seam for a server: `Service<JsonRpcMessage>`.
+/// The protocol seam for a server: `Service<McpRequest>`.
 ///
 /// Clone is cheap (the server clones per request; the router is shared behind an
 /// `Arc`), so the dispatcher composes under per-connection `tower` stacks.
@@ -536,7 +537,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     }
 }
 
-impl<S: McpServerCore> Service<JsonRpcMessage> for VersionDispatcher<S> {
+impl<S: McpServerCore> Service<McpRequest> for VersionDispatcher<S> {
     type Response = Option<JsonRpcMessage>;
     type Error = ProtocolError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -547,7 +548,11 @@ impl<S: McpServerCore> Service<JsonRpcMessage> for VersionDispatcher<S> {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
+    fn call(&mut self, request: McpRequest) -> Self::Future {
+        let McpRequest {
+            message: msg,
+            extensions: ext,
+        } = request;
         let server = self.server.clone();
         let router = Arc::clone(&self.router);
         let supported = self.supported.clone();
@@ -563,13 +568,13 @@ impl<S: McpServerCore> Service<JsonRpcMessage> for VersionDispatcher<S> {
         let tracked = match &msg {
             JsonRpcMessage::Request(req) if msg.has_valid_version() => {
                 let cancel = CancellationToken::new();
-                let guard = cancel_scope(req.params.as_ref())
+                let guard = cancel_scope(&ext)
                     .map(|scope| shared.inflight.register(scope, &req.id, cancel.clone()));
                 Some((cancel, guard))
             }
             _ => None,
         };
-        Box::pin(async move { handle(server, router, supported, shared, msg, tracked).await })
+        Box::pin(async move { handle(server, router, supported, shared, msg, ext, tracked).await })
     }
 }
 
@@ -579,6 +584,7 @@ async fn handle<S: McpServerCore>(
     supported: Vec<ProtocolVersion>,
     shared: Shared,
     msg: JsonRpcMessage,
+    ext: Extensions,
     tracked: Option<(CancellationToken, Option<crate::inflight::InFlightGuard>)>,
 ) -> Result<Option<JsonRpcMessage>, ProtocolError> {
     // JSON-RPC 2.0 §4: a frame declaring a version other than "2.0" is an
@@ -612,13 +618,20 @@ async fn handle<S: McpServerCore>(
             // always-respond contract.
             if req.method == methods::request::SUBSCRIPTIONS_LISTEN {
                 return handle_subscriptions_listen(
-                    &server, &router, &supported, &shared, &req, &cancel,
+                    &server, &router, &supported, &shared, &req, &ext, &cancel,
                 )
                 .await;
             }
 
-            let dispatch =
-                handle_request(server, &router, &supported, &shared, req, cancel.clone());
+            let dispatch = handle_request(
+                server,
+                &router,
+                &supported,
+                &shared,
+                req,
+                &ext,
+                cancel.clone(),
+            );
             tokio::select! {
                 // Cancelled mid-flight: drop the handler future and send
                 // nothing (cancellation spec: "stop processing … not send a
@@ -628,7 +641,7 @@ async fn handle<S: McpServerCore>(
             }
         }
         JsonRpcMessage::Notification(n) => {
-            handle_notification(&shared, &n);
+            handle_notification(&shared, &n, &ext);
             Ok(None)
         }
         JsonRpcMessage::Response(resp) => {
@@ -651,13 +664,13 @@ struct RawCancelledParams {
     reason: Option<String>,
 }
 
-fn handle_notification(shared: &Shared, n: &JsonRpcNotification) {
+fn handle_notification(shared: &Shared, n: &JsonRpcNotification, ext: &Extensions) {
     let (inflight, subs) = (&shared.inflight, &shared.subs);
     match n.method.as_str() {
         methods::notification::CANCELLED => {
             // Fire-and-forget per spec: malformed params, unknown ids, and
             // already-finished requests are all silently ignored.
-            let Some(scope) = cancel_scope(n.params.as_ref()) else {
+            let Some(scope) = cancel_scope(ext) else {
                 tracing::debug!("notifications/cancelled without a scope; ignored");
                 return;
             };
@@ -676,8 +689,8 @@ fn handle_notification(shared: &Shared, n: &JsonRpcNotification) {
             // Subscriptions stay connection-scoped: a `subscriptions/listen`
             // stream belongs to the connection it was opened on, and the draft
             // has no session to widen to.
-            let unsubscribed = connection_id(n.params.as_ref())
-                .is_some_and(|conn| subs.remove(conn, &parsed.request_id));
+            let unsubscribed =
+                connection_id(ext).is_some_and(|conn| subs.remove(conn, &parsed.request_id));
             tracing::debug!(
                 request_id = ?parsed.request_id,
                 reason = parsed.reason.as_deref().unwrap_or(""),
@@ -694,7 +707,7 @@ fn handle_notification(shared: &Shared, n: &JsonRpcNotification) {
         // them, and never hear that they moved — which is the entire purpose
         // of `roots.listChanged`, and the reason a client declares it.
         methods::notification::ROOTS_LIST_CHANGED => match &shared.roots_changed {
-            Some(handler) => handler(&notification_context(n)),
+            Some(handler) => handler(&notification_context(n, ext)),
             None => tracing::debug!("roots changed, but no observer is registered"),
         },
         other => tracing::debug!(method = other, "unhandled notification"),
@@ -703,12 +716,11 @@ fn handle_notification(shared: &Shared, n: &JsonRpcNotification) {
 
 /// The [`RequestContext`] a notification carries: identity and trace context
 /// from its `_meta`, so an observer can tell *which* client's roots moved.
-fn notification_context(n: &JsonRpcNotification) -> RequestContext {
-    build_context(&JsonRpcRequest::new(
-        RequestId::from(0i64),
-        n.method.clone(),
-        n.params.clone(),
-    ))
+fn notification_context(n: &JsonRpcNotification, ext: &Extensions) -> RequestContext {
+    build_context(
+        &JsonRpcRequest::new(RequestId::from(0i64), n.method.clone(), n.params.clone()),
+        ext,
+    )
 }
 
 async fn handle_request<S: McpServerCore>(
@@ -717,6 +729,7 @@ async fn handle_request<S: McpServerCore>(
     supported: &[ProtocolVersion],
     shared: &Shared,
     req: JsonRpcRequest,
+    ext: &Extensions,
     cancel: CancellationToken,
 ) -> Result<JsonRpcMessage, ProtocolError> {
     // The fields this path needs; `signer`/`pending` flow on into
@@ -734,7 +747,7 @@ async fn handle_request<S: McpServerCore>(
     // route them to the registered extension once the client has declared its
     // capability; the legacy path falls through to the built-in equivalents
     // (core Tasks) handled by the arms below.
-    if let Some(ext) = shared
+    if let Some(extension) = shared
         .extensions
         .iter()
         .find(|e| e.methods().contains(&method.as_str()))
@@ -744,21 +757,19 @@ async fn handle_request<S: McpServerCore>(
             VersionRoute::Modern
         )
     {
-        let ctx = build_context(&req);
-        if !context_declares_extension(&ctx, ext.id()) {
+        let ctx = build_context(&req, ext);
+        if !context_declares_extension(&ctx, extension.id()) {
             // "Servers MUST return this error [-32021] for non-declaring
             // clients issuing `tasks/get`, `tasks/update`, and `tasks/cancel`
             // requests." `-32601` (a 404 over HTTP) told a client that forgot
             // to re-declare on this request that the server had no Tasks at
             // all; this names what to declare.
-            return Ok(missing_capability_response(id, ext.id()));
+            return Ok(missing_capability_response(id, extension.id()));
         }
-        let connection_id = connection_id(req.params.as_ref()).map(str::to_owned);
-        return Ok(ext
+        return Ok(extension
             .dispatch(ExtensionRequest {
                 request: req,
                 context: ctx,
-                connection_id,
             })
             .await);
     }
@@ -825,14 +836,15 @@ async fn handle_request<S: McpServerCore>(
                 sessions.as_ref(),
                 tasks_enabled,
                 &req,
+                ext,
             )
             .await;
             // A successfully initialized session gets a delivery route, so
             // list_changed notifications can reach it from the start.
             if matches!(&reply, JsonRpcMessage::Response(r) if r.error.is_none())
-                && let Some(sid) = session_id(req.params.as_ref())
+                && let Some(sid) = session_id(ext)
             {
-                subs.legacy_touch(sid, connection_id(req.params.as_ref()));
+                subs.legacy_touch(sid, ext);
             }
             Ok(reply)
         }
@@ -848,7 +860,7 @@ async fn handle_request<S: McpServerCore>(
         | methods::request::COMPLETION_COMPLETE => {
             match classify_version(req.params.as_ref(), supported) {
                 VersionRoute::Modern => {
-                    let mut ctx = build_context(&req);
+                    let mut ctx = build_context(&req, ext);
                     ctx.cancellation = cancel;
                     // Draft logging opt-in: an unrecognized level rejects the
                     // request (logging spec §Error Handling).
@@ -881,15 +893,15 @@ async fn handle_request<S: McpServerCore>(
                     )
                 }
                 VersionRoute::Legacy(revision) => {
-                    let mut ctx = match legacy_context(sessions.as_ref(), &req).await? {
+                    let mut ctx = match legacy_context(sessions.as_ref(), &req, ext).await? {
                         Ok(ctx) => ctx,
                         Err(response) => return Ok(response),
                     };
                     ctx.cancellation = cancel;
                     // Keep the session's stdio delivery route fresh for
                     // server-initiated notifications.
-                    if let Some(sid) = session_id(req.params.as_ref()) {
-                        subs.legacy_touch(sid, connection_id(req.params.as_ref()));
+                    if let Some(sid) = session_id(ext) {
+                        subs.legacy_touch(sid, ext);
                     }
                     // Core Tasks (2025-11-25 only): an augmented tools/call
                     // detaches into a task. (`tools/list` advertises
@@ -991,7 +1003,7 @@ async fn handle_request<S: McpServerCore>(
             match classify_version(req.params.as_ref(), supported) {
                 VersionRoute::Legacy(revision) => {
                     let version = revision.version();
-                    if let Err(response) = legacy_context(sessions.as_ref(), &req).await? {
+                    if let Err(response) = legacy_context(sessions.as_ref(), &req, ext).await? {
                         return Ok(response);
                     }
                     if !router.has_resources() {
@@ -1006,7 +1018,7 @@ async fn handle_request<S: McpServerCore>(
                         Err(e) => return Ok(error_response_for(id, &version, &e)),
                     };
                     // `legacy_context` proved the session id is present.
-                    let sid = session_id(req.params.as_ref()).unwrap_or_default();
+                    let sid = session_id(ext).unwrap_or_default();
                     if method == methods::request::RESOURCES_SUBSCRIBE {
                         // A hidden resource is unreachable, and that has to
                         // include watching it: every `resources/updated` names
@@ -1016,11 +1028,11 @@ async fn handle_request<S: McpServerCore>(
                         // is — subscribe never checks existence, so that is a
                         // plain success — or the refusal itself enumerates
                         // what is hidden. So it succeeds and records nothing.
-                        let ctx = build_context(&req);
+                        let ctx = build_context(&req, ext);
                         match resource_hidden(shared, router, &server, &ctx, &uri).await {
                             Ok(true) => {}
                             Ok(false) => {
-                                subs.legacy_subscribe(sid, connection_id(req.params.as_ref()), uri);
+                                subs.legacy_subscribe(sid, ext, uri);
                             }
                             Err(e) => return Ok(error_response_for(id, &version, &e)),
                         }
@@ -1042,7 +1054,7 @@ async fn handle_request<S: McpServerCore>(
         methods::request::LOGGING_SET_LEVEL => {
             match classify_version(req.params.as_ref(), supported) {
                 VersionRoute::Legacy(_) => {
-                    if let Err(response) = legacy_context(sessions.as_ref(), &req).await? {
+                    if let Err(response) = legacy_context(sessions.as_ref(), &req, ext).await? {
                         return Ok(response);
                     }
                     if !router.has_logging() {
@@ -1053,7 +1065,7 @@ async fn handle_request<S: McpServerCore>(
                         Err(e) => return Ok(error_response(id, &e)),
                     };
                     // `legacy_context` proved the session id is present.
-                    let sid = session_id(req.params.as_ref()).unwrap_or_default();
+                    let sid = session_id(ext).unwrap_or_default();
                     sessions.set_log_level(sid, level).await;
                     Ok(JsonRpcResponse::success(id, serde_json::json!({})).into())
                 }
@@ -1080,7 +1092,7 @@ async fn handle_request<S: McpServerCore>(
                 }
                 VersionRoute::Legacy(_) => {
                     // Same session gate as every other legacy method.
-                    if let Err(response) = legacy_context(sessions.as_ref(), &req).await? {
+                    if let Err(response) = legacy_context(sessions.as_ref(), &req, ext).await? {
                         return Ok(response);
                     }
                     // Served exactly when advertised: `initialize` offers the
@@ -1093,9 +1105,7 @@ async fn handle_request<S: McpServerCore>(
                         ));
                     };
                     // `legacy_context` proved the session id is present.
-                    let sid = session_id(req.params.as_ref())
-                        .unwrap_or_default()
-                        .to_owned();
+                    let sid = session_id(ext).unwrap_or_default().to_owned();
                     Ok(handle_tasks_method(store, &sid, method.as_str(), &req, id).await)
                 }
                 VersionRoute::Modern => Ok(error_response(id, &McpError::method_not_found(method))),
@@ -1239,23 +1249,14 @@ const REMOVED_IN_STATELESS: &[&str] = &[
 
 // ---- transport-asserted identifiers --------------------------------------------
 
-/// Read the transport-asserted session id from a request's `params._meta`.
-/// Transports sanitize inbound messages before injecting this key, so its
-/// presence is trustworthy in-process (see [`meta::internal`]).
-fn session_id(params: Option<&Value>) -> Option<&str> {
-    params?
-        .get("_meta")?
-        .get(meta::internal::SESSION_ID)?
-        .as_str()
+/// The session the transport (or session adapter) attached to the request.
+fn session_id(ext: &Extensions) -> Option<&str> {
+    ext.get::<SessionId>().map(SessionId::as_str)
 }
 
-/// Read the driver-asserted connection id from `params._meta` (same trust
-/// model as [`session_id`]: the boundary sanitizes before injecting).
-fn connection_id(params: Option<&Value>) -> Option<&str> {
-    params?
-        .get("_meta")?
-        .get(meta::internal::CONNECTION_ID)?
-        .as_str()
+/// The connection the transport attached to the request.
+fn connection_id(ext: &Extensions) -> Option<&str> {
+    ext.get::<ConnectionId>().map(ConnectionId::as_str)
 }
 
 /// The scope a `notifications/cancelled` may reach: the session when there is
@@ -1271,8 +1272,8 @@ fn connection_id(params: Option<&Value>) -> Option<&str> {
 /// Where there is no session — stdio, WebSocket, the stateless wire — this is
 /// the connection id exactly as before, so the "same connection" guarantee is
 /// unchanged for every transport that had it.
-fn cancel_scope(params: Option<&Value>) -> Option<&str> {
-    session_id(params).or_else(|| connection_id(params))
+fn cancel_scope(ext: &Extensions) -> Option<&str> {
+    session_id(ext).or_else(|| connection_id(ext))
 }
 
 /// Whether the request's per-request client capabilities declare `ext_id` under

@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use turbomcp_core::{
-    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, McpResult, ProtocolVersion,
-    RequestContext, RequestId, meta,
+    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, McpResult, ObservedHeaders,
+    ProtocolVersion, RequestContext, RequestId, SessionId, meta,
 };
 use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
@@ -39,10 +39,8 @@ use super::params::{
     parse_call_tool_params, parse_complete_params, parse_get_prompt_params, parse_list_params,
     parse_read_resource_params,
 };
-use super::{
-    Shared, argument_at, collect_header_params, connection_id, error_response_for, ok_value,
-    session_id,
-};
+use super::{Shared, argument_at, collect_header_params, error_response_for, ok_value};
+use crate::subscriptions::Route;
 
 /// Fill the server's configured default cache policy (SEP-2549) into a
 /// cacheable neutral result whose handler didn't set one. Applied on both wire
@@ -214,17 +212,11 @@ enum Component<'a> {
 /// Streamable HTTP has headers, and elsewhere the annotation is inert (the
 /// spec lets non-HTTP transports ignore it).
 fn check_header_mirrors(
-    req: &JsonRpcRequest,
+    observed: Option<&ObservedHeaders>,
     params: &neutral::CallToolParams,
     tool: &neutral::Tool,
 ) -> McpResult<()> {
-    let Some(observed) = req
-        .params
-        .as_ref()
-        .and_then(|p| p.get("_meta"))
-        .and_then(|m| m.get(meta::internal::OBSERVED_HEADER_PARAMS))
-        .and_then(Value::as_object)
-    else {
+    let Some(observed) = observed else {
         return Ok(());
     };
     let mut declared = Vec::new();
@@ -241,9 +233,9 @@ fn check_header_mirrors(
             (None, None) => {}
             (Some(_), None) => return mismatch("header is missing"),
             (None, Some(_)) => return mismatch("header has no matching value in the request body"),
-            (Some(_), Some(Value::Null)) => return mismatch("header contains invalid characters"),
-            (Some(body), Some(raw)) => {
-                let Some(decoded) = raw.as_str().and_then(mcp_headers::decode_value) else {
+            (Some(_), Some(None)) => return mismatch("header contains invalid characters"),
+            (Some(body), Some(Some(raw))) => {
+                let Some(decoded) = mcp_headers::decode_value(raw) else {
                     return mismatch("header has a malformed Base64 sentinel");
                 };
                 if !mirrors(body, &decoded) {
@@ -604,8 +596,8 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 server,
                 ReadResourceContext::new(ctx.clone())
                     .with_client(handle.clone())
-                    .with_progress(progress_reporter::<W>(req))
-                    .with_log(log_sender::<W>(req, &ctx, router.has_logging())),
+                    .with_progress(progress_reporter::<W>(req, &ctx))
+                    .with_log(log_sender::<W>(&ctx, router.has_logging())),
                 params,
             );
             let fut = with_cache_default(fut, shared.cache.resources_read);
@@ -671,8 +663,8 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 server,
                 GetPromptContext::new(ctx.clone())
                     .with_client(handle.clone())
-                    .with_progress(progress_reporter::<W>(req))
-                    .with_log(log_sender::<W>(req, &ctx, router.has_logging())),
+                    .with_progress(progress_reporter::<W>(req, &ctx))
+                    .with_log(log_sender::<W>(&ctx, router.has_logging())),
                 params,
             );
             let subject = ctx.identity.principal_key();
@@ -747,8 +739,8 @@ pub(super) async fn call_prepared_tool<S: McpServerCore, W: WireFamily>(
         server,
         CallToolContext::new(ctx.clone())
             .with_client(handle.clone())
-            .with_progress(progress_reporter::<W>(req))
-            .with_log(log_sender::<W>(req, &ctx, router.has_logging())),
+            .with_progress(progress_reporter::<W>(req, &ctx))
+            .with_log(log_sender::<W>(&ctx, router.has_logging())),
         params,
     );
     let validators = shared.validators.clone();
@@ -837,7 +829,7 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     }) {
         return Err(Box::new(unknown()));
     }
-    check_header_mirrors(req, &params, &tool)
+    check_header_mirrors(ctx.extensions.get::<ObservedHeaders>(), &params, &tool)
         .map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?;
     shared
         .validators
@@ -930,10 +922,9 @@ fn mrtr_handle<W: WireFamily>(
     if !W::MRTR {
         // The legacy session gate ran before dispatch, so the session id is
         // present on this path; its absence means no client channel.
-        return Ok(match session_id(req.params.as_ref()) {
-            Some(session) => ClientHandle::bidi(
-                session,
-                connection_id(req.params.as_ref()).unwrap_or_default(),
+        return Ok(match ctx.extensions.get::<SessionId>() {
+            Some(_) => ClientHandle::bidi(
+                Route::for_request(&ctx.extensions, true),
                 Arc::clone(pending),
                 ctx.client_capabilities.clone(),
                 W::VERSION,
@@ -958,7 +949,7 @@ fn mrtr_handle<W: WireFamily>(
         None => None,
     };
     Ok(ClientHandle::mrtr(
-        connection_id(req.params.as_ref()).unwrap_or_default(),
+        Route::for_request(&ctx.extensions, false),
         ctx.client_capabilities.clone(),
         fields.input_responses.unwrap_or_default(),
         state_in,
@@ -1049,25 +1040,11 @@ where
 /// AND the client opted in (the context's `log_level` carries the opt-in from
 /// either the draft `_meta` key or the legacy session's `setLevel`). Routing
 /// mirrors [`progress_reporter`].
-fn log_sender<W: WireFamily>(
-    req: &JsonRpcRequest,
-    ctx: &RequestContext,
-    logging_enabled: bool,
-) -> LogSender {
+fn log_sender<W: WireFamily>(ctx: &RequestContext, logging_enabled: bool) -> LogSender {
     let Some(min) = ctx.log_level.filter(|_| logging_enabled) else {
         return LogSender::disabled();
     };
-    let connection = connection_id(req.params.as_ref())
-        .unwrap_or_default()
-        .to_owned();
-    let session = if W::MRTR {
-        String::new()
-    } else {
-        session_id(req.params.as_ref())
-            .unwrap_or_default()
-            .to_owned()
-    };
-    LogSender::new(min, connection, session)
+    LogSender::new(min, Route::for_request(&ctx.extensions, !W::MRTR))
 }
 
 /// Build the request's [`ProgressReporter`]: live when the request carried a
@@ -1075,7 +1052,10 @@ fn log_sender<W: WireFamily>(
 /// else is treated as absent, with a warning), inert otherwise. Notifications
 /// route to the request's own stream; the legacy family may fall back to the
 /// session `GET` stream, the draft never does.
-fn progress_reporter<W: WireFamily>(req: &JsonRpcRequest) -> ProgressReporter {
+fn progress_reporter<W: WireFamily>(
+    req: &JsonRpcRequest,
+    ctx: &RequestContext,
+) -> ProgressReporter {
     let token = req
         .params
         .as_ref()
@@ -1088,17 +1068,7 @@ fn progress_reporter<W: WireFamily>(req: &JsonRpcRequest) -> ProgressReporter {
         tracing::warn!(?token, "progressToken must be a string or integer; ignored");
         return ProgressReporter::disabled();
     }
-    let connection = connection_id(req.params.as_ref())
-        .unwrap_or_default()
-        .to_owned();
-    let session = if W::MRTR {
-        String::new()
-    } else {
-        session_id(req.params.as_ref())
-            .unwrap_or_default()
-            .to_owned()
-    };
-    ProgressReporter::new(token.clone(), connection, session)
+    ProgressReporter::new(token.clone(), Route::for_request(&ctx.extensions, !W::MRTR))
 }
 
 #[cfg(test)]
@@ -1132,12 +1102,15 @@ mod header_mirror_tests {
             "route",
             arguments.as_object().cloned().unwrap_or_default(),
         );
-        let req = JsonRpcRequest::new(
-            1,
-            "tools/call",
-            Some(json!({ "_meta": { meta::internal::OBSERVED_HEADER_PARAMS: observed } })),
+        let observed = ObservedHeaders(
+            observed
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.as_str().map(str::to_owned)))
+                .collect(),
         );
-        check_header_mirrors(&req, &params, &tool())
+        check_header_mirrors(Some(&observed), &params, &tool())
     }
 
     #[test]
@@ -1193,7 +1166,6 @@ mod header_mirror_tests {
     #[test]
     fn no_observed_headers_means_no_mirroring_in_effect() {
         let params = neutral::CallToolParams::new("route", Map::new());
-        let req = JsonRpcRequest::new(1, "tools/call", None);
-        assert!(check_header_mirrors(&req, &params, &tool()).is_ok());
+        assert!(check_header_mirrors(None, &params, &tool()).is_ok());
     }
 }

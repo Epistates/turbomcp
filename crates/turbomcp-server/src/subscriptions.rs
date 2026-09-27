@@ -3,22 +3,21 @@
 //! **Draft (`subscriptions/listen`):** a subscription is `(connection,
 //! listen-request id)` plus the filter subset the server agreed to honor
 //! (subscriptions spec: the server **MUST NOT** send notification types the
-//! client didn't opt in to). Delivery resolves the connection's ordered writer
-//! lazily via [`turbomcp_service::outbound`] — a missing writer means the
-//! connection closed, and the subscription is pruned on the spot (on stdio the
-//! server holds no subscription state across reconnections, per spec). Pruning
-//! also runs when a *new* subscription is recorded, because a server whose data
-//! never changes never publishes and would otherwise keep every subscription
-//! any departed client ever opened.
+//! client didn't opt in to), delivered through the connection's [`Peer`]. A
+//! closed peer means the connection went, and the subscription is pruned on
+//! the spot (on stdio the server holds no subscription state across
+//! reconnections, per spec). Pruning also runs when a *new* subscription is
+//! recorded, because a server whose data never changes never publishes and
+//! would otherwise keep every subscription any departed client ever opened.
 //!
 //! **Legacy (`2025-11-25`):** subscriptions are per *session* —
 //! `resources/subscribe` adds a URI; `*_list_changed` goes to every live
 //! legacy session unconditionally (the old protocol has no opt-in filter; the
 //! capability advertisement is the contract). Delivery prefers the session's
-//! HTTP `GET` SSE stream ([`outbound::session_stream_id`]) and falls back to
-//! the byte-pipe connection the session was last seen on (stdio). Routes
-//! without a reachable writer are kept — an HTTP client may open its GET
-//! stream later — bounded by [`MAX_LEGACY_ROUTES`].
+//! HTTP `GET` SSE stream (from the transport's [`SessionStreams`]) and falls
+//! back to the byte-pipe connection the session was last seen on (stdio).
+//! Routes without a reachable stream are kept (an HTTP client may open its
+//! `GET` stream later), bounded by [`MAX_LEGACY_ROUTES`].
 //!
 //! `*_list_changed` publishes are coalesced: bursts inside
 //! [`COALESCE_WINDOW_MS`] collapse into one notification per kind.
@@ -29,10 +28,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use turbomcp_core::{JsonRpcMessage, JsonRpcNotification, RequestId, meta};
+use turbomcp_core::{Extensions, JsonRpcMessage, JsonRpcNotification, RequestId, SessionId, meta};
 use turbomcp_protocol::methods;
 use turbomcp_protocol::v2026_07_28::types as v0728;
-use turbomcp_service::outbound;
+use turbomcp_service::{Delivery, Peer, SessionStreams};
 
 /// How long a `*_list_changed` burst is allowed to accumulate before the one
 /// coalesced notification goes out.
@@ -79,9 +78,12 @@ pub(crate) const MAX_LEGACY_ROUTES: usize = 4096;
 /// A legacy session's delivery route: where its messages go and which
 /// resource URIs it subscribed to.
 struct LegacyRoute {
-    /// The byte-pipe connection the session was last seen on (stdio delivery
-    /// fallback); empty for HTTP-only sessions.
-    connection: String,
+    /// The connection the session was last seen on: the stdio delivery path
+    /// (on HTTP, a finished request's stream, closed and so never used).
+    connection: Option<Peer>,
+    /// The HTTP transport's registry of session `GET` streams, when the
+    /// session rides Streamable HTTP.
+    streams: Option<SessionStreams>,
     uris: HashSet<String>,
     /// When the session last sent anything.
     last_seen: Instant,
@@ -90,17 +92,34 @@ struct LegacyRoute {
 impl LegacyRoute {
     fn new() -> Self {
         Self {
-            connection: String::new(),
+            connection: None,
+            streams: None,
             uris: HashSet::new(),
             last_seen: Instant::now(),
         }
     }
+
+    /// Where a session-scoped publish (list_changed, resources/updated) goes:
+    /// the HTTP `GET` stream first, then the byte-pipe connection. `None` is
+    /// not an error; an HTTP client may simply not have its stream open.
+    fn peer(&self, session: &str) -> Option<Peer> {
+        self.streams
+            .as_ref()
+            .and_then(|streams| streams.get(session))
+            .or_else(|| self.connection.clone().filter(Peer::is_open))
+    }
+}
+
+/// A draft subscription: where it is delivered and what it asked for.
+struct Subscription {
+    peer: Peer,
+    filter: v0728::SubscriptionFilter,
 }
 
 /// Shared map of live subscriptions; dispatcher clones share it via `Arc`.
 #[derive(Default)]
 pub(crate) struct SubscriptionRegistry {
-    inner: Mutex<HashMap<(String, RequestId), v0728::SubscriptionFilter>>,
+    inner: Mutex<HashMap<(String, RequestId), Subscription>>,
     /// Legacy (`2025-11-25`) per-session routes, keyed by session id.
     legacy: Mutex<HashMap<String, LegacyRoute>>,
     /// One pending-flush flag per [`ListChangedKind`] slot.
@@ -108,22 +127,23 @@ pub(crate) struct SubscriptionRegistry {
 }
 
 impl SubscriptionRegistry {
-    pub(crate) fn insert(
-        &self,
-        connection: &str,
-        id: &RequestId,
-        filter: v0728::SubscriptionFilter,
-    ) {
+    pub(crate) fn insert(&self, peer: &Peer, id: &RequestId, filter: v0728::SubscriptionFilter) {
         let mut live = self.lock();
         // Reclaim subscriptions whose connection has since closed. `publish`
         // does this too, but a server whose data never changes never publishes,
         // and would otherwise accumulate one entry per client that ever
         // subscribed and went away. Subscribing is where the map grows, so it
-        // is also where it shrinks; a missing writer *is* what dead means, so
+        // is also where it shrinks; a closed peer *is* what dead means, so
         // this can never disturb a live subscription. O(n) under a lock, but n
         // is the number of open subscriptions and a listen is a rare event.
-        live.retain(|(conn, _), _| outbound::writer(conn).is_some());
-        live.insert((connection.to_owned(), id.clone()), filter);
+        live.retain(|_, sub| sub.peer.is_open());
+        live.insert(
+            (peer.id().as_str().to_owned(), id.clone()),
+            Subscription {
+                peer: peer.clone(),
+                filter,
+            },
+        );
     }
 
     /// Drop the subscription opened by `(connection, id)`, if any. Wired to
@@ -136,17 +156,20 @@ impl SubscriptionRegistry {
 
     // ---- legacy (2025-11-25) session routes -----------------------------------
 
-    /// Record (or refresh) where a legacy session's messages can be delivered.
-    /// Called on every legacy dispatch so the stdio fallback stays current.
-    pub(crate) fn legacy_touch(&self, session: &str, connection: Option<&str>) {
+    /// Record (or refresh) where a legacy session's messages can be delivered,
+    /// from what the request's transport attached. Called on every legacy
+    /// dispatch so the stdio fallback stays current.
+    pub(crate) fn legacy_touch(&self, session: &str, ext: &Extensions) {
+        let peer = ext.get::<Peer>();
         let mut routes = self.lock_legacy();
         if !routes.contains_key(session) {
             // A byte pipe carries one session at a time. A new one on the same
             // connection (the client initialized again) replaces the old, whose
             // route would otherwise deliver every notification twice and keep
             // sending updates for URIs the new session never subscribed to.
-            if let Some(conn) = connection.filter(|c| !c.is_empty()) {
-                routes.retain(|_, route| route.connection != conn);
+            if let Some(peer) = peer {
+                routes
+                    .retain(|_, route| route.connection.as_ref().map(Peer::id) != Some(peer.id()));
             }
             if routes.len() >= MAX_LEGACY_ROUTES {
                 // A route nothing can be delivered to is dead weight; after
@@ -154,7 +177,7 @@ impl SubscriptionRegistry {
                 // live sessions' subscriptions.
                 let victim = routes
                     .iter()
-                    .filter(|(id, route)| legacy_writer(id, &route.connection).is_none())
+                    .filter(|(id, route)| route.peer(id).is_none())
                     .min_by_key(|(_, route)| route.last_seen)
                     .or_else(|| routes.iter().min_by_key(|(_, route)| route.last_seen))
                     .map(|(id, _)| id.clone());
@@ -167,15 +190,18 @@ impl SubscriptionRegistry {
             .entry(session.to_owned())
             .or_insert_with(LegacyRoute::new);
         route.last_seen = Instant::now();
-        if let Some(conn) = connection {
-            conn.clone_into(&mut route.connection);
+        if let Some(peer) = peer {
+            route.connection = Some(peer.clone());
+        }
+        if let Some(streams) = ext.get::<SessionStreams>() {
+            route.streams = Some(streams.clone());
         }
     }
 
     /// Legacy `resources/subscribe`: deliver `notifications/resources/updated`
     /// for `uri` to this session.
-    pub(crate) fn legacy_subscribe(&self, session: &str, connection: Option<&str>, uri: String) {
-        self.legacy_touch(session, connection);
+    pub(crate) fn legacy_subscribe(&self, session: &str, ext: &Extensions, uri: String) {
+        self.legacy_touch(session, ext);
         self.lock_legacy()
             .get_mut(session)
             .expect("touched above")
@@ -245,23 +271,22 @@ impl SubscriptionRegistry {
         extra: Option<(&str, Value)>,
         wants: impl Fn(&LegacyRoute) -> bool,
     ) {
-        let targets: Vec<(String, String)> = self
+        // No stream right now is not a reason to drop the route: an HTTP
+        // client may reconnect its `GET`.
+        let targets: Vec<Peer> = self
             .lock_legacy()
             .iter()
             .filter(|(_, route)| wants(route))
-            .map(|(session, route)| (session.clone(), route.connection.clone()))
+            .filter_map(|(session, route)| route.peer(session))
             .collect();
 
-        for (session, connection) in targets {
-            let Some(writer) = legacy_writer(&session, &connection) else {
-                continue; // no stream right now; the route stays (HTTP may reconnect)
-            };
+        for peer in targets {
             let params = extra
                 .as_ref()
                 .map(|(key, value)| json!({ *key: value.clone() }));
             let note = JsonRpcNotification::new(method, params);
-            // Never waits on one session: see `outbound::offer`.
-            outbound::offer(&session, &writer, note.into());
+            // Never waits on one session: see `Peer::offer`.
+            peer.offer(note.into());
         }
     }
 
@@ -274,21 +299,17 @@ impl SubscriptionRegistry {
         extra: Option<(&str, Value)>,
         wants: impl Fn(&v0728::SubscriptionFilter) -> bool,
     ) {
-        let targets: Vec<(String, RequestId)> = self
+        let targets: Vec<(String, RequestId, Peer)> = self
             .lock()
             .iter()
-            .filter(|(_, filter)| wants(filter))
-            .map(|(key, _)| key.clone())
+            .filter(|(_, sub)| wants(&sub.filter))
+            .map(|((conn, id), sub)| (conn.clone(), id.clone(), sub.peer.clone()))
             .collect();
 
-        for (connection, id) in targets {
-            let Some(writer) = outbound::writer(&connection) else {
-                self.remove(&connection, &id);
-                continue;
-            };
+        for (connection, id, peer) in targets {
             let note = subscription_notification(method, &id, extra.clone());
-            // Never waits on one subscriber: see `outbound::offer`.
-            if outbound::offer(&connection, &writer, note) == outbound::Delivery::Closed {
+            // Never waits on one subscriber: see `Peer::offer`.
+            if peer.offer(note) == Delivery::Closed {
                 self.remove(&connection, &id);
             }
         }
@@ -308,29 +329,22 @@ impl SubscriptionRegistry {
         // Take the targets and clear under the lock — it must not be held
         // across an await, and a subscription being torn down must stop
         // receiving notifications either way.
-        let targets: Vec<(String, RequestId)> = {
+        let targets: Vec<(RequestId, Peer)> = {
             let mut live = self.lock();
-            let targets = live.keys().cloned().collect();
-            live.clear();
-            targets
+            live.drain().map(|((_, id), sub)| (id, sub.peer)).collect()
         };
-        for (connection, id) in targets {
-            let Some(writer) = outbound::writer(&connection) else {
-                continue;
-            };
+        for (id, peer) in targets {
             let result = json!({
                 "resultType": turbomcp_protocol::neutral::result_type::COMPLETE,
                 "_meta": { meta::keys::SUBSCRIPTION_ID: subscription_id_value(&id) },
             });
-            let _ = writer
+            let _ = peer
                 .send(turbomcp_core::JsonRpcResponse::success(id, result).into())
                 .await;
         }
     }
 
-    fn lock(
-        &self,
-    ) -> std::sync::MutexGuard<'_, HashMap<(String, RequestId), v0728::SubscriptionFilter>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, RequestId), Subscription>> {
         self.inner.lock().expect("subscription registry poisoned")
     }
 
@@ -339,39 +353,51 @@ impl SubscriptionRegistry {
     }
 }
 
-/// Resolve a legacy session's server→client writer for *session-scoped*
-/// publishes (list_changed, resources/updated): the HTTP `GET` SSE stream
-/// first, then the byte-pipe connection the session was last seen on. `None`
-/// is not an error — an HTTP client may simply not have its stream open.
-pub(crate) fn legacy_writer(
-    session: &str,
-    connection: &str,
-) -> Option<tokio::sync::mpsc::Sender<JsonRpcMessage>> {
-    outbound::writer(&outbound::session_stream_id(session)).or_else(|| {
-        (!connection.is_empty())
-            .then(|| outbound::writer(connection))
-            .flatten()
-    })
+/// Where a request's server→client messages go (inline requests, progress,
+/// log lines): the originating request's own stream first (its POST SSE
+/// response on HTTP, the pipe on stdio), per the transports spec's SHOULD; then,
+/// on the legacy wires only, the session's `GET` stream (a MAY). The draft
+/// forbids delivering request-scoped messages on any stream but the request's
+/// own, so a draft route has no fallback.
+#[derive(Clone, Default, Debug)]
+pub(crate) struct Route {
+    peer: Option<Peer>,
+    session: Option<(SessionStreams, SessionId)>,
 }
 
-/// Resolve the channel for a *request-related* server→client message (inline
-/// bidi requests; progress and log notifications): the originating request's
-/// own stream first — its POST SSE response on HTTP, the pipe on stdio — per
-/// the transports spec's SHOULD; then the session's `GET` stream (legacy MAY).
-/// Draft callers pass an empty `session`: the draft forbids delivering
-/// request-scoped messages on any stream but the request's own.
-pub(crate) fn request_writer(
-    connection: &str,
-    session: &str,
-) -> Option<tokio::sync::mpsc::Sender<JsonRpcMessage>> {
-    (!connection.is_empty())
-        .then(|| outbound::writer(connection))
-        .flatten()
-        .or_else(|| {
-            (!session.is_empty())
-                .then(|| outbound::writer(&outbound::session_stream_id(session)))
-                .flatten()
+impl Route {
+    /// The route for a request, from what its transport attached.
+    pub(crate) fn for_request(ext: &Extensions, session_fallback: bool) -> Self {
+        let session = session_fallback
+            .then(|| {
+                ext.get::<SessionStreams>()
+                    .cloned()
+                    .zip(ext.get::<SessionId>().cloned())
+            })
+            .flatten();
+        Self {
+            peer: ext.get::<Peer>().cloned(),
+            session,
+        }
+    }
+
+    /// A route to exactly `peer` (tests).
+    #[cfg(test)]
+    pub(crate) fn to(peer: Peer) -> Self {
+        Self {
+            peer: Some(peer),
+            session: None,
+        }
+    }
+
+    /// The live stream to write to right now, if any.
+    pub(crate) fn peer(&self) -> Option<Peer> {
+        self.peer.clone().filter(Peer::is_open).or_else(|| {
+            self.session
+                .as_ref()
+                .and_then(|(streams, session)| streams.get(session.as_str()))
         })
+    }
 }
 
 /// The `_meta.subscriptionId` value for a listen request id: the JSON-RPC ID
@@ -483,14 +509,10 @@ mod tests {
     #[tokio::test]
     async fn publish_respects_filters_and_stamps_subscription_id() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let _guard = outbound::register("sub-test-conn", tx);
+        let peer = Peer::new("sub-test-conn", &tx);
         let reg = Arc::new(SubscriptionRegistry::default());
-        reg.insert(
-            "sub-test-conn",
-            &RequestId::from(1i64),
-            filter(true, &["file://a"]),
-        );
-        reg.insert("sub-test-conn", &RequestId::from(2i64), filter(false, &[]));
+        reg.insert(&peer, &RequestId::from(1i64), filter(true, &["file://a"]));
+        reg.insert(&peer, &RequestId::from(2i64), filter(false, &[]));
 
         reg.publish_resource_updated("file://a").await;
         reg.publish(methods::notification::TOOLS_LIST_CHANGED, None, |f| {
@@ -523,11 +545,11 @@ mod tests {
     #[tokio::test]
     async fn close_all_answers_every_subscription_and_clears() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let _guard = outbound::register("close-conn", tx);
+        let peer = Peer::new("close-conn", &tx);
         let reg = Arc::new(SubscriptionRegistry::default());
-        reg.insert("close-conn", &RequestId::from(7i64), filter(true, &[]));
+        reg.insert(&peer, &RequestId::from(7i64), filter(true, &[]));
         reg.insert(
-            "close-conn",
+            &peer,
             &RequestId::String("listen-a".into()),
             filter(true, &[]),
         );
@@ -561,11 +583,10 @@ mod tests {
     #[tokio::test]
     async fn dead_connections_are_pruned_on_publish() {
         let reg = Arc::new(SubscriptionRegistry::default());
-        reg.insert(
-            "never-registered",
-            &RequestId::from(1i64),
-            filter(true, &[]),
-        );
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let gone = Peer::new("never-registered", &tx);
+        drop(tx);
+        reg.insert(&gone, &RequestId::from(1i64), filter(true, &[]));
         reg.publish(methods::notification::TOOLS_LIST_CHANGED, None, |_| true)
             .await;
         assert!(
@@ -578,22 +599,20 @@ mod tests {
     /// nothing to reclaim on: clients that subscribe and vanish accumulate.
     /// Subscribing is itself the moment the map grows, so it is also where the
     /// dead entries go — no live subscription is ever disturbed, because a
-    /// writer that is gone is what "dead" means here.
+    /// closed peer is what "dead" means here.
     #[tokio::test]
     async fn subscribing_reclaims_the_connections_that_have_since_gone() {
         let reg = Arc::new(SubscriptionRegistry::default());
         for i in 0..50 {
-            reg.insert(
-                &format!("gone-{i}"),
-                &RequestId::from(i64::from(i)),
-                filter(true, &[]),
-            );
+            let (tx, _rx) = tokio::sync::mpsc::channel(1);
+            let gone = Peer::new(format!("gone-{i}"), &tx);
+            reg.insert(&gone, &RequestId::from(i64::from(i)), filter(true, &[]));
         }
 
         // One live subscriber, arriving after the others have gone.
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
-        let _guard = outbound::register("still-here", tx);
-        reg.insert("still-here", &RequestId::from(99i64), filter(true, &[]));
+        let peer = Peer::new("still-here", &tx);
+        reg.insert(&peer, &RequestId::from(99i64), filter(true, &[]));
 
         assert_eq!(
             reg.lock().len(),
@@ -609,9 +628,9 @@ mod tests {
     #[tokio::test]
     async fn list_changed_bursts_coalesce_into_one_notification() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let _guard = outbound::register("coalesce-conn", tx);
+        let peer = Peer::new("coalesce-conn", &tx);
         let reg = Arc::new(SubscriptionRegistry::default());
-        reg.insert("coalesce-conn", &RequestId::from(1i64), filter(true, &[]));
+        reg.insert(&peer, &RequestId::from(1i64), filter(true, &[]));
 
         let notifier = ServerNotifier::new(Arc::clone(&reg), [true; 3]);
         for _ in 0..5 {
@@ -634,15 +653,11 @@ mod tests {
     async fn a_subscriber_that_stops_reading_does_not_stall_the_rest() {
         let (stuck_tx, _stuck_rx) = tokio::sync::mpsc::channel(1);
         let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(8);
-        let _stuck = outbound::register("stalled-reader", stuck_tx);
-        let _live = outbound::register("live-reader", live_tx);
+        let stuck = Peer::new("stalled-reader", &stuck_tx);
+        let live = Peer::new("live-reader", &live_tx);
         let reg = Arc::new(SubscriptionRegistry::default());
-        reg.insert(
-            "stalled-reader",
-            &RequestId::from(1i64),
-            filter(false, &["x"]),
-        );
-        reg.insert("live-reader", &RequestId::from(2i64), filter(false, &["x"]));
+        reg.insert(&stuck, &RequestId::from(1i64), filter(false, &["x"]));
+        reg.insert(&live, &RequestId::from(2i64), filter(false, &["x"]));
 
         let notifier = ServerNotifier::new(Arc::clone(&reg), [true; 3]);
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -664,9 +679,9 @@ mod tests {
     #[tokio::test]
     async fn announcing_an_unadvertised_capability_sends_nothing() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let _guard = outbound::register("tools-only-conn", tx);
+        let peer = Peer::new("tools-only-conn", &tx);
         let reg = Arc::new(SubscriptionRegistry::default());
-        reg.legacy_touch("sess", Some("tools-only-conn"));
+        reg.legacy_touch("sess", &Extensions::new().with(peer.clone()));
 
         let notifier = ServerNotifier::new(Arc::clone(&reg), [true, false, false]);
         notifier.resources_list_changed();

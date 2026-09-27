@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
-use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult};
+use turbomcp_core::{
+    Identity, Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpRequest, McpResult,
+};
 use turbomcp_ext_tasks::{EXTENSION_ID, TasksExtension};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
@@ -69,7 +71,7 @@ fn draft_meta() -> Value {
     })
 }
 
-async fn call(svc: &mut VersionDispatcher<Tools>, req: JsonRpcRequest) -> Value {
+async fn call(svc: &mut VersionDispatcher<Tools>, req: impl Into<McpRequest>) -> Value {
     let JsonRpcMessage::Response(r) = svc
         .ready()
         .await
@@ -247,21 +249,26 @@ async fn at_capacity_the_augmented_call_runs_synchronously() {
 #[tokio::test]
 async fn another_issuer_cannot_read_update_or_cancel_a_task() {
     let mut svc = dispatcher();
-    let principal_meta = |issuer: Option<&str>| {
-        let mut meta = draft_meta();
-        if let Some(issuer) = issuer {
-            meta["io.turbomcp.internal/identity"] = json!({"sub":"alice","claims":{"iss":issuer}});
+    // Alice as `issuer` (or anonymous), attached the way an authenticating
+    // transport attaches her.
+    let as_issuer = |issuer: Option<&str>, id: i64, method: &str, mut params: Value| {
+        params["_meta"] = draft_meta();
+        let request = McpRequest::new(JsonRpcRequest::new(id, method, Some(params)));
+        match issuer {
+            Some(issuer) => request.with(Identity::Bearer {
+                sub: "alice".into(),
+                claims: json!({ "iss": issuer }).as_object().unwrap().clone(),
+            }),
+            None => request,
         }
-        meta
     };
     let created = call(
         &mut svc,
-        JsonRpcRequest::new(
+        as_issuer(
+            Some("issuer-a"),
             1,
             "tools/call",
-            Some(json!({
-                "name":"slow", "arguments":{}, "_meta":principal_meta(Some("issuer-a"))
-            })),
+            json!({ "name": "slow", "arguments": {} }),
         ),
     )
     .await;
@@ -270,12 +277,11 @@ async fn another_issuer_cannot_read_update_or_cancel_a_task() {
         for method in ["tasks/get", "tasks/update", "tasks/cancel"] {
             let refused = call(
                 &mut svc,
-                JsonRpcRequest::new(
+                as_issuer(
+                    issuer,
                     2,
                     method,
-                    Some(json!({
-                        "taskId":task_id, "inputResponses":{}, "_meta":principal_meta(issuer)
-                    })),
+                    json!({ "taskId": task_id, "inputResponses": {} }),
                 ),
             )
             .await;
@@ -284,12 +290,11 @@ async fn another_issuer_cannot_read_update_or_cancel_a_task() {
     }
     let owned = call(
         &mut svc,
-        JsonRpcRequest::new(
+        as_issuer(
+            Some("issuer-a"),
             3,
             "tasks/get",
-            Some(json!({
-                "taskId":task_id, "_meta":principal_meta(Some("issuer-a"))
-            })),
+            json!({ "taskId": task_id }),
         ),
     )
     .await;
@@ -299,12 +304,11 @@ async fn another_issuer_cannot_read_update_or_cancel_a_task() {
     );
     let cancelled = call(
         &mut svc,
-        JsonRpcRequest::new(
+        as_issuer(
+            Some("issuer-a"),
             4,
             "tasks/cancel",
-            Some(json!({
-                "taskId":task_id, "_meta":principal_meta(Some("issuer-a"))
-            })),
+            json!({ "taskId": task_id }),
         ),
     )
     .await;

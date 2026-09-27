@@ -15,7 +15,7 @@ use tower::{Layer, Service};
 use tracing::Instrument;
 use tracing::field::Empty;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
-use turbomcp_core::{JsonRpcMessage, RedactedSubject, meta};
+use turbomcp_core::{Identity, JsonRpcMessage, McpRequest, RedactedSubject};
 
 use crate::SpanPolicy;
 use crate::propagation;
@@ -60,9 +60,9 @@ pub struct TraceContextService<S> {
     policy: SpanPolicy,
 }
 
-impl<S, E> Service<JsonRpcMessage> for TraceContextService<S>
+impl<S, E> Service<McpRequest> for TraceContextService<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = E>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = E>,
 {
     type Response = Option<JsonRpcMessage>;
     type Error = E;
@@ -72,7 +72,7 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
+    fn call(&mut self, req: McpRequest) -> Self::Future {
         let span = self.make_span(&req);
         self.inner.call(req).instrument(span)
     }
@@ -81,8 +81,8 @@ where
 impl<S> TraceContextService<S> {
     /// Build the per-request span: parent it to the caller's extracted trace
     /// context and record method + redacted identity.
-    fn make_span(&self, req: &JsonRpcMessage) -> tracing::Span {
-        let method = req.method().unwrap_or("(response)");
+    fn make_span(&self, req: &McpRequest) -> tracing::Span {
+        let method = req.message.method().unwrap_or("(response)");
         // `otel.name` sets the exported span name; `otel.kind` marks it a server
         // span. Identity fields are filled below (Empty until recorded).
         let span = tracing::info_span!(
@@ -94,22 +94,24 @@ impl<S> TraceContextService<S> {
             mcp.identity.claims = Empty,
         );
 
-        let Some(meta) = request_meta(req) else {
-            return span;
-        };
-
         // Continue the caller's distributed trace, if any. `set_parent` errors
         // only when no `tracing-opentelemetry` layer is installed (no exporter
         // configured) — harmless, the span just has no OTel parent then.
-        let _ = span.set_parent(propagation::extract(meta));
+        if let Some(meta) = request_meta(&req.message) {
+            let _ = span.set_parent(propagation::extract(meta));
+        }
 
-        // Redacted identity attributes (PII-safe by default).
-        let identity = meta::extract_identity(meta);
-        if identity.is_authenticated() {
+        // Redacted identity attributes (PII-safe by default), from what the
+        // transport authenticated.
+        if let Some(identity) = req
+            .extensions
+            .get::<Identity>()
+            .filter(|i| i.is_authenticated())
+        {
             if self.policy.redact_subject {
                 span.record(
                     "mcp.identity.sub",
-                    tracing::field::display(RedactedSubject(&identity)),
+                    tracing::field::display(RedactedSubject(identity)),
                 );
             } else if let Some(sub) = identity.subject() {
                 span.record("mcp.identity.sub", sub);
@@ -152,7 +154,7 @@ mod tests {
     #[derive(Clone)]
     struct Inner;
 
-    impl Service<JsonRpcMessage> for Inner {
+    impl Service<McpRequest> for Inner {
         type Response = Option<JsonRpcMessage>;
         type Error = Infallible;
         type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
@@ -161,7 +163,8 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
+        fn call(&mut self, request: McpRequest) -> Self::Future {
+            let req = request.message;
             let reply = match req {
                 JsonRpcMessage::Request(r) => {
                     Some(JsonRpcResponse::success(r.id, json!({})).into())
@@ -181,9 +184,12 @@ mod tests {
         let svc = TraceContextLayer::new().layer(Inner);
         let req = request_with_meta(json!({
             "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
-            "io.turbomcp.internal/identity": { "sub": "alice", "claims": { "scope": "read" } },
         }));
-        let resp = svc.oneshot(req).await.unwrap();
+        let alice = Identity::Bearer {
+            sub: "alice".into(),
+            claims: json!({ "scope": "read" }).as_object().unwrap().clone(),
+        };
+        let resp = svc.oneshot(McpRequest::new(req).with(alice)).await.unwrap();
         assert!(matches!(resp, Some(JsonRpcMessage::Response(_))));
     }
 
@@ -191,7 +197,7 @@ mod tests {
     async fn handles_request_without_meta() {
         let svc = TraceContextLayer::new().layer(Inner);
         let req: JsonRpcMessage = JsonRpcRequest::new(1, "ping", None).into();
-        let resp = svc.oneshot(req).await.unwrap();
+        let resp = svc.oneshot(req.into()).await.unwrap();
         assert!(matches!(resp, Some(JsonRpcMessage::Response(_))));
     }
 
@@ -201,14 +207,14 @@ mod tests {
         fn assert_mcp_service<S: turbomcp_service::McpService>(_: &S) {}
         #[derive(Clone)]
         struct Dispatcher;
-        impl Service<JsonRpcMessage> for Dispatcher {
+        impl Service<McpRequest> for Dispatcher {
             type Response = Option<JsonRpcMessage>;
             type Error = turbomcp_service::ProtocolError;
             type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
             fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
                 Poll::Ready(Ok(()))
             }
-            fn call(&mut self, _: JsonRpcMessage) -> Self::Future {
+            fn call(&mut self, _: McpRequest) -> Self::Future {
                 std::future::ready(Ok(None))
             }
         }

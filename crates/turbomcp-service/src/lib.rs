@@ -4,8 +4,11 @@
 //! and the shared RPC middleware that sits between them.
 //!
 //! - [`McpService`] — the protocol seam. Every server, every middleware layer,
-//!   reduces to `tower::Service<JsonRpcMessage, Response = Option<JsonRpcMessage>,
-//!   Error = ProtocolError>`. Notifications produce `None`.
+//!   reduces to `tower::Service<McpRequest, Response = Option<JsonRpcMessage>,
+//!   Error = ProtocolError>`. Notifications produce `None`. An [`McpRequest`]
+//!   is the message plus the typed facts its transport attached (connection,
+//!   session, identity, and the [`Peer`] that reaches the client).
+//! - [`Peer`] — where server-initiated messages to one connection go.
 //! - [`Transport`] — a bidirectional `JsonRpcMessage` channel (stdio, HTTP, WS).
 //! - [`ProtocolError`] — the service/transport boundary error, with the
 //!   canonical [`mcp_to_jsonrpc_error`] mapping for user errors.
@@ -25,8 +28,8 @@ mod error;
 pub mod io;
 pub mod mcp_headers;
 mod middleware;
-pub mod outbound;
 mod panic;
+mod peer;
 mod ratelimit;
 mod serve;
 mod session;
@@ -36,6 +39,7 @@ pub use auth::{AuthDecision, AuthFuture, HttpAuthenticator};
 pub use error::{ProtocolError, mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
 pub use middleware::{Tracing, TracingLayer};
 pub use panic::{catch_handler_panic, catch_panic};
+pub use peer::{Delivery, Peer, PeerClosed, SessionStreams, StreamGuard};
 pub use ratelimit::{GovernorRateLimiter, RateKey, RateLimiter};
 pub use serve::{ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
@@ -44,19 +48,20 @@ pub use transport::{HttpFailure, Transport};
 pub use turbomcp_core::CancellationToken;
 
 use turbomcp_core::JsonRpcMessage;
+pub use turbomcp_core::McpRequest;
 
 /// The protocol seam, as a marker trait over the canonical `tower::Service`
 /// shape. Blanket-implemented: anything with the right `Service` signature *is*
 /// an `McpService`, so users never implement this directly.
 pub trait McpService:
-    tower::Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>
+    tower::Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>
     + Send
     + 'static
 {
 }
 
 impl<T> McpService for T where
-    T: tower::Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>
+    T: tower::Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>
         + Send
         + 'static
 {
@@ -73,7 +78,7 @@ mod tests {
     #[derive(Clone)]
     struct Echo;
 
-    impl Service<JsonRpcMessage> for Echo {
+    impl Service<McpRequest> for Echo {
         type Response = Option<JsonRpcMessage>;
         type Error = ProtocolError;
         type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
@@ -82,7 +87,8 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
+        fn call(&mut self, req: McpRequest) -> Self::Future {
+            let req = req.message;
             let reply = match req {
                 JsonRpcMessage::Request(r) => Some(
                     JsonRpcResponse::success(r.id, serde_json::json!({"echo": r.method})).into(),
@@ -103,7 +109,7 @@ mod tests {
 
         let mut svc = svc;
         let req: JsonRpcMessage = JsonRpcRequest::new(7, "tools/list", None).into();
-        let resp = svc.ready().await.unwrap().call(req).await.unwrap();
+        let resp = svc.ready().await.unwrap().call(req.into()).await.unwrap();
         match resp {
             Some(JsonRpcMessage::Response(r)) => {
                 assert_eq!(r.result.unwrap()["echo"], "tools/list");

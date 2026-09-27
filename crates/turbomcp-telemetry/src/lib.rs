@@ -8,7 +8,7 @@
 //!
 //! ## Compose the layer
 //!
-//! [`TraceContextLayer`] is a [`tower::Layer`] over `Service<JsonRpcMessage>`,
+//! [`TraceContextLayer`] is a [`tower::Layer`] over `Service<McpRequest>`,
 //! so it wraps a dispatcher like any shared RPC middleware and works identically
 //! under stdio, HTTP, and WS:
 //!

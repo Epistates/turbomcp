@@ -278,7 +278,7 @@ async fn listen_without_a_streaming_connection_is_rejected_in_band() {
         .ready()
         .await
         .unwrap()
-        .call(listen(1, json!({ "toolsListChanged": true })))
+        .call(listen(1, json!({ "toolsListChanged": true })).into())
         .await
         .unwrap()
         .expect("an error response");

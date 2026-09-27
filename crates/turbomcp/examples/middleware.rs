@@ -37,8 +37,8 @@ use turbomcp::methods::request;
 use turbomcp::prelude::*;
 use turbomcp::tower::{Layer, Service, ServiceBuilder, ServiceExt};
 use turbomcp::{
-    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, LegacySessionAdapter, ProtocolError,
-    VersionDispatcher, mcp_to_jsonrpc_error, serve_stdio,
+    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, LegacySessionAdapter, McpRequest,
+    ProtocolError, VersionDispatcher, mcp_to_jsonrpc_error, serve_stdio,
 };
 
 // ---- the server being wrapped ------------------------------------------------
@@ -96,9 +96,9 @@ struct Audit<S> {
     log: Arc<Mutex<Vec<String>>>,
 }
 
-impl<S> Service<JsonRpcMessage> for Audit<S>
+impl<S> Service<McpRequest> for Audit<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
     S::Future: Send + 'static,
 {
     type Response = Option<JsonRpcMessage>;
@@ -109,8 +109,8 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
-        let method = req.method().unwrap_or("(response)").to_owned();
+    fn call(&mut self, req: McpRequest) -> Self::Future {
+        let method = req.message.method().unwrap_or("(response)").to_owned();
         let log = Arc::clone(&self.log);
         let started = Instant::now();
         let fut = self.inner.call(req);
@@ -180,9 +180,9 @@ impl<S> Policy<S> {
     }
 }
 
-impl<S> Service<JsonRpcMessage> for Policy<S>
+impl<S> Service<McpRequest> for Policy<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
     S::Future: Send + 'static,
 {
     type Response = Option<JsonRpcMessage>;
@@ -193,12 +193,13 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
-        let refuse = Self::called_tool(&req).is_some_and(|tool| self.denied.contains(&tool));
+    fn call(&mut self, req: McpRequest) -> Self::Future {
+        let refuse =
+            Self::called_tool(&req.message).is_some_and(|tool| self.denied.contains(&tool));
         if refuse {
             // Only a `Request` reaches here (`called_tool` matched one), so the
             // id needed to answer is always present.
-            let JsonRpcMessage::Request(r) = &req else {
+            let JsonRpcMessage::Request(r) = &req.message else {
                 unreachable!("called_tool only matches requests")
             };
             // `mcp_to_jsonrpc_error` keeps the code identical to what the
@@ -222,8 +223,9 @@ where
 /// Both layers sit *outside* [`LegacySessionAdapter`], seeing frames as the
 /// client sent them. Wrapping the other way
 /// (`LegacySessionAdapter::new(layers.service(dispatcher))`) puts them inside,
-/// where the negotiated protocol version and session id are already stamped into
-/// `_meta` — the right side for anything that varies by protocol revision.
+/// where the negotiated protocol version is already stamped into `_meta` and the
+/// session id attached to the request: the right side for anything that varies
+/// by protocol revision or session.
 ///
 /// The return type spells the stack out: layers are types, so a mis-stacked
 /// service is a compile error rather than a runtime surprise.

@@ -15,12 +15,12 @@ use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
-use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcNotification, McpResult};
+use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcNotification, McpRequest, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_service::{ProtocolError, outbound};
+use turbomcp_service::{Peer, ProtocolError};
 use turbomcp_transport_http::{HttpConfig, router};
 
 fn call_request(id: i64) -> Request<Body> {
@@ -342,7 +342,7 @@ struct Parked {
     dropped: Arc<AtomicBool>,
 }
 
-impl tower::Service<JsonRpcMessage> for Parked {
+impl tower::Service<McpRequest> for Parked {
     type Response = Option<JsonRpcMessage>;
     type Error = ProtocolError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -351,21 +351,17 @@ impl tower::Service<JsonRpcMessage> for Parked {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
+    fn call(&mut self, request: McpRequest) -> Self::Future {
         let dropped = self.dropped.clone();
         Box::pin(async move {
-            let JsonRpcMessage::Request(req) = &msg else {
+            let JsonRpcMessage::Request(_) = &request.message else {
                 return Ok(None);
             };
-            let conn = req
-                .params
-                .as_ref()
-                .and_then(|p| p.get("_meta"))
-                .and_then(|m| m.get("io.turbomcp.internal/connectionId"))
-                .and_then(Value::as_str)
-                .expect("the endpoint injects a per-request connection id")
-                .to_owned();
-            let writer = outbound::writer(&conn).expect("per-request writer registered");
+            let writer = request
+                .extensions
+                .get::<Peer>()
+                .cloned()
+                .expect("the endpoint attaches the request's own stream");
             writer
                 .send(JsonRpcNotification::new("notifications/test/started", None).into())
                 .await

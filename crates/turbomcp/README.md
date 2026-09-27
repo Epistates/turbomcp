@@ -49,7 +49,7 @@ zero-boilerplate surface and strict spec compliance as a feature.
   under a prefix (`weather.forecast`) where namespacing is what you want. Mix
   both; resource URIs are untouched either way, and capabilities are still
   derived from what the mounts actually have.
-- **Middleware is `tower`.** The dispatcher *is* a `tower::Service<JsonRpcMessage>`,
+- **Middleware is `tower`.** The dispatcher *is* a `tower::Service<McpRequest>`,
   so cross-cutting concerns are ordinary `Layer`s — one `call` for every method
   under every transport, and `ServiceBuilder` / `timeout` / `ConcurrencyLimit`
   compose onto an MCP server unchanged. No hook list to keep in sync with the

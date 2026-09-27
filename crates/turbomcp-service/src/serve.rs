@@ -16,9 +16,9 @@
 //!   the order they came.
 //! - **Writer actor:** every task funnels its response through a single
 //!   `mpsc` channel, and one arm of the [`tokio::select!`] loop is the sole
-//!   writer to the transport — frames are serialized, never interleaved. The
-//!   `mpsc::Sender` is the seam Phase 6 clones into the subscription registry so
-//!   server-initiated notifications share the same ordered writer.
+//!   writer to the transport — frames are serialized, never interleaved. Each
+//!   request carries a [`Peer`] onto that channel, so server-initiated
+//!   messages (notifications, inline requests) share the same ordered writer.
 //!
 //! **Admission** uses separate bounded application and control budgets. Excess
 //! application requests are rejected; responses and cancellation can still
@@ -29,14 +29,13 @@
 //! `drain_timeout` to finish and flush their replies before the transport is
 //! closed; stragglers past the deadline are aborted.
 //!
-//! ## The driver is the trust boundary
+//! ## What the driver attaches
 //!
-//! The driver is the first code to see a frame off the wire, so it owns the
-//! internal-`_meta` hygiene ([`meta::sanitize_inbound`]): forged
-//! `io.turbomcp.internal/*` keys are stripped, then the driver asserts its own
-//! [`meta::internal::CONNECTION_ID`] (one id per `serve` call). Layers below
-//! (session adapter, dispatcher) trust internal keys — they must always sit
-//! under a sanitizing boundary like this driver or the HTTP endpoint.
+//! Every request goes to the service as an [`McpRequest`] carrying this
+//! connection's [`ConnectionId`] (one per `serve` call), its [`Peer`], and the
+//! connection's authenticated [`Identity`] when the transport established one.
+//! They travel beside the message, not in it, so nothing a client sends can
+//! assert them.
 
 use std::future::poll_fn;
 use std::sync::Arc;
@@ -48,9 +47,9 @@ use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 use turbomcp_core::CancellationToken;
-use turbomcp_core::{JsonRpcMessage, meta};
+use turbomcp_core::{ConnectionId, Identity, JsonRpcMessage, McpRequest};
 
-use crate::{McpService, ProtocolError, Transport, catch_handler_panic};
+use crate::{McpService, Peer, ProtocolError, Transport, catch_handler_panic};
 
 /// Tuning for the [`serve_with`] driver.
 #[derive(Clone, Debug)]
@@ -64,13 +63,11 @@ pub struct ServeConfig {
     /// Fire to begin graceful shutdown. Default: a token that is never fired
     /// (the driver runs until the peer closes the stream).
     pub shutdown: CancellationToken,
-    /// The connection's authenticated principal, stamped into every inbound
-    /// message as [`meta::internal::IDENTITY`] after sanitization (the same
-    /// shape the HTTP transport injects: `{ "sub": String, "claims": Object }`).
+    /// The connection's authenticated principal, attached to every request.
     /// Set by transports that authenticate at connection time (e.g. a
     /// WebSocket bearer check at the upgrade); `None` leaves requests
     /// anonymous. Default: `None`.
-    pub identity: Option<serde_json::Value>,
+    pub identity: Option<Identity>,
 }
 
 impl Default for ServeConfig {
@@ -129,12 +126,16 @@ where
     // request cancellation to this connection. Needs only process-uniqueness
     // (it never leaves the process), so a counter beats a uuid.
     static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
-    let connection_id = format!("conn-{}", NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed));
+    let connection_id = ConnectionId::new(format!(
+        "conn-{}",
+        NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed)
+    ));
 
     let (tx, mut rx) = mpsc::channel::<JsonRpcMessage>(capacity);
-    // Publish this connection's ordered writer so server-initiated messages
-    // (subscription pushes, bidi requests) ride the same single-writer actor.
-    let writer_registration = crate::outbound::register(&connection_id, tx.clone());
+    // Server-initiated messages (subscription pushes, inline requests) ride the
+    // same single-writer actor through this handle. It holds the queue weakly:
+    // `tx` below is what keeps it open, and dropping `tx` is what closes it.
+    let peer = Peer::new(connection_id.clone(), &tx);
     let limiter = Arc::new(Semaphore::new(capacity));
     let controls = Arc::new(Semaphore::new(64));
     let mut handlers: JoinSet<()> = JoinSet::new();
@@ -186,22 +187,7 @@ where
                         Err(e) => break Err(ProtocolError::Transport(e.to_string())),
                     },
                     Ok(None) => break Ok(()), // clean EOF
-                    Ok(Some(mut msg)) => {
-                        // Trust boundary: strip forged internal keys, then
-                        // assert this connection's identity.
-                        meta::sanitize_inbound(&mut msg);
-                        meta::set_request_meta(
-                            &mut msg,
-                            meta::internal::CONNECTION_ID,
-                            connection_id.clone().into(),
-                        );
-                        if let Some(principal) = &identity {
-                            meta::set_request_meta(
-                                &mut msg,
-                                meta::internal::IDENTITY,
-                                principal.clone(),
-                            );
-                        }
+                    Ok(Some(msg)) => {
                         let application = matches!(msg, JsonRpcMessage::Request(_));
                         let budget = if application { &limiter } else { &controls };
                         let permit = match Arc::clone(budget).try_acquire_owned() {
@@ -235,16 +221,22 @@ where
                         // it cancels. A service that isn't ready yet is driven
                         // to readiness on the handler task instead, never on
                         // the reader, which also has to keep writing.
+                        let mut request = McpRequest::new(msg)
+                            .with(connection_id.clone())
+                            .with(peer.clone());
+                        if let Some(identity) = &identity {
+                            request.extensions.insert(identity.clone());
+                        }
                         let call: futures::future::BoxFuture<'static, _> =
                             match poll_fn(|cx| ready.poll_ready(cx)).now_or_never() {
                                 Some(Ok(())) => {
-                                    let fut = ready.call(msg);
+                                    let fut = ready.call(request);
                                     Box::pin(fut)
                                 }
                                 Some(Err(e)) => Box::pin(async move { Err(e) }),
                                 None => Box::pin(async move {
                                     poll_fn(|cx| ready.poll_ready(cx)).await?;
-                                    ready.call(msg).await
+                                    ready.call(request).await
                                 }),
                             };
                         handlers.spawn(async move {
@@ -281,8 +273,8 @@ where
     }
 
     // Drain, phase 1: in-flight handlers may still emit server-initiated
-    // messages (progress, inline bidi requests) through the outbound table, so
-    // the writer registration stays live until they finish. Keep writing
+    // messages (progress, inline bidi requests) through their `Peer`, so the
+    // queue stays open until they finish. Keep writing
     // replies and reaping handlers until the set is empty or the deadline
     // forces an abort.
     let deadline = Instant::now() + drain_timeout;
@@ -306,10 +298,10 @@ where
         }
     }
 
-    // Drain, phase 2: unregister the outbound writer (its sender clone would
-    // hold the channel open forever) and drop our own sender, so `rx` reports
-    // closure once the last straggler clone drops; flush what's left.
-    drop(writer_registration);
+    // Drain, phase 2: drop our own sender, the only strong one (every `Peer`
+    // is weak), so `rx` reports closure once the queue empties; flush what's
+    // left.
+    drop(peer);
     drop(tx);
     let close = tokio::time::timeout_at(deadline, async {
         while let Some(out) = rx.recv().await {

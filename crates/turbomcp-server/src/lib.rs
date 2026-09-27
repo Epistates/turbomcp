@@ -8,7 +8,7 @@
 //!   types, so a server is portable across protocol versions.
 //! - [`MethodRouter`] — registers the capabilities a server actually implements;
 //!   advertised capabilities are *derived* from it, so they can't drift.
-//! - [`VersionDispatcher`] — `Service<JsonRpcMessage>`: extracts the version,
+//! - [`VersionDispatcher`] — `Service<McpRequest>`: extracts the version,
 //!   routes to the typed handler, and serializes the response. All per-version
 //!   branching is concentrated here.
 //!
@@ -439,7 +439,7 @@ mod tests {
         let mut svc = dispatcher();
         let msg: JsonRpcMessage =
             turbomcp_core::JsonRpcNotification::new("notifications/initialized", None).into();
-        let out = svc.ready().await.unwrap().call(msg).await.unwrap();
+        let out = svc.ready().await.unwrap().call(msg.into()).await.unwrap();
         assert!(out.is_none());
     }
 

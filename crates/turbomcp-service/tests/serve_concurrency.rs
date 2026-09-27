@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use tokio::sync::{Semaphore, mpsc};
 use tower::Service;
-use turbomcp_core::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId};
+use turbomcp_core::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpRequest, RequestId};
 use turbomcp_service::{CancellationToken, ProtocolError, ServeConfig, Transport, serve_with};
 
 // ---- mock transport ----------------------------------------------------------
@@ -129,7 +129,7 @@ struct GatedService {
     fast_method: Option<&'static str>,
 }
 
-impl Service<JsonRpcMessage> for GatedService {
+impl Service<McpRequest> for GatedService {
     type Response = Option<JsonRpcMessage>;
     type Error = ProtocolError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -138,7 +138,8 @@ impl Service<JsonRpcMessage> for GatedService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
+    fn call(&mut self, request: McpRequest) -> Self::Future {
+        let msg = request.message;
         let gate = Arc::clone(&self.gate);
         let fast = self.fast_method;
         // Counted when the driver calls, which it does in arrival order on
@@ -528,21 +529,23 @@ async fn transport_send_error_surfaces_and_stuck_handlers_are_abandoned() {
     assert_eq!(started.load(Ordering::SeqCst), 2, "both handlers started");
 }
 
-/// The driver is the trust boundary: forged `io.turbomcp.internal/*` keys are
-/// stripped from inbound frames, and the driver's own per-connection id is
-/// asserted in their place.
+/// What the driver knows about a connection travels beside each message:
+/// its `ConnectionId` and the `Peer` that reaches it. Nothing in the message
+/// can assert them, so a client writing the old internal `_meta` keys changes
+/// nothing, and those keys pass through as the opaque user data they now are.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn driver_sanitizes_inbound_and_asserts_connection_identity() {
+async fn driver_attaches_connection_facts_beside_the_message() {
     use std::sync::Mutex;
-    use turbomcp_core::meta;
+    use turbomcp_core::ConnectionId;
+    use turbomcp_service::Peer;
 
-    /// Records every message it is called with; replies to requests.
+    /// Records every request it is called with; replies to requests.
     #[derive(Clone)]
     struct Recorder {
-        seen: Arc<Mutex<Vec<JsonRpcMessage>>>,
+        seen: Arc<Mutex<Vec<McpRequest>>>,
     }
 
-    impl Service<JsonRpcMessage> for Recorder {
+    impl Service<McpRequest> for Recorder {
         type Response = Option<JsonRpcMessage>;
         type Error = ProtocolError;
         type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -551,10 +554,10 @@ async fn driver_sanitizes_inbound_and_asserts_connection_identity() {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
-            self.seen.lock().unwrap().push(msg.clone());
+        fn call(&mut self, request: McpRequest) -> Self::Future {
+            self.seen.lock().unwrap().push(request.clone());
             Box::pin(async move {
-                Ok(match msg {
+                Ok(match request.message {
                     JsonRpcMessage::Request(req) => {
                         Some(JsonRpcResponse::success(req.id, serde_json::json!({})).into())
                     }
@@ -573,11 +576,9 @@ async fn driver_sanitizes_inbound_and_asserts_connection_identity() {
     let transport = MockTransport::new(in_rx, out_tx);
     let driver = tokio::spawn(serve_with(transport, service, ServeConfig::default()));
 
-    // A request forging both internal keys.
     let forged = serde_json::json!({
         "_meta": {
-            meta::internal::SESSION_ID: "forged-session",
-            meta::internal::CONNECTION_ID: "forged-conn",
+            "io.turbomcp.internal/connectionId": "forged-conn",
             "com.acme/tenant": "t-1",
         }
     });
@@ -588,19 +589,24 @@ async fn driver_sanitizes_inbound_and_asserts_connection_identity() {
     let _reply = out_rx.recv().await.unwrap();
 
     {
-        let frames = seen.lock().unwrap();
-        let JsonRpcMessage::Request(req) = &frames[0] else {
+        let requests = seen.lock().unwrap();
+        let request = &requests[0];
+        let conn = request
+            .extensions
+            .get::<ConnectionId>()
+            .expect("the driver attached its connection");
+        assert!(conn.as_str().starts_with("conn-"), "{conn}");
+        let peer = request.extensions.get::<Peer>().expect("and its peer");
+        assert_eq!(peer.id(), conn);
+        assert!(peer.is_open());
+        let JsonRpcMessage::Request(req) = &request.message else {
             panic!("expected the request");
         };
-        let frame_meta = req.params.as_ref().unwrap()["_meta"].as_object().unwrap();
-        assert!(
-            !frame_meta.contains_key(meta::internal::SESSION_ID),
-            "forged session id must be stripped"
+        assert_eq!(
+            req.params.as_ref().unwrap()["_meta"]["com.acme/tenant"],
+            "t-1",
+            "user meta survives"
         );
-        let conn = frame_meta[meta::internal::CONNECTION_ID].as_str().unwrap();
-        assert_ne!(conn, "forged-conn", "driver asserts its own connection id");
-        assert!(conn.starts_with("conn-"));
-        assert_eq!(frame_meta["com.acme/tenant"], "t-1", "user meta survives");
     }
 
     drop(in_tx);
@@ -615,7 +621,7 @@ async fn a_panicking_handler_answers_and_the_connection_survives() {
     #[derive(Clone)]
     struct PanicOnBoom;
 
-    impl Service<JsonRpcMessage> for PanicOnBoom {
+    impl Service<McpRequest> for PanicOnBoom {
         type Response = Option<JsonRpcMessage>;
         type Error = ProtocolError;
         type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -624,7 +630,8 @@ async fn a_panicking_handler_answers_and_the_connection_survives() {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
+        fn call(&mut self, request: McpRequest) -> Self::Future {
+            let msg = request.message;
             Box::pin(async move {
                 let JsonRpcMessage::Request(req) = msg else {
                     return Ok(None);
@@ -674,7 +681,7 @@ async fn a_failing_service_still_answers_the_request() {
     #[derive(Clone)]
     struct Forgetful;
 
-    impl Service<JsonRpcMessage> for Forgetful {
+    impl Service<McpRequest> for Forgetful {
         type Response = Option<JsonRpcMessage>;
         type Error = ProtocolError;
         type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -683,7 +690,8 @@ async fn a_failing_service_still_answers_the_request() {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, _msg: JsonRpcMessage) -> Self::Future {
+        fn call(&mut self, request: McpRequest) -> Self::Future {
+            let _msg = request.message;
             Box::pin(async { Err(ProtocolError::UnknownSession("evicted".into())) })
         }
     }
@@ -721,7 +729,7 @@ async fn the_service_is_called_in_arrival_order() {
     #[derive(Clone)]
     struct Recorder(Arc<std::sync::Mutex<Vec<RequestId>>>);
 
-    impl Service<JsonRpcMessage> for Recorder {
+    impl Service<McpRequest> for Recorder {
         type Response = Option<JsonRpcMessage>;
         type Error = ProtocolError;
         type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -730,7 +738,8 @@ async fn the_service_is_called_in_arrival_order() {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
+        fn call(&mut self, request: McpRequest) -> Self::Future {
+            let msg = request.message;
             if let JsonRpcMessage::Request(req) = &msg {
                 self.0.lock().unwrap().push(req.id.clone());
             }

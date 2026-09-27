@@ -5,8 +5,9 @@
 //! # Writing a layer
 //!
 //! An MCP middleware is an ordinary [`tower::Layer`] over
-//! `Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error =
-//! ProtocolError>`. There is no MCP-specific middleware trait to learn and no
+//! `Service<McpRequest, Response = Option<JsonRpcMessage>, Error =
+//! ProtocolError>`, where an [`McpRequest`](turbomcp_core::McpRequest) is the
+//! message plus the typed facts its transport attached. There is no MCP-specific middleware trait to learn and no
 //! per-method hook list to keep in sync with the protocol: one `call`, every
 //! method, every transport. [`TracingLayer`] below is the whole shape in 30
 //! lines.
@@ -38,12 +39,11 @@
 //! ```
 //!
 //! Outside the adapter a layer sees the frame as the client sent it. Inside, it
-//! sees the negotiated protocol version and session id that the adapter stamped
-//! into `_meta` — which is what a layer keyed on protocol version needs. Either
-//! way the layer is already behind the wire trust boundary: [`serve`](crate::serve)
-//! (and the HTTP endpoint) sanitize forged internal `_meta` keys and assert the
-//! connection's own identity *before* the service is called, so
-//! `io.turbomcp.internal/*` keys are trustworthy at every layer.
+//! sees the negotiated protocol version the adapter stamped into `_meta`, and
+//! the [`SessionId`](turbomcp_core::SessionId) it attached, which is what a
+//! layer keyed on protocol version or session needs. Either way the facts in
+//! `request.extensions` (identity, connection, session) come from the
+//! transport and the adapter; a client has no way to put them there.
 //!
 //! Stack several with `tower::ServiceBuilder`; the first layer added is the
 //! outermost.
@@ -52,7 +52,7 @@ use std::task::{Context, Poll};
 
 use tower::{Layer, Service};
 use tracing::Instrument;
-use turbomcp_core::JsonRpcMessage;
+use turbomcp_core::{JsonRpcMessage, McpRequest};
 
 use crate::ProtocolError;
 
@@ -76,9 +76,9 @@ pub struct Tracing<S> {
     inner: S,
 }
 
-impl<S> Service<JsonRpcMessage> for Tracing<S>
+impl<S> Service<McpRequest> for Tracing<S>
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>, Error = ProtocolError>,
 {
     type Response = Option<JsonRpcMessage>;
     type Error = ProtocolError;
@@ -88,8 +88,8 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: JsonRpcMessage) -> Self::Future {
-        let method = req.method().unwrap_or("(response)").to_owned();
+    fn call(&mut self, req: McpRequest) -> Self::Future {
+        let method = req.message.method().unwrap_or("(response)").to_owned();
         let span = tracing::debug_span!("mcp.rpc", method = %method);
         self.inner.call(req).instrument(span)
     }

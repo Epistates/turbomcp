@@ -92,6 +92,8 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     // The task's token doubles as the handler's request cancellation, so
     // `tasks/cancel` (and ttl purge) reach a cooperative handler.
     let token = CancellationToken::new();
+    // The legacy gate guarantees a session id by the time we're here.
+    let sid = session_id(&ctx.extensions).unwrap_or_default().to_owned();
     let mut ctx = ctx;
     ctx.cancellation = token.clone();
     let Some(fut) = router.dispatch_call_tool(server, CallToolContext::new(ctx), params) else {
@@ -103,10 +105,6 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
 
     let fut = async move { contract.0.output(contract.1.as_ref(), fut.await?) };
 
-    // The legacy gate guarantees a session id by the time we're here.
-    let sid = session_id(req.params.as_ref())
-        .unwrap_or_default()
-        .to_owned();
     let snap = match store.create(&sid, task_meta.ttl, token.clone()).await {
         Ok(s) => s,
         Err(e) => return task_error_response(id, &e),

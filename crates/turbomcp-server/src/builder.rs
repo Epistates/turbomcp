@@ -2,7 +2,7 @@
 //! into a [`VersionDispatcher`] ready to hand to a transport.
 //!
 //! The builder is deliberately transport- and codec-agnostic: it produces the
-//! `tower::Service<JsonRpcMessage>` and nothing more. Codec selection, RPC
+//! `tower::Service<McpRequest>` and nothing more. Codec selection, RPC
 //! middleware stacks (`with_rpc_middleware`), and extensions (`with_extension`)
 //! attach at the transport/facade layer and land in Phases 4/8 — adding them
 //! here now would be infrastructure with no consumer.
@@ -422,7 +422,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
         None
     }
 
-    /// Finish: produce the `tower::Service<JsonRpcMessage>` for this server.
+    /// Finish: produce the `tower::Service<McpRequest>` for this server.
     #[must_use]
     pub fn build(self) -> VersionDispatcher<S> {
         let mut dispatcher = VersionDispatcher::new(self.server, self.router);

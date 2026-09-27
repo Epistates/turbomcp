@@ -11,7 +11,8 @@ use turbomcp::prelude::*;
 use turbomcp::tower::{Service, ServiceExt};
 use turbomcp::{
     Composite, CompositeServer, Implementation, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
-    LegacySessionAdapter, ProtocolVersion, ServerBuilder, VersionDispatcher, codes, neutral,
+    LegacySessionAdapter, McpRequest, ProtocolVersion, ServerBuilder, VersionDispatcher, codes,
+    neutral,
 };
 
 #[derive(Clone)]
@@ -116,7 +117,7 @@ fn draft_meta() -> Value {
 
 async fn respond<S>(svc: &mut S, req: JsonRpcRequest) -> JsonRpcResponse
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>> + Clone,
     S::Error: std::fmt::Debug,
 {
     let method = req.method.clone();
@@ -133,7 +134,7 @@ where
 
 async fn result<S>(svc: &mut S, req: JsonRpcRequest) -> Value
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>> + Clone,
     S::Error: std::fmt::Debug,
 {
     let method = req.method.clone();
@@ -146,7 +147,7 @@ where
 /// right answer.
 async fn error<S>(svc: &mut S, req: JsonRpcRequest) -> turbomcp::JsonRpcError
 where
-    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>> + Clone,
+    S: Service<McpRequest, Response = Option<JsonRpcMessage>> + Clone,
     S::Error: std::fmt::Debug,
 {
     let method = req.method.clone();
@@ -980,11 +981,14 @@ async fn preflight_catches_a_collision_that_spans_pages() {
         .clone()
         .into_server()
         .build()
-        .oneshot(JsonRpcMessage::from(JsonRpcRequest::new(
-            1,
-            request::TOOLS_LIST,
-            Some(json!({ "_meta": draft_meta() })),
-        )))
+        .oneshot(
+            JsonRpcMessage::from(JsonRpcRequest::new(
+                1,
+                request::TOOLS_LIST,
+                Some(json!({ "_meta": draft_meta() })),
+            ))
+            .into(),
+        )
         .await
         .expect("service")
         .expect("a response");

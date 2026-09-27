@@ -1,8 +1,8 @@
 //! Phase 9c: `notifications/tasks` over `subscriptions/listen` (`taskIds`).
 //!
-//! Drives the dispatcher directly with a manually-registered `outbound` writer
-//! (the same pattern the core subscription unit tests use) — no serve driver
-//! needed to prove the push mechanism and the `-32021` capability gate.
+//! Drives the dispatcher directly, attaching a `Peer` over a test channel the
+//! way a transport would; no serve driver needed to prove the push mechanism
+//! and the `-32021` capability gate.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,13 +11,14 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tower::{Service, ServiceExt};
 use turbomcp_core::{
-    Implementation, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, McpResult,
+    Implementation, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, McpRequest, McpResult,
 };
 use turbomcp_ext_tasks::{EXTENSION_ID, TasksExtension};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
+use turbomcp_service::Peer;
 
 #[derive(Clone)]
 struct Slow;
@@ -55,15 +56,14 @@ fn dispatcher() -> VersionDispatcher<Slow> {
         .with_extension(Arc::new(TasksExtension::new().task_tools(["slow"])))
 }
 
-/// Draft `_meta`: protocol version + connection id, optionally declaring the
-/// tasks extension capability.
-fn meta(conn: &str, declare: bool) -> Value {
+/// Draft `_meta`: the protocol version, optionally declaring the tasks
+/// extension capability.
+fn meta(_conn: &str, declare: bool) -> Value {
     let mut m = serde_json::Map::new();
     m.insert(
         "io.modelcontextprotocol/protocolVersion".into(),
         json!("2026-07-28"),
     );
-    m.insert("io.turbomcp.internal/connectionId".into(), json!(conn));
     // Required on this wire either way (SEP-2575); `declare` controls what
     // goes in it, not whether it is present.
     m.insert(
@@ -77,11 +77,23 @@ fn meta(conn: &str, declare: bool) -> Value {
     Value::Object(m)
 }
 
-async fn call_some(svc: &mut VersionDispatcher<Slow>, req: JsonRpcRequest) -> JsonRpcMessage {
+/// The request as a transport would hand it over: attached to `peer`'s
+/// connection.
+fn on(peer: &Peer, req: JsonRpcRequest) -> McpRequest {
+    McpRequest::new(req)
+        .with(peer.id().clone())
+        .with(peer.clone())
+}
+
+async fn call_some(
+    svc: &mut VersionDispatcher<Slow>,
+    peer: &Peer,
+    req: JsonRpcRequest,
+) -> JsonRpcMessage {
     svc.ready()
         .await
         .unwrap()
-        .call(req.into())
+        .call(on(peer, req))
         .await
         .unwrap()
         .expect("a response")
@@ -89,9 +101,15 @@ async fn call_some(svc: &mut VersionDispatcher<Slow>, req: JsonRpcRequest) -> Js
 
 async fn call_none(
     svc: &mut VersionDispatcher<Slow>,
+    peer: &Peer,
     req: JsonRpcRequest,
 ) -> Option<JsonRpcMessage> {
-    svc.ready().await.unwrap().call(req.into()).await.unwrap()
+    svc.ready()
+        .await
+        .unwrap()
+        .call(on(peer, req))
+        .await
+        .unwrap()
 }
 
 fn as_notification(msg: JsonRpcMessage) -> JsonRpcNotification {
@@ -106,11 +124,12 @@ async fn listen_then_cancel_pushes_notifications_tasks() {
     let conn = "notif-test-listen-conn";
     let mut svc = dispatcher();
     let (tx, mut rx) = mpsc::channel(16);
-    let _guard = turbomcp_service::outbound::register(conn, tx);
+    let peer = Peer::new(conn, &tx);
 
     // 1. Create a (slow) task.
     let created = call_some(
         &mut svc,
+        &peer,
         JsonRpcRequest::new(
             1,
             "tools/call",
@@ -129,6 +148,7 @@ async fn listen_then_cancel_pushes_notifications_tasks() {
     // 2. Subscribe to the task's status via subscriptions/listen.
     let listen = call_none(
         &mut svc,
+        &peer,
         JsonRpcRequest::new(
             2,
             "subscriptions/listen",
@@ -155,6 +175,7 @@ async fn listen_then_cancel_pushes_notifications_tasks() {
     // 3. Cancel the task → a `notifications/tasks` push for the cancelled state.
     let _ack = call_some(
         &mut svc,
+        &peer,
         JsonRpcRequest::new(
             3,
             "tasks/cancel",
@@ -183,11 +204,12 @@ async fn non_declaring_listen_with_task_ids_is_missing_capability() {
     let conn = "notif-test-undeclared-conn";
     let mut svc = dispatcher();
     let (tx, _rx) = mpsc::channel(16);
-    let _guard = turbomcp_service::outbound::register(conn, tx);
+    let peer = Peer::new(conn, &tx);
 
     // subscriptions/listen with taskIds but WITHOUT declaring the extension.
     let out = call_some(
         &mut svc,
+        &peer,
         JsonRpcRequest::new(
             1,
             "subscriptions/listen",
@@ -219,10 +241,11 @@ async fn listen_without_task_ids_is_unaffected_by_the_extension() {
     let conn = "notif-test-plain-conn";
     let mut svc = dispatcher();
     let (tx, mut rx) = mpsc::channel(16);
-    let _guard = turbomcp_service::outbound::register(conn, tx);
+    let peer = Peer::new(conn, &tx);
 
     let out = call_none(
         &mut svc,
+        &peer,
         JsonRpcRequest::new(
             1,
             "subscriptions/listen",
