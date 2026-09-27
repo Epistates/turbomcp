@@ -336,7 +336,12 @@ async fn running_out_of_post_slots_fails_one_call_not_the_client() {
         .unwrap();
 
     let (first, second) = tokio::join!(client.call_tool("a", Map::new()), async {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Wait until the first call holds the slot. A fixed head start lost
+        // the race on a loaded CI runner, and then the *first* call was the
+        // one refused.
+        while mock.seen("tools/call").is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         client.call_tool("b", Map::new()).await
     });
     assert!(first.is_ok(), "{first:?}");
