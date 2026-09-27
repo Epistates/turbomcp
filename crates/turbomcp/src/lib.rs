@@ -430,10 +430,25 @@ pub use turbomcp_telemetry as telemetry;
 
 /// The MCP client: [`client::ClientBuilder`] runs the handshake + version
 /// negotiation, then [`client::Client`] speaks the typed [`neutral`] API.
-/// Enable with the `client` feature.
+/// Enable with the `client` feature; add `http` for
+/// [`HttpClientTransport`](client::HttpClientTransport) and
+/// [`connect_http`](client::connect_http).
 #[cfg(feature = "client")]
 #[cfg_attr(docsrs, doc(cfg(feature = "client")))]
-pub use turbomcp_client as client;
+pub mod client {
+    pub use turbomcp_client::*;
+
+    #[cfg(feature = "http")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+    pub use turbomcp_transport_http::{
+        BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, connect_http,
+    };
+
+    /// Coordinated HTTP OAuth authorization and token refresh.
+    #[cfg(feature = "client-oauth")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "client-oauth")))]
+    pub use turbomcp_transport_http::oauth;
+}
 
 /// The draft Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663):
 /// register [`ext_tasks::TasksExtension`] with `ServerBuilder::with_extension`

@@ -12,15 +12,7 @@ homepage = "https://turbomcp.org"
 keywords = ["mcp", "client", "llm", "ai"]
 categories = ["network-programming", "asynchronous", "api-bindings"]
 
-[features]
-# The Streamable HTTP client transport (reqwest + SSE). Off by default; stdio
-# needs no extra deps.
-http = ["dep:reqwest", "dep:eventsource-stream"]
-
-oauth = ["http", "dep:turbomcp-auth"]
-
 [dependencies]
-turbomcp-auth = { workspace = true, features = ["oauth-client"], optional = true }
 bytes = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
 turbomcp-core = { workspace = true, features = ["std"] }
@@ -32,8 +24,6 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "process", "io-util", "macros"] }
-reqwest = { workspace = true, optional = true }
-eventsource-stream = { workspace = true, optional = true }
 futures = { workspace = true }
 # Validates `structuredContent` against the tool's declared `outputSchema`.
 jsonschema = { workspace = true }
@@ -42,8 +32,3 @@ jsonschema = { workspace = true }
 turbomcp-server = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util"] }
 async-trait = { workspace = true }
-
-[package.metadata.docs.rs]
-all-features = true
-# Lights the `doc(cfg)` labels that name the feature behind each gated item.
-rustdoc-args = ["--cfg", "docsrs"]

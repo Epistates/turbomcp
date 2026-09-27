@@ -4,7 +4,7 @@ use serde_json::json;
 #[tokio::test]
 async fn http_error_preserves_rpc_body_and_auth_challenge() {
     use axum::{http::StatusCode, routing::post};
-    use turbomcp_client::{Connection, HttpClientTransport};
+    use turbomcp::client::{Connection, HttpClientTransport};
     let app = Router::new().route("/mcp", post(|| async {
    (StatusCode::BAD_REQUEST, [("www-authenticate", "Bearer scope=\"admin\"")], Json(json!({"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"Unsupported protocol","data":{"supported":["2026-07-28"]}}})))
  }));

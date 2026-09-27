@@ -1,0 +1,2058 @@
+//! The server half: an axum endpoint that drives an [`McpService`].
+
+use std::collections::VecDeque;
+use std::convert::Infallible;
+use std::future::{Future, poll_fn};
+use std::net::{IpAddr, SocketAddr};
+
+use ipnet::IpNet;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::headers;
+use axum::body::Bytes;
+use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts, State};
+use axum::http::request::Parts;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
+use axum::routing::post;
+use axum::{Json, Router};
+use serde_json::json;
+use tower_http::cors::CorsLayer;
+use turbomcp_core::codec::{Codec, DefaultCodec};
+use turbomcp_core::{
+    ConnectionId, Extensions, Identity, InvalidFrame, JsonRpcMessage, JsonRpcResponse, McpRequest,
+    ObservedHeaders, ProtocolVersion, RequestId, SessionId, meta,
+};
+use turbomcp_service::{
+    AuthDecision, CancellationToken, HttpAuthenticator, McpService, Peer, ProtocolError, RateKey,
+    RateLimiter, SessionStreams, SessionTerminator, StreamGuard, catch_handler_panic, mcp_headers,
+};
+
+/// The id this message owes a response to — `None` for anything but a request.
+/// Captured before dispatch so a panicking handler can still be answered (see
+/// [`catch_handler_panic`]).
+fn request_id(msg: &JsonRpcMessage) -> Option<RequestId> {
+    match msg {
+        JsonRpcMessage::Request(r) => Some(r.id.clone()),
+        _ => None,
+    }
+}
+
+/// The protocol version a message's own `_meta` declares, if any — the
+/// stateless draft envelope. Must be read **before** the dual-stack routing
+/// stamps a session's negotiated version into version-less legacy bodies.
+fn declared_version(msg: &JsonRpcMessage) -> Option<String> {
+    let params = match msg {
+        JsonRpcMessage::Request(r) => r.params.as_ref(),
+        JsonRpcMessage::Notification(n) => n.params.as_ref(),
+        JsonRpcMessage::Response(_) => None,
+    }?;
+    params
+        .get("_meta")?
+        .get(meta::keys::PROTOCOL_VERSION)?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// Validate the transport's request-metadata headers against the body
+/// (transports spec §Request Metadata / §Server Validation). Applies to
+/// messages whose body `_meta` declares a protocol version — the stateless
+/// draft envelope; the legacy `2025-11-25` session flow keeps its
+/// negotiated-version tolerance. Any failure is `400` + a
+/// `HeaderMismatch` JSON-RPC error (`-32001`).
+///
+/// Headers are pure **mirrors** — the body stays authoritative and values are
+/// never sourced *from* headers (the earlier fill-absent `Mcp-Param-*` merge
+/// is gone; it let a header inject an argument the body omitted).
+fn validate_request_headers(msg: &JsonRpcMessage, headers: &HeaderMap) -> Option<Response> {
+    let declared = declared_version(msg);
+    // Every rejection below echoes this, so the client can correlate it.
+    let id = request_id(msg);
+    let id = id.as_ref();
+    let header_version = headers
+        .get(&headers::PROTOCOL_VERSION)
+        .and_then(|v| v.to_str().ok());
+
+    // The mirror invariant: when both the header and the body name a version,
+    // they MUST agree — whatever the versions.
+    if let (Some(h), Some(d)) = (header_version, declared.as_deref())
+        && h != d
+    {
+        return Some(header_mismatch_rejection(
+            id,
+            &format!("MCP-Protocol-Version header ({h}) does not match the request body ({d})"),
+        ));
+    }
+
+    // The remaining rules are the draft transport's: they apply when the body
+    // carries the draft's stateless envelope. A body declaring a *legacy*
+    // version without a header keeps `2025-11-25`'s softer absence rule (the
+    // session flow governs); a *header*-only draft version on an
+    // envelope-less body (e.g. a notification, whose params carry no
+    // envelope) requires nothing further.
+    let declared_draft = declared
+        .as_deref()
+        .is_some_and(|d| ProtocolVersion::from_wire(d) == ProtocolVersion::V2026_07_28);
+    if !declared_draft {
+        return None;
+    }
+    if header_version.is_none() {
+        // The draft requires the version header on every POST; this server
+        // supports no pre-2025-06-18 clients, so absence is a rejection.
+        return Some(header_mismatch_rejection(
+            id,
+            "missing required MCP-Protocol-Version header",
+        ));
+    }
+    let JsonRpcMessage::Request(req) = msg else {
+        return None;
+    };
+
+    // `Mcp-Method` is required on every request POST and mirrors `method`.
+    match headers
+        .get(&headers::MCP_METHOD)
+        .and_then(|v| v.to_str().ok())
+    {
+        None => {
+            return Some(header_mismatch_rejection(
+                id,
+                "missing required Mcp-Method header",
+            ));
+        }
+        Some(m) if m != req.method => {
+            return Some(header_mismatch_rejection(
+                id,
+                &format!(
+                    "Mcp-Method header ({m}) does not match the request body ({})",
+                    req.method
+                ),
+            ));
+        }
+        Some(_) => {}
+    }
+
+    // `Mcp-Name` is required for `tools/call`/`resources/read`/`prompts/get`
+    // and mirrors `params.name`/`params.uri` (Base64 sentinel decoded). On the
+    // Tasks extension's methods it mirrors `params.taskId`; the core spec
+    // doesn't require it there, so it is checked only when sent.
+    if let Some(field) = mcp_headers::routing_name_field(&req.method) {
+        let required = mcp_headers::name_field_for(&req.method).is_some();
+        let body_value = req
+            .params
+            .as_ref()
+            .and_then(|p| p.get(field))
+            .and_then(serde_json::Value::as_str);
+        let sent = headers.get(&headers::MCP_NAME);
+        if sent.is_none() && !required {
+            return None;
+        }
+        let Some(raw) = sent.and_then(|v| v.to_str().ok()) else {
+            return Some(header_mismatch_rejection(
+                id,
+                "missing required Mcp-Name header",
+            ));
+        };
+        let Some(decoded) = mcp_headers::decode_value(raw) else {
+            return Some(header_mismatch_rejection(
+                id,
+                "malformed Base64 sentinel in Mcp-Name header",
+            ));
+        };
+        if body_value != Some(decoded.as_str()) {
+            return Some(header_mismatch_rejection(
+                id,
+                &format!("Mcp-Name header does not match the request body's `{field}`"),
+            ));
+        }
+    }
+
+    // `Mcp-Param-*` values are checked by the dispatcher, which knows the
+    // tool's schema and so which argument each header actually mirrors (see
+    // the observed-header hand-off in the endpoint).
+
+    None
+}
+
+/// Buffered events per SSE stream; a consumer this far behind backpressures
+/// publishers (the registry awaits `send`).
+const SSE_CHANNEL_CAPACITY: usize = 256;
+
+/// What keeps one response stream's queue open: the only strong sender (every
+/// [`Peer`] holds it weakly) and, for a session `GET` stream, its registry
+/// entry. It travels inside the stream state, so a client disconnect (axum
+/// drops the body) closes the queue, and anything still holding the stream's
+/// `Peer` sees it closed.
+struct Outlet {
+    _tx: tokio::sync::mpsc::Sender<JsonRpcMessage>,
+    _guard: Option<StreamGuard>,
+}
+
+impl Outlet {
+    /// Open a stream for `request`: a fresh queue under a minted connection id
+    /// (`prefix-uuid`), attached to the request as its connection and `Peer`.
+    fn open(
+        prefix: &str,
+        request: &mut McpRequest,
+    ) -> (Self, tokio::sync::mpsc::Receiver<JsonRpcMessage>) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
+        let id = ConnectionId::new(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        request.extensions.insert(id.clone());
+        request.extensions.insert(Peer::new(id, &tx));
+        (
+            Self {
+                _tx: tx,
+                _guard: None,
+            },
+            rx,
+        )
+    }
+}
+/// Default keep-alive comment interval — short enough to outlive common
+/// proxy/LB idle timeouts (often 30–60s).
+const DEFAULT_SSE_KEEPALIVE: Duration = Duration::from_secs(15);
+
+/// Where a request's `Origin` header is checked against (DNS-rebinding guard).
+#[derive(Clone, Debug)]
+enum OriginPolicy {
+    /// Reject any request whose `Origin` isn't in this list. An empty list lets
+    /// only `Origin`-less (non-browser) clients through — the secure default.
+    Allowlist(Vec<String>),
+    /// Accept any `Origin` (development only).
+    Any,
+}
+
+/// Where a request's `Host` header is checked against — DNS-rebinding defense in
+/// depth, complementing [`OriginPolicy`] for non-browser clients that can spoof
+/// `Host` (the `Origin` guard only covers browsers).
+#[derive(Clone, Debug)]
+enum HostPolicy {
+    /// Accept any `Host` (the default — suited to deployments behind a proxy or
+    /// load balancer that rewrites `Host`).
+    Any,
+    /// Reject any request whose `Host` isn't in this list. Lets a server that
+    /// knows its expected host(s) refuse a spoofed `Host`.
+    Allowlist(Vec<String>),
+}
+
+/// The well-known path RFC 9728 Protected Resource Metadata is served at.
+const RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource";
+
+/// Configuration for the HTTP endpoint. Construct with [`HttpConfig::new`] and
+/// chain the builder methods.
+#[derive(Clone)]
+pub struct HttpConfig {
+    max_concurrent_requests: usize,
+    request_timeout: Duration,
+    shutdown_timeout: Duration,
+    path: String,
+    max_body_bytes: usize,
+    origins: OriginPolicy,
+    hosts: HostPolicy,
+    cors: bool,
+    shutdown: CancellationToken,
+    sse_keepalive: Duration,
+    authenticator: Option<Arc<dyn HttpAuthenticator>>,
+    rate_limiter: Option<Arc<dyn RateLimiter>>,
+    ip_rate_limiter: Option<Arc<dyn RateLimiter>>,
+    session_terminator: Option<Arc<dyn SessionTerminator>>,
+    trusted_proxies: Vec<IpNet>,
+    supported_versions: Vec<ProtocolVersion>,
+}
+
+impl core::fmt::Debug for HttpConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HttpConfig")
+            .field("path", &self.path)
+            .field("max_body_bytes", &self.max_body_bytes)
+            .field("origins", &self.origins)
+            .field("hosts", &self.hosts)
+            .field("cors", &self.cors)
+            .field("sse_keepalive", &self.sse_keepalive)
+            .field("authenticator", &self.authenticator.is_some())
+            .field("rate_limiter", &self.rate_limiter.is_some())
+            .field("ip_rate_limiter", &self.ip_rate_limiter.is_some())
+            .field("session_terminator", &self.session_terminator.is_some())
+            .field("trusted_proxies", &self.trusted_proxies)
+            .field("supported_versions", &self.supported_versions)
+            .finish()
+    }
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_requests: 1024,
+            request_timeout: Duration::from_secs(60),
+            shutdown_timeout: Duration::from_secs(30),
+            path: "/mcp".to_owned(),
+            max_body_bytes: 1 << 20, // 1 MiB
+            origins: OriginPolicy::Allowlist(Vec::new()),
+            hosts: HostPolicy::Any,
+            cors: false,
+            shutdown: CancellationToken::new(),
+            sse_keepalive: DEFAULT_SSE_KEEPALIVE,
+            authenticator: None,
+            rate_limiter: None,
+            ip_rate_limiter: None,
+            session_terminator: None,
+            trusted_proxies: Vec::new(),
+            supported_versions: ProtocolVersion::SUPPORTED.to_vec(),
+        }
+    }
+}
+
+impl HttpConfig {
+    /// The revisions this endpoint serves, for the `MCP-Protocol-Version`
+    /// check: "if the server receives a request with an invalid **or
+    /// unsupported** `MCP-Protocol-Version`, it MUST respond with `400 Bad
+    /// Request`".
+    ///
+    /// Defaults to the whole build's set. `ServeHttp::run_http` narrows it from
+    /// the dispatcher, so `#[server(protocols("2025-06-18"))]` refuses a
+    /// `2025-11-25` header instead of advertising a version it does not serve;
+    /// call this yourself when composing [`serve_http`] with your own
+    /// dispatcher.
+    #[must_use]
+    pub fn with_supported_versions(mut self, versions: Vec<ProtocolVersion>) -> Self {
+        self.supported_versions = versions;
+        self
+    }
+
+    /// Bound admitted requests, including authentication and live SSE bodies.
+    #[must_use]
+    pub fn max_concurrent_requests(mut self, limit: usize) -> Self {
+        self.max_concurrent_requests = limit.max(1);
+        self
+    }
+    /// Deadline to authenticate, read the request, and produce response headers.
+    #[must_use]
+    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+    /// Maximum drain time after shutdown is requested.
+    #[must_use]
+    pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
+        self.shutdown_timeout = timeout;
+        self
+    }
+
+    /// Default configuration: `POST /mcp`, 1 MiB body limit, Origin-less only.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the endpoint path (default `/mcp`).
+    #[must_use]
+    pub fn path(mut self, path: impl Into<String>) -> Self {
+        self.path = path.into();
+        self
+    }
+
+    /// Set the maximum accepted request-body size in bytes (default 1 MiB).
+    #[must_use]
+    pub fn max_body_bytes(mut self, bytes: usize) -> Self {
+        self.max_body_bytes = bytes;
+        self
+    }
+
+    /// Add an allowed `Origin` (exact match, e.g. `https://app.example.com`).
+    #[must_use]
+    pub fn allow_origin(mut self, origin: impl Into<String>) -> Self {
+        match &mut self.origins {
+            OriginPolicy::Allowlist(list) => list.push(origin.into()),
+            OriginPolicy::Any => {}
+        }
+        self
+    }
+
+    /// Accept requests from any `Origin` (development only). Also enables a
+    /// permissive CORS layer so browsers can actually use it.
+    #[must_use]
+    pub fn allow_any_origin(mut self) -> Self {
+        self.origins = OriginPolicy::Any;
+        self.cors = true;
+        self
+    }
+
+    /// Add an allowed `Host` (exact match, e.g. `localhost:8080` or
+    /// `mcp.example.com`). By default any `Host` is accepted; once at least one
+    /// host is allow-listed, a request whose `Host` isn't listed is rejected
+    /// with `403`. Combined with [`allow_origin`](Self::allow_origin) this
+    /// hardens the server against DNS-rebinding (a spoofed `Host`/`Origin` from
+    /// a non-browser client is refused). Leave unset behind a trusted proxy that
+    /// rewrites `Host`.
+    #[must_use]
+    pub fn allow_host(mut self, host: impl Into<String>) -> Self {
+        match &mut self.hosts {
+            HostPolicy::Allowlist(list) => list.push(host.into()),
+            HostPolicy::Any => self.hosts = HostPolicy::Allowlist(vec![host.into()]),
+        }
+        self
+    }
+
+    /// Toggle the permissive CORS layer (off by default).
+    #[must_use]
+    pub fn enable_cors(mut self, enabled: bool) -> Self {
+        self.cors = enabled;
+        self
+    }
+
+    /// Provide a cancellation token; firing it triggers axum's graceful shutdown.
+    #[must_use]
+    pub fn with_shutdown(mut self, shutdown: CancellationToken) -> Self {
+        self.shutdown = shutdown;
+        self
+    }
+
+    /// A clone of the configured shutdown token (a fresh, never-fired token by
+    /// default). Lets callers coordinate their own teardown — e.g. `run_http`
+    /// gracefully closes `subscriptions/listen` subscriptions when it fires.
+    #[must_use]
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
+    }
+
+    /// Set the SSE keep-alive comment interval (default 15s). Keep it shorter
+    /// than the idle timeout of any proxy in front of the server.
+    #[must_use]
+    pub fn sse_keepalive(mut self, interval: Duration) -> Self {
+        self.sse_keepalive = interval;
+        self
+    }
+
+    /// Protect the endpoint as an OAuth 2.1 resource server: every `POST`/`GET`
+    /// must carry a valid `Authorization: Bearer` token (validated by
+    /// `authenticator`, e.g. `turbomcp_auth::ResourceServer`), and the RFC
+    /// 9728 metadata document is served at
+    /// `/.well-known/oauth-protected-resource`. Unauthenticated requests get
+    /// the `401`/`403` + `WWW-Authenticate` challenges. stdio is unaffected
+    /// (the MCP spec has no stdio auth).
+    #[must_use]
+    pub fn with_authenticator(mut self, authenticator: Arc<dyn HttpAuthenticator>) -> Self {
+        self.authenticator = Some(authenticator);
+        self
+    }
+
+    /// Rate-limit the endpoint. Each request is charged against an
+    /// identity-derived [`RateKey`] — per authenticated subject when the
+    /// request carries a valid bearer token, otherwise per source IP — and an
+    /// over-budget request gets `429 Too Many Requests` + `Retry-After` before
+    /// it ever reaches a handler. Pair with
+    /// [`GovernorRateLimiter`](turbomcp_service::GovernorRateLimiter) for the
+    /// in-process default. stdio is never rate-limited (single trusted local
+    /// connection).
+    #[must_use]
+    pub fn with_rate_limiter(mut self, rate_limiter: Arc<dyn RateLimiter>) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
+    }
+
+    /// Rate-limit by source IP *before* anything else happens: before the
+    /// body is read, before a bearer token is verified. Every request is
+    /// charged against [`RateKey::Ip`] (or [`RateKey::Global`] with no peer
+    /// address), and an over-budget one gets `429` + `Retry-After`.
+    ///
+    /// [`with_rate_limiter`](Self::with_rate_limiter) charges authenticated
+    /// callers per subject, which only works once the token is verified, so a
+    /// flood of bad tokens never reaches it: each still costs a signature
+    /// check (and a body parse) and is never throttled. This is the cheap
+    /// first gate for that. Keep its quota generous, since callers behind one
+    /// NAT share it.
+    #[must_use]
+    pub fn with_ip_rate_limiter(mut self, rate_limiter: Arc<dyn RateLimiter>) -> Self {
+        self.ip_rate_limiter = Some(rate_limiter);
+        self
+    }
+
+    /// Trust these proxies to set `X-Forwarded-For`: addresses or CIDR ranges
+    /// (anything that converts into an [`IpNet`], so a plain [`IpAddr`] works
+    /// too). When the direct socket peer is one of them, the client IP used
+    /// for rate limiting is taken from the right of the `X-Forwarded-For`
+    /// chain (the first hop not itself trusted) instead of the proxy's own
+    /// address. Every `X-Forwarded-For` line counts, in order: a proxy that
+    /// appends a new line rather than extending the client's is common, and
+    /// reading only the first let a client name any address it liked.
+    /// Spoofable if you list an address that isn't actually your proxy; list
+    /// only your real front ends. Empty (default) means the raw socket peer is
+    /// always used.
+    #[must_use]
+    pub fn with_trusted_proxies<I, N>(mut self, proxies: I) -> Self
+    where
+        I: IntoIterator<Item = N>,
+        N: Into<IpNet>,
+    {
+        self.trusted_proxies = proxies.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Honor client-initiated session termination: a `DELETE` carrying an
+    /// `Mcp-Session-Id` ends that `2025-11-25` session (dropping its state and
+    /// subscription routes) and answers `204`; an unknown session answers
+    /// `404`. Obtain the terminator from
+    /// `VersionDispatcher::session_terminator`. Without it, `DELETE` answers
+    /// `405` (the spec permits a server refusing termination).
+    #[must_use]
+    pub fn with_session_terminator(mut self, terminator: Arc<dyn SessionTerminator>) -> Self {
+        self.session_terminator = Some(terminator);
+        self
+    }
+}
+
+/// Errors from running the HTTP transport.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum HttpError {
+    /// Binding the listener or running the server failed.
+    #[error("http server i/o error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Erase into the service-layer boundary error so a binary that serves over
+/// more than one transport can `?` every entry point against a single
+/// `Result<(), ProtocolError>` — the type `serve_stdio` already returns.
+impl From<HttpError> for ProtocolError {
+    fn from(err: HttpError) -> Self {
+        match err {
+            HttpError::Io(e) => ProtocolError::Transport(format!("http: {e}")),
+        }
+    }
+}
+
+/// Per-request shared state: the service to dispatch into, the codec, the
+/// Origin policy, and the optional resource-server authenticator. Cheap to
+/// clone (the service clones per request by contract).
+#[derive(Clone)]
+struct HttpState<S> {
+    service: S,
+    codec: DefaultCodec,
+    origins: OriginPolicy,
+    hosts: HostPolicy,
+    sse_keepalive: Duration,
+    authenticator: Option<Arc<dyn HttpAuthenticator>>,
+    rate_limiter: Option<Arc<dyn RateLimiter>>,
+    session_terminator: Option<Arc<dyn SessionTerminator>>,
+    trusted_proxies: Arc<[IpNet]>,
+    /// This endpoint's stateful sessions' `GET` streams, attached to every
+    /// request so the dispatcher can reach a session's current stream.
+    streams: SessionStreams,
+    /// The revisions this endpoint serves, for the `MCP-Protocol-Version`
+    /// check and the `supported` list its rejection carries.
+    supported_versions: Arc<[ProtocolVersion]>,
+    /// The configured shutdown token; dedicated `subscriptions/listen` SSE
+    /// streams end when it fires (the RC's server-side subscription close).
+    shutdown: CancellationToken,
+}
+
+impl<S> HttpState<S> {
+    /// Whether this endpoint serves the revision a `MCP-Protocol-Version`
+    /// header names.
+    fn serves(&self, version: &str) -> bool {
+        let requested = ProtocolVersion::from_wire(version);
+        self.supported_versions.contains(&requested)
+    }
+
+    /// The `400` for a `MCP-Protocol-Version` this endpoint does not serve, on
+    /// the verbs that carry no JSON-RPC id to name.
+    ///
+    /// The rule is "all subsequent requests", not "all POSTs": a `GET` opening
+    /// the session's stream and a `DELETE` ending it are requests too, and a
+    /// header naming a version the server never agreed to is as wrong there.
+    fn reject_version_header(&self, headers: &HeaderMap) -> Option<Response> {
+        let version = headers
+            .get(&headers::PROTOCOL_VERSION)
+            .and_then(|v| v.to_str().ok())?;
+        (!self.serves(version))
+            .then(|| version_header_rejection(None, version, &self.supported_versions))
+    }
+}
+
+/// Build the configured axum [`Router`] for `service` without binding a socket —
+/// the unit of composition (mount it under a larger app) and the seam tests
+/// drive via `tower::ServiceExt::oneshot`.
+pub fn router<S>(service: S, config: HttpConfig) -> Router
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    let admission = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_requests));
+    let request_timeout = config.request_timeout;
+    let ip_rate_limiter = config.ip_rate_limiter.clone();
+    let gate_proxies: Arc<[IpNet]> = config.trusted_proxies.clone().into();
+    let state = HttpState {
+        service,
+        codec: DefaultCodec::default(),
+        origins: config.origins.clone(),
+        hosts: config.hosts.clone(),
+        sse_keepalive: config.sse_keepalive,
+        authenticator: config.authenticator.clone(),
+        rate_limiter: config.rate_limiter.clone(),
+        session_terminator: config.session_terminator.clone(),
+        trusted_proxies: config.trusted_proxies.clone().into(),
+        streams: SessionStreams::new(),
+        supported_versions: config.supported_versions.clone().into(),
+        shutdown: config.shutdown.clone(),
+    };
+    let mut app = Router::new()
+        .route(
+            &config.path,
+            post(mcp_post::<S>)
+                .get(mcp_get::<S>)
+                .delete(mcp_delete::<S>),
+        )
+        .layer(DefaultBodyLimit::max(config.max_body_bytes));
+    // RFC 9728 Protected Resource Metadata is public (no auth) discovery.
+    if config.authenticator.is_some() {
+        app = app.route(
+            RESOURCE_METADATA_PATH,
+            axum::routing::get(resource_metadata::<S>),
+        );
+    }
+    let app = if config.cors {
+        app.layer(CorsLayer::permissive())
+    } else {
+        app
+    };
+    app.layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let admission = admission.clone();
+            let ip_rate_limiter = ip_rate_limiter.clone();
+            let gate_proxies = Arc::clone(&gate_proxies);
+            async move {
+                // The per-IP gate runs first, before the body is read or a
+                // token verified: it is what makes a flood cheap to refuse.
+                if let Some(limiter) = &ip_rate_limiter {
+                    let (parts, body) = request.into_parts();
+                    let key = PeerIp::from_parts(&parts)
+                        .client_ip(&gate_proxies)
+                        .map_or(RateKey::Global, RateKey::Ip);
+                    if let Err(retry_after) = limiter.check(&key) {
+                        return too_many_requests(retry_after);
+                    }
+                    let request = axum::extract::Request::from_parts(parts, body);
+                    admit(admission, request_timeout, request, next).await
+                } else {
+                    admit(admission, request_timeout, request, next).await
+                }
+            }
+        },
+    ))
+    .with_state(state)
+}
+
+/// The admission pool: a permit per in-flight request, held until its body
+/// has been streamed out.
+async fn admit(
+    admission: Arc<tokio::sync::Semaphore>,
+    request_timeout: Duration,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Ok(permit) = admission.try_acquire_owned() else {
+        return too_many_requests(Duration::from_secs(1));
+    };
+    let response = match tokio::time::timeout(request_timeout, next.run(request)).await {
+        Ok(response) => response,
+        Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+    };
+    let (parts, body) = response.into_parts();
+    let stream = futures::stream::unfold(
+        (body.into_data_stream(), permit),
+        |(mut stream, permit)| async move {
+            use futures::StreamExt as _;
+            stream.next().await.map(|chunk| (chunk, (stream, permit)))
+        },
+    );
+    Response::from_parts(parts, axum::body::Body::from_stream(stream))
+}
+
+/// Serve `service` over Streamable HTTP on `addr` until the configured shutdown
+/// token fires (or forever, with the default token).
+///
+/// # Errors
+/// Returns [`HttpError::Io`] if the listener cannot bind or the server loop fails.
+pub async fn serve_http<S>(
+    addr: SocketAddr,
+    service: S,
+    config: HttpConfig,
+) -> Result<(), HttpError>
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    let shutdown = config.shutdown.clone();
+    let shutdown_timeout = config.shutdown_timeout;
+    let signal = shutdown.clone();
+    let app = router(service, config);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!(%addr, "turbomcp http transport listening");
+    // `with_connect_info` so the rate limiter can key anonymous requests on the
+    // peer IP (a no-op when no limiter is configured).
+    let serving = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move { shutdown.cancelled().await });
+    use std::future::IntoFuture as _;
+    let serving = serving.into_future();
+    tokio::pin!(serving);
+    tokio::select! {
+        result = &mut serving => result?,
+        () = signal.cancelled() => {
+            if let Ok(result) = tokio::time::timeout(shutdown_timeout, &mut serving).await { result?; }
+        }
+    }
+    Ok(())
+}
+
+// ---- handlers ----------------------------------------------------------------
+
+async fn mcp_post<S>(
+    State(state): State<HttpState<S>>,
+    peer: PeerIp,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    if let Some(rejection) = check_origin(&state.origins, &headers) {
+        return rejection;
+    }
+    if let Some(rejection) = check_host(&state.hosts, &headers) {
+        return rejection;
+    }
+    // Transports spec §Sending Messages to the Server: the client MUST list
+    // both `application/json` and `text/event-stream` in `Accept` — a POST
+    // may answer with either.
+    if !(accepts(&headers, &mime::APPLICATION_JSON) && accepts(&headers, &mime::TEXT_EVENT_STREAM))
+    {
+        return not_acceptable_rejection(
+            "POST requires an Accept header listing both application/json and text/event-stream",
+        );
+    }
+
+    // Resource-server auth (if configured), before the body is decoded: an
+    // unauthenticated caller shouldn't get to spend a JSON parse. A rejected
+    // request never dispatches.
+    let authenticated = match enforce_auth(&state, &headers).await {
+        Ok(authenticated) => authenticated,
+        Err(rejection) => return *rejection,
+    };
+    let subject = authenticated.as_ref().and_then(|a| a.subject.clone());
+
+    let mut msg = match turbomcp_core::codec::decode_message(&state.codec, &body) {
+        Ok(msg) => msg,
+        Err(bad) => return invalid_frame_response(&bad),
+    };
+
+    // What this endpoint knows about the request travels beside the message,
+    // where the client can't write: the verified identity, the session, the
+    // mirrors that arrived, and where session streams live.
+    let mut ext = Extensions::new().with(state.streams.clone());
+    if let Some(authenticated) = authenticated {
+        ext.insert(authenticated.identity);
+    }
+
+    // Rate limit (if configured) per identity: authenticated → per-subject,
+    // anonymous → per source IP. Over budget → 429 + Retry-After, before any
+    // dispatch.
+    if let Some(rejection) = enforce_rate_limit(
+        &state,
+        subject.as_deref(),
+        peer.client_ip(&state.trusted_proxies),
+    ) {
+        return rejection;
+    }
+
+    // "If the server receives a request with an invalid **or unsupported**
+    // `MCP-Protocol-Version`, it MUST respond with `400 Bad Request`."
+    //
+    // Unsupported is measured against *this server's* set, which
+    // `#[server(protocols(…))]` narrows — not against every version the crate
+    // can parse. Tolerating a real-but-unserved version (`2024-11-05`, or
+    // `2025-11-25` on a `2025-06-18`-only server) meant answering it in a wire
+    // shape the client never asked for.
+    let header_version = headers
+        .get(&headers::PROTOCOL_VERSION)
+        .and_then(|v| v.to_str().ok());
+    if let Some(v) = header_version
+        && !state.serves(v)
+    {
+        return version_header_rejection(request_id(&msg).as_ref(), v, &state.supported_versions);
+    }
+    // Header/body mirror validation (draft envelope): version header must
+    // match a body-declared version; `Mcp-Method`/`Mcp-Name`/`Mcp-Param-*`
+    // must mirror the body on draft requests. Runs BEFORE the dual-stack
+    // routing below, which stamps a negotiated version into version-less
+    // legacy bodies.
+    if let Some(rejection) = validate_request_headers(&msg, &headers) {
+        return rejection;
+    }
+    // Whether this request rides the stateless wire. The body's own `_meta`
+    // is the primary signal, but a request whose envelope is *missing* has no
+    // body signal to read — the header is what still identifies the wire, and
+    // rejecting such a request is the whole point (SEP-2575).
+    let stateless_request = matches!(&msg, JsonRpcMessage::Request(_))
+        && declared_version(&msg)
+            .as_deref()
+            .or(header_version)
+            .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28);
+
+    // SEP-2575: a stateless request MUST carry `protocolVersion` and
+    // `clientCapabilities` in `_meta`. The dispatcher rejects these too (every
+    // transport must), but the status code is the transport's to set: these
+    // are malformed requests, not application errors, so they are 400 rather
+    // than the usual 200-with-an-error-body.
+    if stateless_request
+        && let JsonRpcMessage::Request(r) = &msg
+        && let Some(field) = meta::missing_request_envelope_field(r.params.as_ref())
+    {
+        return envelope_rejection(&r.id, field);
+    }
+
+    // Hand the dispatcher the `Mcp-Param-*` mirrors that arrived, name
+    // (lowercased) to raw value. It knows the tool's schema, so it is the one
+    // that can tell which argument each mirrors and check the value; only we
+    // know which headers were sent, and an *omitted* mirror is a validation
+    // failure (SEP-2243 §Server Validation) the body alone cannot reveal. A
+    // value that isn't visible ASCII is passed as `null`, which the dispatcher
+    // refuses if the header is one the tool declares.
+    if stateless_request {
+        ext.insert(ObservedHeaders(
+            headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    let param = name.as_str().strip_prefix(headers::MCP_PARAM_PREFIX)?;
+                    let value = value.to_str().ok().map(str::to_owned);
+                    Some((param.to_ascii_lowercase(), value))
+                })
+                .collect(),
+        ));
+    }
+
+    let session_header = headers
+        .get(&headers::SESSION_ID)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+
+    // Dual-stack routing (module docs): legacy traffic carries its session;
+    // modern stateless bodies pass through untouched.
+    let is_initialize = msg.method() == Some("initialize");
+    if state.authenticator.is_some()
+        && state.session_terminator.is_none()
+        && (is_initialize || session_header.is_some())
+    {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "authenticated sessions require a session ownership backend",
+        )
+            .into_response();
+    }
+    let mut minted_session = None;
+    if is_initialize {
+        let sid = uuid::Uuid::new_v4().to_string();
+        ext.insert(SessionId::new(sid.as_str()));
+        minted_session = Some(sid);
+    } else if let Some(sid) = session_header {
+        if let Some(terminator) = &state.session_terminator
+            && !terminator.owns(&sid, subject.as_deref()).await
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        if !message_has_version(&msg) {
+            // What this session actually negotiated, in preference order:
+            //
+            // 1. The session's stored version. The spec has the server fall
+            //    back to assuming a version only when it "has no other way to
+            //    identify the version — for example, by relying on the
+            //    protocol version negotiated during initialization", and a
+            //    live session is precisely that other way. Reading the header
+            //    first meant a client that sent something other than what it
+            //    negotiated got answered in the shape it typed, not the one
+            //    the two ends agreed on.
+            // 2. `MCP-Protocol-Version`, which both revisions require on every
+            //    post-`initialize` request, for a session this endpoint's
+            //    backend cannot look up.
+            // 3. `2025-11-25`, which keeps tolerant clients (rmcp, Codex)
+            //    working when neither is available.
+            let stored = match &state.session_terminator {
+                Some(t) => t.negotiated_version(&sid).await,
+                None => None,
+            };
+            let session_version = stored
+                .or_else(|| header_version.map(ProtocolVersion::from_wire))
+                .filter(ProtocolVersion::is_stateful)
+                .unwrap_or(ProtocolVersion::V2025_11_25);
+            meta::set_request_meta(
+                &mut msg,
+                meta::keys::PROTOCOL_VERSION,
+                json!(session_version.as_str()),
+            );
+        }
+        ext.insert(SessionId::new(sid));
+    } else if header_version
+        .map(ProtocolVersion::from_wire)
+        .is_some_and(|v| v.is_stateful())
+    {
+        // Declared-legacy request with no session and not initialize: the
+        // stateful path requires a session (spec §Session Management).
+        return session_required_rejection(request_id(&msg).as_ref());
+    }
+
+    // A modern `subscriptions/listen` request answers with a long-lived SSE
+    // stream rather than a JSON body. (A legacy-stamped or malformed listen
+    // comes back from the dispatcher as an error *response*, which the SSE
+    // path renders as plain JSON — so the divert is safe on method alone.)
+    let is_listen = msg.method() == Some("subscriptions/listen");
+    let is_request = matches!(&msg, JsonRpcMessage::Request(_));
+    let id = request_id(&msg);
+    let request = McpRequest {
+        message: msg,
+        extensions: ext,
+    };
+    if is_listen {
+        return listen_sse(&state, request).await;
+    }
+
+    // Every other *request* takes the lazy-upgrade path: plain JSON unless the
+    // handler emits server→client messages mid-flight. `initialize` stays on
+    // the inline path below — its response must carry the minted session
+    // header, and the handshake never streams.
+    if !is_initialize && is_request {
+        return request_post(&state, request, stateless_request).await;
+    }
+
+    let mut svc = state.service.clone();
+    if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
+        return protocol_error_response(&e, id);
+    }
+    match catch_handler_panic(id.clone(), svc.call(request)).await {
+        Ok(Some(reply)) => {
+            let mut resp = encode_json_response(&state.codec, &reply);
+            // `initialize` reaches this inline path rather than `request_post`,
+            // so it needs the same 404 upgrade: on the stateless wire the
+            // method was removed, and the dispatcher answers `-32601`.
+            apply_stateless_error_status(&mut resp, &reply, stateless_request);
+            // A successful initialize hands the minted session back to the
+            // client as the Mcp-Session-Id header.
+            if let Some(sid) = minted_session
+                && matches!(&reply, JsonRpcMessage::Response(r) if r.error.is_none())
+                && let Ok(value) = HeaderValue::from_str(&sid)
+            {
+                resp.headers_mut().insert(headers::SESSION_ID, value);
+            }
+            resp
+        }
+        Ok(None) => StatusCode::ACCEPTED.into_response(), // notification: no body
+        Err(e) => protocol_error_response(&e, id),
+    }
+}
+
+/// Give a stateless-wire reply the HTTP status its JSON-RPC error code calls
+/// for (transports spec / SEP-2575). Two codes are not "the request was fine,
+/// the operation failed", so they do not get the usual `200`:
+///
+/// - `-32601` → `404`: on this wire the method does not exist, however well an
+///   earlier revision defined it.
+/// - `-32021` → `400`: the client did not declare a capability the call needs,
+///   so the request was never valid to send.
+/// - `-32020` → `400`: header/body validation failed. Most of these are caught
+///   in [`validate_request_headers`] before dispatch, but a *missing*
+///   `Mcp-Param-*` mirror is only detectable once the tool's schema is known,
+///   so that one comes back from the dispatcher and is mapped here.
+///
+/// Everything else stays `200` with the error in the body — including
+/// `-32602`, which a perfectly well-formed request earns by naming a missing
+/// resource or a bad tool argument.
+fn apply_stateless_error_status(resp: &mut Response, reply: &JsonRpcMessage, enabled: bool) {
+    if !enabled {
+        return;
+    }
+    let JsonRpcMessage::Response(r) = reply else {
+        return;
+    };
+    let Some(code) = r.error.as_ref().map(|e| e.code) else {
+        return;
+    };
+    if code == -32601 {
+        *resp.status_mut() = StatusCode::NOT_FOUND;
+    } else if code == turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY
+        || code == turbomcp_core::codes::HEADER_MISMATCH
+    {
+        *resp.status_mut() = StatusCode::BAD_REQUEST;
+    }
+}
+
+/// Open the SSE stream for a `subscriptions/listen` request: register a
+/// per-stream writer (under a minted connection id) so the dispatcher's
+/// subscription registry can reach this response, dispatch the listen, and —
+/// if it was accepted — stream every pushed message as an SSE event.
+///
+/// The writer registration travels inside the stream state, so a client
+/// disconnect (axum drops the body) unregisters it; the registry prunes the
+/// subscription at its next publish (transports spec §Cancellation: closing
+/// the stream is the cancellation signal).
+async fn listen_sse<S>(state: &HttpState<S>, mut request: McpRequest) -> Response
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    let (outlet, rx) = Outlet::open("http-sse", &mut request);
+
+    let id = request_id(&request.message);
+    let mut svc = state.service.clone();
+    if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
+        return protocol_error_response(&e, id);
+    }
+    match catch_handler_panic(id.clone(), svc.call(request)).await {
+        // Accepted: no JSON-RPC response; the ack notification is already in
+        // the channel as the stream's first event.
+        Ok(None) => {}
+        // Rejected in-band (bad filter, legacy path, unsupported version).
+        Ok(Some(reply)) => return encode_json_response(&state.codec, &reply),
+        Err(e) => return protocol_error_response(&e, id),
+    }
+
+    sse_response(
+        state.codec,
+        rx,
+        outlet,
+        state.sse_keepalive,
+        Some(state.shutdown.clone()),
+    )
+}
+
+/// Dispatch one JSON-RPC request with a per-request server→client channel
+/// (transports spec §Sending Messages: the server answers each POSTed request
+/// with either a single JSON object or an SSE stream scoped to that request).
+///
+/// The request carries a [`Peer`] for its own channel under a minted
+/// per-request connection id, so anything the handler emits mid-flight —
+/// inline bidi requests on the legacy path, progress, log messages — reaches
+/// this response. If nothing is emitted the reply stays plain JSON; the first
+/// mid-flight message upgrades the response to `text/event-stream`, carrying
+/// the request-related messages followed by the final response, which
+/// terminates the stream. A client disconnect drops the in-flight call —
+/// HTTP's cancellation signal.
+async fn request_post<S>(
+    state: &HttpState<S>,
+    mut request: McpRequest,
+    stateless_request: bool,
+) -> Response
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    let JsonRpcMessage::Request(req) = &request.message else {
+        unreachable!("request_post is only called for requests");
+    };
+    let request_id = req.id.clone();
+    // No event `id` on this stream, because this endpoint does not replay.
+    //
+    // Attaching one is a MAY, and it belongs entirely to §Resumability and
+    // Redelivery: an id is what tells a client it may reconnect with
+    // `Last-Event-ID` and be caught up. Nothing here reads that header — and
+    // v4's own client sends it — so priming the stream turned a visible
+    // disconnect into a silent gap the client believed it had recovered from.
+    // A stream with no ids is plainly not resumable, which the spec allows and
+    // a client can see.
+    let (registration, mut rx) = Outlet::open("http-post", &mut request);
+
+    let mut svc = state.service.clone();
+    if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
+        return protocol_error_response(&e, Some(request_id));
+    }
+    // Wrapped at construction, not at each await: this future is polled from
+    // here *and* from the upgraded SSE stream below, and a handler panic must
+    // answer on whichever path is live.
+    let mut call = Box::pin(catch_handler_panic(
+        Some(request_id.clone()),
+        svc.call(request),
+    ));
+
+    tokio::select! {
+        biased;
+        result = call.as_mut() => {
+            // Completed without upgrading — but messages may have raced into
+            // the channel just before completion; don't lose them.
+            let mut events = drain(&mut rx);
+            drop(registration);
+            match result {
+                Ok(Some(reply)) if events.is_empty() => {
+                    let mut resp = encode_json_response(&state.codec, &reply);
+                    apply_stateless_error_status(&mut resp, &reply, stateless_request);
+                    resp
+                }
+                Ok(Some(reply)) => {
+                    events.push_back(reply);
+                    finished_sse(state.codec, events)
+                }
+                // A request always gets a response from the dispatcher; these
+                // arms are defensive.
+                Ok(None) if events.is_empty() => StatusCode::ACCEPTED.into_response(),
+                Ok(None) => finished_sse(state.codec, events),
+                Err(e) => protocol_error_response(&e, Some(request_id.clone())),
+            }
+        }
+        first = rx.recv() => {
+            let Some(first) = first else {
+                // Unreachable while `registration` holds the sender.
+                return protocol_error_response(
+                    &ProtocolError::Internal(
+                        "per-request channel closed while registered".to_owned(),
+                    ),
+                    Some(request_id.clone()),
+                );
+            };
+            streaming_post_sse(
+                state.codec,
+                first,
+                PostStream::Run {
+                    rx,
+                    call,
+                    id: request_id,
+                    registration,
+                },
+                state.sse_keepalive,
+            )
+        }
+    }
+}
+
+/// State for an upgraded per-request SSE response: keep streaming channel
+/// messages while driving the in-flight call; when the call completes, append
+/// its final response and end the stream.
+enum PostStream<F> {
+    /// The request is still in flight.
+    Run {
+        rx: tokio::sync::mpsc::Receiver<JsonRpcMessage>,
+        call: Pin<Box<F>>,
+        id: RequestId,
+        registration: Outlet,
+    },
+    /// The call finished; flush the remaining events and close.
+    Tail(VecDeque<JsonRpcMessage>),
+}
+
+/// The upgraded per-request SSE response (see [`request_post`]). The final
+/// response (or a JSON-RPC error built from a [`ProtocolError`]) is the last
+/// event; dropping the response body drops the call future.
+fn streaming_post_sse<F>(
+    codec: DefaultCodec,
+    first: JsonRpcMessage,
+    run: PostStream<F>,
+    keepalive: Duration,
+) -> Response
+where
+    F: Future<Output = Result<Option<JsonRpcMessage>, ProtocolError>> + Send + 'static,
+{
+    let head = futures::stream::iter([Ok::<_, Infallible>(sse_event(&codec, &first))]);
+    let tail = futures::stream::unfold(run, move |state| async move {
+        match state {
+            PostStream::Run {
+                mut rx,
+                mut call,
+                id,
+                registration,
+            } => {
+                tokio::select! {
+                    result = call.as_mut() => {
+                        let mut events = drain(&mut rx);
+                        drop(registration);
+                        match result {
+                            Ok(Some(reply)) => events.push_back(reply),
+                            Ok(None) => {}
+                            Err(e) => events.push_back(e.into_response(id).into()),
+                        }
+                        let msg = events.pop_front()?;
+                        Some((
+                            Ok::<_, Infallible>(sse_event(&codec, &msg)),
+                            PostStream::Tail(events),
+                        ))
+                    }
+                    msg = rx.recv() => {
+                        let msg = msg.expect("sender held by registration");
+                        Some((
+                            Ok::<_, Infallible>(sse_event(&codec, &msg)),
+                            PostStream::Run { rx, call, id, registration },
+                        ))
+                    }
+                }
+            }
+            PostStream::Tail(mut events) => {
+                let msg = events.pop_front()?;
+                Some((
+                    Ok::<_, Infallible>(sse_event(&codec, &msg)),
+                    PostStream::Tail(events),
+                ))
+            }
+        }
+    });
+    let stream = futures::StreamExt::chain(head, tail);
+    let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(keepalive).text("keep-alive"));
+    (
+        [(
+            HeaderName::from_static("x-accel-buffering"),
+            HeaderValue::from_static("no"),
+        )],
+        sse,
+    )
+        .into_response()
+}
+
+/// A short, complete SSE response for a request that finished before the
+/// upgrade decision but raced messages into its channel: the messages, the
+/// final response, end of stream.
+fn finished_sse(codec: DefaultCodec, events: VecDeque<JsonRpcMessage>) -> Response {
+    let stream = futures::stream::iter(
+        events
+            .into_iter()
+            .map(move |msg| sse_event(&codec, &msg))
+            .map(Ok::<_, Infallible>),
+    );
+    (
+        [(
+            HeaderName::from_static("x-accel-buffering"),
+            HeaderValue::from_static("no"),
+        )],
+        Sse::new(stream),
+    )
+        .into_response()
+}
+
+/// Empty the channel without awaiting (post-completion stragglers).
+fn drain(rx: &mut tokio::sync::mpsc::Receiver<JsonRpcMessage>) -> VecDeque<JsonRpcMessage> {
+    let mut events = VecDeque::new();
+    while let Ok(msg) = rx.try_recv() {
+        events.push_back(msg);
+    }
+    events
+}
+
+/// Encode one message as one `data:` event; an encode failure becomes a
+/// comment so the stream survives.
+fn sse_event(codec: &DefaultCodec, msg: &JsonRpcMessage) -> Event {
+    match codec.encode(msg) {
+        Ok(bytes) => Event::default().data(String::from_utf8_lossy(&bytes)),
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to encode SSE event; skipped");
+            Event::default().comment("event encoding failed; skipped")
+        }
+    }
+}
+
+/// The common SSE response shape for the two long-lived stream kinds (modern
+/// listen, legacy GET): every channel message becomes one `data:` event;
+/// keep-alive comments flow in between; the writer registration travels inside
+/// the stream state so dropping the response body unregisters it.
+fn sse_response(
+    codec: DefaultCodec,
+    rx: tokio::sync::mpsc::Receiver<JsonRpcMessage>,
+    registration: Outlet,
+    keepalive: Duration,
+    shutdown: Option<CancellationToken>,
+) -> Response {
+    let stream = futures::stream::unfold(
+        (Some((rx, registration)), codec, shutdown),
+        |(live, codec, shutdown)| async move {
+            let (mut rx, registration) = live?;
+            // A listen stream carries the shutdown token: the subscriptions
+            // spec ends a subscription by closing the stream (no closing
+            // response), so graceful teardown ends it here. Other streams
+            // (per-POST, legacy GET) end on their final response instead.
+            let msg = match &shutdown {
+                Some(token) => tokio::select! {
+                    () = token.cancelled() => None,
+                    m = rx.recv() => m,
+                }?,
+                None => rx.recv().await?,
+            };
+            let event = sse_event(&codec, &msg);
+            // A JSON-RPC *response* ends the stream — the per-POST stream
+            // contract ("the final response ends the stream").
+            let next = if matches!(msg, JsonRpcMessage::Response(_)) {
+                None
+            } else {
+                Some((rx, registration))
+            };
+            Some((Ok::<_, Infallible>(event), (next, codec, shutdown)))
+        },
+    );
+
+    let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(keepalive).text("keep-alive"));
+    // X-Accel-Buffering tells reverse proxies (nginx) not to buffer the
+    // stream (transports spec: SHOULD include it on SSE responses).
+    (
+        [(
+            HeaderName::from_static("x-accel-buffering"),
+            HeaderValue::from_static("no"),
+        )],
+        sse,
+    )
+        .into_response()
+}
+
+/// The legacy (`2025-11-25`) server→client SSE stream: `GET` with an
+/// `Mcp-Session-Id` opens the session's notification stream (transports spec
+/// §Listening for Messages). The stream is registered as the session's in this
+/// endpoint's [`SessionStreams`]; a newer GET stream replaces an older one (the
+/// spec forbids broadcasting one message across streams).
+/// Resumability (`Last-Event-ID`) is not supported.
+///
+/// The draft never GETs — it subscribes via `subscriptions/listen` over POST —
+/// so a session-less GET answers `405`, which the spec permits.
+async fn mcp_get<S>(State(state): State<HttpState<S>>, peer: PeerIp, headers: HeaderMap) -> Response
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    if let Some(rejection) = check_origin(&state.origins, &headers) {
+        return rejection;
+    }
+    if let Some(rejection) = check_host(&state.hosts, &headers) {
+        return rejection;
+    }
+    // Transports spec §Listening for Messages from the Server: the client
+    // MUST list `text/event-stream` in `Accept`.
+    if !accepts(&headers, &mime::TEXT_EVENT_STREAM) {
+        return not_acceptable_rejection("GET requires an Accept header listing text/event-stream");
+    }
+    if let Some(rejection) = state.reject_version_header(&headers) {
+        return rejection;
+    }
+    // The GET stream is part of the protected resource; require auth too.
+    let subject = match enforce_auth(&state, &headers).await {
+        Ok(authenticated) => authenticated.and_then(|a| a.subject),
+        Err(rejection) => return *rejection,
+    };
+    if let Some(rejection) = enforce_rate_limit(
+        &state,
+        subject.as_deref(),
+        peer.client_ip(&state.trusted_proxies),
+    ) {
+        return rejection;
+    }
+    let Some(sid) = headers
+        .get(&headers::SESSION_ID)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "POST")],
+            "no GET stream without Mcp-Session-Id: the draft subscribes via subscriptions/listen",
+        )
+            .into_response();
+    };
+
+    if state.authenticator.is_some() && state.session_terminator.is_none() {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "authenticated sessions require a session ownership backend",
+        )
+            .into_response();
+    }
+    if let Some(terminator) = &state.session_terminator
+        && !terminator.owns(sid, subject.as_deref()).await
+    {
+        return (StatusCode::NOT_FOUND, "session not found").into_response();
+    }
+    let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
+    // One stream per session: a newer GET replaces this one in the registry
+    // the dispatcher publishes through.
+    let peer = Peer::new(format!("http-get-{}", uuid::Uuid::new_v4()), &tx);
+    let guard = state.streams.register(sid, peer);
+    let outlet = Outlet {
+        _tx: tx,
+        _guard: Some(guard),
+    };
+    sse_response(state.codec, rx, outlet, state.sse_keepalive, None)
+}
+
+/// Client-initiated session termination (`2025-11-25` spec §Session
+/// Management). With a [`SessionTerminator`] configured
+/// ([`HttpConfig::with_session_terminator`]): a `DELETE` carrying an
+/// `Mcp-Session-Id` ends that session — `204` if it existed, `404` if not.
+/// Without one, the spec permits refusing: `405`. The endpoint is part of the
+/// protected resource, so the origin + auth guards apply.
+async fn mcp_delete<S>(
+    State(state): State<HttpState<S>>,
+    peer: PeerIp,
+    headers: HeaderMap,
+) -> Response
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    if let Some(rejection) = check_origin(&state.origins, &headers) {
+        return rejection;
+    }
+    if let Some(rejection) = check_host(&state.hosts, &headers) {
+        return rejection;
+    }
+    if let Some(rejection) = state.reject_version_header(&headers) {
+        return rejection;
+    }
+    let subject = match enforce_auth(&state, &headers).await {
+        Ok(authenticated) => authenticated.and_then(|a| a.subject),
+        Err(rejection) => return *rejection,
+    };
+    // Rate-limit termination like POST/GET — otherwise it's an unthrottled
+    // endpoint even though it mutates session state.
+    if let Some(rejection) = enforce_rate_limit(
+        &state,
+        subject.as_deref(),
+        peer.client_ip(&state.trusted_proxies),
+    ) {
+        return rejection;
+    }
+    let Some(terminator) = &state.session_terminator else {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "POST")],
+            "client-initiated session termination is not supported; sessions expire by eviction",
+        )
+            .into_response();
+    };
+    let Some(sid) = headers
+        .get(&headers::SESSION_ID)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "DELETE requires an Mcp-Session-Id header",
+        )
+            .into_response();
+    };
+    if terminator.terminate(sid, subject.as_deref()).await {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        // Unknown/already-terminated session: the spec maps this to 404 so the
+        // client knows it's gone.
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+/// Serve the RFC 9728 Protected Resource Metadata document (public, no auth).
+/// Only routed when an authenticator is configured.
+async fn resource_metadata<S>(State(state): State<HttpState<S>>) -> Response
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    match &state.authenticator {
+        Some(authenticator) => Json(authenticator.resource_metadata()).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+// ---- auth --------------------------------------------------------------------
+
+/// A caller the authenticator let in.
+struct Authenticated {
+    /// The rate-limit identity (issuer + subject), when the principal names one.
+    subject: Option<String>,
+    /// Who it is, attached to the request for the dispatcher.
+    identity: Identity,
+}
+
+/// Run the configured authenticator. `Err` carries the challenge response
+/// (401/403 + `WWW-Authenticate`); `Ok(None)` is an open endpoint (no
+/// authenticator configured, so anonymous).
+///
+/// The rejection is boxed: an axum `Response` is 128 bytes, and this is
+/// awaited on the request path of three handlers, so the unboxed `Result`
+/// would widen each of their futures for a branch that only runs when auth
+/// fails. The allocation lands on the failure path alone.
+async fn enforce_auth<S>(
+    state: &HttpState<S>,
+    headers: &HeaderMap,
+) -> Result<Option<Authenticated>, Box<Response>> {
+    let Some(authenticator) = state.authenticator.as_ref() else {
+        return Ok(None);
+    };
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    match authenticator.authenticate(authorization).await {
+        AuthDecision::Allow(identity) => Ok(Some(Authenticated {
+            subject: identity.principal_key(),
+            identity,
+        })),
+        AuthDecision::Challenge {
+            status,
+            www_authenticate,
+        } => Err(Box::new(challenge_response(status, &www_authenticate))),
+    }
+}
+
+/// Build an auth-challenge response: the status (401/403) plus the
+/// `WWW-Authenticate` header.
+fn challenge_response(status: u16, www_authenticate: &str) -> Response {
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::UNAUTHORIZED);
+    let header = HeaderValue::from_str(www_authenticate)
+        .unwrap_or_else(|_| HeaderValue::from_static("Bearer"));
+    (status, [(axum::http::header::WWW_AUTHENTICATE, header)]).into_response()
+}
+
+// ---- rate limiting -----------------------------------------------------------
+
+/// The request's peer IP, if axum captured one. An infallible extractor: a
+/// real socket carries `ConnectInfo<SocketAddr>` in the request extensions
+/// (set by `into_make_service_with_connect_info`); oneshot/test harnesses and
+/// mounts without connect info simply have none. `Option<ConnectInfo<_>>` can't
+/// be used directly — axum 0.8's `Option` extractor needs
+/// `OptionalFromRequestParts`, which `ConnectInfo` doesn't implement.
+struct PeerIp {
+    socket: Option<IpAddr>,
+    forwarded: Option<String>,
+}
+
+impl PeerIp {
+    /// The effective client IP for rate limiting. If the direct socket peer is a
+    /// trusted proxy, walk `X-Forwarded-For` from the right to the first hop that
+    /// isn't itself trusted; otherwise use the socket peer as-is.
+    fn client_ip(&self, trusted: &[IpNet]) -> Option<IpAddr> {
+        let socket = self.socket?;
+        let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
+        if !is_trusted(&socket) {
+            return Some(socket);
+        }
+        let mut candidate = socket;
+        for raw in self.forwarded.as_deref().unwrap_or("").rsplit(',') {
+            // Never skip an unknown hop to trust an address farther left.
+            let Ok(hop) = raw.trim().parse::<IpAddr>() else {
+                return Some(socket);
+            };
+            candidate = hop;
+            if !is_trusted(&hop) {
+                return Some(hop);
+            }
+        }
+        Some(candidate)
+    }
+
+    /// Read the socket peer and every `X-Forwarded-For` line, joined in
+    /// order (RFC 9110 §5.3: several field lines are one comma-separated
+    /// list). A line that isn't text makes the whole chain unusable, which
+    /// the walk above treats as "stop at the socket".
+    fn from_parts(parts: &Parts) -> Self {
+        let lines: Option<Vec<&str>> = parts
+            .headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .map(|v| v.to_str().ok())
+            .collect();
+        PeerIp {
+            socket: parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|ConnectInfo(addr)| addr.ip()),
+            forwarded: match lines {
+                Some(lines) if !lines.is_empty() => Some(lines.join(",")),
+                Some(_) => None,
+                None => Some("\u{0}".to_owned()),
+            },
+        }
+    }
+}
+
+impl<St: Send + Sync> FromRequestParts<St> for PeerIp {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &St) -> Result<Self, Infallible> {
+        Ok(PeerIp::from_parts(parts))
+    }
+}
+
+/// Enforce the rate limit when configured. Charges the request against an
+/// identity-derived [`RateKey`] — per authenticated `subject`, else per source
+/// IP, else a single global bucket — and returns `Some(429)` if over budget.
+fn enforce_rate_limit<S>(
+    state: &HttpState<S>,
+    subject: Option<&str>,
+    peer_ip: Option<IpAddr>,
+) -> Option<Response> {
+    let limiter = state.rate_limiter.as_ref()?;
+    let key = match subject {
+        Some(sub) => RateKey::Subject(sub.to_owned()),
+        None => peer_ip.map_or(RateKey::Global, RateKey::Ip),
+    };
+    match limiter.check(&key) {
+        Ok(()) => None,
+        Err(retry_after) => Some(too_many_requests(retry_after)),
+    }
+}
+
+/// `429 Too Many Requests` with a `Retry-After` header (seconds, rounded up).
+fn too_many_requests(retry_after: Duration) -> Response {
+    // Round up to whole seconds; a sub-second wait still asks for at least 1s.
+    let secs = retry_after.as_secs() + u64::from(retry_after.subsec_nanos() > 0);
+    let secs = secs.max(1);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": null,
+        "error": { "code": -32000, "message": "rate limit exceeded" },
+    });
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(header::RETRY_AFTER, secs.to_string())],
+        Json(body),
+    )
+        .into_response()
+}
+
+// ---- helpers -----------------------------------------------------------------
+
+/// Whether the message's `params._meta` already states a protocol version (a
+/// modern stateless request does; a legacy post-initialize request doesn't).
+fn message_has_version(msg: &JsonRpcMessage) -> bool {
+    let params = match msg {
+        JsonRpcMessage::Request(r) => r.params.as_ref(),
+        JsonRpcMessage::Notification(n) => n.params.as_ref(),
+        JsonRpcMessage::Response(_) => None,
+    };
+    params
+        .and_then(|p| p.get("_meta"))
+        .and_then(|m| m.get(meta::keys::PROTOCOL_VERSION))
+        .is_some()
+}
+
+/// A transport-level JSON-RPC error response, carrying the request's own id.
+///
+/// SEP-2575 requires every error response to echo the id, and a rejection the
+/// client cannot correlate is one it cannot act on — with several requests in
+/// flight it can't even tell which one failed. `None` is reserved for the
+/// cases where there genuinely is no id to echo: an unparseable body, or a
+/// check that runs before the body is read.
+fn transport_error(
+    status: StatusCode,
+    id: Option<&RequestId>,
+    code: i32,
+    message: String,
+    data: Option<serde_json::Value>,
+) -> Response {
+    let mut error = serde_json::json!({ "code": code, "message": message });
+    if let (Some(obj), Some(data)) = (error.as_object_mut(), data) {
+        obj.insert("data".into(), data);
+    }
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": error,
+    });
+    (status, Json(body)).into_response()
+}
+
+/// `400` + a `HeaderMismatch` JSON-RPC error: an HTTP header did not match the
+/// corresponding request-body value, or a required header is missing or
+/// malformed (transports spec §Server Validation).
+fn header_mismatch_rejection(id: Option<&RequestId>, detail: &str) -> Response {
+    transport_error(
+        StatusCode::BAD_REQUEST,
+        id,
+        turbomcp_core::codes::HEADER_MISMATCH,
+        format!("header mismatch: {detail}"),
+        None,
+    )
+}
+
+/// `400` + `-32602` for a stateless request whose `_meta` envelope is missing
+/// a field SEP-2575 requires.
+fn envelope_rejection(id: &RequestId, field: &str) -> Response {
+    transport_error(
+        StatusCode::BAD_REQUEST,
+        Some(id),
+        -32602,
+        format!("request `_meta` is missing the required field `{field}`"),
+        Some(serde_json::json!({ "missingField": field })),
+    )
+}
+
+/// `400` for an explicit but unsupported `MCP-Protocol-Version` header
+/// (`UnsupportedProtocolVersionError`, with the spec-required
+/// `data: { supported, requested }`).
+fn version_header_rejection(
+    id: Option<&RequestId>,
+    requested: &str,
+    serves: &[ProtocolVersion],
+) -> Response {
+    let supported: Vec<&str> = serves.iter().map(ProtocolVersion::as_str).collect();
+    transport_error(
+        StatusCode::BAD_REQUEST,
+        id,
+        turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION,
+        format!("unsupported MCP-Protocol-Version header: {requested}"),
+        Some(serde_json::json!({ "supported": supported, "requested": requested })),
+    )
+}
+
+/// `400` for a declared-legacy request missing its `Mcp-Session-Id`.
+fn session_required_rejection(id: Option<&RequestId>) -> Response {
+    transport_error(
+        StatusCode::BAD_REQUEST,
+        id,
+        turbomcp_core::codes::NO_ACTIVE_SESSION,
+        "the 2025-11-25 path requires an Mcp-Session-Id header (initialize first)".to_owned(),
+        None,
+    )
+}
+
+/// Whether the request's `Accept` header lists `required` as supported.
+/// Media ranges are matched per RFC 9110 §12.5.1 — `*/*` and `type/*`
+/// wildcards count, and parameters (`;q=…`) are ignored for the "listed as
+/// supported" check the MCP transports spec makes. A missing `Accept` header
+/// fails: the spec says the client MUST include one.
+fn accepts(headers: &HeaderMap, required: &mime::Mime) -> bool {
+    let Some(accept) = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    accept
+        .split(',')
+        .filter_map(|part| part.trim().parse::<mime::Mime>().ok())
+        .any(|range| {
+            (range.type_() == mime::STAR || range.type_() == required.type_())
+                && (range.subtype() == mime::STAR || range.subtype() == required.subtype())
+        })
+}
+
+/// `406` + a JSON-RPC error body for a request whose `Accept` header doesn't
+/// cover the response types this endpoint produces (transports spec: POST
+/// clients MUST list both `application/json` and `text/event-stream`; GET
+/// clients MUST list `text/event-stream`).
+fn not_acceptable_rejection(detail: &str) -> Response {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": null,
+        "error": { "code": -32000, "message": format!("not acceptable: {detail}") },
+    });
+    (StatusCode::NOT_ACCEPTABLE, Json(body)).into_response()
+}
+
+/// Returns `Some(rejection)` if the request's `Origin` is disallowed, else `None`.
+fn check_origin(policy: &OriginPolicy, headers: &HeaderMap) -> Option<Response> {
+    let origin = headers.get(header::ORIGIN)?; // no Origin → non-browser → allowed
+    match policy {
+        OriginPolicy::Any => None,
+        OriginPolicy::Allowlist(list) => {
+            let origin = origin.to_str().unwrap_or_default();
+            (!list.iter().any(|allowed| allowed == origin))
+                .then(|| (StatusCode::FORBIDDEN, "origin not allowed").into_response())
+        }
+    }
+}
+
+/// Returns `Some(rejection)` if the request's `Host` is disallowed, else `None`.
+/// Unlike `Origin`, `Host` is always present, so `Allowlist` mode rejects a
+/// missing/unmatched `Host` — the point is to pin the server's expected host(s).
+fn check_host(policy: &HostPolicy, headers: &HeaderMap) -> Option<Response> {
+    match policy {
+        HostPolicy::Any => None,
+        HostPolicy::Allowlist(list) => {
+            let host = headers
+                .get(header::HOST)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default();
+            (!list.iter().any(|allowed| allowed == host))
+                .then(|| (StatusCode::FORBIDDEN, "host not allowed").into_response())
+        }
+    }
+}
+
+fn encode_json_response(codec: &DefaultCodec, msg: &JsonRpcMessage) -> Response {
+    match codec.encode(msg) {
+        Ok(bytes) => (
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            )],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => {
+            let id = match msg {
+                JsonRpcMessage::Response(r) => r.id.clone(),
+                _ => None,
+            };
+            protocol_error_response(&ProtocolError::from(e), id)
+        }
+    }
+}
+
+/// A body that isn't a valid message: `400` with the JSON-RPC error it is owed
+/// (Parse error, or Invalid Request echoing the id when one was readable).
+/// "The HTTP response body MAY comprise a JSON-RPC error response that has no
+/// `id`", which covers a broken POSTed response too.
+fn invalid_frame_response(bad: &InvalidFrame) -> Response {
+    let body = bad
+        .response()
+        .unwrap_or_else(|| JsonRpcResponse::error_without_id(bad.error()));
+    (StatusCode::BAD_REQUEST, Json(body)).into_response()
+}
+
+/// Map a service/transport [`ProtocolError`] to an HTTP status + JSON-RPC error
+/// body (PLAN §4.10). User `McpError`s never reach here — the dispatcher renders
+/// them as `Ok` error *responses*; this is for parse/version/shutdown conditions.
+/// The request's id is echoed whenever the caller has it: a multiplexing
+/// client can't correlate an error that doesn't name its request.
+fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>) -> Response {
+    let status = match err {
+        ProtocolError::Parse(_)
+        | ProtocolError::UnsupportedVersion { .. }
+        | ProtocolError::MissingCapability(_) => StatusCode::BAD_REQUEST,
+        // Spec §Session Management: an expired/unknown session answers 404 so
+        // the client starts over with a fresh initialize.
+        ProtocolError::UnknownSession(_) => StatusCode::NOT_FOUND,
+        ProtocolError::Transport(_) | ProtocolError::ServerShuttingDown => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    let error = err.to_jsonrpc_error();
+    let body = match id {
+        Some(id) => JsonRpcResponse::error(id, error),
+        None => JsonRpcResponse::error_without_id(error),
+    };
+    (status, Json(body)).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use turbomcp_core::JsonRpcRequest;
+
+    #[test]
+    fn http_error_bridges_into_protocol_error() {
+        let err = HttpError::Io(std::io::Error::other("bind failed"));
+        match ProtocolError::from(err) {
+            ProtocolError::Transport(msg) => assert!(msg.contains("bind failed")),
+            other => panic!("expected Transport, got {other:?}"),
+        }
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        h
+    }
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    fn net(s: &str) -> IpNet {
+        s.parse::<IpNet>().unwrap_or_else(|_| ip(s).into())
+    }
+
+    /// A trusted range covers every address in it: a pod network or a cloud
+    /// load balancer's subnet, which a list of single addresses can't name.
+    #[test]
+    fn client_ip_trusts_a_proxy_range() {
+        let p = peer("10.1.2.3", Some("203.0.113.7, 10.9.8.7"));
+        assert_eq!(p.client_ip(&[net("10.0.0.0/8")]), Some(ip("203.0.113.7")));
+    }
+
+    /// Every `X-Forwarded-For` line counts. A proxy that appends its own line
+    /// puts the trustworthy entry in the *last* one; reading only the first
+    /// line took whatever the client wrote there.
+    #[test]
+    fn client_ip_reads_every_forwarded_line() {
+        let mut headers = HeaderMap::new();
+        headers.append("x-forwarded-for", HeaderValue::from_static("6.6.6.6"));
+        headers.append("x-forwarded-for", HeaderValue::from_static("203.0.113.7"));
+        let mut request = axum::http::Request::builder().body(()).unwrap();
+        *request.headers_mut() = headers;
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([10, 0, 0, 1], 443))));
+        let (parts, ()) = request.into_parts();
+        let p = PeerIp::from_parts(&parts);
+        assert_eq!(p.client_ip(&[net("10.0.0.1")]), Some(ip("203.0.113.7")));
+    }
+
+    fn peer(socket: &str, xff: Option<&str>) -> PeerIp {
+        PeerIp {
+            socket: Some(ip(socket)),
+            forwarded: xff.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn client_ip_uses_socket_when_no_trusted_proxies() {
+        // Even with an XFF header, an empty trust list ignores it (unspoofable).
+        let p = peer("203.0.113.9", Some("1.2.3.4"));
+        assert_eq!(p.client_ip(&[]), Some(ip("203.0.113.9")));
+    }
+
+    #[test]
+    fn client_ip_ignores_xff_from_untrusted_peer() {
+        let p = peer("203.0.113.9", Some("1.2.3.4"));
+        assert_eq!(p.client_ip(&[net("10.0.0.1")]), Some(ip("203.0.113.9")));
+    }
+
+    #[test]
+    fn client_ip_uses_xff_behind_trusted_proxy() {
+        // Peer is the trusted LB; the real client is the rightmost untrusted hop.
+        let p = peer("10.0.0.1", Some("9.9.9.9, 203.0.113.7"));
+        assert_eq!(p.client_ip(&[net("10.0.0.1")]), Some(ip("203.0.113.7")));
+    }
+
+    #[test]
+    fn client_ip_skips_trusted_hops_in_xff() {
+        // Two trusted proxies chained: skip both, take the client.
+        let p = peer("10.0.0.1", Some("203.0.113.7, 10.0.0.2"));
+        let trusted = [net("10.0.0.1"), net("10.0.0.2")];
+        assert_eq!(p.client_ip(&trusted), Some(ip("203.0.113.7")));
+    }
+
+    #[test]
+    fn client_ip_does_not_skip_malformed_proxy_boundaries() {
+        let trusted = [net("10.0.0.1"), net("10.0.0.2")];
+        for header in ["1.2.3.4, unknown", "1.2.3.4,,10.0.0.2", "1.2.3.4, [::1]"] {
+            assert_eq!(
+                peer("10.0.0.1", Some(header)).client_ip(&trusted),
+                Some(ip("10.0.0.1"))
+            );
+        }
+        // Entries left of the first untrusted peer are controlled by that peer.
+        assert_eq!(
+            peer("10.0.0.1", Some("garbage, 2001:db8::7, 10.0.0.2")).client_ip(&trusted),
+            Some(ip("2001:db8::7"))
+        );
+        assert_eq!(
+            PeerIp {
+                socket: None,
+                forwarded: Some("1.2.3.4".into())
+            }
+            .client_ip(&trusted),
+            None
+        );
+    }
+
+    /// A draft-enveloped `tools/call` body and its compliant header set.
+    fn draft_call(region: &str) -> JsonRpcMessage {
+        JsonRpcMessage::Request(JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({
+                "name": "locate",
+                "arguments": { "region": region, "n": 3, "ok": true },
+                "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            })),
+        ))
+    }
+
+    fn draft_call_headers<'a>(extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+        let mut all = vec![
+            ("MCP-Protocol-Version", "2026-07-28"),
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Name", "locate"),
+        ];
+        all.extend_from_slice(extra);
+        all
+    }
+
+    /// On `tasks/*`, `Mcp-Name` is the task id: optional for the server, but
+    /// when a client sends one it has to be right, or a load balancer routed
+    /// the poll by a different task than the body names.
+    #[test]
+    fn a_task_poll_mcp_name_is_checked_when_present() {
+        let poll = JsonRpcMessage::Request(JsonRpcRequest::new(
+            1,
+            "tasks/get",
+            Some(json!({
+                "taskId": "t-1",
+                "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+            })),
+        ));
+        let base = [
+            ("MCP-Protocol-Version", "2026-07-28"),
+            ("Mcp-Method", "tasks/get"),
+        ];
+        assert!(validate_request_headers(&poll, &headers(&base)).is_none());
+        let mut named = base.to_vec();
+        named.push(("Mcp-Name", "t-1"));
+        assert!(validate_request_headers(&poll, &headers(&named)).is_none());
+        let mut wrong = base.to_vec();
+        wrong.push(("Mcp-Name", "t-2"));
+        assert!(validate_request_headers(&poll, &headers(&wrong)).is_some());
+    }
+
+    #[test]
+    fn validation_passes_a_compliant_draft_request() {
+        let msg = draft_call("us-west");
+        let ok = validate_request_headers(
+            &msg,
+            &headers(&draft_call_headers(&[
+                ("Mcp-Param-region", "us-west"),
+                ("Mcp-Param-n", "3"),
+                ("Mcp-Param-ok", "true"),
+            ])),
+        );
+        assert!(ok.is_none());
+    }
+
+    #[test]
+    fn validation_skips_bodies_without_a_declared_version() {
+        // Legacy traffic (no `_meta` version envelope) keeps the session
+        // flow's tolerance — no headers required here.
+        let msg = JsonRpcMessage::Request(JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "locate", "arguments": {} })),
+        ));
+        assert!(validate_request_headers(&msg, &headers(&[])).is_none());
+    }
+
+    #[test]
+    fn validation_requires_and_matches_the_standard_headers() {
+        let msg = draft_call("us-west");
+        // Missing version header.
+        assert!(validate_request_headers(&msg, &headers(&[])).is_some());
+        // Version header not matching the body.
+        assert!(
+            validate_request_headers(
+                &msg,
+                &headers(&[
+                    ("MCP-Protocol-Version", "2025-11-25"),
+                    ("Mcp-Method", "tools/call"),
+                    ("Mcp-Name", "locate"),
+                ])
+            )
+            .is_some()
+        );
+        // Missing Mcp-Method.
+        assert!(
+            validate_request_headers(
+                &msg,
+                &headers(&[
+                    ("MCP-Protocol-Version", "2026-07-28"),
+                    ("Mcp-Name", "locate")
+                ])
+            )
+            .is_some()
+        );
+        // Mcp-Name not matching `params.name`.
+        assert!(
+            validate_request_headers(
+                &msg,
+                &headers(&[
+                    ("MCP-Protocol-Version", "2026-07-28"),
+                    ("Mcp-Method", "tools/call"),
+                    ("Mcp-Name", "other_tool"),
+                ])
+            )
+            .is_some()
+        );
+    }
+}

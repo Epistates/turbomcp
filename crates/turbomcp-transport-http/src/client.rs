@@ -1,7 +1,7 @@
-//! The Streamable HTTP client transport (feature `http`).
+//! The Streamable HTTP client transport (feature `client`).
 //!
 //! Streamable HTTP is request-scoped — each JSON-RPC request is its own POST —
-//! yet the [`Connection`](crate::Connection) actor wants the persistent
+//! yet the [`Connection`](turbomcp_client::Connection) actor wants the persistent
 //! [`Transport`] `send`/`recv` shape. This transport bridges the two: `send`
 //! fires a POST in a spawned task whose response (a single `application/json`
 //! frame, or a `text/event-stream` of frames) is funneled into an inbound
@@ -27,7 +27,7 @@
 //! disconnect as cancellation of that request"), which for us means dropping
 //! the POST task. So [`send`](Transport::send) reads the cancellations passing
 //! through it and aborts the task it names — turning the portable signal the
-//! [`Connection`](crate::Connection) emits into the one HTTP actually listens
+//! [`Connection`](turbomcp_client::Connection) emits into the one HTTP actually listens
 //! for.
 
 use std::collections::HashMap;
@@ -50,8 +50,9 @@ use turbomcp_service::{
     HttpFailure, ParamHeaders, Transport, TransportFailure, WireVersion, mcp_headers,
 };
 
-use crate::client::{Client, ClientBuilder};
-use crate::error::{ClientError, ClientResult};
+use turbomcp_client::{Client, ClientBuilder, ClientError, ClientResult};
+
+use crate::headers;
 
 /// Failures specific to the HTTP client transport.
 #[derive(Debug, thiserror::Error)]
@@ -60,9 +61,14 @@ pub enum HttpClientError {
     /// The transport's inbound channel closed (connection torn down).
     #[error("http client transport closed")]
     Closed,
+    /// The underlying `reqwest` client could not be built.
+    #[error("http client build failed: {0}")]
+    Build(#[source] reqwest::Error),
+    /// A caller-supplied header is one the protocol owns (`Mcp-*`); the
+    /// transport sets those itself.
+    #[error("`{0}` is a protocol header; the transport sets it")]
+    ReservedHeader(String),
 }
-
-const SESSION_HEADER: &str = "mcp-session-id";
 
 /// Why a POST's pump stopped without delivering its response.
 enum PumpFailure {
@@ -136,7 +142,7 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
     }
     let Some(sid) = resp
         .headers()
-        .get(SESSION_HEADER)
+        .get(headers::SESSION_ID)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned)
     else {
@@ -158,10 +164,10 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
         .post(&shared.url)
         .header(ACCEPT, "application/json, text/event-stream")
         .header(CONTENT_TYPE, "application/json")
-        .header(SESSION_HEADER, sid)
+        .header(headers::SESSION_ID, sid)
         .body(initialized);
     if let Some(version) = shared.version.lock().expect("version mutex").clone() {
-        req = req.header(mcp_headers::PROTOCOL_VERSION, version);
+        req = req.header(headers::PROTOCOL_VERSION, version);
     }
     if let Some(source) = &shared.bearer
         && let Some(token) = source.bearer().await
@@ -417,8 +423,8 @@ impl HttpClientTransport {
     /// Build a transport targeting `url` (e.g. `http://127.0.0.1:8080/mcp`).
     ///
     /// # Errors
-    /// [`ClientError::Protocol`] if the underlying HTTP client can't be built.
-    pub fn new(url: impl Into<String>) -> ClientResult<Self> {
+    /// [`HttpClientError::Build`] if the underlying HTTP client can't be built.
+    pub fn new(url: impl Into<String>) -> Result<Self, HttpClientError> {
         let http = default_http_client(reqwest::header::HeaderMap::new())?;
         let (inbound_tx, inbound_rx) = mpsc::channel(1024);
         Ok(Self {
@@ -465,19 +471,21 @@ impl HttpClientTransport {
     /// client given to [`with_client`](Self::with_client).
     ///
     /// # Errors
-    /// [`ClientError::Protocol`] for an `Mcp-*` header, which the protocol owns,
-    /// or if the client cannot be rebuilt.
+    /// [`HttpClientError::ReservedHeader`] for an `Mcp-*` header, which the
+    /// protocol owns, or [`HttpClientError::Build`] if the client cannot be
+    /// rebuilt.
     ///
     /// # Panics
     /// If the transport is already connected. Call this first.
-    pub fn with_headers(self, headers: reqwest::header::HeaderMap) -> ClientResult<Self> {
+    pub fn with_headers(
+        self,
+        headers: reqwest::header::HeaderMap,
+    ) -> Result<Self, HttpClientError> {
         if let Some(reserved) = headers
             .keys()
             .find(|name| name.as_str().starts_with("mcp-"))
         {
-            return Err(ClientError::Protocol(format!(
-                "`{reserved}` is a protocol header; the transport sets it"
-            )));
+            return Err(HttpClientError::ReservedHeader(reserved.to_string()));
         }
         let http = default_http_client(headers)?;
         Ok(self.with_client(http))
@@ -522,13 +530,15 @@ impl HttpClientTransport {
 
 /// The client [`HttpClientTransport::new`] uses: no redirects (a bearer token
 /// stays on its origin) and a bounded connect.
-fn default_http_client(headers: reqwest::header::HeaderMap) -> ClientResult<reqwest::Client> {
+fn default_http_client(
+    headers: reqwest::header::HeaderMap,
+) -> Result<reqwest::Client, HttpClientError> {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .default_headers(headers)
         .build()
-        .map_err(|e| ClientError::Protocol(format!("http client build failed: {e}")))
+        .map_err(HttpClientError::Build)
 }
 
 impl Transport for HttpClientTransport {
@@ -683,13 +693,13 @@ impl Transport for HttpClientTransport {
                 .shared
                 .http
                 .delete(&self.shared.url)
-                .header(SESSION_HEADER, sid)
+                .header(headers::SESSION_ID, sid)
                 .timeout(Duration::from_secs(5));
             // "the client MUST include the `MCP-Protocol-Version` header on all
             // subsequent requests" — a strict server refuses the DELETE
             // without it, and the session outlives the client.
             if let Some(version) = self.shared.version.lock().expect("version mutex").clone() {
-                req = req.header(mcp_headers::PROTOCOL_VERSION, version);
+                req = req.header(headers::PROTOCOL_VERSION, version);
             }
             // Authenticated too: on a server that requires a bearer, an
             // unauthenticated DELETE is a 401 and the session leaks.
@@ -799,7 +809,7 @@ async fn pump(
     // transports specs; on `2025-11-25` from the first post-`initialize`
     // request onward — the handshake itself negotiates in-band).
     if let Some(v) = &version {
-        req = req.header(mcp_headers::PROTOCOL_VERSION, v);
+        req = req.header(headers::PROTOCOL_VERSION, v);
     }
     // The draft's standard request headers mirror body fields for
     // intermediaries: `Mcp-Method` on every request POST, `Mcp-Name` for
@@ -809,7 +819,7 @@ async fn pump(
         .as_deref()
         .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28);
     if is_draft && let JsonRpcMessage::Request(r) = &msg {
-        req = req.header(mcp_headers::MCP_METHOD, &r.method);
+        req = req.header(headers::MCP_METHOD, &r.method);
         if let Some(field) = mcp_headers::routing_name_field(&r.method)
             && let Some(value) = r
                 .params
@@ -817,11 +827,11 @@ async fn pump(
                 .and_then(|p| p.get(field))
                 .and_then(serde_json::Value::as_str)
         {
-            req = req.header(mcp_headers::MCP_NAME, mcp_headers::encode_value(value));
+            req = req.header(headers::MCP_NAME, mcp_headers::encode_value(value));
         }
     }
     for (name, value) in mirrors.0 {
-        req = req.header(format!("{}{name}", mcp_headers::MCP_PARAM_PREFIX), value);
+        req = req.header(format!("{}{name}", headers::MCP_PARAM_PREFIX), value);
     }
 
     let mut attempts = 0;
@@ -836,7 +846,7 @@ async fn pump(
         }
         let sent_session = shared.session.lock().expect("session mutex").clone();
         if let Some(sid) = &sent_session {
-            attempt = attempt.header(SESSION_HEADER, sid);
+            attempt = attempt.header(headers::SESSION_ID, sid);
         }
         let resp = attempt
             .send()
@@ -922,7 +932,7 @@ async fn pump(
     // Only successful responses can establish or replace a session.
     if let Some(sid) = resp
         .headers()
-        .get(SESSION_HEADER)
+        .get(headers::SESSION_ID)
         .and_then(|v| v.to_str().ok())
     {
         *shared.session.lock().expect("session mutex") = Some(sid.to_string());
@@ -1089,12 +1099,12 @@ async fn pump_sse(
             .http
             .get(&shared.url)
             .header(ACCEPT, "text/event-stream")
-            .header("last-event-id", id);
+            .header(headers::LAST_EVENT_ID, id);
         if let Some(sid) = shared.session.lock().expect("session mutex").clone() {
-            get = get.header(SESSION_HEADER, sid);
+            get = get.header(headers::SESSION_ID, sid);
         }
         if let Some(version) = version {
-            get = get.header(mcp_headers::PROTOCOL_VERSION, version);
+            get = get.header(headers::PROTOCOL_VERSION, version);
         }
         response = shared
             .authorize(get)
@@ -1157,13 +1167,13 @@ async fn listen(shared: Arc<Shared>) {
             .header(ACCEPT, "text/event-stream");
         let sent_session = shared.session.lock().expect("session mutex").clone();
         if let Some(sid) = &sent_session {
-            req = req.header(SESSION_HEADER, sid);
+            req = req.header(headers::SESSION_ID, sid);
         }
         if let Some(v) = shared.version.lock().expect("version mutex").clone() {
-            req = req.header(mcp_headers::PROTOCOL_VERSION, v);
+            req = req.header(headers::PROTOCOL_VERSION, v);
         }
         if let Some(id) = &last_event_id {
-            req = req.header("last-event-id", id);
+            req = req.header(headers::LAST_EVENT_ID, id);
         }
 
         let outcome = shared.authorize(req).await.send().await;
@@ -1297,9 +1307,11 @@ fn resolve_protocol_version(
 /// the handshake.
 ///
 /// # Errors
-/// Propagates transport construction and handshake failures.
+/// Propagates handshake failures; a transport that can't be built is
+/// [`ClientError::Protocol`].
 pub async fn connect_http(builder: ClientBuilder, url: impl Into<String>) -> ClientResult<Client> {
-    let transport = HttpClientTransport::new(url)?;
+    let transport =
+        HttpClientTransport::new(url).map_err(|e| ClientError::Protocol(e.to_string()))?;
     builder.connect(transport).await
 }
 

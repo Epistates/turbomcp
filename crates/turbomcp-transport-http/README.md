@@ -1,6 +1,9 @@
 # turbomcp-transport-http
 
-The TurboMCP v4 Streamable HTTP transport (axum 0.8): POST + per-request SSE upgrade, the legacy GET stream, sessions (`Mcp-Session-Id`, DELETE termination), Origin/Host guards, and the auth/rate-limit seams.
+The TurboMCP v4 Streamable HTTP transport, both halves:
+
+- **`server`** (default): the axum 0.8 endpoint. POST + per-request SSE upgrade, the legacy GET stream, sessions (`Mcp-Session-Id`, DELETE termination), Origin/Host guards, and the auth/rate-limit seams.
+- **`client`**: `HttpClientTransport` for `turbomcp-client`. Session recovery, SSE resumption, cancellation by disconnect, bearer sources, custom `reqwest` clients and headers. **`oauth`** adds the challenge-driven OAuth 2.1 bearer source.
 
 Part of [TurboMCP](https://github.com/Epistates/turbomcp), a Rust SDK for the
 [Model Context Protocol](https://modelcontextprotocol.io). Most users should

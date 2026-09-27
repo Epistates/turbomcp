@@ -17,13 +17,18 @@ categories = ["network-programming", "asynchronous", "api-bindings"]
 default = []
 # Also lights up the client's Streamable HTTP transport when `client` is on.
 # (tokio: `run_http` spawns the graceful subscription-close watcher.)
-http = ["dep:turbomcp-transport-http", "turbomcp-client?/http", "dep:tokio", "dep:tokio-util"]
+http = [
+    "dep:turbomcp-transport-http",
+    "turbomcp-transport-http/server",
+    "dep:tokio",
+    "dep:tokio-util",
+]
 # OAuth 2.1 resource-server auth (bearer validation, RFC 9728). Most useful
 # with `http`; the metadata endpoint + challenges are HTTP-level.
 auth = ["dep:turbomcp-auth"]
 # The OAuth 2.1 *client* flow (authorization-code + PKCE, discovery,
 # registration, refresh) under `turbomcp::auth::client`. Implies `auth`.
-client-oauth = ["auth", "client", "http", "turbomcp-auth/oauth-client", "turbomcp-client/oauth"]
+client-oauth = ["auth", "client", "http", "turbomcp-auth/oauth-client", "turbomcp-transport-http/oauth"]
 # OpenTelemetry observability: the TraceContextLayer + W3C propagation +
 # redaction. Add `otlp` (on the telemetry crate) for the export pipeline.
 telemetry = ["dep:turbomcp-telemetry"]
@@ -31,7 +36,7 @@ telemetry = ["dep:turbomcp-telemetry"]
 websocket = ["dep:turbomcp-transport-ws"]
 # The MCP client (ClientBuilder, ConnectMode probe, typed neutral API). The
 # other half of the protocol; opt-in for server-only users.
-client = ["dep:turbomcp-client"]
+client = ["dep:turbomcp-client", "turbomcp-transport-http?/client"]
 # The draft Tasks extension (io.modelcontextprotocol/tasks, SEP-2663):
 # resultType:"task" augmentation, tasks/get|update|cancel, notifications/tasks.
 ext-tasks = ["dep:turbomcp-ext-tasks"]

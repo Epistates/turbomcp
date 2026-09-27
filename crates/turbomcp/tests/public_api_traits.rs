@@ -29,7 +29,8 @@ fn public_error_types_satisfy_the_error_bound() {
     #[cfg(feature = "client")]
     {
         assert_error::<turbomcp::client::ClientError>();
-        assert_error::<turbomcp_client::HttpClientError>();
+        #[cfg(feature = "http")]
+        assert_error::<turbomcp::client::HttpClientError>();
     }
     #[cfg(feature = "http")]
     assert_error::<turbomcp::http::HttpError>();
@@ -62,7 +63,8 @@ fn types_users_hold_are_debug() {
         assert_debug::<turbomcp::client::Client>();
         assert_debug::<turbomcp::client::ClientBuilder>();
         assert_debug::<turbomcp_client::Connection>();
-        assert_debug::<turbomcp_client::HttpClientTransport>();
+        #[cfg(feature = "http")]
+        assert_debug::<turbomcp::client::HttpClientTransport>();
     }
     #[cfg(feature = "ext-tasks")]
     assert_debug::<turbomcp_ext_tasks::TasksExtension>();

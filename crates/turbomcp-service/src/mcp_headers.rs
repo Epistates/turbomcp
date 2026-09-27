@@ -10,24 +10,12 @@
 //! `HeaderMismatch` JSON-RPC error (`-32001`). Servers never source values
 //! *from* headers.
 //!
-//! This module is the shared client/server half: header names, the Base64
-//! sentinel value codec, and the body-value rendering rules. The client
-//! transport encodes with it; the HTTP server transport decodes and compares
-//! with it.
+//! This module is what the client and the dispatcher share without knowing
+//! about HTTP: the Base64 sentinel value codec and the body-value rendering
+//! rules. The header names themselves are in `turbomcp-transport-http`.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-
-/// `MCP-Protocol-Version` — required on every POST; must equal the request
-/// body's `_meta` protocol version on the draft.
-pub const PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
-/// `Mcp-Method` — required on every draft request POST; mirrors `method`.
-pub const MCP_METHOD: &str = "Mcp-Method";
-/// `Mcp-Name` — required for `tools/call`/`resources/read`/`prompts/get`;
-/// mirrors `params.name` / `params.uri`.
-pub const MCP_NAME: &str = "Mcp-Name";
-/// The `Mcp-Param-{name}` prefix for `x-mcp-header`-annotated tool arguments.
-pub const MCP_PARAM_PREFIX: &str = "Mcp-Param-";
 
 /// The methods whose requests must carry an `Mcp-Name` header, with the body
 /// field it mirrors (`params.name` or `params.uri`). This is the set a server

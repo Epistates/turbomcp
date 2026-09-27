@@ -246,6 +246,17 @@ Earlier in this cycle:
   synthesized error's `data`, where a server could forge it. The namespace
   and `meta::sanitize_outbound` are gone; `consumes_internal_meta` is
   `carries_headers`; a lost stream is `ClientError::StreamLost`.
+- **Breaking:** the Streamable HTTP client transport moved from
+  `turbomcp-client` (features `http`, `oauth`) to `turbomcp-transport-http`
+  (features `client`, `oauth`), next to the server half, which is now the
+  default `server` feature. `turbomcp-client` is transport-agnostic and no
+  longer depends on reqwest, and a server-only `http` build no longer pulls
+  the client. `HttpClientTransport::new` and `with_headers` return
+  `HttpClientError` (`Build`, `ReservedHeader`). Through the facade,
+  `turbomcp::client::{HttpClientTransport, connect_http, oauth, …}` are
+  where they were. Both halves take their header names from one
+  `turbomcp_transport_http::headers` module, and `mcp_headers` in
+  `turbomcp-service` keeps only the value codec.
 - **Breaking:** fewer crates. `turbomcp-codec` is now `turbomcp_core::codec`
   (the `simd` feature moved with it), `turbomcp-transport-stdio` is now
   `turbomcp_service::io` (`LineTransport`, `stdio`, `serve_stdio`), and the

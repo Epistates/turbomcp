@@ -9,10 +9,11 @@
 //! - [`Client`] / [`ClientBuilder`] add the handshake, the negotiated
 //!   [`ConnectMode`], modern `_meta` stamping, and the typed MCP API.
 //! - [`connect_child`] spawns a server subprocess and connects over its stdio.
+//!
+//! The client speaks to any [`Transport`](turbomcp_service::Transport). The
+//! Streamable HTTP one is `turbomcp-transport-http`'s `HttpClientTransport`
+//! (feature `client`), next to the server half of the same protocol.
 #![forbid(unsafe_code)]
-// docs.rs builds with `--cfg docsrs` on nightly so every feature-gated item
-// renders with the feature that unlocks it.
-#![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
 mod cache;
@@ -33,16 +34,3 @@ pub use stdio::connect_child;
 /// Re-exported so implementers of [`ElicitationHandler`] can write
 /// `#[async_trait]` without taking a direct dependency on the crate.
 pub use async_trait::async_trait;
-
-#[cfg(feature = "http")]
-#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-mod http;
-#[cfg(feature = "http")]
-#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-pub use http::{
-    BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, connect_http,
-};
-
-/// Coordinated HTTP OAuth authorization and token refresh.
-#[cfg(feature = "oauth")]
-pub mod oauth;

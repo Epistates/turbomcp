@@ -2899,10 +2899,8 @@ version = "4.0.0-alpha.5"
 dependencies = [
  "async-trait",
  "bytes",
- "eventsource-stream",
  "futures",
  "jsonschema",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror",
@@ -3007,18 +3005,25 @@ dependencies = [
 name = "turbomcp-transport-http"
 version = "4.0.0-alpha.5"
 dependencies = [
+ "async-trait",
  "axum",
  "bytes",
+ "eventsource-stream",
  "futures",
+ "http",
  "ipnet",
  "mime",
+ "reqwest",
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tower",
  "tower-http 0.7.1",
  "tracing",
+ "turbomcp-client",
  "turbomcp-core",
+ "turbomcp-protocol",
  "turbomcp-service",
  "uuid",
 ]

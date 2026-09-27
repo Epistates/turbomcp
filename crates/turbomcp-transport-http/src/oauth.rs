@@ -1,6 +1,8 @@
-//! Challenge-driven OAuth for [`crate::HttpClientTransport`].
+//! Coordinated OAuth authorization and token refresh for
+//! [`HttpClientTransport`](crate::HttpClientTransport), driven by the
+//! server's challenges.
 //!
-//! Share one [`OAuthSession`](crate::oauth::OAuthSession) as the transport's bearer source. Consent is
+//! Share one [`OAuthSession`] as the transport's bearer source. Consent is
 //! application-owned; concurrent challenges and refreshes are serialized.
 use std::{sync::Arc, time::Duration};
 use turbomcp_auth::client::{

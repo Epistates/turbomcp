@@ -78,6 +78,8 @@ jsonschema = { version = "0.49", default-features = false }
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
 eventsource-stream = "0.2.3"
 axum = { version = "0.8.9", features = ["tracing"] }
+# The header types axum and reqwest share, for the HTTP transport's names.
+http = "1.4"
 mime = "0.3.17"
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
 tower-http = { version = "0.7.1", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
@@ -141,7 +143,7 @@ turbomcp-protocol = { version = "4.0.0-alpha.5", path = "crates/turbomcp-protoco
 turbomcp-service = { version = "4.0.0-alpha.5", path = "crates/turbomcp-service" }
 turbomcp-server = { version = "4.0.0-alpha.5", path = "crates/turbomcp-server" }
 turbomcp-client = { version = "4.0.0-alpha.5", path = "crates/turbomcp-client" }
-turbomcp-transport-http = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-http" }
+turbomcp-transport-http = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-http", default-features = false }
 turbomcp-transport-ws = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-ws" }
 turbomcp-macros = { version = "4.0.0-alpha.5", path = "crates/turbomcp-macros" }
 turbomcp-auth = { version = "4.0.0-alpha.5", path = "crates/turbomcp-auth" }

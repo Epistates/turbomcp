@@ -102,8 +102,9 @@ users need, so a typical dependency is just `turbomcp`.
 | `turbomcp-protocol` | MCP protocol: neutral types, date-versioned wire shapes, version dispatch |
 | `turbomcp-service` | The `tower`-shaped protocol seam, transport trait, shared RPC middleware, stdio / line-delimited transport |
 | `turbomcp-server` | Handler registry, dispatcher, `ServerBuilder`, graceful shutdown |
-| `turbomcp-client` | Typed client: handshake, version negotiation, neutral API |
-| `turbomcp-transport-http` / `-ws` | Network transports |
+| `turbomcp-client` | Typed client: handshake, version negotiation, neutral API; transport-agnostic |
+| `turbomcp-transport-http` | Streamable HTTP, both halves: the axum server endpoint (`server`) and the client transport (`client`, `oauth`) |
+| `turbomcp-transport-ws` | WebSocket transport |
 | `turbomcp-auth` | OAuth 2.1 resource-server auth (bearer validation, RFC 9728) |
 | `turbomcp-telemetry` | OpenTelemetry tracing (W3C `_meta` propagation, PII-safe spans) |
 | `turbomcp-ext-tasks` | Draft Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) |

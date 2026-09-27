@@ -4,26 +4,54 @@ version = "4.0.0-alpha.5"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
-description = "TurboMCP v4 Streamable HTTP transport (axum)."
+description = "TurboMCP v4 Streamable HTTP transport: the axum server endpoint and the reqwest client transport."
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/Epistates/turbomcp"
 homepage = "https://turbomcp.org"
 keywords = ["mcp", "http", "sse", "axum", "transport"]
-categories = ["network-programming", "web-programming::http-server", "asynchronous"]
+categories = ["network-programming", "web-programming::http-server", "web-programming::http-client", "asynchronous"]
+
+[features]
+default = ["server"]
+# The axum endpoint: `router`, `serve_http`, `HttpConfig`.
+server = ["dep:axum", "dep:ipnet", "dep:mime", "dep:tower", "dep:tower-http", "dep:uuid", "tokio/net"]
+# `HttpClientTransport` for turbomcp-client, and `connect_http`.
+client = [
+    "dep:reqwest",
+    "dep:eventsource-stream",
+    "dep:turbomcp-client",
+    "dep:turbomcp-protocol",
+    "dep:tokio-util",
+    "dep:async-trait",
+    "tokio/time",
+    "tokio/macros",
+]
+# The challenge-driven OAuth 2.1 bearer source (`oauth::OAuthSession`).
+oauth = ["client", "dep:turbomcp-auth", "turbomcp-auth/oauth-client"]
 
 [dependencies]
-# CIDR ranges for trusted proxies.
-ipnet = { workspace = true }
-turbomcp-core = { workspace = true }
+turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-service = { workspace = true }
-axum = { workspace = true }
-mime = { workspace = true }
-tower = { workspace = true }
-tower-http = { workspace = true }
-tokio = { workspace = true, features = ["rt", "net", "sync"] }
-uuid = { workspace = true, features = ["v4"] }
+http = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
 bytes = { workspace = true }
+# server
+# CIDR ranges for trusted proxies.
+ipnet = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+mime = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["v4"], optional = true }
+# client
+turbomcp-client = { workspace = true, optional = true }
+turbomcp-protocol = { workspace = true, optional = true }
+turbomcp-auth = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+eventsource-stream = { workspace = true, optional = true }
+tokio-util = { workspace = true, features = ["rt"], optional = true }
+async-trait = { workspace = true, optional = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
