@@ -574,10 +574,13 @@ jobs:
       # Every published crate's API is public, not just the facade's: a user
       # can depend on turbomcp-server directly, and VERSIONING.md promises
       # them the same review. A crate with no 4.x on crates.io yet (new, or
-      # never released) has nothing to compare against and is skipped.
+      # never released) has nothing to compare against and is skipped, and so
+      # is turbomcp-macros: semver-checks reads rustdoc JSON, which a
+      # proc-macro crate doesn't produce (its API is covered by the facade's).
       run: |
         crates=$(cargo metadata --no-deps --format-version 1 \
-          | jq -r '.packages[] | select(.publish != []) | .name')
+          | jq -r '.packages[] | select(.publish != [])
+                   | select(any(.targets[]; .kind | index("lib"))) | .name')
         failed=0
         for crate in $crates; do
           baseline=$(curl -sSf -H 'User-Agent: turbomcp-ci (nick@epistates.com)' \
