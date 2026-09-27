@@ -39,6 +39,16 @@ pub enum ClientError {
     /// version, capability mismatch).
     #[error("protocol error: {0}")]
     Protocol(String),
+
+    /// A tool's successful result broke its own declared `outputSchema`
+    /// (or omitted the `structuredContent` the schema promises).
+    #[error("tool `{tool}` returned a result that violates its outputSchema: {reason}")]
+    OutputSchema {
+        /// The tool that was called.
+        tool: String,
+        /// What the validator objected to.
+        reason: String,
+    },
 }
 
 impl ClientError {

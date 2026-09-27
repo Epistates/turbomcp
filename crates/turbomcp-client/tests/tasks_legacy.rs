@@ -164,9 +164,8 @@ async fn task_augmented_call_round_trips_against_a_real_server() {
     assert_eq!(backend.creates.load(SeqCst), 1, "plain call stays inline");
 }
 
-/// Spec §Task Support and Handling: a server without Tasks enabled ignores
-/// the `task` augmentation entirely and answers inline — `call_tool_task`
-/// degrades to a plain call.
+/// A server without Tasks enabled doesn't declare `tasks.requests.tools.call`,
+/// so the client MUST NOT augment: `call_tool_task` goes out as a plain call.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_task_support_the_augmented_call_degrades_to_inline() {
     let client = connect_real(None).await;
@@ -212,9 +211,21 @@ where
 fn initialize_ok() -> Value {
     json!({ "result": {
         "protocolVersion": "2025-11-25",
-        "capabilities": { "tools": {}, "tasks": {} },
+        "capabilities": {
+            "tools": {},
+            "tasks": { "cancel": {}, "requests": { "tools": { "call": {} } } }
+        },
         "serverInfo": { "name": "scripted", "version": "1.0" }
     }})
+}
+
+/// `tools/list` naming one tool, `nap`, with the given `taskSupport`.
+fn tools_list(task_support: Option<&str>) -> Value {
+    let mut tool = json!({ "name": "nap", "inputSchema": { "type": "object" } });
+    if let Some(support) = task_support {
+        tool["execution"] = json!({ "taskSupport": support });
+    }
+    json!({ "result": { "tools": [tool] } })
 }
 
 fn task_handle(status: &str, ttl: u64) -> Value {
@@ -258,6 +269,7 @@ async fn the_augmented_call_carries_ttl_and_settles_via_tasks_result() {
     let gets_in = Arc::clone(&gets);
     let client = connect_scripted(move |method, frame| match method {
         "initialize" => Some(initialize_ok()),
+        "tools/list" => Some(tools_list(Some("optional"))),
         "tools/call" => {
             *sent.lock().unwrap() = frame.get("params").and_then(|p| p.get("task")).cloned();
             Some(task_handle("working", 60000))
@@ -295,6 +307,7 @@ async fn the_augmented_call_carries_ttl_and_settles_via_tasks_result() {
 async fn a_failed_task_surfaces_the_underlying_rpc_error() {
     let client = connect_scripted(|method, _| match method {
         "initialize" => Some(initialize_ok()),
+        "tools/list" => Some(tools_list(Some("optional"))),
         "tools/call" => Some(task_handle("working", 60000)),
         "tasks/get" => Some(task_state("failed")),
         "tasks/result" => Some(json!({ "error": { "code": -32050, "message": "boom" } })),
@@ -317,6 +330,7 @@ async fn a_failed_task_surfaces_the_underlying_rpc_error() {
 async fn a_cancelled_task_is_a_protocol_error() {
     let client = connect_scripted(|method, _| match method {
         "initialize" => Some(initialize_ok()),
+        "tools/list" => Some(tools_list(Some("optional"))),
         "tools/call" => Some(task_handle("cancelled", 60000)),
         other => panic!("unexpected method: {other}"),
     })
@@ -336,6 +350,7 @@ async fn a_cancelled_task_is_a_protocol_error() {
 async fn the_reported_ttl_bounds_polling() {
     let client = connect_scripted(|method, _| match method {
         "initialize" => Some(initialize_ok()),
+        "tools/list" => Some(tools_list(Some("optional"))),
         "tools/call" => Some(task_handle("working", 30)),
         "tasks/get" => Some(task_state("working")),
         other => panic!("unexpected method: {other}"),
@@ -351,12 +366,16 @@ async fn the_reported_ttl_bounds_polling() {
 /// Robustness: a spec-violating server that answers a *plain* `tools/call`
 /// with a `CreateTaskResult` is still driven to the final result (be liberal
 /// in what we accept), and the plain call sent no `task` field.
+///
+/// (`nap` is `optional` here, so a plain `call_tool` has no reason to
+/// augment.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unsolicited_task_handle_is_still_driven() {
     let sent_task = Arc::new(Mutex::new(Some(json!("sentinel"))));
     let sent = Arc::clone(&sent_task);
     let client = connect_scripted(move |method, frame| match method {
         "initialize" => Some(initialize_ok()),
+        "tools/list" => Some(tools_list(Some("optional"))),
         "tools/call" => {
             *sent.lock().unwrap() = frame.get("params").and_then(|p| p.get("task")).cloned();
             Some(task_handle("working", 60000))
@@ -378,4 +397,151 @@ async fn an_unsolicited_task_handle_is_still_driven() {
         other => panic!("expected text, got {other:?}"),
     }
     assert_eq!(sent_task.lock().unwrap().take(), None, "no task field sent");
+}
+
+// ---- tool-level negotiation (§Tool-Level Negotiation) -----------------------------
+
+/// The `task` field of each `tools/call`, in order.
+type SentTasks = Arc<Mutex<Vec<Option<Value>>>>;
+
+/// Records the `task` field of every `tools/call`, answering inline.
+fn recording_inline(
+    task_support: Option<&'static str>,
+    capabilities: Value,
+) -> (
+    SentTasks,
+    impl FnMut(&str, &Value) -> Option<Value> + Send + 'static,
+) {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let record = Arc::clone(&sent);
+    let respond = move |method: &str, frame: &Value| match method {
+        "initialize" => Some(json!({ "result": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": capabilities.clone(),
+            "serverInfo": { "name": "scripted", "version": "1.0" }
+        }})),
+        "tools/list" => Some(tools_list(task_support)),
+        "tools/call" => {
+            record
+                .lock()
+                .unwrap()
+                .push(frame["params"].get("task").cloned());
+            Some(json!({ "result": { "content": [ { "type": "text", "text": "inline" } ] } }))
+        }
+        other => panic!("unexpected method: {other}"),
+    };
+    (sent, respond)
+}
+
+fn tasks_capable() -> Value {
+    initialize_ok()["result"]["capabilities"].clone()
+}
+
+/// "If `execution.taskSupport` is not present or `forbidden`, clients MUST
+/// NOT attempt to invoke the tool as a task." The client learns the tool's
+/// support by listing (it hadn't yet) and sends the call plain.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tool_without_task_support_is_never_augmented() {
+    for support in [None, Some("forbidden")] {
+        let (sent, respond) = recording_inline(support, tasks_capable());
+        let client = connect_scripted(respond).await;
+        client
+            .call_tool_task("nap", Map::new(), Some(1_000))
+            .await
+            .expect("plain call");
+        assert_eq!(*sent.lock().unwrap(), vec![None], "{support:?}");
+    }
+}
+
+/// "If `execution.taskSupport` is `required`, clients MUST invoke the tool as
+/// a task", even through plain `call_tool`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_required_tool_is_always_augmented() {
+    let (sent, respond) = recording_inline(Some("required"), tasks_capable());
+    let client = connect_scripted(respond).await;
+    client.call_tool("nap", Map::new()).await.expect("call");
+    assert_eq!(*sent.lock().unwrap(), vec![Some(json!({}))]);
+}
+
+/// "If a server's capabilities do not include `tasks.requests.tools.call`,
+/// then clients MUST NOT attempt to use task augmentation on that server's
+/// tools, regardless of the `execution.taskSupport` value." Nor does the
+/// client list tools to find out: the capability already settled it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn without_the_capability_nothing_is_augmented() {
+    let capabilities = json!({ "tools": {}, "tasks": { "cancel": {} } });
+    let (sent, mut respond) = recording_inline(Some("required"), capabilities);
+    let client = connect_scripted(move |method, frame| {
+        assert_ne!(method, "tools/list", "no listing needed");
+        respond(method, frame)
+    })
+    .await;
+    client
+        .call_tool_task("nap", Map::new(), None)
+        .await
+        .expect("plain call");
+    assert_eq!(*sent.lock().unwrap(), vec![None]);
+}
+
+/// `input_required` → the client calls `tasks/result` straight away ("the
+/// requestor SHOULD preemptively call `tasks/result`"), and that answer
+/// settles the call without waiting for another poll to say `completed`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn input_required_calls_tasks_result_early() {
+    let client = connect_scripted(|method, _| match method {
+        "initialize" => Some(initialize_ok()),
+        "tools/list" => Some(tools_list(Some("optional"))),
+        "tools/call" => Some(task_handle("working", 60000)),
+        // Never terminal: only an early `tasks/result` can finish this call.
+        "tasks/get" => Some(task_state("input_required")),
+        "tasks/result" => Some(json!({ "result": {
+            "content": [ { "type": "text", "text": "answered" } ]
+        }})),
+        other => panic!("unexpected method: {other}"),
+    })
+    .await;
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.call_tool_task("nap", Map::new(), None),
+    )
+    .await
+    .expect("settles without a completed poll")
+    .expect("result");
+    assert_eq!(text_of(&result), "answered");
+}
+
+/// Abandoning a task-augmented call sends `tasks/cancel`: the spec rules out
+/// `notifications/cancelled` for these, so without it the server runs the
+/// task to its TTL for nobody.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropping_a_task_call_cancels_the_task() {
+    let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel::<Value>();
+    let cancelled_tx = Mutex::new(Some(cancelled_tx));
+    let client = connect_scripted(move |method, frame| match method {
+        "initialize" => Some(initialize_ok()),
+        "tools/list" => Some(tools_list(Some("optional"))),
+        "tools/call" => Some(task_handle("working", 60000)),
+        "tasks/get" => Some(task_state("working")),
+        "tasks/cancel" => {
+            if let Some(tx) = cancelled_tx.lock().unwrap().take() {
+                let _ = tx.send(frame["params"]["taskId"].clone());
+            }
+            Some(task_state("cancelled"))
+        }
+        other => panic!("unexpected method: {other}"),
+    })
+    .await;
+
+    let abandoned = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        client.call_tool_task("nap", Map::new(), None),
+    )
+    .await;
+    assert!(abandoned.is_err(), "still working when dropped");
+    let task_id = tokio::time::timeout(std::time::Duration::from_secs(5), cancelled_rx)
+        .await
+        .expect("tasks/cancel sent")
+        .expect("recorded");
+    assert_eq!(task_id, "t-1");
 }

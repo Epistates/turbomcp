@@ -29,6 +29,19 @@ impl Geo {
     async fn locate(&self, city: String, #[mcp_header] region: String) -> McpResult<String> {
         Ok(format!("{city}@{region}"))
     }
+
+    /// `zone` is optional, so its schema type is `["string", "null"]`.
+    #[tool(description = "Locate a city, zone optional")]
+    async fn locate_in(
+        &self,
+        city: String,
+        #[mcp_header] zone: Option<String>,
+    ) -> McpResult<String> {
+        Ok(format!(
+            "{city}@{}",
+            zone.unwrap_or_else(|| "anywhere".into())
+        ))
+    }
 }
 
 async fn spawn_server() -> (String, CancellationToken) {
@@ -120,6 +133,38 @@ async fn typed_client_mirrors_marked_param_to_header() {
     let result = client.call_tool("locate", args).await.expect("call_tool");
     assert!(
         matches!(&result.content[0], neutral::Content::Text { text, .. } if text == "SF@us-west")
+    );
+    shutdown.cancel();
+}
+
+/// An optional `#[mcp_header]` parameter renders as a nullable type, which
+/// the client used to reject as a non-primitive, so TurboMCP's own tool
+/// vanished from its own client's `list_tools`. It's kept, and mirrored when
+/// present.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_optional_header_param_is_listed_and_mirrored() {
+    let (url, shutdown) = spawn_server().await;
+    let client = connect_http(
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Modern),
+        &url,
+    )
+    .await
+    .expect("connect");
+
+    let tools = client.list_tools(None).await.expect("list_tools");
+    assert!(tools.tools.iter().any(|t| t.name == "locate_in"));
+
+    let mut args = Map::new();
+    args.insert("city".into(), json!("SF"));
+    args.insert("zone".into(), json!("west"));
+    let result = client.call_tool("locate_in", args).await.expect("mirrored");
+    assert!(matches!(&result.content[0], neutral::Content::Text { text, .. } if text == "SF@west"));
+
+    let mut args = Map::new();
+    args.insert("city".into(), json!("SF"));
+    let result = client.call_tool("locate_in", args).await.expect("omitted");
+    assert!(
+        matches!(&result.content[0], neutral::Content::Text { text, .. } if text == "SF@anywhere")
     );
     shutdown.cancel();
 }

@@ -144,17 +144,17 @@ async fn listen_negotiates_a_filter_with_the_real_server() {
     );
 }
 
-/// `subscriptions/listen` is draft-only: the `2025-11-25` server answers
-/// `-32601` and points the client at `resources/subscribe` instead.
+/// `subscriptions/listen` arrived in 2026-07-28: on `2025-11-25` the client
+/// refuses it locally and points at `resources/subscribe` instead.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn listen_is_method_not_found_on_the_legacy_wire() {
+async fn listen_is_refused_on_the_legacy_wire() {
     let (client, _spy) = connect(ConnectMode::Legacy).await;
 
     let err = client
         .listen(neutral::SubscriptionFilter::all_list_changed())
         .await
         .expect_err("listen does not exist on 2025-11-25");
-    assert_eq!(err.rpc_code(), Some(-32601));
+    assert!(err.to_string().contains("subscribe_resource"), "{err}");
 
     // The legacy equivalent does work on this wire.
     client

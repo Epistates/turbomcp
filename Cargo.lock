@@ -3799,6 +3799,7 @@ dependencies = [
  "bytes",
  "eventsource-stream",
  "futures",
+ "jsonschema",
  "reqwest",
  "serde",
  "serde_json",

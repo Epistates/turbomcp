@@ -37,6 +37,8 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "process", "io-uti
 reqwest = { workspace = true, optional = true }
 eventsource-stream = { workspace = true, optional = true }
 futures = { workspace = true }
+# Validates `structuredContent` against the tool's declared `outputSchema`.
+jsonschema = { workspace = true }
 
 [dev-dependencies]
 turbomcp-server = { workspace = true }

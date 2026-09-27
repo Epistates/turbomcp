@@ -74,7 +74,24 @@ impl NotificationHandler for Spy {
     }
 }
 
-async fn connect<F>(handler: Option<Arc<Spy>>, mut frames_for: F) -> Client
+async fn connect<F>(handler: Option<Arc<Spy>>, frames_for: F) -> Client
+where
+    F: FnMut(&str, &Value) -> Vec<Value> + Send + 'static,
+{
+    connect_with(
+        ClientBuilder::new("subscriber", "1.0.0"),
+        handler,
+        frames_for,
+    )
+    .await
+}
+
+/// [`connect`], from a caller-configured builder.
+async fn connect_with<F>(
+    builder: ClientBuilder,
+    handler: Option<Arc<Spy>>,
+    mut frames_for: F,
+) -> Client
 where
     F: FnMut(&str, &Value) -> Vec<Value> + Send + 'static,
 {
@@ -83,8 +100,46 @@ where
         "server/discover" => vec![result_for(frame, discover_result())],
         other => frames_for(other, frame),
     });
+    finish(builder, client_io, handler).await
+}
+
+/// A scripted `2025-11-25` server: `initialize` is answered here and
+/// `notifications/initialized` swallowed; everything else goes to `frames_for`.
+async fn connect_legacy<F>(builder: ClientBuilder, mut frames_for: F) -> Client
+where
+    F: FnMut(&str, &Value) -> Vec<Value> + Send + 'static,
+{
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    spawn_raw(server_io, move |method, frame| match method {
+        "initialize" => vec![result_for(
+            frame,
+            json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": {
+                    "tools": {}, "resources": { "subscribe": true }, "logging": {},
+                    "tasks": { "list": {}, "cancel": {}, "requests": { "tools": { "call": {} } } }
+                },
+                "serverInfo": { "name": "legacy", "version": "1.0.0" }
+            }),
+        )],
+        "notifications/initialized" => vec![],
+        other => frames_for(other, frame),
+    });
+    finish(
+        builder.with_connect_mode(turbomcp_client::ConnectMode::Legacy),
+        client_io,
+        None,
+    )
+    .await
+}
+
+async fn finish(
+    builder: ClientBuilder,
+    client_io: tokio::io::DuplexStream,
+    handler: Option<Arc<Spy>>,
+) -> Client {
     let (rd, wr) = split(client_io);
-    let mut builder = ClientBuilder::new("subscriber", "1.0.0").with_response_cache(false);
+    let mut builder = builder.with_response_cache(false);
     if let Some(handler) = handler {
         let shared = HandlerArc(handler);
         builder = builder
@@ -262,12 +317,15 @@ async fn an_unmatched_acknowledgement_is_harmless() {
 async fn subscribe_and_unsubscribe_and_set_level_round_trip() {
     let calls = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
     let seen = Arc::clone(&calls);
-    let client = connect(None, move |method, frame| {
-        seen.lock()
-            .unwrap()
-            .push((method.to_owned(), frame["params"].clone()));
-        vec![result_for(frame, json!({}))]
-    })
+    let client = connect_legacy(
+        ClientBuilder::new("subscriber", "1.0.0"),
+        move |method, frame| {
+            seen.lock()
+                .unwrap()
+                .push((method.to_owned(), frame["params"].clone()));
+            vec![result_for(frame, json!({}))]
+        },
+    )
     .await;
 
     client
@@ -298,18 +356,21 @@ async fn subscribe_and_unsubscribe_and_set_level_round_trip() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_all_tasks_follows_pages() {
-    let client = connect(None, |method, frame| match method {
-        "tasks/list" => {
-            let first = frame["params"].get("cursor").is_none();
-            let result = if first {
-                json!({ "tasks": [{ "taskId": "t1" }], "nextCursor": "p2" })
-            } else {
-                json!({ "tasks": [{ "taskId": "t2" }] })
-            };
-            vec![result_for(frame, result)]
-        }
-        other => panic!("unexpected method {other}"),
-    })
+    let client = connect_legacy(
+        ClientBuilder::new("subscriber", "1.0.0"),
+        |method, frame| match method {
+            "tasks/list" => {
+                let first = frame["params"].get("cursor").is_none();
+                let result = if first {
+                    json!({ "tasks": [{ "taskId": "t1" }], "nextCursor": "p2" })
+                } else {
+                    json!({ "tasks": [{ "taskId": "t2" }] })
+                };
+                vec![result_for(frame, result)]
+            }
+            other => panic!("unexpected method {other}"),
+        },
+    )
     .await;
 
     let tasks = client.list_all_tasks().await.expect("tasks paginate");
@@ -326,16 +387,104 @@ async fn list_all_tasks_follows_pages() {
 /// mistaken for an empty task list.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_list_propagates_method_not_found() {
-    let client = connect(None, |method, frame| match method {
-        "tasks/list" => vec![json!({
-            "jsonrpc": "2.0",
-            "id": frame.get("id").cloned().unwrap_or(Value::Null),
-            "error": { "code": -32601, "message": "no tasks here" }
-        })],
-        other => panic!("unexpected method {other}"),
-    })
+    let client = connect_legacy(
+        ClientBuilder::new("subscriber", "1.0.0"),
+        |method, frame| match method {
+            "tasks/list" => vec![json!({
+                "jsonrpc": "2.0",
+                "id": frame.get("id").cloned().unwrap_or(Value::Null),
+                "error": { "code": -32601, "message": "no tasks here" }
+            })],
+            other => panic!("unexpected method {other}"),
+        },
+    )
     .await;
 
     let err = client.list_all_tasks().await.expect_err("must propagate");
     assert!(matches!(&err, ClientError::Rpc(e) if e.code == -32601));
+}
+
+/// Methods one revision removed or never had are refused before they reach
+/// the wire, each naming what to use instead, rather than earning a bare
+/// `-32601`. The scripted server panics on anything but discovery.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stateful_only_methods_are_refused_locally_on_2026_07_28() {
+    let client = connect(None, |method, _| panic!("{method} reached the wire")).await;
+
+    let refusals = [
+        client.subscribe_resource("file:///a").await.map(drop),
+        client.unsubscribe_resource("file:///a").await.map(drop),
+        #[expect(deprecated, reason = "the refusal is the point")]
+        client.set_level(LogLevel::Info).await.map(drop),
+        client.task_list(None).await.map(drop),
+        client.ping().await,
+    ];
+    for refusal in refusals {
+        let err = refusal.expect_err("refused locally");
+        assert!(
+            matches!(&err, ClientError::Protocol(m) if m.contains("removed in 2026-07-28")),
+            "{err}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stateless_only_methods_are_refused_locally_before_2026_07_28() {
+    let client = connect_legacy(ClientBuilder::new("subscriber", "1.0.0"), |method, _| {
+        panic!("{method} reached the wire")
+    })
+    .await;
+
+    let listen = client
+        .listen(neutral::SubscriptionFilter::all_list_changed())
+        .await
+        .expect_err("listen arrived in 2026-07-28");
+    assert!(matches!(&listen, ClientError::Protocol(m) if m.contains("subscribe_resource")));
+    let update = client
+        .task_update("t1", Map::new())
+        .await
+        .expect_err("tasks/update is the SEP-2663 extension");
+    assert!(matches!(update, ClientError::Protocol(_)));
+}
+
+/// `with_log_level` opts into server logs on either wire: the per-request
+/// `_meta` level on 2026-07-28, `logging/setLevel` once at connect before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn with_log_level_opts_in_on_both_wires() {
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let record = Arc::clone(&seen);
+    let modern = connect_with(
+        ClientBuilder::new("subscriber", "1.0.0").with_log_level(LogLevel::Warning),
+        None,
+        move |method, frame| {
+            assert_eq!(method, "tools/list");
+            record.lock().unwrap().push(frame["params"].clone());
+            vec![result_for(
+                frame,
+                json!({ "tools": [], "resultType": "complete", "cacheScope": "private", "ttlMs": 0 }),
+            )]
+        },
+    )
+    .await;
+    modern.list_tools(None).await.expect("list");
+    assert_eq!(
+        seen.lock().unwrap()[0]["_meta"]["io.modelcontextprotocol/logLevel"],
+        "warning"
+    );
+
+    let levels = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let record = Arc::clone(&levels);
+    let _legacy = connect_legacy(
+        ClientBuilder::new("subscriber", "1.0.0").with_log_level(LogLevel::Error),
+        move |method, frame| {
+            assert_eq!(method, "logging/setLevel");
+            record
+                .lock()
+                .unwrap()
+                .push(frame["params"]["level"].clone());
+            vec![result_for(frame, json!({}))]
+        },
+    )
+    .await;
+    assert_eq!(*levels.lock().unwrap(), vec![json!("error")]);
 }

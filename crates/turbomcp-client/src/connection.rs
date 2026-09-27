@@ -78,6 +78,10 @@ struct Inner {
     shutdown: tokio_util::sync::CancellationToken,
     done: tokio_util::sync::CancellationToken,
     admission: tokio::sync::Semaphore,
+    /// Whether the transport turns the `io.turbomcp.internal/*` signals into
+    /// something on the wire (Streamable HTTP headers) rather than having
+    /// them stripped.
+    consumes_internal_meta: bool,
 }
 
 impl Drop for Inner {
@@ -163,6 +167,7 @@ impl Connection {
         let shutdown = tokio_util::sync::CancellationToken::new();
         let done = tokio_util::sync::CancellationToken::new();
         let negotiated = Arc::new(Mutex::new(ProtocolVersion::LATEST));
+        let consumes_internal_meta = transport.consumes_internal_meta();
         tokio::spawn(actor(
             transport,
             rx,
@@ -185,6 +190,7 @@ impl Connection {
                 shutdown,
                 done,
                 admission: tokio::sync::Semaphore::new(1024),
+                consumes_internal_meta,
             }),
         }
     }
@@ -197,6 +203,13 @@ impl Connection {
             .negotiated
             .lock()
             .expect("negotiated version mutex poisoned") = version;
+    }
+
+    /// Whether this connection runs over a transport that consumes the
+    /// internal `_meta` signals itself (Streamable HTTP), which is where the
+    /// spec's HTTP-only rules (`x-mcp-header` mirroring) apply.
+    pub(crate) fn consumes_internal_meta(&self) -> bool {
+        self.inner.consumes_internal_meta
     }
 
     /// Cancel this connection and wait for its owned tasks and transport to
