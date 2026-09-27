@@ -901,10 +901,10 @@ async fn notifications_arrive_in_order_and_a_burst_does_not_disconnect() {
         .connect(transport_for(client_io))
         .await
         .unwrap();
-    for _ in 0..200 {
-        if spy.seen.lock().unwrap().len() == 300 {
-            break;
-        }
+    // A deadline, not a poll count: the handler sleeps 1ms per notification,
+    // and Windows timers round that up to ~15ms, so 300 take seconds there.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while spy.seen.lock().unwrap().len() < 300 && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let seen = spy.seen.lock().unwrap().clone();
