@@ -34,8 +34,8 @@ fn public_error_types_satisfy_the_error_bound() {
     }
     #[cfg(feature = "http")]
     assert_error::<turbomcp::http::HttpError>();
-    #[cfg(feature = "websocket")]
-    assert_error::<turbomcp_transport_ws::WsError>();
+    #[cfg(all(feature = "client", feature = "websocket"))]
+    assert_error::<turbomcp::client::WsError>();
     #[cfg(feature = "auth")]
     assert_error::<turbomcp_auth::AuthError>();
     #[cfg(feature = "client-oauth")]

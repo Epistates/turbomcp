@@ -90,8 +90,17 @@
 
 pub mod headers;
 
+#[cfg(all(feature = "websocket", any(feature = "server", feature = "client")))]
+mod ws_link;
+#[cfg(all(feature = "websocket", any(feature = "server", feature = "client")))]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
+pub use ws_link::WsError;
+
 #[cfg(feature = "server")]
 mod server;
+#[cfg(all(feature = "server", feature = "websocket"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "server", feature = "websocket"))))]
+pub use server::WebSocketConfig;
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
 pub use server::{Http, HttpConfig, HttpError, router, serve_http};
@@ -103,6 +112,9 @@ mod client;
 pub use client::{
     BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, connect_http,
 };
+#[cfg(all(feature = "client", feature = "websocket"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "client", feature = "websocket"))))]
+pub use client::{WebSocketClientTransport, connect_websocket};
 
 #[cfg(feature = "oauth")]
 #[cfg_attr(docsrs, doc(cfg(feature = "oauth")))]

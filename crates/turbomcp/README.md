@@ -31,7 +31,8 @@ zero-boilerplate surface and strict spec compliance as a feature.
   and WebSocket. `MyServer.run_stdio()`, or
   `MyServer.into_server().layer(…).serve(Http::bind(addr))`: the runtime wires
   sessions, `DELETE` and graceful shutdown the same with or without
-  middleware. WebSocket: `turbomcp::ws::serve_websocket(listener, dispatcher)`.
+  middleware. WebSocket is a route on the HTTP endpoint, behind its guards:
+  `HttpConfig::new().with_websocket(WebSocketConfig::new("/ws"))`.
 - **The client too.** A typed `Client` runs the handshake, negotiates the
   version, and speaks the same neutral API — interoperating with the official
   Rust SDK (rmcp) both directions. `call_tool` transparently drives task-shaped
@@ -213,7 +214,7 @@ async fn stats(&self) -> Json<Stats> { Json(Stats { count: 3, mean: 1.5 }) }
 |---|---|
 | *(default)* | stdio transport (always linked) |
 | `http` | Streamable HTTP transport (axum); the client's HTTP transport when `client` is on |
-| `websocket` | WebSocket transport (bidirectional, non-spec) → `turbomcp::ws` (`WsConfig`: Origin policy, bearer auth, size caps, keepalive) |
+| `websocket` | WebSocket (bidirectional, non-spec) as a route on the HTTP endpoint (`http::WebSocketConfig`; implies `http`), and with `client` the client transport (`client::connect_websocket`) |
 | `client` | the typed `Client` + `ConnectMode` negotiation |
 | `auth` | OAuth 2.1 resource-server auth (bearer validation, RFC 9728 metadata) |
 | `client-oauth` | the OAuth 2.1 *client* flow (auth-code + PKCE, discovery, registration, refresh) → `turbomcp::client::oauth::OAuthSession` |

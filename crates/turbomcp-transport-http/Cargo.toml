@@ -26,9 +26,17 @@ client = [
     "dep:async-trait",
     "tokio/time",
     "tokio/macros",
+    # Dialing out (`wss://` too), when `websocket` is on.
+    "tokio-tungstenite?/connect",
+    "tokio-tungstenite?/rustls-tls-native-roots",
 ]
 # The challenge-driven OAuth 2.1 bearer source (`oauth::OAuthSession`).
 oauth = ["client", "dep:turbomcp-auth", "turbomcp-auth/oauth-client"]
+# WebSocket (not an MCP-spec transport): with `server`, a route on the HTTP
+# endpoint (`HttpConfig::with_websocket`); with `client`,
+# `WebSocketClientTransport` (`wss://` included).
+# The server side needs nothing axum's `ws` doesn't already compile.
+websocket = ["axum?/ws", "dep:tokio-tungstenite"]
 
 [dependencies]
 turbomcp-core = { workspace = true, features = ["std"] }
@@ -52,6 +60,8 @@ reqwest = { workspace = true, optional = true }
 eventsource-stream = { workspace = true, optional = true }
 tokio-util = { workspace = true, features = ["rt"], optional = true }
 async-trait = { workspace = true, optional = true }
+# websocket
+tokio-tungstenite = { workspace = true, optional = true }
 futures = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

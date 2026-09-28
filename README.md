@@ -34,7 +34,7 @@ zero-boilerplate surface and strict spec compliance as a feature.
   and WebSocket. `MyServer.run_stdio()`, or
   `.into_server().layer(…).serve(Http::bind(addr))`: one runtime wires
   sessions, `DELETE` and graceful shutdown, with or without middleware.
-  WebSocket: `turbomcp::ws::serve_websocket(listener, factory)`.
+  WebSocket rides the HTTP endpoint as a route, behind the same guards.
 - **The client too.** A typed `Client` runs the handshake, negotiates the
   version, and speaks the same neutral API — interoperating with the official
   Rust SDK (rmcp) in both directions.
@@ -105,8 +105,7 @@ users need, so a typical dependency is just `turbomcp`.
 | `turbomcp-service` | The `tower`-shaped protocol seam, transport trait, shared RPC middleware, stdio / line-delimited transport |
 | `turbomcp-server` | Handler registry, dispatcher, `ServerBuilder`, graceful shutdown |
 | `turbomcp-client` | Typed client: handshake, version negotiation, neutral API; transport-agnostic |
-| `turbomcp-transport-http` | Streamable HTTP, both halves: the axum server endpoint (`server`) and the client transport (`client`, `oauth`) |
-| `turbomcp-transport-ws` | WebSocket transport |
+| `turbomcp-transport-http` | Streamable HTTP, both halves: the axum server endpoint (`server`) and the client transport (`client`, `oauth`); WebSocket as a route on the same endpoint and its client (`websocket`) |
 | `turbomcp-auth` | OAuth 2.1 resource-server auth (bearer validation, RFC 9728) |
 | `turbomcp-telemetry` | OpenTelemetry tracing (W3C `_meta` propagation, PII-safe spans) |
 | `turbomcp-ext-tasks` | Draft Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) |

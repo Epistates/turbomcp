@@ -285,21 +285,22 @@ pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, std
 ///
 /// [`router`](http::router) builds the axum `Router` to mount inside a larger
 /// app.
+///
+/// WebSocket (feature `websocket`, not an MCP-spec transport) is a route on
+/// the same endpoint, behind the same guards:
+/// `HttpConfig::new().with_websocket(WebSocketConfig::new("/ws"))`. Connect
+/// to it with [`client::connect_websocket`](crate::client) (features
+/// `client` + `websocket`).
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod http {
     pub use turbomcp_service::SessionTerminator;
     pub use turbomcp_transport_http::{Http, HttpConfig, HttpError, router, serve_http};
-}
 
-/// WebSocket transport (bidirectional, non-spec convenience). Enable with the
-/// `websocket` feature. Serve with
-/// [`ws::serve_websocket`] over a `TcpListener` (see [`ws::WsConfig`] for
-/// Origin policy, bearer auth, limits, and keepalive), or connect a client
-/// transport with [`ws::connect`].
-#[cfg(feature = "websocket")]
-#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
-pub use turbomcp_transport_ws as ws;
+    #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
+    pub use turbomcp_transport_http::WebSocketConfig;
+}
 
 /// OAuth 2.1 resource-server auth: bearer-token validation + RFC 9728 metadata.
 /// Enable with the `auth` feature, then protect an HTTP endpoint with
@@ -311,7 +312,7 @@ pub use turbomcp_auth as auth;
 /// The HTTP authentication seam (implemented by [`auth::ResourceServer`]).
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-pub use turbomcp_service::{AuthDecision, HttpAuthenticator};
+pub use turbomcp_service::{AuthDecision, AuthFuture, HttpAuthenticator};
 
 /// The HTTP rate-limiting seam + the in-process `governor`-backed default.
 /// Apply with [`HttpConfig::with_rate_limiter`](http::HttpConfig::with_rate_limiter).
@@ -343,6 +344,10 @@ pub mod client {
     pub use turbomcp_transport_http::{
         BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, connect_http,
     };
+
+    #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
+    pub use turbomcp_transport_http::{WebSocketClientTransport, WsError, connect_websocket};
 
     /// Coordinated HTTP OAuth authorization and token refresh.
     #[cfg(feature = "client-oauth")]

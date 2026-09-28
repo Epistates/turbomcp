@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- WebSocket connections pass the HTTP endpoint's guards before the upgrade.
+  A bad token was answered with close code `1008` after the `101`, with no
+  challenge and no protected-resource metadata, so a client could not
+  discover the authorization server; it is now a `401` with its
+  `WWW-Authenticate`. Both rate limiters apply, connections are capped
+  (`WebSocketConfig::max_connections`, `503` past it), and a connection is
+  closed with `1008` when its bearer token's `exp` passes, where the old
+  server trusted a token for as long as the socket stayed open. The old accept
+  loop had no handshake timeout and stopped for good on one `EMFILE`; axum's
+  does not.
 - `rustls` 0.23.41 → 0.23.45 for RUSTSEC-2026-0285: TLS 1.3 handshake messages
   were accepted across encryption-level boundaries, so a peer could send in
   plaintext what should have been encrypted. The transcript stays
@@ -154,6 +164,14 @@ Client:
   with nothing else in flight.
 
 Macros and runtime:
+
+- WebSocket: shutdown drains live connections instead of returning while they
+  are still running, closing with `1001`; the `mcp` subprotocol is selected
+  when a client asks for it, as browsers and the official SDKs' clients do
+  (they fail the connection otherwise); a peer that stops answering pings is
+  reaped even while the server keeps writing to it (the keepalive's count
+  lived in the `recv` future and reset on every write); writes run on a task
+  of their own, as stdio's now do; outbound text frames are no longer copied.
 
 - A stateful session on a connection the runtime serves (stdio, any
   `Transport`) ends when the connection does, taking its subscription routes
@@ -297,6 +315,16 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** WebSocket is a route on the HTTP endpoint, and
+  `turbomcp-transport-ws` is gone (12 workspace crates). Serve it with
+  `HttpConfig::new().with_websocket(WebSocketConfig::new("/ws"))` (feature
+  `websocket`, which now implies `http`); connect with
+  `turbomcp::client::connect_websocket` or `WebSocketClientTransport::connect`,
+  which takes a request with headers of your own. `turbomcp::ws`,
+  `serve_websocket` and `WsConfig` are gone: Origin policy, authentication,
+  rate limits and the message size limit come from the `HttpConfig` the route
+  is part of. tokio-tungstenite is 0.29, the version axum's `ws` uses, so a
+  build carries one tungstenite stack.
 - **Breaking:** HTTP serves through the runtime too:
   `builder.serve(Http::bind(addr).config(cfg))` (or `Http::listener` for a
   bound socket). `ServeHttp`/`run_http` are gone, and `router` and

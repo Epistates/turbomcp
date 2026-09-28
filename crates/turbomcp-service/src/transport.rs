@@ -8,7 +8,7 @@
 //! # The production parity contract
 //!
 //! Every bundled server transport — stdio ([`io::LineTransport`](crate::io::LineTransport)),
-//! WebSocket (`turbomcp-transport-ws`), and Streamable HTTP
+//! WebSocket (a route on the HTTP endpoint), and Streamable HTTP
 //! (`turbomcp-transport-http`, a runner rather than a `Transport`) — must
 //! uphold the same production guarantees. A new transport (or a change to one)
 //! is held to this checklist:

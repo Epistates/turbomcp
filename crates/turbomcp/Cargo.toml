@@ -26,8 +26,9 @@ client-oauth = ["auth", "client", "http", "turbomcp-auth/oauth-client", "turbomc
 # OpenTelemetry observability: the TraceContextLayer + W3C propagation +
 # redaction. Add `otlp` (on the telemetry crate) for the export pipeline.
 telemetry = ["dep:turbomcp-telemetry"]
-# WebSocket transport (bidirectional, non-spec convenience). Server + client.
-websocket = ["dep:turbomcp-transport-ws"]
+# WebSocket (bidirectional, non-spec): a route on the HTTP endpoint
+# (`HttpConfig::with_websocket`), and with `client` the client transport.
+websocket = ["http", "turbomcp-transport-http/websocket"]
 # The MCP client (ClientBuilder, ConnectMode probe, typed neutral API). The
 # other half of the protocol; opt-in for server-only users.
 client = ["dep:turbomcp-client", "turbomcp-transport-http?/client"]
@@ -44,7 +45,6 @@ turbomcp-protocol = { workspace = true }
 turbomcp-service = { workspace = true }
 turbomcp-server = { workspace = true }
 turbomcp-transport-http = { workspace = true, optional = true }
-turbomcp-transport-ws = { workspace = true, optional = true }
 turbomcp-auth = { workspace = true, optional = true }
 turbomcp-telemetry = { workspace = true, optional = true }
 turbomcp-client = { workspace = true, optional = true }
@@ -77,6 +77,8 @@ reqwest = { workspace = true }
 # behaviour TurboMCP's own server does not exhibit (see
 # `client_standalone_stream.rs`).
 futures = { workspace = true }
+# Raw WebSocket peers: handshake refusals, subprotocols, close codes.
+tokio-tungstenite = { workspace = true, features = ["connect"] }
 
 [[example]]
 name = "hello_world"

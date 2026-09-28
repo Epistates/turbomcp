@@ -377,9 +377,9 @@ Tracked for later phases; absent in this alpha:
 - **Transports**: TCP and Unix-socket — **dropped in v4**, not deferred. MCP
   defines stdio + Streamable HTTP; no MCP client speaks a raw socket, and those
   transports had no auth or Origin concept. v4 surfaces stdio, HTTP, and
-  WebSocket (enable the `websocket` feature and serve with
-  `turbomcp::ws::serve_websocket`). Use stdio for local IPC, HTTP/WebSocket for
-  network access.
+  WebSocket (enable the `websocket` feature; it is a route on the HTTP
+  endpoint, `HttpConfig::with_websocket`). Use stdio for local IPC,
+  HTTP/WebSocket for network access.
 
 ## Companion crates published for v3
 

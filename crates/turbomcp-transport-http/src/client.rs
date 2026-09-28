@@ -54,6 +54,11 @@ use turbomcp_client::{Client, ClientBuilder, ClientError, ClientResult};
 
 use crate::headers;
 
+#[cfg(feature = "websocket")]
+mod websocket;
+#[cfg(feature = "websocket")]
+pub use websocket::{WebSocketClientTransport, connect_websocket};
+
 /// Failures specific to the HTTP client transport.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

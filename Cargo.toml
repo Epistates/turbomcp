@@ -8,7 +8,6 @@ members = [
     "crates/turbomcp-server",
     "crates/turbomcp-client",
     "crates/turbomcp-transport-http",
-    "crates/turbomcp-transport-ws",
     "crates/turbomcp-macros",
     "crates/turbomcp-codegen",
     "crates/turbomcp-auth",
@@ -83,7 +82,8 @@ http = "1.4"
 mime = "0.3.17"
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
 tower-http = { version = "0.7.1", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
-tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
+# 0.29 is the version axum's `ws` feature uses: one tungstenite stack, not two.
+tokio-tungstenite = { version = "0.29.0", default-features = false }
 
 # Error handling and diagnostics
 thiserror = "2.0.18"
@@ -144,7 +144,6 @@ turbomcp-service = { version = "4.0.0-alpha.5", path = "crates/turbomcp-service"
 turbomcp-server = { version = "4.0.0-alpha.5", path = "crates/turbomcp-server" }
 turbomcp-client = { version = "4.0.0-alpha.5", path = "crates/turbomcp-client" }
 turbomcp-transport-http = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-http", default-features = false }
-turbomcp-transport-ws = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-ws" }
 turbomcp-macros = { version = "4.0.0-alpha.5", path = "crates/turbomcp-macros" }
 turbomcp-auth = { version = "4.0.0-alpha.5", path = "crates/turbomcp-auth" }
 turbomcp-telemetry = { version = "4.0.0-alpha.5", path = "crates/turbomcp-telemetry" }

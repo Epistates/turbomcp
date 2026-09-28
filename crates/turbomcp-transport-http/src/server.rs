@@ -1,5 +1,10 @@
 //! The server half: an axum endpoint that drives an [`McpService`].
 
+#[cfg(feature = "websocket")]
+mod websocket;
+#[cfg(feature = "websocket")]
+pub use websocket::WebSocketConfig;
+
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::future::{Future, poll_fn};
@@ -261,12 +266,14 @@ pub struct HttpConfig {
     session_terminator: Option<Arc<dyn SessionTerminator>>,
     trusted_proxies: Vec<IpNet>,
     supported_versions: Option<Vec<ProtocolVersion>>,
+    #[cfg(feature = "websocket")]
+    websocket: Option<WebSocketConfig>,
 }
 
 impl core::fmt::Debug for HttpConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("HttpConfig")
-            .field("path", &self.path)
+        let mut f = f.debug_struct("HttpConfig");
+        f.field("path", &self.path)
             .field("max_body_bytes", &self.max_body_bytes)
             .field("origins", &self.origins)
             .field("hosts", &self.hosts)
@@ -277,8 +284,10 @@ impl core::fmt::Debug for HttpConfig {
             .field("ip_rate_limiter", &self.ip_rate_limiter.is_some())
             .field("session_terminator", &self.session_terminator.is_some())
             .field("trusted_proxies", &self.trusted_proxies)
-            .field("supported_versions", &self.supported_versions)
-            .finish()
+            .field("supported_versions", &self.supported_versions);
+        #[cfg(feature = "websocket")]
+        f.field("websocket", &self.websocket);
+        f.finish()
     }
 }
 
@@ -301,6 +310,8 @@ impl Default for HttpConfig {
             session_terminator: None,
             trusted_proxies: Vec::new(),
             supported_versions: None,
+            #[cfg(feature = "websocket")]
+            websocket: None,
         }
     }
 }
@@ -488,6 +499,16 @@ impl HttpConfig {
         self
     }
 
+    /// Also accept WebSocket connections, on `websocket`'s path (feature
+    /// `websocket`). Every guard this config sets applies to the upgrade.
+    #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
+    #[must_use]
+    pub fn with_websocket(mut self, websocket: WebSocketConfig) -> Self {
+        self.websocket = Some(websocket);
+        self
+    }
+
     /// Honor client-initiated session termination with `terminator`: a
     /// `DELETE` carrying an `Mcp-Session-Id` ends that `2025-11-25` session
     /// (dropping its state and subscription routes) and answers `204`; an
@@ -590,26 +611,12 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         .session_terminator
         .clone()
         .or_else(|| server.session_terminator());
-    let service = server.service();
-    router_for(service, config, supported_versions, session_terminator)
-}
-
-fn router_for<S>(
-    service: S,
-    config: HttpConfig,
-    supported_versions: Vec<ProtocolVersion>,
-    session_terminator: Option<Arc<dyn SessionTerminator>>,
-) -> Router
-where
-    S: McpService + Clone + Sync,
-    S::Future: Send + 'static,
-{
     let admission = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_requests));
     let request_timeout = config.request_timeout;
     let ip_rate_limiter = config.ip_rate_limiter.clone();
     let gate_proxies: Arc<[IpNet]> = config.trusted_proxies.clone().into();
     let state = HttpState {
-        service,
+        service: server.service(),
         codec: DefaultCodec::default(),
         origins: config.origins.clone(),
         hosts: config.hosts.clone(),
@@ -625,18 +632,26 @@ where
     let mut app = Router::new()
         .route(
             &config.path,
-            post(mcp_post::<S>)
-                .get(mcp_get::<S>)
-                .delete(mcp_delete::<S>),
+            post(mcp_post::<H::Service>)
+                .get(mcp_get::<H::Service>)
+                .delete(mcp_delete::<H::Service>),
         )
         .layer(DefaultBodyLimit::max(config.max_body_bytes));
     // RFC 9728 Protected Resource Metadata is public (no auth) discovery.
     if config.authenticator.is_some() {
         app = app.route(
             RESOURCE_METADATA_PATH,
-            axum::routing::get(resource_metadata::<S>),
+            axum::routing::get(resource_metadata::<H::Service>),
         );
     }
+    #[cfg_attr(not(feature = "websocket"), allow(unused_mut))]
+    let mut app = app.with_state(state.clone());
+    #[cfg(feature = "websocket")]
+    if let Some(ws) = &config.websocket {
+        app = app.merge(websocket::routes(server, state, &config, ws));
+    }
+    #[cfg(not(feature = "websocket"))]
+    drop((server, state));
     let app = if config.cors {
         app.layer(CorsLayer::permissive())
     } else {
@@ -666,7 +681,6 @@ where
             }
         },
     ))
-    .with_state(state)
 }
 
 /// The admission pool: a permit per in-flight request, held until its body
@@ -778,6 +792,8 @@ async fn serve_listener<H: ServerHandle>(
         close_then_shut_down(&server, config.shutdown.clone(), shutdown_timeout);
     config.shutdown = shutdown.clone();
     let signal = shutdown.clone();
+    #[cfg(feature = "websocket")]
+    let websocket = config.websocket.clone();
     let app = router(server, config);
     if let Ok(addr) = listener.local_addr() {
         tracing::info!(%addr, "turbomcp http transport listening");
@@ -799,6 +815,12 @@ async fn serve_listener<H: ServerHandle>(
             if let Ok(result) = tokio::time::timeout(shutdown_timeout, &mut serving).await { result?; }
         }
         () = &mut closing => unreachable!("the close task never completes"),
+    }
+    // Upgraded sockets outlive the HTTP server's own drain: axum hands them
+    // off and stops tracking them.
+    #[cfg(feature = "websocket")]
+    if let Some(websocket) = websocket {
+        websocket.drained(shutdown_timeout).await;
     }
     Ok(())
 }
