@@ -297,6 +297,16 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** HTTP serves through the runtime too:
+  `builder.serve(Http::bind(addr).config(cfg))` (or `Http::listener` for a
+  bound socket). `ServeHttp`/`run_http` are gone, and `router` and
+  `serve_http` take a `ServerHandle` (a `Server`, a builder's `.layer(…)`, or
+  a bare service) instead of a service. A server supplies its supported
+  revisions and its `DELETE` handler; `HttpConfig::with_supported_versions`
+  and `with_session_terminator` now only override them. The middleware path
+  (`serve_http` around a hand-layered service) answered `DELETE` with `405`,
+  accepted `MCP-Protocol-Version`s the server didn't serve, and cut listen
+  streams off at shutdown instead of closing them.
 - **Breaking:** `McpServerCore::register` registers a server's capabilities,
   and every `ServerBuilder` starts from it; `#[server]` implements it, and
   its inherent `into_server()` is now the trait method. The inherent method registered

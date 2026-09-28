@@ -16,13 +16,7 @@ categories = ["network-programming", "asynchronous", "api-bindings"]
 # stdio is the default transport and is always linked; http is opt-in.
 default = []
 # Also lights up the client's Streamable HTTP transport when `client` is on.
-# (tokio: `run_http` spawns the graceful subscription-close watcher.)
-http = [
-    "dep:turbomcp-transport-http",
-    "turbomcp-transport-http/server",
-    "dep:tokio",
-    "dep:tokio-util",
-]
+http = ["dep:turbomcp-transport-http", "turbomcp-transport-http/server"]
 # OAuth 2.1 resource-server auth (bearer validation, RFC 9728). Most useful
 # with `http`; the metadata endpoint + challenges are HTTP-level.
 auth = ["dep:turbomcp-auth"]
@@ -45,7 +39,6 @@ ext-tasks = ["dep:turbomcp-ext-tasks"]
 simd = ["turbomcp-core/simd"]
 
 [dependencies]
-tokio-util = { workspace = true, features = ["rt"], optional = true }
 turbomcp-core = { workspace = true }
 turbomcp-protocol = { workspace = true }
 turbomcp-service = { workspace = true }
@@ -57,8 +50,6 @@ turbomcp-telemetry = { workspace = true, optional = true }
 turbomcp-client = { workspace = true, optional = true }
 turbomcp-ext-tasks = { workspace = true, optional = true }
 turbomcp-macros = { workspace = true }
-# `run_http` spawns the graceful subscription-close watcher (feature `http`).
-tokio = { workspace = true, features = ["rt"], optional = true }
 # Re-exported as `turbomcp::tower`: `McpService` *is* a `tower::Service`, so
 # users writing RPC middleware need the same tower, not a second copy.
 tower = { workspace = true }

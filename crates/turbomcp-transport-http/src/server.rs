@@ -28,7 +28,8 @@ use turbomcp_core::{
 };
 use turbomcp_service::{
     AuthDecision, CancellationToken, HttpAuthenticator, McpService, Peer, ProtocolError, RateKey,
-    RateLimiter, SessionStreams, SessionTerminator, StreamGuard, catch_handler_panic, mcp_headers,
+    RateLimiter, Serve, ServerHandle, SessionStreams, SessionTerminator, StreamGuard,
+    catch_handler_panic, close_then_shut_down, mcp_headers,
 };
 
 /// The id this message owes a response to — `None` for anything but a request.
@@ -259,7 +260,7 @@ pub struct HttpConfig {
     ip_rate_limiter: Option<Arc<dyn RateLimiter>>,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
     trusted_proxies: Vec<IpNet>,
-    supported_versions: Vec<ProtocolVersion>,
+    supported_versions: Option<Vec<ProtocolVersion>>,
 }
 
 impl core::fmt::Debug for HttpConfig {
@@ -299,7 +300,7 @@ impl Default for HttpConfig {
             ip_rate_limiter: None,
             session_terminator: None,
             trusted_proxies: Vec::new(),
-            supported_versions: ProtocolVersion::SUPPORTED.to_vec(),
+            supported_versions: None,
         }
     }
 }
@@ -310,14 +311,12 @@ impl HttpConfig {
     /// unsupported** `MCP-Protocol-Version`, it MUST respond with `400 Bad
     /// Request`".
     ///
-    /// Defaults to the whole build's set. `ServeHttp::run_http` narrows it from
-    /// the dispatcher, so `#[server(protocols("2025-06-18"))]` refuses a
-    /// `2025-11-25` header instead of advertising a version it does not serve;
-    /// call this yourself when composing [`serve_http`] with your own
-    /// dispatcher.
+    /// Defaults to what the server serves, so `#[server(protocols("2025-06-18"))]`
+    /// refuses a `2025-11-25` header instead of advertising a version it does
+    /// not serve. Set it only to narrow the endpoint further.
     #[must_use]
     pub fn with_supported_versions(mut self, versions: Vec<ProtocolVersion>) -> Self {
-        self.supported_versions = versions;
+        self.supported_versions = Some(versions);
         self
     }
 
@@ -410,8 +409,7 @@ impl HttpConfig {
     }
 
     /// A clone of the configured shutdown token (a fresh, never-fired token by
-    /// default). Lets callers coordinate their own teardown — e.g. `run_http`
-    /// gracefully closes `subscriptions/listen` subscriptions when it fires.
+    /// default), for callers coordinating their own teardown.
     #[must_use]
     pub fn shutdown_token(&self) -> CancellationToken {
         self.shutdown.clone()
@@ -490,12 +488,12 @@ impl HttpConfig {
         self
     }
 
-    /// Honor client-initiated session termination: a `DELETE` carrying an
-    /// `Mcp-Session-Id` ends that `2025-11-25` session (dropping its state and
-    /// subscription routes) and answers `204`; an unknown session answers
-    /// `404`. Obtain the terminator from
-    /// `VersionDispatcher::session_terminator`. Without it, `DELETE` answers
-    /// `405` (the spec permits a server refusing termination).
+    /// Honor client-initiated session termination with `terminator`: a
+    /// `DELETE` carrying an `Mcp-Session-Id` ends that `2025-11-25` session
+    /// (dropping its state and subscription routes) and answers `204`; an
+    /// unknown session answers `404`. A server built by `turbomcp-server`
+    /// supplies its own, so this is for replacing it. Without one, `DELETE`
+    /// answers `405` (the spec permits a server refusing termination).
     #[must_use]
     pub fn with_session_terminator(mut self, terminator: Arc<dyn SessionTerminator>) -> Self {
         self.session_terminator = Some(terminator);
@@ -571,10 +569,37 @@ impl<S> HttpState<S> {
     }
 }
 
-/// Build the configured axum [`Router`] for `service` without binding a socket —
+/// Build the configured axum [`Router`] for `server` without binding a socket —
 /// the unit of composition (mount it under a larger app) and the seam tests
 /// drive via `tower::ServiceExt::oneshot`.
-pub fn router<S>(service: S, config: HttpConfig) -> Router
+///
+/// `server` is usually a `turbomcp-server` `Server` (or a builder's
+/// `.layer(…)`), which brings its supported revisions and its `DELETE`
+/// handler. A bare service works too and brings neither.
+///
+/// Closing `subscriptions/listen` streams at shutdown is the listener's job,
+/// not the router's: [`serve_http`] and [`Http`] do it. When you serve this
+/// router yourself, call `ServerHandle::close_subscriptions` before firing
+/// the configured shutdown token.
+pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
+    let supported_versions = config
+        .supported_versions
+        .clone()
+        .unwrap_or_else(|| server.supported_versions());
+    let session_terminator = config
+        .session_terminator
+        .clone()
+        .or_else(|| server.session_terminator());
+    let service = server.service();
+    router_for(service, config, supported_versions, session_terminator)
+}
+
+fn router_for<S>(
+    service: S,
+    config: HttpConfig,
+    supported_versions: Vec<ProtocolVersion>,
+    session_terminator: Option<Arc<dyn SessionTerminator>>,
+) -> Router
 where
     S: McpService + Clone + Sync,
     S::Future: Send + 'static,
@@ -591,10 +616,10 @@ where
         sse_keepalive: config.sse_keepalive,
         authenticator: config.authenticator.clone(),
         rate_limiter: config.rate_limiter.clone(),
-        session_terminator: config.session_terminator.clone(),
+        session_terminator,
         trusted_proxies: config.trusted_proxies.clone().into(),
         streams: SessionStreams::new(),
-        supported_versions: config.supported_versions.clone().into(),
+        supported_versions: supported_versions.into(),
         shutdown: config.shutdown.clone(),
     };
     let mut app = Router::new()
@@ -670,26 +695,93 @@ async fn admit(
     Response::from_parts(parts, axum::body::Body::from_stream(stream))
 }
 
-/// Serve `service` over Streamable HTTP on `addr` until the configured shutdown
-/// token fires (or forever, with the default token).
+/// Streamable HTTP on a socket, as a target for `ServerBuilder::serve`:
+/// `server.serve(Http::bind(addr).config(HttpConfig::new()))`.
+#[derive(Debug)]
+pub struct Http {
+    listen: Listen,
+    config: HttpConfig,
+}
+
+#[derive(Debug)]
+enum Listen {
+    Addr(SocketAddr),
+    Listener(tokio::net::TcpListener),
+}
+
+impl Http {
+    /// Bind `addr` when serving starts.
+    #[must_use]
+    pub fn bind(addr: SocketAddr) -> Self {
+        Self {
+            listen: Listen::Addr(addr),
+            config: HttpConfig::default(),
+        }
+    }
+
+    /// Serve on a listener that is already bound (port `0` in tests, a socket
+    /// handed over by a supervisor).
+    #[must_use]
+    pub fn listener(listener: tokio::net::TcpListener) -> Self {
+        Self {
+            listen: Listen::Listener(listener),
+            config: HttpConfig::default(),
+        }
+    }
+
+    /// Serve by `config`.
+    #[must_use]
+    pub fn config(mut self, config: HttpConfig) -> Self {
+        self.config = config;
+        self
+    }
+}
+
+impl Serve for Http {
+    async fn serve<H: ServerHandle>(self, server: H) -> Result<(), ProtocolError> {
+        let listener = match self.listen {
+            Listen::Addr(addr) => tokio::net::TcpListener::bind(addr)
+                .await
+                .map_err(HttpError::Io)?,
+            Listen::Listener(listener) => listener,
+        };
+        serve_listener(listener, server, self.config).await?;
+        Ok(())
+    }
+}
+
+/// Serve `server` over Streamable HTTP on `addr` until the configured shutdown
+/// token fires (or forever, with the default token). The same as
+/// `server.serve(Http::bind(addr).config(config))`.
 ///
 /// # Errors
 /// Returns [`HttpError::Io`] if the listener cannot bind or the server loop fails.
-pub async fn serve_http<S>(
+pub async fn serve_http<H: ServerHandle>(
     addr: SocketAddr,
-    service: S,
+    server: H,
     config: HttpConfig,
-) -> Result<(), HttpError>
-where
-    S: McpService + Clone + Sync,
-    S::Future: Send + 'static,
-{
-    let shutdown = config.shutdown.clone();
-    let shutdown_timeout = config.shutdown_timeout;
-    let signal = shutdown.clone();
-    let app = router(service, config);
+) -> Result<(), HttpError> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "turbomcp http transport listening");
+    serve_listener(listener, server, config).await
+}
+
+/// When the shutdown token fires, live `subscriptions/listen` requests get
+/// their closing responses first; only then does the endpoint stop accepting
+/// and start draining, with the listen streams still open to carry them.
+async fn serve_listener<H: ServerHandle>(
+    listener: tokio::net::TcpListener,
+    server: H,
+    mut config: HttpConfig,
+) -> Result<(), HttpError> {
+    let shutdown_timeout = config.shutdown_timeout;
+    let (shutdown, closing) =
+        close_then_shut_down(&server, config.shutdown.clone(), shutdown_timeout);
+    config.shutdown = shutdown.clone();
+    let signal = shutdown.clone();
+    let app = router(server, config);
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(%addr, "turbomcp http transport listening");
+    }
     // `with_connect_info` so the rate limiter can key anonymous requests on the
     // peer IP (a no-op when no limiter is configured).
     let serving = axum::serve(
@@ -700,11 +792,13 @@ where
     use std::future::IntoFuture as _;
     let serving = serving.into_future();
     tokio::pin!(serving);
+    tokio::pin!(closing);
     tokio::select! {
         result = &mut serving => result?,
         () = signal.cancelled() => {
             if let Ok(result) = tokio::time::timeout(shutdown_timeout, &mut serving).await { result?; }
         }
+        () = &mut closing => unreachable!("the close task never completes"),
     }
     Ok(())
 }

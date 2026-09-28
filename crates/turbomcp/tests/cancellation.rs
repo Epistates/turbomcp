@@ -203,23 +203,22 @@ async fn an_http_disconnect_cancels_the_request() {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use turbomcp::CancellationToken;
-    use turbomcp::http::{HttpConfig, ServeHttp};
+    use turbomcp::http::{Http, HttpConfig};
 
     let marks = Arc::new(Marks::default());
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    drop(listener);
 
     let shutdown = CancellationToken::new();
     let server = Slow {
         marks: Arc::clone(&marks),
     };
     tokio::spawn(
-        server
-            .into_server()
-            .run_http(addr, HttpConfig::new().with_shutdown(shutdown.clone())),
+        server.into_server().serve(
+            Http::listener(listener).config(HttpConfig::new().with_shutdown(shutdown.clone())),
+        ),
     );
     tokio::time::sleep(Duration::from_millis(150)).await;
 
@@ -281,23 +280,22 @@ async fn a_typed_http_client_timing_out_stops_the_server_handler() {
 
     use turbomcp::CancellationToken;
     use turbomcp::client::connect_http;
-    use turbomcp::http::{HttpConfig, ServeHttp};
+    use turbomcp::http::{Http, HttpConfig};
 
     let marks = Arc::new(Marks::default());
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    drop(listener);
 
     let shutdown = CancellationToken::new();
     let server = Slow {
         marks: Arc::clone(&marks),
     };
     tokio::spawn(
-        server
-            .into_server()
-            .run_http(addr, HttpConfig::new().with_shutdown(shutdown.clone())),
+        server.into_server().serve(
+            Http::listener(listener).config(HttpConfig::new().with_shutdown(shutdown.clone())),
+        ),
     );
     tokio::time::sleep(Duration::from_millis(150)).await;
 

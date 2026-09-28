@@ -94,7 +94,7 @@ pub mod headers;
 mod server;
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
-pub use server::{HttpConfig, HttpError, router, serve_http};
+pub use server::{Http, HttpConfig, HttpError, router, serve_http};
 
 #[cfg(feature = "client")]
 mod client;

@@ -28,8 +28,10 @@ zero-boilerplate surface and strict spec compliance as a feature.
   signature changes — including dropping, per session, the fields a revision
   predates. Pin the set with `#[server(protocols("2025-11-25", …))]`.
 - **Transports behind one builder.** stdio (default), Streamable HTTP (axum),
-  and WebSocket. `MyServer.run_stdio()`, `MyServer.into_server().run_http(addr,
-  cfg)`, or `turbomcp::ws::serve_websocket(listener, dispatcher)`.
+  and WebSocket. `MyServer.run_stdio()`, or
+  `MyServer.into_server().layer(…).serve(Http::bind(addr))`: the runtime wires
+  sessions, `DELETE` and graceful shutdown the same with or without
+  middleware. WebSocket: `turbomcp::ws::serve_websocket(listener, dispatcher)`.
 - **The client too.** A typed `Client` runs the handshake, negotiates the
   version, and speaks the same neutral API — interoperating with the official
   Rust SDK (rmcp) both directions. `call_tool` transparently drives task-shaped
@@ -106,10 +108,10 @@ async fn main() -> Result<(), turbomcp::ProtocolError> {
 Serve the same server over Streamable HTTP instead (feature `http`):
 
 ```rust,ignore
-use turbomcp::http::{HttpConfig, ServeHttp};
+use turbomcp::http::{Http, HttpConfig};
 
 Hello.into_server()
-    .run_http("127.0.0.1:8080".parse()?, HttpConfig::new())
+    .serve(Http::bind("127.0.0.1:8080".parse()?).config(HttpConfig::new()))
     .await?;
 ```
 

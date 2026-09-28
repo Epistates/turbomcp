@@ -31,8 +31,10 @@ zero-boilerplate surface and strict spec compliance as a feature.
   signature changes — including dropping, per session, the fields a revision
   predates. Pin the set with `#[server(protocols("2025-11-25", …))]`.
 - **Transports behind one builder.** stdio (default), Streamable HTTP (axum),
-  and WebSocket. `MyServer.run_stdio()`, `.run_http(addr, cfg)`, or
-  `turbomcp::ws::serve_websocket(listener, factory)`.
+  and WebSocket. `MyServer.run_stdio()`, or
+  `.into_server().layer(…).serve(Http::bind(addr))`: one runtime wires
+  sessions, `DELETE` and graceful shutdown, with or without middleware.
+  WebSocket: `turbomcp::ws::serve_websocket(listener, factory)`.
 - **The client too.** A typed `Client` runs the handshake, negotiates the
   version, and speaks the same neutral API — interoperating with the official
   Rust SDK (rmcp) in both directions.

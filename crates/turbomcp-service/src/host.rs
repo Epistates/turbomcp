@@ -58,6 +58,39 @@ pub trait ServerHandle: Clone + Send + Sync + 'static {
     fn close_subscriptions(&self) -> BoxFuture<'static, ()>;
 }
 
+/// A bare service is a server with nothing to wire: every revision, no
+/// `DELETE`, nothing to close, and no per-connection session (so on a
+/// connection that is its own session, stateful clients fail after
+/// `initialize`). For tests and embeddings that bring their own; a real server
+/// is `turbomcp-server`'s `Server`.
+impl<S> ServerHandle for S
+where
+    S: McpService<Future: Send + 'static> + Clone + Sync,
+{
+    type Service = S;
+    type Connection = S;
+
+    fn service(&self) -> S {
+        self.clone()
+    }
+
+    fn connection(&self) -> S {
+        self.clone()
+    }
+
+    fn supported_versions(&self) -> Vec<ProtocolVersion> {
+        ProtocolVersion::SUPPORTED.to_vec()
+    }
+
+    fn session_terminator(&self) -> Option<Arc<dyn SessionTerminator>> {
+        None
+    }
+
+    fn close_subscriptions(&self) -> BoxFuture<'static, ()> {
+        Box::pin(async {})
+    }
+}
+
 /// A transport that can run a [`ServerHandle`]: any [`Transport`] (one
 /// connection), [`Pipe`] (one connection with a [`ServeConfig`]), or a
 /// network listener such as `turbomcp-transport-http`'s `Http`.

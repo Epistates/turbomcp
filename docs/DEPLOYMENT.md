@@ -7,12 +7,14 @@ Apps currently reserves an identifier and is not a supported implementation.
 
 ## Server contracts
 
-Define a server with `#[server]`, build it with `into_server()`, and serve
-stdio or enable `http` and call `run_http`. The HTTP facade automatically wires
-the dispatcher's session ownership backend. Applications assembling an axum
-router themselves must set `HttpConfig::with_session_terminator` to the same
-dispatcher's backend when using authenticated legacy sessions. Otherwise the
-HTTP transport refuses that session mode. Put TLS at the server or a trusted
+Define a server with `#[server]`, build it with `into_server()`, add any
+middleware with `.layer(…)`, and `.serve(stdio())` or (feature `http`)
+`.serve(Http::bind(addr))`. The runtime wires the dispatcher's session
+ownership backend, its supported revisions and graceful listen close on
+every transport. `turbomcp::http::router(server, config)` does the same for an
+axum router you mount yourself; pass it the `Server` (or the builder's
+`.layer(…)`), not a bare dispatcher, or authenticated legacy sessions are
+refused for want of a session terminator. Put TLS at the server or a trusted
 reverse proxy; configure allowed hosts/origins and trusted proxies explicitly.
 
 A callable tool must resolve through `WithTools::lookup_tool`. Macro-generated

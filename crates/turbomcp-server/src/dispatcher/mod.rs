@@ -445,8 +445,9 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// shutdown, answering each listen request with the frozen `2026-07-28`
     /// `SubscriptionsListenResult` envelope before clearing the registry.
     /// Best-effort: a connection that is already gone gets nothing, which the
-    /// spec allows (an abrupt close carries no response). `run_http` wires
-    /// this to the configured shutdown token automatically.
+    /// spec allows (an abrupt close carries no response). The runtime
+    /// ([`Server::serve`](crate::Server::serve)) calls it at shutdown, before
+    /// any transport drains.
     pub async fn close_subscriptions(&self) {
         self.shared.subs.close_all().await;
     }

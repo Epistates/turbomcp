@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use common::Everything;
 use turbomcp::CancellationToken;
-use turbomcp::http::{HttpConfig, serve_http};
+use turbomcp::http::{Http, HttpConfig};
 use turbomcp_conformance::harness::{
     self, CONFORMANCE_PKG, CheckResult, assert_conformance, load_baseline,
 };
@@ -60,7 +60,6 @@ async fn spawn_server() -> (String, CancellationToken, tokio::task::JoinHandle<(
         .await
         .expect("bind ephemeral port");
     let addr: SocketAddr = listener.local_addr().unwrap();
-    drop(listener); // run_http rebinds; this just reserves a free port number.
 
     let shutdown = CancellationToken::new();
     // Pin the Origin AND Host to this server's real `host:port` so the
@@ -75,11 +74,9 @@ async fn spawn_server() -> (String, CancellationToken, tokio::task::JoinHandle<(
         .allow_origin(format!("http://{authority}"))
         .allow_host(authority);
     let handle = tokio::spawn(async move {
-        let dispatcher = Everything.into_server().with_logging().build();
-        let notifier = dispatcher.notifier();
-        let config =
-            config.with_session_terminator(std::sync::Arc::new(dispatcher.session_terminator()));
-        let serving = serve_http(addr, dispatcher, config);
+        let server = turbomcp::Server::new(Everything.into_server().with_logging().build());
+        let notifier = server.notifier();
+        let serving = server.serve(Http::listener(listener).config(config));
         tokio::pin!(serving);
         // Exercise subscribed catalog-change delivery from the public notifier.
         let mut changes = tokio::time::interval(Duration::from_millis(200));

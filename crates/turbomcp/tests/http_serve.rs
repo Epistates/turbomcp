@@ -1,13 +1,15 @@
-//! The HTTP one-liner: `MyServer.into_server().run_http(addr, config)` builds
-//! the dispatcher, serves it, AND auto-wires session termination — so a client
-//! `DELETE` ends its session (204) without the user touching the terminator.
+//! Serving on `Http` wires session termination from the server, so a client
+//! `DELETE` ends its session (204) without the user touching the terminator,
+//! and a layer of middleware doesn't change that. The middleware path used to
+//! be `serve_http` with a hand-built service, which answered `DELETE` with
+//! `405` and accepted `MCP-Protocol-Version`s the server didn't serve.
 #![cfg(feature = "http")]
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use turbomcp::CancellationToken;
-use turbomcp::http::{HttpConfig, ServeHttp};
+use turbomcp::http::{Http, HttpConfig};
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
@@ -23,18 +25,34 @@ impl Greeter {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn run_http_serves_and_auto_wires_delete_termination() {
+async fn serving_on_http_honors_delete() {
+    delete_is_honored(|http| tokio::spawn(Greeter.into_server().serve(http))).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_layer_of_middleware_keeps_delete() {
+    delete_is_honored(|http| {
+        tokio::spawn(
+            Greeter
+                .into_server()
+                .layer(turbomcp::TracingLayer)
+                .serve(http),
+        )
+    })
+    .await;
+}
+
+type Serving = tokio::task::JoinHandle<Result<(), turbomcp::ProtocolError>>;
+
+async fn delete_is_honored(serve: impl FnOnce(Http) -> Serving) {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    drop(listener);
 
     let shutdown = CancellationToken::new();
     let config = HttpConfig::new().with_shutdown(shutdown.clone());
-    // The one-liner under test.
-    let server = tokio::spawn(Greeter.into_server().run_http(addr, config));
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let server = serve(Http::listener(listener).config(config));
 
     let url = format!("http://{addr}/mcp");
     let client = reqwest::Client::new();
@@ -63,7 +81,7 @@ async fn run_http_serves_and_auto_wires_delete_termination() {
         .unwrap()
         .to_owned();
 
-    // DELETE the session: run_http wired the terminator, so this is honored.
+    // DELETE the session: the runtime wired the terminator, so this is honored.
     let resp = client
         .delete(&url)
         .header("mcp-session-id", &sid)
@@ -89,5 +107,5 @@ async fn run_http_serves_and_auto_wires_delete_termination() {
         .await
         .expect("server shuts down")
         .unwrap()
-        .expect("run_http exits Ok");
+        .expect("serving exits Ok");
 }

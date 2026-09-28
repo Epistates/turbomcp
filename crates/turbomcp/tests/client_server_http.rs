@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde_json::{Map, json};
 use turbomcp::CancellationToken;
 use turbomcp::client::{Client, ClientBuilder, ConnectMode, connect_http};
-use turbomcp::http::{HttpConfig, ServeHttp};
+use turbomcp::http::{Http, HttpConfig};
 use turbomcp::prelude::*;
 use turbomcp_core::ProtocolVersion;
 
@@ -41,11 +41,13 @@ async fn spawn_server() -> (String, CancellationToken) {
         .await
         .unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    drop(listener);
 
     let shutdown = CancellationToken::new();
     let config = HttpConfig::new().with_shutdown(shutdown.clone());
-    tokio::spawn(Demo.into_server().run_http(addr, config));
+    tokio::spawn(
+        Demo.into_server()
+            .serve(Http::listener(listener).config(config)),
+    );
     // Give the listener a moment to bind.
     tokio::time::sleep(Duration::from_millis(100)).await;
     (format!("http://{addr}/mcp"), shutdown)

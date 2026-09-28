@@ -256,13 +256,13 @@ pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, std
 
 /// Streamable HTTP transport (axum 0.8). Enable with the `http` feature.
 ///
-/// The one-liner is [`ServeHttp::run_http`](http::ServeHttp::run_http) on a
-/// builder — it builds the dispatcher, wires session termination (`DELETE`)
-/// automatically, and serves:
+/// Serve a builder on [`Http`](http::Http), with or without middleware; the
+/// runtime wires supported revisions, `DELETE` session termination and
+/// graceful `subscriptions/listen` close either way:
 ///
 /// ```no_run
 /// use turbomcp::prelude::*;
-/// use turbomcp::http::{HttpConfig, ServeHttp};
+/// use turbomcp::http::{Http, HttpConfig};
 ///
 /// #[derive(Clone)]
 /// struct MyServer;
@@ -274,93 +274,22 @@ pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, std
 /// }
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// MyServer.into_server().run_http("127.0.0.1:8080".parse()?, HttpConfig::new()).await?;
+/// let addr = "127.0.0.1:8080".parse()?;
+/// MyServer.into_server().serve(Http::bind(addr).config(HttpConfig::new())).await?;
+///
+/// // With RPC middleware (e.g. the telemetry `TraceContextLayer`):
+/// MyServer.into_server().layer(turbomcp::TracingLayer).serve(Http::bind(addr)).await?;
 /// # Ok(())
 /// # }
 /// ```
 ///
-/// For full control — in particular to wrap the dispatcher in RPC middleware
-/// such as the telemetry [`TraceContextLayer`](crate::telemetry::TraceContextLayer)
-/// (feature `telemetry`) — build the service yourself and call
-/// [`serve_http`](http::serve_http). Note that this path does *not* auto-wire
-/// `DELETE` session termination; pass
-/// [`HttpConfig::with_session_terminator`](http::HttpConfig::with_session_terminator)
-/// if you need it.
-///
-/// ```no_run
-/// # use turbomcp::prelude::*;
-/// use turbomcp::http::{HttpConfig, serve_http};
-///
-/// # #[derive(Clone)]
-/// # struct MyServer;
-/// # #[server(name = "my-server", version = "1.0.0")]
-/// # impl MyServer {
-/// #     #[tool]
-/// #     async fn ping(&self) -> String { "pong".into() }
-/// # }
-/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// # let addr = "127.0.0.1:8080".parse()?;
-/// // …or `SomeLayer::new().layer(…)` around this to add RPC middleware.
-/// let service = MyServer.into_server().build();
-/// serve_http(addr, service, HttpConfig::new()).await?;
-/// # Ok(())
-/// # }
-/// ```
+/// [`router`](http::router) builds the axum `Router` to mount inside a larger
+/// app.
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod http {
-    use std::net::SocketAddr;
-    use std::sync::Arc;
-
     pub use turbomcp_service::SessionTerminator;
-    pub use turbomcp_transport_http::{HttpConfig, HttpError, router, serve_http};
-
-    use turbomcp_server::{McpServerCore, ServerBuilder};
-
-    /// One-call HTTP serving for a [`ServerBuilder`] (the value
-    /// `MyServer.into_server()` produces).
-    pub trait ServeHttp {
-        /// Build this server's dispatcher and serve it over Streamable HTTP on
-        /// `addr` until `config`'s shutdown token fires.
-        ///
-        /// Session termination (`DELETE`) is wired automatically from the built
-        /// dispatcher, so the endpoint honors client-initiated termination by
-        /// default. To compose RPC middleware first, build the dispatcher
-        /// yourself and call [`serve_http`] instead.
-        fn run_http(
-            self,
-            addr: SocketAddr,
-            config: HttpConfig,
-        ) -> impl std::future::Future<Output = Result<(), HttpError>> + Send;
-    }
-
-    impl<S> ServeHttp for ServerBuilder<S>
-    where
-        S: McpServerCore + Clone + Send + Sync + 'static,
-    {
-        async fn run_http(self, addr: SocketAddr, config: HttpConfig) -> Result<(), HttpError> {
-            let dispatcher = self.build();
-            // What `#[server(protocols(…))]` narrowed, so the endpoint refuses
-            // an `MCP-Protocol-Version` this server does not serve rather than
-            // answering it in a shape the client never asked for.
-            let config = config
-                .with_supported_versions(dispatcher.supported_versions().to_vec())
-                .with_session_terminator(Arc::new(dispatcher.session_terminator()));
-            // Graceful teardown: when the shutdown token fires, end the live
-            // `subscriptions/listen` registrations — each gets the frozen
-            // `2026-07-28` closing envelope before the transport tears its
-            // listen SSE stream down off the same token.
-            let closer = dispatcher.clone();
-            let shutdown = config.shutdown_token();
-            let closer_task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
-                shutdown.cancelled().await;
-                closer.close_subscriptions().await;
-            }));
-            let result = serve_http(addr, dispatcher, config).await;
-            closer_task.abort();
-            result
-        }
-    }
+    pub use turbomcp_transport_http::{Http, HttpConfig, HttpError, router, serve_http};
 }
 
 /// WebSocket transport (bidirectional, non-spec convenience). Enable with the
@@ -464,10 +393,10 @@ pub mod prelude {
     };
     pub use turbomcp_service::io::stdio;
 
-    /// The HTTP one-liner `builder.run_http(addr, config)` (feature `http`).
+    /// Streamable HTTP to [`serve`](ServerBuilder::serve) on (feature `http`).
     #[cfg(feature = "http")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-    pub use crate::http::ServeHttp;
+    pub use crate::http::{Http, HttpConfig};
 
     pub use turbomcp_macros::{completion, mcp_header, prompt, resource, server, tool};
 }

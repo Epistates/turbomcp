@@ -12,7 +12,7 @@
 
 use std::net::SocketAddr;
 
-use turbomcp::http::{HttpConfig, serve_http};
+use turbomcp::http::{Http, HttpConfig};
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
@@ -41,10 +41,9 @@ async fn main() -> Result<(), turbomcp::ProtocolError> {
                 .parse()
                 .expect("invalid listen address");
             eprintln!("serving calc over HTTP on http://{addr}/mcp");
-            // `.into_server()` resolves to the macro's inherent method, so the
-            // tool capability is pre-registered before we build the dispatcher.
-            let service = Calc.into_server().build();
-            serve_http(addr, service, HttpConfig::new()).await?;
+            Calc.into_server()
+                .serve(Http::bind(addr).config(HttpConfig::new()))
+                .await?;
         }
         _ => {
             eprintln!("serving calc over stdio");
