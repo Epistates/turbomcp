@@ -3,12 +3,13 @@
 //! The driver parses the annotated `impl` block, classifies each method by its
 //! `#[tool]` / `#[resource]` / `#[prompt]` marker, and emits:
 //! - the user's `impl` block, cleaned of the marker/parameter helper attributes;
-//! - `impl McpServerCore` (from the `name`/`version` args);
+//! - `impl McpServerCore` (from the `name`/`version` args), whose `register`
+//!   registers the capabilities found, so every `into_server()` has them;
 //! - one capability trait impl per kind present (`WithTools`, `WithResources`,
 //!   `WithPrompts`) — so advertised capabilities are derived from what's written;
 //! - per-tool argument structs (deriving `Deserialize` + `JsonSchema`) that back
 //!   compile-time schema generation and pre-call validation;
-//! - inherent `into_server()` (pre-registering the discovered capabilities) and
+//! - inherent `into_server()` (the trait method, without the import) and
 //!   `run_stdio()` entry points.
 //!
 //! All generated paths are rooted at `::turbomcp` so the macro works from any
@@ -93,7 +94,6 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         "give each resource a distinct URI",
     )?;
 
-    let core_impl = gen_core_impl(&self_ty, &args)?;
     let tools_impl = (!tools.is_empty()).then(|| gen_tools_impl(&self_ty, &tools));
     let resources_impl = (!resources.is_empty()).then(|| gen_resources_impl(&self_ty, &resources));
     let prompts_impl = (!prompts.is_empty()).then(|| gen_prompts_impl(&self_ty, &prompts));
@@ -114,12 +114,16 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     if completion.is_some() {
         registrations.extend(quote!(.with_completions()));
     }
+    let core_impl = gen_core_impl(&self_ty, &args, &registrations)?;
 
     let entry_impl = quote! {
         impl #self_ty {
-            /// Build a configurable server with this type's capabilities registered.
+            /// Build a configurable server with this type's capabilities
+            /// registered. The same as
+            /// [`IntoServerBuilder::into_server`](::turbomcp::IntoServerBuilder::into_server),
+            /// here so it needs no import.
             pub fn into_server(self) -> ::turbomcp::ServerBuilder<Self> {
-                ::turbomcp::ServerBuilder::new(self) #registrations
+                ::turbomcp::ServerBuilder::new(self)
             }
 
             /// Serve over stdio until the peer closes stdin.
@@ -129,10 +133,10 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
             /// both stateless `2026-07-28` clients and stateful
             /// `2025-11-25` (`initialize`-handshake) clients are served.
             ///
-            /// Needs a builder setting? `into_server()…run_stdio()` via
-            /// [`ServeStdio`](::turbomcp::ServeStdio) serves the same way.
+            /// Needs a builder setting or middleware?
+            /// `into_server()…serve(stdio())` serves the same way.
             pub async fn run_stdio(self) -> ::core::result::Result<(), ::turbomcp::ProtocolError> {
-                ::turbomcp::ServeStdio::run_stdio(self.into_server()).await
+                self.into_server().serve(::turbomcp::stdio()).await
             }
         }
     };
@@ -1022,7 +1026,11 @@ impl Handler {
 
 // ---- codegen: McpServerCore --------------------------------------------------
 
-fn gen_core_impl(self_ty: &Type, args: &ServerArgs) -> syn::Result<TokenStream> {
+fn gen_core_impl(
+    self_ty: &Type,
+    args: &ServerArgs,
+    registrations: &TokenStream,
+) -> syn::Result<TokenStream> {
     let name = &args.name;
     let version = &args.version;
     let title_set = args.title.as_ref().map(
@@ -1063,6 +1071,11 @@ fn gen_core_impl(self_ty: &Type, args: &ServerArgs) -> syn::Result<TokenStream> 
             }
             #instructions_fn
             #protocols_fn
+            fn register(
+                router: ::turbomcp::MethodRouter<Self>,
+            ) -> ::turbomcp::MethodRouter<Self> {
+                router #registrations
+            }
         }
     })
 }

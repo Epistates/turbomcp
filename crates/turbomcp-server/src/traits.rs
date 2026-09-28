@@ -40,6 +40,21 @@ pub trait McpServerCore: Clone + Send + Sync + 'static {
     fn instructions(&self) -> Option<String> {
         None
     }
+
+    /// Register the capabilities this server implements. Every
+    /// [`ServerBuilder`](crate::ServerBuilder) starts from it, so
+    /// `into_server()` means the same thing wherever it is called.
+    ///
+    /// `#[server]` writes this from the markers it finds. A hand-written server
+    /// overrides it (`router.with_tools()`, …) or leaves it empty and chains
+    /// the builder's `with_*` methods instead.
+    #[must_use]
+    fn register(router: crate::MethodRouter<Self>) -> crate::MethodRouter<Self>
+    where
+        Self: Sized,
+    {
+        router
+    }
 }
 
 /// Implement to serve tools (`tools/list`, `tools/call`).

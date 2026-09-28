@@ -8,9 +8,9 @@
 
 use serde_json::{Map, json};
 use tokio::io::{BufReader, split};
+use turbomcp::SerdeJsonCodec;
 use turbomcp::client::{Client, ClientBuilder, ConnectMode};
 use turbomcp::prelude::*;
-use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
 use turbomcp_core::ProtocolVersion;
 use turbomcp_service::io::LineTransport;
 
@@ -64,8 +64,8 @@ impl Previous {
     }
 }
 
-/// Spawn the server (the exact stack `run_stdio` wires) on one end of a duplex
-/// pipe and connect a typed [`Client`] in `mode` on the other.
+/// Spawn the server through the runtime `run_stdio` uses, on one end of a
+/// duplex pipe, and connect a typed [`Client`] in `mode` on the other.
 async fn connect(mode: ConnectMode) -> Client {
     connect_to(Demo.into_server().build(), mode).await
 }
@@ -77,8 +77,7 @@ where
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let (s_rd, s_wr) = split(server_io);
     let transport = LineTransport::new(BufReader::new(s_rd), s_wr, SerdeJsonCodec);
-    let service = LegacySessionAdapter::new(dispatcher);
-    tokio::spawn(serve(transport, service));
+    tokio::spawn(turbomcp::Server::new(dispatcher).serve(transport));
 
     let (c_rd, c_wr) = split(client_io);
     let client_transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);

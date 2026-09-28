@@ -7,14 +7,15 @@
 //! attach at the transport/facade layer and land in Phases 4/8 — adding them
 //! here now would be infrastructure with no consumer.
 //!
-//! Two entry points:
-//! - [`ServerBuilder::new`] starts with an empty router; chain `with_tools()`
-//!   etc. to register the capabilities the server implements.
-//! - [`IntoServerBuilder::into_server`] (blanket-implemented for every
-//!   [`McpServerCore`]) gives the same empty-router builder as a method, so
-//!   `my_server.into_server()` works. The `#[server]` macro emits an *inherent*
-//!   `into_server` on the user's type that pre-registers exactly the capabilities
-//!   it found (inherent methods shadow the trait method, so there's no clash).
+//! [`ServerBuilder::new`] (or [`IntoServerBuilder::into_server`], the same
+//! thing as a method) starts from the capabilities the server registers
+//! ([`McpServerCore::register`], which `#[server]` writes from its markers).
+//! Chain `with_tools()` etc. to add more.
+//!
+//! This used to be two things: the macro emitted an inherent `into_server`
+//! that registered its capabilities, while the trait method, which is what
+//! generic code resolves to, returned an empty router. A helper generic over
+//! `McpServerCore` deployed every server with no tools.
 
 use std::sync::Arc;
 
@@ -64,12 +65,13 @@ pub struct ServerBuilder<S> {
 }
 
 impl<S: McpServerCore> ServerBuilder<S> {
-    /// Start from `server` with no capabilities registered.
+    /// Start from `server` with the capabilities it registers
+    /// ([`McpServerCore::register`]).
     #[must_use]
     pub fn new(server: S) -> Self {
         Self {
             server,
-            router: MethodRouter::new(),
+            router: S::register(MethodRouter::new()),
             tasks: false,
             strict_elicitation_keys: false,
             session_idle_timeout: None,
@@ -422,6 +424,31 @@ impl<S: McpServerCore> ServerBuilder<S> {
         None
     }
 
+    /// Wrap the server in RPC middleware: `layer` is a [`tower::Layer`] over
+    /// the `Service<McpRequest>` seam. Chain more with
+    /// [`Server::layer`](crate::Server::layer); the first added is outermost.
+    #[must_use]
+    pub fn layer<T>(
+        self,
+        layer: T,
+    ) -> crate::Server<S, tower::layer::util::Stack<T, tower::layer::util::Identity>> {
+        crate::Server::new(self.build()).layer(layer)
+    }
+
+    /// Build the server and serve it on `target`: `stdio()` or any other
+    /// [`Transport`](turbomcp_service::Transport) for one connection, or a
+    /// network listener such as `turbomcp-transport-http`'s `Http`. See
+    /// [`Server::serve`](crate::Server::serve).
+    ///
+    /// # Errors
+    /// Whatever the transport fails with.
+    pub async fn serve<T: turbomcp_service::Serve>(
+        self,
+        target: T,
+    ) -> Result<(), turbomcp_service::ProtocolError> {
+        crate::Server::new(self.build()).serve(target).await
+    }
+
     /// Finish: produce the `tower::Service<McpRequest>` for this server.
     #[must_use]
     pub fn build(self) -> VersionDispatcher<S> {
@@ -464,10 +491,10 @@ impl<S: McpServerCore> ServerBuilder<S> {
     }
 }
 
-/// Blanket entry point so any [`McpServerCore`] gets `into_server()`. The macro
-/// shadows this with an inherent method that pre-registers capabilities.
+/// Blanket entry point so any [`McpServerCore`] gets `into_server()`.
 pub trait IntoServerBuilder: McpServerCore + Sized {
-    /// Begin building a server (empty router; chain `with_*` to register).
+    /// Begin building a server from the capabilities it registers
+    /// ([`McpServerCore::register`]); chain `with_*` to add more.
     fn into_server(self) -> ServerBuilder<Self> {
         ServerBuilder::new(self)
     }

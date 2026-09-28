@@ -1,7 +1,8 @@
 //! # RPC middleware (v4)
 //!
 //! Cross-cutting concerns — audit logging, access control, quotas — are
-//! [`tower::Layer`]s wrapped around the built dispatcher. One `call` sees every
+//! [`tower::Layer`]s wrapped around the server with `into_server().layer(…)`.
+//! One `call` sees every
 //! method under every transport; there is no per-operation hook list to keep in
 //! sync with the protocol. (v3 users: this replaces `McpMiddleware`'s
 //! `on_call_tool` / `on_read_resource` / … hooks — see `MIGRATION.md`.)
@@ -35,10 +36,10 @@ use std::time::Instant;
 use serde_json::{Value, json};
 use turbomcp::methods::request;
 use turbomcp::prelude::*;
-use turbomcp::tower::{Layer, Service, ServiceBuilder, ServiceExt};
+use turbomcp::tower::{Layer, Service, ServiceExt};
 use turbomcp::{
-    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, LegacySessionAdapter, McpRequest,
-    ProtocolError, VersionDispatcher, mcp_to_jsonrpc_error, serve_stdio,
+    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpRequest, ProtocolError, Serve,
+    ServerHandle, mcp_to_jsonrpc_error,
 };
 
 // ---- the server being wrapped ------------------------------------------------
@@ -217,36 +218,33 @@ where
 
 // ---- wiring ------------------------------------------------------------------
 
-/// The composed stack. `ServiceBuilder` applies layers outside-in: `Audit` wraps
-/// `Policy`, so the audit log records refusals too.
+/// The server with its middleware. The first layer added is the outermost:
+/// `Audit` wraps `Policy`, so the audit log records refusals too.
 ///
-/// Both layers sit *outside* [`LegacySessionAdapter`], seeing frames as the
-/// client sent them. Wrapping the other way
-/// (`LegacySessionAdapter::new(layers.service(dispatcher))`) puts them inside,
-/// where the negotiated protocol version is already stamped into `_meta` and the
-/// session id attached to the request: the right side for anything that varies
-/// by protocol revision or session.
-///
-/// The return type spells the stack out: layers are types, so a mis-stacked
-/// service is a compile error rather than a runtime surprise.
-fn stack(audit: AuditLayer) -> Audit<Policy<LegacySessionAdapter<VersionDispatcher<Files>>>> {
-    ServiceBuilder::new()
+/// Both layers sit *inside* the per-connection session the runtime adds, so a
+/// stateful request reaches them with its negotiated protocol version and
+/// session already attached: the right side for anything that varies by
+/// revision or session.
+fn server(audit: AuditLayer) -> impl ServerHandle {
+    Files
+        .into_server()
         .layer(audit)
         .layer(PolicyLayer::denying(&["delete"]))
-        .service(LegacySessionAdapter::new(Files.into_server().build()))
 }
 
 #[tokio::main]
 async fn main() -> Result<(), ProtocolError> {
     let audit = AuditLayer::default();
-    let service = stack(audit.clone());
+    let server = server(audit.clone());
 
-    // The production path: identical stack, driven by the stdio transport.
+    // The production path: the server, driven by the stdio transport.
     if std::env::args().any(|a| a == "--stdio") {
-        return serve_stdio(service).await;
+        return stdio().serve(server).await;
     }
 
-    // The demo path: drive frames through the same stack in-process.
+    // The demo path: drive frames in-process through what one stdio
+    // connection gets.
+    let service = server.connection();
     let send = |frame: JsonRpcRequest| {
         let svc = service.clone();
         async move { svc.oneshot(frame.into()).await }

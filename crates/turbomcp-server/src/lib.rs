@@ -31,6 +31,7 @@ mod mrtr;
 mod progress;
 mod response;
 mod router;
+mod runtime;
 mod session;
 mod subscriptions;
 pub mod tags;
@@ -60,6 +61,7 @@ pub use response::{
     Audio, Image, IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult, Json,
 };
 pub use router::MethodRouter;
+pub use runtime::Server;
 pub use session::{SessionBackend, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
 pub use tasks::{TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStatus, TaskStore};

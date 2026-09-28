@@ -78,10 +78,11 @@
 //!
 //! ## RPC middleware
 //!
-//! Cross-cutting concerns wrap the built dispatcher as [`tower::Layer`]s over
+//! Cross-cutting concerns wrap the server as [`tower::Layer`]s over
 //! `Service<McpRequest>` — one `call` for every method under every
-//! transport, and the tower ecosystem (`ServiceBuilder`, `timeout`,
-//! `ConcurrencyLimit`, …) composes onto an MCP server unchanged. `tower` itself
+//! transport: `MyServer.into_server().layer(TracingLayer).serve(stdio())`.
+//! Adding a layer costs nothing else; the runtime still wires sessions,
+//! `DELETE` and graceful shutdown on every transport. `tower` itself
 //! is re-exported as [`tower`] so the `Layer` you write is the one the SDK
 //! expects. Start from [`TracingLayer`] (the shape in 30 lines) and the
 //! [`middleware` example](https://github.com/Epistates/turbomcp/blob/main/crates/turbomcp/examples/middleware.rs).
@@ -136,8 +137,8 @@ pub use turbomcp_server::{ComponentKind, Visibility, VisibilityPolicy, VisibleCo
 
 pub use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
 pub use turbomcp_service::{
-    CancellationToken, Delivery, McpService, Peer, PeerClosed, ProtocolError, ServeConfig,
-    SessionStreams, Transport, serve, serve_with,
+    CancellationToken, Delivery, McpService, Peer, PeerClosed, Pipe, ProtocolError, Serve,
+    ServeConfig, ServerHandle, SessionStreams, Transport, serve, serve_with,
 };
 
 /// RPC middleware: [`tower::Layer`]s over the `Service<McpRequest>` seam,
@@ -149,7 +150,7 @@ pub use turbomcp_service::{
 ///
 /// ```no_run
 /// use turbomcp::prelude::*;
-/// use turbomcp::{LegacySessionAdapter, TracingLayer, serve_stdio, tower::Layer};
+/// use turbomcp::TracingLayer;
 ///
 /// # #[derive(Clone)]
 /// # struct MyServer;
@@ -160,8 +161,7 @@ pub use turbomcp_service::{
 /// # }
 /// # async fn run() -> Result<(), turbomcp::ProtocolError> {
 /// // What `run_stdio()` does, with one layer added.
-/// let service = TracingLayer.layer(LegacySessionAdapter::new(MyServer.into_server().build()));
-/// serve_stdio(service).await
+/// MyServer.into_server().layer(TracingLayer).serve(stdio()).await
 /// # }
 /// ```
 ///
@@ -216,9 +216,10 @@ pub use turbomcp_server::{
     IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult, IntoServerBuilder, Json,
     LegacySessionAdapter, ListPromptsContext, ListResourceTemplatesContext, ListResourcesContext,
     ListToolsContext, LogSender, McpServerCore, MethodRouter, ProgressReporter,
-    ReadResourceContext, ServerBuilder, ServerNotifier, SessionBackend, SessionState, SessionStore,
-    TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStatus, TaskStore, UriTemplate,
-    UriTemplateError, VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
+    ReadResourceContext, Server, ServerBuilder, ServerNotifier, SessionBackend, SessionState,
+    SessionStore, TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStatus, TaskStore,
+    UriTemplate, UriTemplateError, VersionDispatcher, WithCompletions, WithPrompts, WithResources,
+    WithTools,
 };
 
 /// Re-export of [`schemars`] for deriving `JsonSchema` on `#[tool]` argument
@@ -228,20 +229,9 @@ pub use schemars;
 
 // ---- transports -------------------------------------------------------------
 
-/// The raw stdio driver: serves `service` exactly as given. A bare
-/// dispatcher here answers only stateless `2026-07-28` clients; every
-/// `initialize`-handshake client fails after the handshake, because nothing
-/// stamps its session onto later requests. Wrap the dispatcher in
-/// [`LegacySessionAdapter`] (outermost, around any middleware), or use
-/// [`ServeStdio::run_stdio`], which does.
-pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, stdio};
-
-/// One-call stdio serving for a [`ServerBuilder`] (the value
-/// `MyServer.into_server()` produces), dual-stack like the macro's
-/// `run_stdio()`: every revision this server accepts is served, stateful
-/// clients included. This is the entry point once a builder setting
-/// (`with_logging()`, `with_tasks()`, `with_visibility(…)`) takes you off the
-/// macro's `run_stdio()`.
+/// stdio: [`stdio()`] is the transport to [`serve`](ServerBuilder::serve) on,
+/// dual-stack like the macro's `run_stdio()` (every revision the server
+/// accepts, stateful clients included):
 ///
 /// ```no_run
 /// use turbomcp::prelude::*;
@@ -254,34 +244,15 @@ pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, std
 /// #     async fn ping(&self) -> String { "pong".into() }
 /// # }
 /// # async fn run() -> Result<(), turbomcp::ProtocolError> {
-/// MyServer.into_server().with_logging().run_stdio().await
+/// MyServer.into_server().with_logging().serve(stdio()).await
 /// # }
 /// ```
-pub trait ServeStdio {
-    /// Build the dispatcher and serve it over stdin/stdout until the peer
-    /// closes stdin.
-    fn run_stdio(self) -> impl std::future::Future<Output = Result<(), ProtocolError>> + Send;
-
-    /// [`run_stdio`](Self::run_stdio) with an explicit [`ServeConfig`]
-    /// (shutdown token, drain timeout, concurrency bound).
-    fn run_stdio_with(
-        self,
-        config: ServeConfig,
-    ) -> impl std::future::Future<Output = Result<(), ProtocolError>> + Send;
-}
-
-impl<S> ServeStdio for ServerBuilder<S>
-where
-    S: McpServerCore + Clone + Send + Sync + 'static,
-{
-    async fn run_stdio(self) -> Result<(), ProtocolError> {
-        self.run_stdio_with(ServeConfig::default()).await
-    }
-
-    async fn run_stdio_with(self, config: ServeConfig) -> Result<(), ProtocolError> {
-        serve_stdio_with(LegacySessionAdapter::new(self.build()), config).await
-    }
-}
+///
+/// Wrap it in a [`Pipe`] to set a [`ServeConfig`] (shutdown token, drain and
+/// write timeouts, concurrency). [`serve_stdio`] is the raw driver: it serves
+/// a service exactly as given, so a bare dispatcher there answers only
+/// stateless `2026-07-28` clients.
+pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, stdio};
 
 /// Streamable HTTP transport (axum 0.8). Enable with the `http` feature.
 ///
@@ -483,7 +454,6 @@ pub mod __macros {
 
 /// The common imports for building a server.
 pub mod prelude {
-    pub use crate::ServeStdio;
     pub use crate::neutral;
     pub use turbomcp_core::{Implementation, LogLevel, McpError, McpResult, RequestContext};
     pub use turbomcp_server::{
@@ -492,6 +462,7 @@ pub mod prelude {
         McpServerCore, ReadResourceContext, ServerBuilder, WithCompletions, WithPrompts,
         WithResources, WithTools,
     };
+    pub use turbomcp_service::io::stdio;
 
     /// The HTTP one-liner `builder.run_http(addr, config)` (feature `http`).
     #[cfg(feature = "http")]

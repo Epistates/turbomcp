@@ -20,6 +20,12 @@
 //!
 //! The session id travels in the request's extensions, so a client can't name
 //! someone else's session: there is nothing in the message to forge.
+//!
+//! An adapter the server runtime builds also ends the session when the
+//! connection does (the last clone dropping). Before, nothing did: every
+//! stdio or WebSocket connection that ever completed a handshake left its
+//! session and subscription routes behind until the store's LRU evicted them,
+//! live sessions included.
 
 use std::future::poll_fn;
 use std::sync::{Arc, Mutex};
@@ -34,14 +40,17 @@ use turbomcp_protocol::{methods, version};
 use turbomcp_service::ProtocolError;
 use uuid::Uuid;
 
+use crate::dispatcher::SessionEnd;
+
 /// Wraps an inner `Service<McpRequest>` (normally the
 /// [`VersionDispatcher`](crate::VersionDispatcher)) with per-connection legacy
 /// session tracking. Construct one adapter per connection; clones share the
 /// connection's session state.
 pub struct LegacySessionAdapter<S> {
     inner: S,
-    /// `Some(_)` once an `initialize` on this connection succeeded.
-    session: Arc<Mutex<Option<Session>>>,
+    /// The connection's session, `Some(_)` once an `initialize` on it
+    /// succeeded. Shared by every clone; ended when the last one drops.
+    session: Arc<ConnectionSession>,
     /// Set while an `initialize` is being answered; its sender drops once the
     /// outcome is committed, which is what a message pipelined behind the
     /// handshake waits on.
@@ -53,9 +62,40 @@ impl<S> core::fmt::Debug for LegacySessionAdapter<S> {
         f.debug_struct("LegacySessionAdapter")
             .field(
                 "handshaken",
-                &self.session.lock().is_ok_and(|s| s.is_some()),
+                &self.session.session.lock().is_ok_and(|s| s.is_some()),
             )
             .finish_non_exhaustive()
+    }
+}
+
+/// A connection's session slot, and what ends the session with it.
+#[derive(Default)]
+struct ConnectionSession {
+    session: Mutex<Option<Session>>,
+    end: Option<SessionEnd>,
+}
+
+impl ConnectionSession {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<Session>> {
+        self.session.lock().expect("session state lock poisoned")
+    }
+
+    /// Make `session` the connection's, ending any it replaces (a client that
+    /// runs `initialize` twice on one connection).
+    fn commit(&self, session: Session) {
+        let replaced = self.lock().replace(session);
+        if let (Some(end), Some(old)) = (&self.end, replaced) {
+            end.clone().end(old.id);
+        }
+    }
+}
+
+impl Drop for ConnectionSession {
+    fn drop(&mut self) {
+        let session = self.session.get_mut().ok().and_then(Option::take);
+        if let (Some(end), Some(session)) = (self.end.take(), session) {
+            end.end(session.id);
+        }
     }
 }
 
@@ -73,7 +113,20 @@ impl<S> LegacySessionAdapter<S> {
     pub fn new(inner: S) -> Self {
         Self {
             inner,
-            session: Arc::new(Mutex::new(None)),
+            session: Arc::new(ConnectionSession::default()),
+            handshake: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Wrap `inner` for one connection whose session `end` tears down once
+    /// the connection is gone.
+    pub(crate) fn ending_with(inner: S, end: SessionEnd) -> Self {
+        Self {
+            inner,
+            session: Arc::new(ConnectionSession {
+                session: Mutex::new(None),
+                end: Some(end),
+            }),
             handshake: Arc::new(Mutex::new(None)),
         }
     }
@@ -95,8 +148,8 @@ impl<S> LegacySessionAdapter<S> {
 /// Stamp a version-less message with the connection's session, if it has one:
 /// the negotiated version into `_meta` (where the dispatcher reads a
 /// request's version), the session id into the request's extensions.
-fn stamp(session: &Mutex<Option<Session>>, request: &mut McpRequest) {
-    let session = session.lock().expect("session state lock poisoned").clone();
+fn stamp(session: &ConnectionSession, request: &mut McpRequest) {
+    let session = session.lock().clone();
     let Some(session) = session else { return };
     let msg = &mut request.message;
     let params = match &*msg {
@@ -173,7 +226,7 @@ where
                         .and_then(|r| r.get("protocolVersion"))
                         .and_then(serde_json::Value::as_str)
                         .map_or(ProtocolVersion::V2025_11_25, ProtocolVersion::from_wire);
-                    *session.lock().expect("session state lock poisoned") = Some(Session {
+                    session.commit(Session {
                         id: candidate,
                         version,
                     });

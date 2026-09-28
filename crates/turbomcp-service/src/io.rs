@@ -361,7 +361,7 @@ pub fn stdio() -> StdioTransport {
 /// given. For a stateful (`initialize`-handshake) client to work, `service`
 /// has to be wrapped in the server's `LegacySessionAdapter`, which stamps the
 /// connection's session onto every later request; the facade's
-/// `ServeStdio::run_stdio` does that for you.
+/// `ServerBuilder::serve(stdio())` does that for you.
 ///
 /// # Errors
 /// Propagates transport and service errors from the driver loop.

@@ -10,6 +10,8 @@
 //!   session, identity, and the [`Peer`] that reaches the client).
 //! - [`Peer`] — where server-initiated messages to one connection go.
 //! - [`Transport`] — a bidirectional `JsonRpcMessage` channel (stdio, HTTP, WS).
+//! - [`ServerHandle`] / [`Serve`] — a server as its transports see it, and a
+//!   transport that can run one: the one serving path every transport shares.
 //! - [`ProtocolError`] — the service/transport boundary error, with the
 //!   canonical [`mcp_to_jsonrpc_error`] mapping for user errors.
 //! - [`TracingLayer`] — the first shared RPC middleware.
@@ -25,6 +27,7 @@
 
 mod auth;
 mod error;
+mod host;
 pub mod io;
 pub mod mcp_headers;
 mod middleware;
@@ -37,6 +40,7 @@ mod transport;
 
 pub use auth::{AuthDecision, AuthFuture, HttpAuthenticator};
 pub use error::{ProtocolError, mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
+pub use host::{Pipe, Serve, ServerHandle, close_then_shut_down};
 pub use middleware::{Tracing, TracingLayer};
 pub use panic::{catch_handler_panic, catch_panic};
 pub use peer::{Delivery, Peer, PeerClosed, SessionStreams, StreamGuard};

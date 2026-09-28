@@ -15,9 +15,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use turbomcp::ProtocolError;
 use turbomcp::ext_tasks::TasksExtension;
 use turbomcp::prelude::*;
-use turbomcp::{LegacySessionAdapter, ProtocolError, serve_stdio};
 
 #[derive(Clone)]
 struct Reports;
@@ -39,15 +39,13 @@ impl Reports {
 
 #[tokio::main]
 async fn main() -> Result<(), ProtocolError> {
-    // Build the dispatcher with the Tasks extension registered, opting the
-    // slow tool into task execution.
-    let dispatcher = Reports
+    // Register the Tasks extension, opting the slow tool into task execution,
+    // and serve over stdio (dual-stack, like `run_stdio()`).
+    Reports
         .into_server()
         .with_extension(Arc::new(
             TasksExtension::new().task_tools(["generate_report"]),
         ))
-        .build();
-
-    // Wrap in the legacy session adapter (dual-stack) and serve over stdio.
-    serve_stdio(LegacySessionAdapter::new(dispatcher)).await
+        .serve(stdio())
+        .await
 }

@@ -319,6 +319,28 @@ impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
     }
 }
 
+/// Ends one connection's stateful session once the connection is gone: the
+/// trusted, owner-free counterpart to [`DispatcherSessionTerminator`], held by
+/// the [`LegacySessionAdapter`](crate::LegacySessionAdapter) the runtime
+/// builds for each stdio or WebSocket connection.
+#[derive(Clone)]
+pub(crate) struct SessionEnd {
+    shared: Shared,
+}
+
+impl SessionEnd {
+    /// Tear down session `id` in the background: called from `Drop`, which
+    /// can't wait. Outside a runtime (a test dropping an adapter on a plain
+    /// thread) there is nothing to run it on, and nothing is left to leak.
+    pub(crate) fn end(self, id: String) {
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                self.shared.terminate_session(&id).await;
+            });
+        }
+    }
+}
+
 impl<S: Clone> Clone for VersionDispatcher<S> {
     fn clone(&self) -> Self {
         Self {
@@ -408,6 +430,13 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn session_terminator(&self) -> DispatcherSessionTerminator {
         DispatcherSessionTerminator {
+            shared: self.shared.clone(),
+        }
+    }
+
+    /// What ends a connection's session when the connection closes.
+    pub(crate) fn session_end(&self) -> SessionEnd {
+        SessionEnd {
             shared: self.shared.clone(),
         }
     }

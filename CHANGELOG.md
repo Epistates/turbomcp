@@ -26,9 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   encoded and `search://items{?q}` was listed but unreadable. The macro checks
   the same grammar at compile time; a variable a URI may omit must be
   `Option<String>`.
-- `ServeStdio::run_stdio` / `run_stdio_with` for builders, in the prelude:
-  dual-stack stdio serving once a builder setting takes you off the macro's
-  `run_stdio()`.
+- One serving path for every transport: `ServerBuilder::serve(target)` and
+  `ServerBuilder::layer(l)` (a `Server` you can keep layering). The target is
+  `stdio()` or any other `Transport` (one connection), a `Pipe` (one
+  connection with a `ServeConfig`), or a network listener. The runtime alone
+  wires a server to its transport, so adding a layer costs nothing else:
+  per-connection sessions go outside the layers (which therefore see each
+  request's session), and every transport answers live `subscriptions/listen`
+  requests with their closing response before it drains. Transports serve a
+  `ServerHandle`, the bundle a runner needs; `Serve` is a transport that can
+  run one.
 - `ClientBuilder::with_log_level`: opts into server logs on either wire (the
   per-request `_meta` level on `2026-07-28`, `logging/setLevel` at connect
   before).
@@ -147,6 +154,12 @@ Client:
   with nothing else in flight.
 
 Macros and runtime:
+
+- A stateful session on a connection the runtime serves (stdio, any
+  `Transport`) ends when the connection does, taking its subscription routes
+  and tasks with it. Nothing
+  ended it before: every client that ever completed a handshake stayed in the
+  session store until LRU eviction, which could then evict live sessions.
 
 - `#[mcp_header]` accepts only string, integer and bool parameters (or an
   `Option` of one), checked at compile time.
@@ -283,8 +296,13 @@ Earlier in this cycle:
   success/error constructors are unchanged.
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
-  `ServeStdio::run_stdio`, or `turbomcp::serve_stdio` with a
-  `LegacySessionAdapter` around the dispatcher.
+  `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** `McpServerCore::register` registers a server's capabilities,
+  and every `ServerBuilder` starts from it; `#[server]` implements it, and
+  its inherent `into_server()` is now the trait method. The inherent method registered
+  capabilities while the trait method, which is what generic code resolves
+  to, returned an empty router, so a helper generic over `McpServerCore`
+  deployed every server with no tools.
 - **Breaking:** `TaskBackend::complete` takes a `TaskOutcome` (a failed tool
   result is `failed` with its result, not `completed`), and gains
   `end_session` (default no-op).

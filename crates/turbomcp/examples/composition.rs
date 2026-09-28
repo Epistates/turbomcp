@@ -21,9 +21,7 @@
 //! Run with: `cargo run -p turbomcp --example composition`
 
 use turbomcp::prelude::*;
-use turbomcp::{
-    Composite, Implementation, LegacySessionAdapter, ProtocolVersion, RequestContext, serve_stdio,
-};
+use turbomcp::{Composite, Implementation, ProtocolVersion, RequestContext};
 
 // ---- sub-server one ----------------------------------------------------------
 
@@ -108,11 +106,10 @@ async fn main() -> McpResult<()> {
         .await?;
 
     // `into_server()` registers exactly the capabilities the mounts provide,
-    // then builds the dispatcher like any other server. `run_stdio()` is an
-    // inherent method the `#[server]` macro generates, so a composite spells
-    // the same thing out:
-    let dispatcher = composed.into_server().build();
-    serve_stdio(LegacySessionAdapter::new(dispatcher))
+    // and serves like any other server.
+    composed
+        .into_server()
+        .serve(stdio())
         .await
         .map_err(|e| McpError::internal(e.to_string()))
 }
