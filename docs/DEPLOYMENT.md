@@ -2,7 +2,9 @@
 
 v4 remains a prerelease. The supported core revisions are `2025-06-18`,
 `2025-11-25`, and `2026-07-28`. Stdio and Streamable HTTP implement MCP
-transports; WebSocket is a convenience transport. Tasks is implemented;
+transports; WebSocket is a convenience transport, served as a route on the
+HTTP endpoint (`HttpConfig::with_websocket`) so its authentication, Origin and
+Host policy, and rate limits apply before the upgrade. Tasks is implemented;
 Apps currently reserves an identifier and is not a supported implementation.
 
 ## Server contracts
