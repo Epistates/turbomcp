@@ -315,6 +315,16 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** an extension's share of a `subscriptions/listen` takes two
+  steps. `Extension::on_subscribe` agrees to a filter and must not start
+  sending; the new `Extension::activate` starts, once the acknowledgement is
+  queued. The Tasks extension registered as it answered, so a task changing
+  status in that window pushed its notification ahead of the
+  acknowledgement (a MUST NOT), and a listen a later extension refused left
+  it registered anyway. `Extension::on_unsubscribe` tells an extension a
+  client cancelled a subscription: the Tasks extension kept pushing on
+  cancelled subscriptions for the life of a stdio connection. It also drops
+  subscriptions to tasks the store has purged.
 - **Breaking:** the client speaks neutral types where it spoke JSON.
   `Client::server_capabilities()` returns a `neutral::ServerCapabilities`
   (typed `tools`/`resources`/`prompts`/`logging`/`completions`, with

@@ -268,3 +268,76 @@ async fn listen_without_task_ids_is_unaffected_by_the_extension() {
             .is_none()
     );
 }
+
+/// A cancelled listen stops the extension's pushes too. Only the core
+/// subscription used to be removed, so task-status notifications kept arriving
+/// tagged with a subscription the client had closed.
+#[tokio::test]
+async fn a_cancelled_listen_stops_task_notifications() {
+    let conn = "notif-test-cancelled-listen";
+    let mut svc = dispatcher();
+    let (tx, mut rx) = mpsc::channel(16);
+    let peer = Peer::new(conn, &tx);
+
+    let created = call_some(
+        &mut svc,
+        &peer,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "slow", "arguments": {}, "_meta": meta(conn, true) })),
+        ),
+    )
+    .await;
+    let JsonRpcMessage::Response(r) = created else {
+        panic!("expected response")
+    };
+    let task_id = r.result.unwrap()["taskId"].as_str().unwrap().to_owned();
+
+    call_none(
+        &mut svc,
+        &peer,
+        JsonRpcRequest::new(
+            2,
+            "subscriptions/listen",
+            Some(json!({ "_meta": meta(conn, true), "notifications": { "taskIds": [task_id] } })),
+        ),
+    )
+    .await;
+    let ack = as_notification(rx.recv().await.expect("ack"));
+    assert_eq!(ack.method, "notifications/subscriptions/acknowledged");
+
+    // The client ends the subscription by cancelling its listen request.
+    let cancel = JsonRpcNotification::new(
+        "notifications/cancelled",
+        Some(json!({ "requestId": 2, "_meta": meta(conn, true) })),
+    );
+    let out = svc
+        .ready()
+        .await
+        .unwrap()
+        .call(
+            McpRequest::new(cancel)
+                .with(peer.id().clone())
+                .with(peer.clone()),
+        )
+        .await
+        .unwrap();
+    assert!(out.is_none());
+
+    call_some(
+        &mut svc,
+        &peer,
+        JsonRpcRequest::new(
+            3,
+            "tasks/cancel",
+            Some(json!({ "taskId": task_id, "_meta": meta(conn, true) })),
+        ),
+    )
+    .await;
+    let pushed = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+    assert!(
+        pushed.is_err(),
+        "a notification arrived on a cancelled subscription: {pushed:?}"
+    );
+}

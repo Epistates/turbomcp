@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde_json::{Value, json};
-use turbomcp_core::{JsonRpcNotification, RequestId};
+use turbomcp_core::{ConnectionId, JsonRpcNotification, RequestId};
 use turbomcp_service::{Delivery, Peer};
 
 use crate::store::DraftTaskStore;
@@ -77,6 +77,23 @@ impl TaskSubscriptions {
                 subs.push(subscriber.clone());
             }
         }
+    }
+
+    /// Forget every task `exists` says is gone: an expired task is never
+    /// pushed again, so its subscribers would otherwise stay for as long as
+    /// their connection does.
+    pub(crate) fn retain_tasks(&self, exists: impl Fn(&str) -> bool) {
+        self.lock().retain(|task_id, _| exists(task_id));
+    }
+
+    /// Forget listen request `subscription_id` on `connection` (the client
+    /// cancelled it). Empties are reclaimed.
+    pub(crate) fn unsubscribe(&self, connection: &ConnectionId, subscription_id: &RequestId) {
+        let mut map = self.lock();
+        map.retain(|_, subs| {
+            subs.retain(|s| !(s.peer.id() == connection && &s.subscription_id == subscription_id));
+            !subs.is_empty()
+        });
     }
 
     /// The subscribers listening to `task_id`.

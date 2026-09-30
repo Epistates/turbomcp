@@ -2,6 +2,8 @@
 //! intersection, the acknowledged-first stream contract, and extension filter
 //! contributions (e.g. the Tasks extension's `taskIds`).
 
+use std::sync::Arc;
+
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -131,6 +133,11 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // extension's `taskIds`). Build it as a value so extensions can merge in.
     let mut ack_notifications =
         serde_json::to_value(&agreed).unwrap_or_else(|_| Value::Object(Map::new()));
+    // Extensions that agreed start sending only once the acknowledgement is
+    // queued: activating one as it answered let a task that changed status in
+    // between push its notification ahead of the acknowledgement, and left it
+    // registered when a later extension refused the listen.
+    let mut accepted_by: Vec<(Arc<dyn crate::extension::Extension>, Value)> = Vec::new();
     // Offer the raw `notifications` filter to each extension (it reads its own
     // fields). A non-declaring client requesting an extension's notifications
     // is `-32021` (SEP-2663); accepted filters are merged into the ack.
@@ -157,6 +164,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
                             ack_obj.insert(key.clone(), value.clone());
                         }
                     }
+                    accepted_by.push((Arc::clone(extension), contribution));
                 }
             }
         }
@@ -174,6 +182,9 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     if peer.send(ack.into()).await.is_err() {
         return Ok(None); // connection already gone; nothing to answer
     }
+    for (extension, accepted) in &accepted_by {
+        extension.activate(&peer, &id, accepted);
+    }
     agreed
         .resource_subscriptions
         .retain(|uri| !unwatched.contains(uri));
@@ -182,6 +193,9 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // token before the insert could be seen — honor it now.
     if cancel.is_cancelled() {
         subs.remove(peer.id().as_str(), &id);
+        for (extension, _) in &accepted_by {
+            extension.on_unsubscribe(peer.id(), &id);
+        }
     }
     Ok(None)
 }

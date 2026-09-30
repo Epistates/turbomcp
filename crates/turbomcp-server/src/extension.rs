@@ -164,9 +164,10 @@ pub enum SubscribeOutcome {
     /// capability → the dispatcher answers `-32021` (Missing Required Client
     /// Capability), per SEP-2663.
     MissingCapability,
-    /// The extension recorded the subscription against the connection; the
-    /// returned object is merged into the acknowledgement's `notifications`
-    /// (echoing the filters the server agreed to honor).
+    /// The extension agreed; the returned object is merged into the
+    /// acknowledgement's `notifications` (echoing the filters the server
+    /// agreed to honor) and handed back to
+    /// [`Extension::activate`] once the acknowledgement is queued.
     Subscribed(Value),
 }
 
@@ -233,9 +234,13 @@ pub trait Extension: Send + Sync + 'static {
     /// listen request's JSON-RPC id — every notification the extension later
     /// pushes on this subscription MUST carry it verbatim in
     /// `_meta["io.modelcontextprotocol/subscriptionId"]`; `client_declared` is
-    /// whether the client declared this extension's capability. The extension
-    /// records the subscription against `peer` (the listen stream) and returns
-    /// a [`SubscribeOutcome`]. Defaults to [`SubscribeOutcome::NotApplicable`].
+    /// whether the client declared this extension's capability. Returns a
+    /// [`SubscribeOutcome`]; defaults to [`SubscribeOutcome::NotApplicable`].
+    ///
+    /// Decide here; don't start sending. "The server MUST NOT send any
+    /// notification on the subscription before" its acknowledgement, which
+    /// goes out after every extension has answered (another may yet refuse
+    /// the listen). [`activate`](Self::activate) is when to start.
     fn on_subscribe(
         &self,
         _peer: &turbomcp_service::Peer,
@@ -245,5 +250,29 @@ pub trait Extension: Send + Sync + 'static {
         _context: &RequestContext,
     ) -> SubscribeOutcome {
         SubscribeOutcome::NotApplicable
+    }
+
+    /// Start sending what [`on_subscribe`](Self::on_subscribe) agreed to:
+    /// `accepted` is the object it returned in
+    /// [`SubscribeOutcome::Subscribed`], and the acknowledgement is already
+    /// queued on `peer` ahead of anything sent from now on. Defaults to
+    /// nothing.
+    fn activate(
+        &self,
+        _peer: &turbomcp_service::Peer,
+        _subscription_id: &turbomcp_core::RequestId,
+        _accepted: &Value,
+    ) {
+    }
+
+    /// The client ended subscription `subscription_id` on `connection`
+    /// (`notifications/cancelled` naming its listen request): stop sending on
+    /// it and forget it. A connection that closes is not reported here; its
+    /// peer reads closed. Defaults to nothing.
+    fn on_unsubscribe(
+        &self,
+        _connection: &turbomcp_core::ConnectionId,
+        _subscription_id: &turbomcp_core::RequestId,
+    ) {
     }
 }

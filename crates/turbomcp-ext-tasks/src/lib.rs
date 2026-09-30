@@ -364,8 +364,33 @@ impl Extension for TasksExtension {
             .filter_map(|v| v.as_str().map(str::to_owned))
             .filter(|id| self.store.owns(id, owner.as_deref()))
             .collect();
-        self.subs.subscribe(peer, subscription_id, &ids);
+        let _ = (peer, subscription_id);
         SubscribeOutcome::Subscribed(json!({ "taskIds": ids }))
+    }
+
+    fn activate(
+        &self,
+        peer: &turbomcp_service::Peer,
+        subscription_id: &turbomcp_core::RequestId,
+        accepted: &serde_json::Value,
+    ) {
+        let ids: Vec<String> = accepted
+            .get("taskIds")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+        self.subs.retain_tasks(|id| self.store.get(id).is_some());
+        self.subs.subscribe(peer, subscription_id, &ids);
+    }
+
+    fn on_unsubscribe(
+        &self,
+        connection: &turbomcp_core::ConnectionId,
+        subscription_id: &turbomcp_core::RequestId,
+    ) {
+        self.subs.unsubscribe(connection, subscription_id);
     }
 
     async fn augment_call(&self, augment: CallAugmentRequest) -> Option<JsonRpcMessage> {

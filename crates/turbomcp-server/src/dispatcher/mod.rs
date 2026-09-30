@@ -737,6 +737,14 @@ fn handle_notification(shared: &Shared, n: &JsonRpcNotification, ext: &Extension
             // has no session to widen to.
             let unsubscribed =
                 connection_id(ext).is_some_and(|conn| subs.remove(conn, &parsed.request_id));
+            // Extensions keep subscriptions of their own on the same id; they
+            // outlived the cancel, and kept pushing on a stream the client had
+            // closed.
+            if let Some(conn) = ext.get::<ConnectionId>() {
+                for extension in shared.extensions.iter() {
+                    extension.on_unsubscribe(conn, &parsed.request_id);
+                }
+            }
             tracing::debug!(
                 request_id = ?parsed.request_id,
                 reason = parsed.reason.as_deref().unwrap_or(""),
