@@ -604,9 +604,29 @@ impl SsrfValidator {
         if !self.policy.allow_redirects {
             client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
         } else {
-            client_builder = client_builder.redirect(reqwest::redirect::Policy::limited(
-                self.policy.max_redirects as usize,
-            ));
+            // Each hop is held to the same policy as the first URL: a redirect
+            // is otherwise the easiest way around it. The hop's host is
+            // resolved and its addresses checked here; the connection then
+            // resolves it again, which narrows but can't close a rebinding
+            // window for a redirected host the way pinning does for the first.
+            let validator = self.clone();
+            let max_redirects = self.policy.max_redirects as usize;
+            client_builder =
+                client_builder.redirect(reqwest::redirect::Policy::custom(move |attempt| {
+                    if attempt.previous().len() >= max_redirects {
+                        return attempt.error(SsrfError::InvalidUrl(format!(
+                            "more than {max_redirects} redirects"
+                        )));
+                    }
+                    let next = attempt.url().as_str().to_owned();
+                    match validator
+                        .validate_url(&next)
+                        .and_then(|()| validator.resolve_for_pinning(&next))
+                    {
+                        Ok(_) => attempt.follow(),
+                        Err(error) => attempt.error(error),
+                    }
+                }));
         }
 
         let client = client_builder
@@ -921,5 +941,53 @@ mod tests {
         // fe80::1 is link-local
         let ipv6 = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
         assert!(validator.validate_ip_address(&IpAddr::V6(ipv6)).is_err());
+    }
+
+    /// With redirects allowed, every hop is held to the policy; they used to
+    /// be followed wherever they pointed.
+    #[tokio::test]
+    async fn a_redirect_is_validated_like_the_first_url() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(path("/to-metadata"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", "http://169.254.169.254/latest/meta-data/"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(path("/to-local"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/ok"))
+            .mount(&server)
+            .await;
+        Mock::given(path("/ok"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let validator = SsrfValidator::new(SsrfPolicy {
+            allow_localhost: true,
+            allow_private_networks: true,
+            require_https: false,
+            ip_denylist: Vec::new(),
+            allow_redirects: true,
+            max_redirects: 3,
+            ..Default::default()
+        });
+
+        let url = format!("{}/to-local", server.uri());
+        let (client, url) = validator.create_pinned_client(&url).unwrap();
+        let followed = client.get(&url).send().await.unwrap();
+        assert_eq!(followed.status(), 200, "an allowed hop is followed");
+
+        let url = format!("{}/to-metadata", server.uri());
+        let (client, url) = validator.create_pinned_client(&url).unwrap();
+        let refused = client.get(&url).send().await.unwrap_err();
+        assert!(
+            refused.is_redirect(),
+            "the redirect policy refuses the hop, not a failed connection: {refused}"
+        );
     }
 }

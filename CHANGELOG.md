@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `turbomcp-transport/websocket` yourself if you relied on it; the `turbomcp`
   crate's `websocket` feature still enables both.
 
+### Security
+
+- **`SsrfPolicy { allow_redirects: true, .. }` followed redirects anywhere.**
+  The client from `SsrfValidator::create_pinned_client` checked only the first
+  URL, then followed up to `max_redirects` hops to any host, including private
+  and cloud-metadata addresses the policy refuses. Each hop is now validated
+  against the same policy, its host resolved and every address checked, before
+  it is followed. Redirects are off by default, and the JWKS client never
+  follows them.
+
 ## [3.5.1] - 2026-09-30
 
 `Client::connect_tcp` failed against every server in 3.5.0: the TCP client
