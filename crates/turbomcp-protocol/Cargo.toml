@@ -84,7 +84,7 @@ proptest = "1.11"
 [features]
 default = ["std", "simd"]
 std = []
-simd = ["sonic-rs", "simdutf8"]
+simd = ["sonic-rs", "simdutf8", "simd-json"]
 # Accepted for compatibility; the SIMD JSON paths use sonic-rs.
 simd-json = []
 zero-copy = ["bytes/serde"]
@@ -92,7 +92,7 @@ messagepack = ["msgpacker"]
 tracing = []
 metrics = []
 wasm = []
-fancy-errors = []
+fancy-errors = ["miette"]
 # Accepted for compatibility; enables nothing.
 miette = []
 mmap = ["memmap2"]  # Enable memory-mapped file support

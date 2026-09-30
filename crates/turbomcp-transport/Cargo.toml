@@ -91,7 +91,7 @@ unix = ["dep:turbomcp-unix", "tokio/net"]
 compression = ["flate2", "brotli", "lz4_flex"]
 
 # TLS support
-tls = []
+tls = ["rustls", "tokio-rustls"]
 # Accepted for compatibility; enable nothing.
 rustls = []
 tokio-rustls = []

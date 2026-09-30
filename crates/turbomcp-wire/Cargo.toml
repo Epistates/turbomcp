@@ -31,7 +31,7 @@ tracing = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
-std = ["serde/std", "serde_json/std", "tracing"]
+std = ["serde/std", "serde_json/std", "thiserror", "tracing"]
 # Accepted for compatibility; enables nothing.
 thiserror = []
 # `json` is always available — `serde_json` and `JsonCodec` are unconditional.

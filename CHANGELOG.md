@@ -25,8 +25,13 @@ that didn't compile, and an HTTP graceful shutdown that ran backwards. Two
 security gaps are closed: `JwksClient` was open to DNS rebinding, and a child
 process could exhaust its parent's memory.
 
-No public API changed; `cargo semver-checks` finds nothing to flag against
-3.5.0.
+The dependency tree is also smaller. Dependencies no code used are gone, one
+of each pair of SIMD JSON libraries, TLS providers and WebSocket stacks was
+dropped, and a default build compiles 175 crates instead of 199; see
+*Dependencies*.
+
+No public API changed and no feature was removed; `cargo semver-checks` finds
+nothing to flag against 3.5.0.
 
 ### Fixed
 
@@ -124,10 +129,14 @@ No public API changed; `cargo semver-checks` finds nothing to flag against
 
 ### Dependencies
 
-A default `turbomcp` build now compiles 185 crates instead of 199, a
-`turbomcp-client` build 174 instead of 235, and the whole workspace 553 instead
-of 608. No feature was removed: where a dependency that no code used had
-defined a feature, the feature stays and enables nothing.
+A default `turbomcp` build now compiles 175 crates instead of 199, a `full`
+build 295 instead of 319, a default `turbomcp-client` build 164 instead of 235,
+and the whole workspace 543 instead of 608. Crates present at more than one
+version went from 43 to 36; what remains comes from upstream crates (`oauth2`
+still on the older RustCrypto and `rand` generations, `reqwest` 0.13 on
+`tower-http` 0.6, `dashmap` on an older `hashbrown`). No feature was removed:
+where a dependency that no code used had defined a feature, the feature stays
+and enables nothing.
 
 - **Removed dependencies no code used.** `turbomcp-client` depended on
   `reqwest`, `chrono` and `uuid`; `turbomcp-macros`, a proc-macro crate, on
@@ -160,8 +169,7 @@ defined a feature, the feature stays and enables nothing.
   while the WebSocket client uses 0.30, so every WebSocket build compiled both,
   along with two `sha1`s. The server now performs the RFC 6455 handshake itself
   over hyper's upgrade and runs the connection on the same `tokio-tungstenite`
-  as the client, with the same frame limits. Its `websocket` feature also no
-  longer enables the WebSocket *client* transport, which it never used.
+  as the client, with the same frame limits.
 - **Latest majors of internal dependencies.** OpenTelemetry 0.33 with
   `tracing-opentelemetry` 0.34 in `turbomcp-telemetry`, and `nix` 0.31 in
   `turbomcp-transport`. None of their types appear in a public signature.

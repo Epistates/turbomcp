@@ -89,12 +89,12 @@ default = ["cli", "runtime", "introspection"]
 introspection = []
 runtime = ["introspection", "dep:turbomcp-server", "axum", "dep:tower", "tower-service", "tower-http", "futures-util", "auth"]
 tower = ["runtime"]  # Alias for runtime Tower integration (for consistency with other turbomcp crates)
-codegen = ["introspection", "handlebars", "convert_case", "chrono", "syn"]
-schema = []
+codegen = ["introspection", "handlebars", "convert_case", "chrono", "syn", "proc-macro2"]
+schema = ["schemars"]
 auth = ["dep:turbomcp-auth", "dep:jsonwebtoken", "turbomcp-auth/jwt"]
 
 # Adapters (Phase 6)
-rest = ["axum", "tower", "tower-http"]
+rest = ["utoipa", "utoipa-swagger-ui", "axum", "tower", "tower-http"]
 # NOTE (audit-v3.0.13 #38): The `graphql` feature is a Phase 6 placeholder. The
 # scaffolded `adapters/graphql.rs` exists but no `async-graphql` deps are pinned,
 # so enabling this feature does not produce a working GraphQL adapter — the gated

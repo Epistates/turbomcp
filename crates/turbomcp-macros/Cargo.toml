@@ -37,9 +37,9 @@ turbomcp-protocol = { workspace = true }
 [features]
 default = []
 # Accepted for compatibility; the macros don't read them.
-http = []
-tcp = []
-unix = []
+http = ["axum"]
+tcp = ["tokio"]
+unix = ["tokio"]
 experimental-tasks = []
 axum = []
 tokio = []

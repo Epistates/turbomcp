@@ -81,7 +81,7 @@ http = [
     "dep:http",
     "dep:async-stream",
 ]
-websocket = ["http", "dep:tokio-tungstenite", "dep:hyper", "dep:hyper-util"]
+websocket = ["http", "turbomcp-transport/websocket", "dep:tokio-tungstenite", "dep:hyper", "dep:hyper-util"]
 tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 channel = ["dep:turbomcp-transport"]
