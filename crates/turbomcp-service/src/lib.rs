@@ -24,6 +24,7 @@
 //! version mismatches, and dead transports.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod auth;
 mod error;
@@ -44,7 +45,10 @@ pub use host::{Pipe, Serve, ServerHandle, close_then_shut_down};
 pub use middleware::{Tracing, TracingLayer};
 pub use panic::{catch_handler_panic, catch_panic};
 pub use peer::{Delivery, Peer, PeerClosed, SessionStreams, StreamGuard};
-pub use ratelimit::{GovernorRateLimiter, RateKey, RateLimiter};
+#[cfg(feature = "governor")]
+#[cfg_attr(docsrs, doc(cfg(feature = "governor")))]
+pub use ratelimit::GovernorRateLimiter;
+pub use ratelimit::{RateKey, RateLimiter};
 pub use serve::{ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
 pub use transport::{HttpFailure, ParamHeaders, Transport, TransportFailure, WireVersion};

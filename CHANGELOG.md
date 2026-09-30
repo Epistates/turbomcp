@@ -321,6 +321,35 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** dependencies are current and a build carries one copy of
+  each where we choose. A stdio-only build compiles 128 crates (was 177),
+  an HTTP server 158 (was 211).
+  - `opentelemetry`/`opentelemetry_sdk`/`opentelemetry-otlp` 0.33 and
+    `tracing-opentelemetry` 0.34 (their types appear in
+    `turbomcp-telemetry`'s API), `jsonschema` 0.58, and every compatible
+    update.
+  - The wire types are regenerated with `typify` 0.8. On 2025-11-25 a task
+    without `ttl` (required, nullable) is now refused rather than read as
+    unlimited; the rest is equivalent (plus `Default` derives and `Display`
+    on newtypes).
+  - `sha2`/`hmac` stay on the digest 0.10 generation, which the WebSocket
+    handshake (`sha1`) and `oauth2` already link; 0.11 put a second copy of
+    the RustCrypto stack in those builds. `rand` is gone (a 32-byte key
+    comes from `getrandom`).
+  - The server checks an elicitation URL with `fluent-uri` (already linked
+    by `jsonschema`) instead of `url`, which brought `idna` and ~25 ICU
+    crates into every build.
+  - `GovernorRateLimiter` is behind `turbomcp-service`'s new `governor`
+    feature, on with `turbomcp-transport-http`'s `server` (so the facade's
+    `http`); stdio builds no longer link `governor`, which also drops its
+    `jitter` and `dashmap` defaults.
+  - Unused features and dependencies removed: `tower-http`'s compression,
+    trace, timeout and limit (brotli and flate2 in every HTTP server),
+    `tracing-subscriber`'s `json`/`tracing-log`, `moka`'s `future`,
+    `uuid`'s `serde`, and `tokio-util`/`bytes`/`serde` where unused.
+  - `cargo deny` now fails on a new duplicate crate version across the
+    all-features graph; the known upstream splits are listed with reasons
+    in `deny.toml`.
 - **Breaking:** a `Composite` joins a mount's prefix and a component's name
   with `__` (`weather__forecast`), not `.`. The spec's charset allows `.`,
   but the Anthropic and OpenAI tool APIs accept only `[a-zA-Z0-9_-]{1,64}`,

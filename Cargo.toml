@@ -71,7 +71,7 @@ sonic-rs = "0.5.8"   # High-performance JSON (core `simd` codec)
 
 # Schema validation and generation
 schemars = { version = "1.2.1" }
-jsonschema = { version = "0.49", default-features = false }
+jsonschema = { version = "0.58", default-features = false }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
@@ -81,7 +81,9 @@ axum = { version = "0.8.9", features = ["tracing"] }
 http = "1.4"
 mime = "0.3.17"
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
-tower-http = { version = "0.7.1", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
+# Only CORS is used; compression/trace/timeout/limit pulled brotli, flate2 and
+# async-compression into every HTTP server build for nothing.
+tower-http = { version = "0.7.1", default-features = false, features = ["cors"] }
 # 0.29 is the version axum's `ws` feature uses: one tungstenite stack, not two.
 tokio-tungstenite = { version = "0.29.0", default-features = false }
 
@@ -92,22 +94,31 @@ anyhow = "1.0.102"
 
 # Observability and monitoring
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "tracing-log"] }
-tracing-opentelemetry = "0.33.0"
-opentelemetry = "0.32"
-opentelemetry-otlp = { version = "0.32", features = ["tonic", "metrics", "logs"] }
-opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "std", "ansi"] }
+tracing-opentelemetry = "0.34.0"
+opentelemetry = "0.33"
+opentelemetry-otlp = { version = "0.33", features = ["tonic", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
 
 # URL
 url = "2.5.8"
+# RFC 3986 parsing where WHATWG `url` (and its IDNA/ICU stack) is not
+# needed; jsonschema already links it.
+fluent-uri = "0.4.1"
 # CIDR parsing and containment for the outbound authorization network policy.
 ipnet = "2.12"
 
 # Security and authentication
 subtle = "2.6"  # Constant-time comparison for secret values
-hmac = "0.13"   # HMAC (pairs with sha2 0.11 / digest 0.11)
+# HMAC-SHA-256. The digest 0.10 generation, not 0.11: the WebSocket handshake
+# (sha1, via tungstenite) and oauth2 already link digest 0.10, so 0.11 would
+# put a second copy of the RustCrypto stack in every build that has either.
+hmac = "0.12"
+sha2 = "0.10"
+# OS randomness for keys (uuid already links it).
+getrandom = "0.4"
 base64 = "0.23.1"
-uuid = { version = "1.23", features = ["v4", "serde"] }
+uuid = { version = "1.23", features = ["v4"] }
 # OAuth 2.1 client flows (auth-code + PKCE + token exchange); HTTP is supplied
 # by our reqwest adapter, so no default features.
 oauth2 = { version = "5", default-features = false }
@@ -120,17 +131,17 @@ time = { version = "0.3.47", features = ["serde", "macros"] }
 bytes = "1.11.1"
 
 # Caching
-moka = { version = "0.12.15", features = ["future"] }
+moka = { version = "0.12.15", default-features = false }
 
 # Rate limiting (lock-free GCRA, replaces hand-rolled token bucket / sliding window)
-governor = "0.10.4"
+# Without the defaults' `jitter` (rand) and `dashmap` (a second hashbrown):
+# the keyed limiter keeps its type over a mutex-guarded map.
+governor = { version = "0.10.4", default-features = false, features = ["std", "quanta"] }
 
 # Development and testing
 criterion = { version = "0.8.2", features = ["html_reports"] }
 trybuild = "1.0"
 insta = { version = "1.47", features = ["json", "redactions"] }
-rand = "0.10"
-sha2 = "0.11"
 
 # Internal workspace crate dependencies.
 # `default-features = false` on turbomcp-core / turbomcp-protocol keeps the

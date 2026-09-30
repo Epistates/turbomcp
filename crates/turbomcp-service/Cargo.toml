@@ -18,12 +18,17 @@ tower = { workspace = true }
 tracing = { workspace = true }
 # `FutureExt::catch_unwind`, so a panicking handler still answers its request.
 futures = { workspace = true }
-governor = { workspace = true }
+governor = { workspace = true, optional = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time", "io-std", "io-util"] }
-tokio-util = { workspace = true }
+
+[features]
+# `GovernorRateLimiter`, the in-process rate limiter the HTTP transport's
+# `server` feature turns on. Stdio is never rate limited, so a stdio-only
+# build doesn't link it.
+governor = ["dep:governor"]
 
 [dev-dependencies]
 serde_json = { workspace = true }

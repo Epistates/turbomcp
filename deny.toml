@@ -34,11 +34,13 @@ targets = [
 # they are connected to another crate in the graph that hasn't been pruned,
 # so it should be used with care. The identifiers are [Package ID Specifications]
 # (https://doc.rust-lang.org/cargo/reference/pkgid-spec.html)
-#exclude = []
+# The codegen tool is a build tool (`publish = false`, never in a user's
+# build); its typify pins schemars 0.8.
+exclude = ["turbomcp-codegen"]
 # If true, metadata will be collected with `--all-features`. Note that this can't
 # be toggled off if true, if you want to conditionally enable `--all-features` it
 # is recommended to pass `--all-features` on the cmd line instead
-all-features = false
+all-features = true
 # If true, metadata will be collected with `--no-default-features`. The same
 # caveat with `all-features` applies
 no-default-features = false
@@ -144,7 +146,10 @@ registries = [
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
 [bans]
 # Lint level for when multiple versions of the same crate are detected
-multiple-versions = "warn"
+# A second copy of a crate is build time and binary size for nothing, so a new
+# one fails CI. The ones below are upstream splits we can't close; each says
+# why. Revisit when the named dependents move.
+multiple-versions = "deny"
 # Lint level for when a crate version requirement is `*`
 wildcards = "allow"
 # The graph highlighting used when creating dotgraphs for crates
@@ -193,8 +198,22 @@ deny = [
 # this is set there is no point setting `deny`
 #exact = true
 
-# Skip duplicate detection for known issues being systematically resolved
-skip = []
+# Known duplicates, all upstream splits.
+skip = [
+    { crate = "base64@0.22", reason = "axum, hyper-util, jsonwebtoken, tonic, pem, oauth2 on 0.22; reqwest and we on 0.23" },
+    { crate = "getrandom@0.2", reason = "rand 0.8, via oauth2 5 (client-oauth only)" },
+    { crate = "getrandom@0.3", reason = "rand 0.9 (tungstenite, opentelemetry_sdk) and ahash (jsonschema); uuid is on 0.4" },
+    { crate = "hashbrown@0.16", reason = "governor and regress; indexmap and we are on 0.17" },
+    { crate = "r-efi@5", reason = "getrandom 0.3's UEFI backend; 0.4 uses r-efi 6" },
+    { crate = "rand@0.8", reason = "oauth2 5 (client-oauth only)" },
+    { crate = "rand_chacha@0.3", reason = "rand 0.8, via oauth2 5" },
+    { crate = "rand_core@0.6", reason = "rand 0.8, via oauth2 5" },
+    { crate = "thiserror@1", reason = "oauth2 5 (client-oauth only)" },
+    { crate = "thiserror-impl@1", reason = "thiserror 1, via oauth2 5" },
+    { crate = "tower-http@0.6", reason = "reqwest 0.13's HTTP client stack; our server is on 0.7" },
+    { crate = "syn@2", reason = "proc macros across the ecosystem (tokio, tracing, prost, pin-project, zerovec); serde_derive, thiserror and ours are on syn 3" },
+    { crate = "untrusted@0.7", reason = "aws-lc-rs; rustls-webpki is on 0.9" },
+]
 
 # Skip dependency trees while we fix the root causes
 skip-tree = [

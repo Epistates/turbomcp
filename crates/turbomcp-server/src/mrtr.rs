@@ -31,7 +31,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use hmac::{Hmac, KeyInit as _, Mac};
+use hmac::{Hmac, Mac};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -74,9 +74,8 @@ pub(crate) struct StateSigner {
 
 impl StateSigner {
     pub(crate) fn new() -> Self {
-        use rand::Rng as _;
         let mut key = [0u8; 32];
-        rand::rng().fill_bytes(&mut key);
+        getrandom::fill(&mut key).expect("the OS random source is unavailable");
         Self::from_key(key)
     }
 
@@ -518,15 +517,21 @@ impl ClientHandle {
         // parser rather than a prefix test: the client is about to put this in
         // front of a user, and a relative or malformed one resolves against
         // whatever the client's UI happens to be.
-        let url = url::Url::parse(&params.url).map_err(|e| {
+        let url = fluent_uri::Uri::parse(params.url.as_str()).map_err(|e| {
             McpError::invalid_params(format!("elicitation url `{}`: {e}", params.url))
         })?;
-        if !matches!(url.scheme(), "http" | "https") {
+        let scheme = url.scheme().as_str();
+        if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")) {
             return Err(McpError::invalid_params(format!(
-                "elicitation url `{}` has scheme `{}`; a user is being sent there, \
+                "elicitation url `{}` has scheme `{scheme}`; a user is being sent there, \
                  so it must be http or https",
                 params.url,
-                url.scheme()
+            )));
+        }
+        if url.authority().is_none_or(|a| a.host().is_empty()) {
+            return Err(McpError::invalid_params(format!(
+                "elicitation url `{}` names no host",
+                params.url
             )));
         }
         // `elicitationId` is `2025-11-25`-only. The 2026-07-28 RC had briefly
@@ -2023,7 +2028,14 @@ mod tests {
         );
 
         // "The `url` parameter MUST contain a valid URL."
-        for bad in ["not a url", "/relative/path", "javascript:alert(1)"] {
+        for bad in [
+            "not a url",
+            "/relative/path",
+            "javascript:alert(1)",
+            "https:no-host",
+            "https:///path",
+            "ftp://files.example/x",
+        ] {
             let err = handle
                 .elicit_url("k", neutral::ElicitUrlParams::new("Sign in", bad))
                 .await
@@ -2031,7 +2043,17 @@ mod tests {
             assert!(matches!(&err, McpError::InvalidParams(_)), "{bad}: {err:?}");
         }
 
-        // A real one gets as far as being recorded for the retry.
+        // A real one gets as far as being recorded for the retry (schemes are
+        // case-insensitive).
+        assert!(matches!(
+            handle
+                .elicit_url(
+                    "k",
+                    neutral::ElicitUrlParams::new("Sign in", "HTTPS://auth.example/go")
+                )
+                .await,
+            Err(McpError::InputRequired)
+        ));
         assert!(matches!(
             handle
                 .elicit_url(

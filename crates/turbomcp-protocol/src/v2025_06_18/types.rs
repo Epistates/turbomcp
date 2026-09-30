@@ -16,69 +16,8 @@ use ::alloc::{
     vec,
     vec::Vec,
 };
-/// Error types.
-pub mod error {
-    #[cfg(not(feature = "std"))]
-    #[allow(unused_imports)]
-    use ::alloc::{
-        borrow::ToOwned,
-        string::{String, ToString},
-    };
-    /// Error from a `TryFrom` or `FromStr` implementation.
-    pub struct ConversionError(::alloc::borrow::Cow<'static, str>);
-    impl ::core::error::Error for ConversionError {}
-    impl ::core::fmt::Display for ConversionError {
-        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> Result<(), ::core::fmt::Error> {
-            ::core::fmt::Display::fmt(&self.0, f)
-        }
-    }
-    impl ::core::fmt::Debug for ConversionError {
-        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> Result<(), ::core::fmt::Error> {
-            ::core::fmt::Debug::fmt(&self.0, f)
-        }
-    }
-    impl From<&'static str> for ConversionError {
-        fn from(value: &'static str) -> Self {
-            Self(value.into())
-        }
-    }
-    impl From<String> for ConversionError {
-        fn from(value: String) -> Self {
-            Self(value.into())
-        }
-    }
-}
 ///Optional annotations for the client. The client can use annotations to inform how objects are used or displayed
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Optional annotations for the client. The client can use annotations to inform how objects are used or displayed",
-///  "type": "object",
-///  "properties": {
-///    "audience": {
-///      "description": "Describes who the intended customer of this object or data is.\n\nIt can include multiple entries to indicate content useful for multiple audiences (e.g., `[\"user\", \"assistant\"]`).",
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/Role"
-///      }
-///    },
-///    "lastModified": {
-///      "description": "The moment the resource was last modified, as an ISO 8601 formatted string.\n\nShould be an ISO 8601 formatted string (e.g., \"2025-01-12T15:00:58Z\").\n\nExamples: last activity timestamp in an open file, timestamp when the resource\nwas attached, etc.",
-///      "type": "string"
-///    },
-///    "priority": {
-///      "description": "Describes how important this data is for operating the server.\n\nA value of 1 means \"most important,\" and indicates that the data is\neffectively required, while 0 means \"least important,\" and indicates that\nthe data is entirely optional.",
-///      "type": "number",
-///      "maximum": 1.0,
-///      "minimum": 0.0
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct Annotations {
     /**Describes who the intended customer of this object or data is.
 
@@ -93,7 +32,6 @@ pub struct Annotations {
     was attached, etc.*/
     #[serde(
         rename = "lastModified",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub last_modified: ::core::option::Option<::alloc::string::String>,
@@ -102,64 +40,14 @@ pub struct Annotations {
     A value of 1 means "most important," and indicates that the data is
     effectively required, while 0 means "least important," and indicates that
     the data is entirely optional.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub priority: ::core::option::Option<f64>,
 }
-impl ::core::default::Default for Annotations {
-    fn default() -> Self {
-        Self {
-            audience: Default::default(),
-            last_modified: Default::default(),
-            priority: Default::default(),
-        }
-    }
-}
 ///Audio provided to or from an LLM.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Audio provided to or from an LLM.",
-///  "type": "object",
-///  "required": [
-///    "data",
-///    "mimeType",
-///    "type"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "annotations": {
-///      "description": "Optional annotations for the client.",
-///      "$ref": "#/definitions/Annotations"
-///    },
-///    "data": {
-///      "description": "The base64-encoded audio data.",
-///      "type": "string",
-///      "format": "byte"
-///    },
-///    "mimeType": {
-///      "description": "The MIME type of the audio. Different providers may support different audio types.",
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "audio"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct AudioContent {
     ///Optional annotations for the client.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
     ///The base64-encoded audio data.
     pub data: ::alloc::string::String,
@@ -177,18 +65,6 @@ pub struct AudioContent {
     pub type_: AudioContentType,
 }
 ///`AudioContentType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "audio"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -227,14 +103,6 @@ impl ::core::convert::TryFrom<&str> for AudioContentType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for AudioContentType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for AudioContentType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -244,29 +112,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for AudioContentType {
     }
 }
 ///Base interface for metadata with name (identifier) and title (display name) properties.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Base interface for metadata with name (identifier) and title (display name) properties.",
-///  "type": "object",
-///  "required": [
-///    "name"
-///  ],
-///  "properties": {
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct BaseMetadata {
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
@@ -277,44 +122,10 @@ pub struct BaseMetadata {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
 ///`BlobResourceContents`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "blob",
-///    "uri"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "blob": {
-///      "description": "A base64-encoded string representing the binary data of the item.",
-///      "type": "string",
-///      "format": "byte"
-///    },
-///    "mimeType": {
-///      "description": "The MIME type of this resource, if known.",
-///      "type": "string"
-///    },
-///    "uri": {
-///      "description": "The URI of this resource.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct BlobResourceContents {
     ///A base64-encoded string representing the binary data of the item.
@@ -329,7 +140,6 @@ pub struct BlobResourceContents {
     ///The MIME type of this resource, if known.
     #[serde(
         rename = "mimeType",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub mime_type: ::core::option::Option<::alloc::string::String>,
@@ -337,59 +147,18 @@ pub struct BlobResourceContents {
     pub uri: ::alloc::string::String,
 }
 ///`BooleanSchema`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "type"
-///  ],
-///  "properties": {
-///    "default": {
-///      "type": "boolean"
-///    },
-///    "description": {
-///      "type": "string"
-///    },
-///    "title": {
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "boolean"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct BooleanSchema {
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub default: ::core::option::Option<bool>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
     pub type_: BooleanSchemaType,
 }
 ///`BooleanSchemaType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "boolean"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -428,14 +197,6 @@ impl ::core::convert::TryFrom<&str> for BooleanSchemaType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for BooleanSchemaType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for BooleanSchemaType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -445,60 +206,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for BooleanSchemaType {
     }
 }
 ///Used by the client to invoke a tool provided by the server.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Used by the client to invoke a tool provided by the server.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "tools/call"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "name"
-///      ],
-///      "properties": {
-///        "arguments": {
-///          "$ref": "#/definitions/JSONObject"
-///        },
-///        "name": {
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CallToolRequest {
     pub method: CallToolRequestMethod,
     pub params: CallToolRequestParams,
 }
 ///`CallToolRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "tools/call"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -537,14 +250,6 @@ impl ::core::convert::TryFrom<&str> for CallToolRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for CallToolRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for CallToolRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -554,68 +259,13 @@ impl ::core::convert::TryFrom<::alloc::string::String> for CallToolRequestMethod
     }
 }
 ///`CallToolRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "name"
-///  ],
-///  "properties": {
-///    "arguments": {
-///      "$ref": "#/definitions/JSONObject"
-///    },
-///    "name": {
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CallToolRequestParams {
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub arguments: ::core::option::Option<JsonObject>,
     pub name: ::alloc::string::String,
 }
 ///The server's response to a tool call.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's response to a tool call.",
-///  "type": "object",
-///  "required": [
-///    "content"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "content": {
-///      "description": "A list of content objects that represent the unstructured result of the tool call.",
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/ContentBlock"
-///      }
-///    },
-///    "isError": {
-///      "description": "Whether the tool call ended in an error.\n\nIf not set, this is assumed to be false (the call was successful).\n\nAny errors that originate from the tool SHOULD be reported inside the result\nobject, with `isError` set to true, _not_ as an MCP protocol-level error\nresponse. Otherwise, the LLM would not be able to see that an error occurred\nand self-correct.\n\nHowever, any errors in _finding_ the tool, an error indicating that the\nserver does not support tool calls, or any other exceptional conditions,\nshould be reported as an MCP error response.",
-///      "type": "boolean"
-///    },
-///    "structuredContent": {
-///      "description": "An optional JSON object that represents the structured result of the tool call.",
-///      "$ref": "#/definitions/JSONObject"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CallToolResult {
     ///A list of content objects that represent the unstructured result of the tool call.
@@ -634,7 +284,6 @@ pub struct CallToolResult {
     should be reported as an MCP error response.*/
     #[serde(
         rename = "isError",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub is_error: ::core::option::Option<bool>,
@@ -648,7 +297,6 @@ pub struct CallToolResult {
     ///An optional JSON object that represents the structured result of the tool call.
     #[serde(
         rename = "structuredContent",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub structured_content: ::core::option::Option<JsonObject>,
@@ -660,62 +308,12 @@ The request SHOULD still be in-flight, but due to communication latency, it is a
 This notification indicates that the result will be unused, so any associated processing SHOULD cease.
 
 A client MUST NOT attempt to cancel its `initialize` request.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "This notification can be sent by either side to indicate that it is cancelling a previously-issued request.\n\nThe request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.\n\nThis notification indicates that the result will be unused, so any associated processing SHOULD cease.\n\nA client MUST NOT attempt to cancel its `initialize` request.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/cancelled"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "requestId"
-///      ],
-///      "properties": {
-///        "reason": {
-///          "description": "An optional string describing the reason for the cancellation. This MAY be logged or presented to the user.",
-///          "type": "string"
-///        },
-///        "requestId": {
-///          "description": "The ID of the request to cancel.\n\nThis MUST correspond to the ID of a request previously issued in the same direction.",
-///          "$ref": "#/definitions/RequestId"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CancelledNotification {
     pub method: CancelledNotificationMethod,
     pub params: CancelledNotificationParams,
 }
 ///`CancelledNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/cancelled"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -754,14 +352,6 @@ impl ::core::convert::TryFrom<&str> for CancelledNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for CancelledNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for CancelledNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -771,32 +361,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for CancelledNotification
     }
 }
 ///`CancelledNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "requestId"
-///  ],
-///  "properties": {
-///    "reason": {
-///      "description": "An optional string describing the reason for the cancellation. This MAY be logged or presented to the user.",
-///      "type": "string"
-///    },
-///    "requestId": {
-///      "description": "The ID of the request to cancel.\n\nThis MUST correspond to the ID of a request previously issued in the same direction.",
-///      "$ref": "#/definitions/RequestId"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CancelledNotificationParams {
     ///An optional string describing the reason for the cancellation. This MAY be logged or presented to the user.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub reason: ::core::option::Option<::alloc::string::String>,
     /**The ID of the request to cancel.
 
@@ -805,48 +373,10 @@ pub struct CancelledNotificationParams {
     pub request_id: RequestId,
 }
 ///Capabilities a client may support. Known capabilities are defined here, in this schema, but this is not a closed set: any client can define its own, additional capabilities.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Capabilities a client may support. Known capabilities are defined here, in this schema, but this is not a closed set: any client can define its own, additional capabilities.",
-///  "type": "object",
-///  "properties": {
-///    "elicitation": {
-///      "description": "Present if the client supports elicitation from the server.",
-///      "$ref": "#/definitions/JSONObject"
-///    },
-///    "experimental": {
-///      "description": "Experimental, non-standard capabilities that the client supports.",
-///      "type": "object",
-///      "additionalProperties": {
-///        "type": "object",
-///        "additionalProperties": true
-///      }
-///    },
-///    "roots": {
-///      "description": "Present if the client supports listing roots.",
-///      "type": "object",
-///      "properties": {
-///        "listChanged": {
-///          "description": "Whether the client supports notifications for changes to the roots list.",
-///          "type": "boolean"
-///        }
-///      }
-///    },
-///    "sampling": {
-///      "description": "Present if the client supports sampling from an LLM.",
-///      "$ref": "#/definitions/JSONObject"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ClientCapabilities {
     ///Present if the client supports elicitation from the server.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub elicitation: ::core::option::Option<JsonObject>,
     ///Experimental, non-standard capabilities that the client supports.
     #[serde(
@@ -857,79 +387,23 @@ pub struct ClientCapabilities {
         ::alloc::string::String,
         ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
     >,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub roots: ::core::option::Option<ClientCapabilitiesRoots>,
     ///Present if the client supports sampling from an LLM.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub sampling: ::core::option::Option<JsonObject>,
 }
-impl ::core::default::Default for ClientCapabilities {
-    fn default() -> Self {
-        Self {
-            elicitation: Default::default(),
-            experimental: Default::default(),
-            roots: Default::default(),
-            sampling: Default::default(),
-        }
-    }
-}
 ///Present if the client supports listing roots.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Present if the client supports listing roots.",
-///  "type": "object",
-///  "properties": {
-///    "listChanged": {
-///      "description": "Whether the client supports notifications for changes to the roots list.",
-///      "type": "boolean"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ClientCapabilitiesRoots {
     ///Whether the client supports notifications for changes to the roots list.
     #[serde(
         rename = "listChanged",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub list_changed: ::core::option::Option<bool>,
 }
-impl ::core::default::Default for ClientCapabilitiesRoots {
-    fn default() -> Self {
-        Self {
-            list_changed: Default::default(),
-        }
-    }
-}
 ///`ClientNotification`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/CancelledNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/InitializedNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/ProgressNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/RootsListChangedNotification"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ClientNotification {
@@ -959,55 +433,6 @@ impl ::core::convert::From<RootsListChangedNotification> for ClientNotification 
     }
 }
 ///`ClientRequest`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/InitializeRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/PingRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/ListResourcesRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/ListResourceTemplatesRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/ReadResourceRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/SubscribeRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/UnsubscribeRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/ListPromptsRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/GetPromptRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/ListToolsRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/CallToolRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/SetLevelRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/CompleteRequest"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ClientRequest {
@@ -1091,28 +516,6 @@ impl ::core::convert::From<CompleteRequest> for ClientRequest {
     }
 }
 ///`ClientResult`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/Result"
-///    },
-///    {
-///      "$ref": "#/definitions/CreateMessageResult"
-///    },
-///    {
-///      "$ref": "#/definitions/ListRootsResult"
-///    },
-///    {
-///      "$ref": "#/definitions/ElicitResult"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ClientResult {
@@ -1142,96 +545,12 @@ impl ::core::convert::From<ElicitResult> for ClientResult {
     }
 }
 ///A request from the client to the server, to ask for completion options.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A request from the client to the server, to ask for completion options.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "completion/complete"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "argument",
-///        "ref"
-///      ],
-///      "properties": {
-///        "argument": {
-///          "description": "The argument's information",
-///          "type": "object",
-///          "required": [
-///            "name",
-///            "value"
-///          ],
-///          "properties": {
-///            "name": {
-///              "description": "The name of the argument",
-///              "type": "string"
-///            },
-///            "value": {
-///              "description": "The value of the argument to use for completion matching.",
-///              "type": "string"
-///            }
-///          }
-///        },
-///        "context": {
-///          "description": "Additional, optional context for completions",
-///          "type": "object",
-///          "properties": {
-///            "arguments": {
-///              "description": "Previously-resolved variables in a URI template or prompt.",
-///              "type": "object",
-///              "additionalProperties": {
-///                "type": "string"
-///              }
-///            }
-///          }
-///        },
-///        "ref": {
-///          "anyOf": [
-///            {
-///              "$ref": "#/definitions/PromptReference"
-///            },
-///            {
-///              "$ref": "#/definitions/ResourceTemplateReference"
-///            }
-///          ]
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteRequest {
     pub method: CompleteRequestMethod,
     pub params: CompleteRequestParams,
 }
 ///`CompleteRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "completion/complete"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1270,14 +589,6 @@ impl ::core::convert::TryFrom<&str> for CompleteRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for CompleteRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for CompleteRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -1287,95 +598,15 @@ impl ::core::convert::TryFrom<::alloc::string::String> for CompleteRequestMethod
     }
 }
 ///`CompleteRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "argument",
-///    "ref"
-///  ],
-///  "properties": {
-///    "argument": {
-///      "description": "The argument's information",
-///      "type": "object",
-///      "required": [
-///        "name",
-///        "value"
-///      ],
-///      "properties": {
-///        "name": {
-///          "description": "The name of the argument",
-///          "type": "string"
-///        },
-///        "value": {
-///          "description": "The value of the argument to use for completion matching.",
-///          "type": "string"
-///        }
-///      }
-///    },
-///    "context": {
-///      "description": "Additional, optional context for completions",
-///      "type": "object",
-///      "properties": {
-///        "arguments": {
-///          "description": "Previously-resolved variables in a URI template or prompt.",
-///          "type": "object",
-///          "additionalProperties": {
-///            "type": "string"
-///          }
-///        }
-///      }
-///    },
-///    "ref": {
-///      "anyOf": [
-///        {
-///          "$ref": "#/definitions/PromptReference"
-///        },
-///        {
-///          "$ref": "#/definitions/ResourceTemplateReference"
-///        }
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteRequestParams {
     pub argument: CompleteRequestParamsArgument,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub context: ::core::option::Option<CompleteRequestParamsContext>,
     #[serde(rename = "ref")]
     pub ref_: CompleteRequestParamsRef,
 }
 ///The argument's information
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The argument's information",
-///  "type": "object",
-///  "required": [
-///    "name",
-///    "value"
-///  ],
-///  "properties": {
-///    "name": {
-///      "description": "The name of the argument",
-///      "type": "string"
-///    },
-///    "value": {
-///      "description": "The value of the argument to use for completion matching.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteRequestParamsArgument {
     ///The name of the argument
@@ -1384,26 +615,7 @@ pub struct CompleteRequestParamsArgument {
     pub value: ::alloc::string::String,
 }
 ///Additional, optional context for completions
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Additional, optional context for completions",
-///  "type": "object",
-///  "properties": {
-///    "arguments": {
-///      "description": "Previously-resolved variables in a URI template or prompt.",
-///      "type": "object",
-///      "additionalProperties": {
-///        "type": "string"
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct CompleteRequestParamsContext {
     ///Previously-resolved variables in a URI template or prompt.
     #[serde(
@@ -1412,30 +624,7 @@ pub struct CompleteRequestParamsContext {
     )]
     pub arguments: ::alloc::collections::BTreeMap<::alloc::string::String, ::alloc::string::String>,
 }
-impl ::core::default::Default for CompleteRequestParamsContext {
-    fn default() -> Self {
-        Self {
-            arguments: Default::default(),
-        }
-    }
-}
 ///`CompleteRequestParamsRef`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/PromptReference"
-///    },
-///    {
-///      "$ref": "#/definitions/ResourceTemplateReference"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum CompleteRequestParamsRef {
@@ -1453,49 +642,6 @@ impl ::core::convert::From<ResourceTemplateReference> for CompleteRequestParamsR
     }
 }
 ///The server's response to a completion/complete request
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's response to a completion/complete request",
-///  "type": "object",
-///  "required": [
-///    "completion"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "completion": {
-///      "type": "object",
-///      "required": [
-///        "values"
-///      ],
-///      "properties": {
-///        "hasMore": {
-///          "description": "Indicates whether there are additional completion options beyond those provided in the current response, even if the exact total is unknown.",
-///          "type": "boolean"
-///        },
-///        "total": {
-///          "description": "The total number of completion options available. This can exceed the number of values actually sent in the response.",
-///          "type": "integer"
-///        },
-///        "values": {
-///          "description": "An array of completion values. Must not exceed 100 items.",
-///          "type": "array",
-///          "items": {
-///            "type": "string"
-///          }
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteResult {
     pub completion: CompleteResultCompletion,
@@ -1508,76 +654,21 @@ pub struct CompleteResult {
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///`CompleteResultCompletion`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "values"
-///  ],
-///  "properties": {
-///    "hasMore": {
-///      "description": "Indicates whether there are additional completion options beyond those provided in the current response, even if the exact total is unknown.",
-///      "type": "boolean"
-///    },
-///    "total": {
-///      "description": "The total number of completion options available. This can exceed the number of values actually sent in the response.",
-///      "type": "integer"
-///    },
-///    "values": {
-///      "description": "An array of completion values. Must not exceed 100 items.",
-///      "type": "array",
-///      "items": {
-///        "type": "string"
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteResultCompletion {
     ///Indicates whether there are additional completion options beyond those provided in the current response, even if the exact total is unknown.
     #[serde(
         rename = "hasMore",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub has_more: ::core::option::Option<bool>,
     ///The total number of completion options available. This can exceed the number of values actually sent in the response.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub total: ::core::option::Option<i64>,
     ///An array of completion values. Must not exceed 100 items.
     pub values: ::alloc::vec::Vec<::alloc::string::String>,
 }
 ///`ContentBlock`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/TextContent"
-///    },
-///    {
-///      "$ref": "#/definitions/ImageContent"
-///    },
-///    {
-///      "$ref": "#/definitions/AudioContent"
-///    },
-///    {
-///      "$ref": "#/definitions/ResourceLink"
-///    },
-///    {
-///      "$ref": "#/definitions/EmbeddedResource"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ContentBlock {
@@ -1613,95 +704,12 @@ impl ::core::convert::From<EmbeddedResource> for ContentBlock {
     }
 }
 ///A request from the server to sample an LLM via the client. The client has full discretion over which model to select. The client should also inform the user before beginning sampling, to allow them to inspect the request (human in the loop) and decide whether to approve it.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A request from the server to sample an LLM via the client. The client has full discretion over which model to select. The client should also inform the user before beginning sampling, to allow them to inspect the request (human in the loop) and decide whether to approve it.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "sampling/createMessage"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "maxTokens",
-///        "messages"
-///      ],
-///      "properties": {
-///        "includeContext": {
-///          "description": "A request to include context from one or more MCP servers (including the caller), to be attached to the prompt. The client MAY ignore this request.",
-///          "type": "string",
-///          "enum": [
-///            "allServers",
-///            "none",
-///            "thisServer"
-///          ]
-///        },
-///        "maxTokens": {
-///          "description": "The requested maximum number of tokens to sample (to prevent runaway completions).\n\nThe client MAY choose to sample fewer tokens than the requested maximum.",
-///          "type": "integer"
-///        },
-///        "messages": {
-///          "type": "array",
-///          "items": {
-///            "$ref": "#/definitions/SamplingMessage"
-///          }
-///        },
-///        "metadata": {
-///          "description": "Optional metadata to pass through to the LLM provider. The format of this metadata is provider-specific.",
-///          "$ref": "#/definitions/JSONObject"
-///        },
-///        "modelPreferences": {
-///          "description": "The server's preferences for which model to select. The client MAY ignore these preferences.",
-///          "$ref": "#/definitions/ModelPreferences"
-///        },
-///        "stopSequences": {
-///          "type": "array",
-///          "items": {
-///            "type": "string"
-///          }
-///        },
-///        "systemPrompt": {
-///          "description": "An optional system prompt the server wants to use for sampling. The client MAY modify or omit this prompt.",
-///          "type": "string"
-///        },
-///        "temperature": {
-///          "type": "number"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CreateMessageRequest {
     pub method: CreateMessageRequestMethod,
     pub params: CreateMessageRequestParams,
 }
 ///`CreateMessageRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "sampling/createMessage"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1740,14 +748,6 @@ impl ::core::convert::TryFrom<&str> for CreateMessageRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for CreateMessageRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for CreateMessageRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -1757,67 +757,11 @@ impl ::core::convert::TryFrom<::alloc::string::String> for CreateMessageRequestM
     }
 }
 ///`CreateMessageRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "maxTokens",
-///    "messages"
-///  ],
-///  "properties": {
-///    "includeContext": {
-///      "description": "A request to include context from one or more MCP servers (including the caller), to be attached to the prompt. The client MAY ignore this request.",
-///      "type": "string",
-///      "enum": [
-///        "allServers",
-///        "none",
-///        "thisServer"
-///      ]
-///    },
-///    "maxTokens": {
-///      "description": "The requested maximum number of tokens to sample (to prevent runaway completions).\n\nThe client MAY choose to sample fewer tokens than the requested maximum.",
-///      "type": "integer"
-///    },
-///    "messages": {
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/SamplingMessage"
-///      }
-///    },
-///    "metadata": {
-///      "description": "Optional metadata to pass through to the LLM provider. The format of this metadata is provider-specific.",
-///      "$ref": "#/definitions/JSONObject"
-///    },
-///    "modelPreferences": {
-///      "description": "The server's preferences for which model to select. The client MAY ignore these preferences.",
-///      "$ref": "#/definitions/ModelPreferences"
-///    },
-///    "stopSequences": {
-///      "type": "array",
-///      "items": {
-///        "type": "string"
-///      }
-///    },
-///    "systemPrompt": {
-///      "description": "An optional system prompt the server wants to use for sampling. The client MAY modify or omit this prompt.",
-///      "type": "string"
-///    },
-///    "temperature": {
-///      "type": "number"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CreateMessageRequestParams {
     ///A request to include context from one or more MCP servers (including the caller), to be attached to the prompt. The client MAY ignore this request.
     #[serde(
         rename = "includeContext",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub include_context: ::core::option::Option<CreateMessageRequestParamsIncludeContext>,
@@ -1828,12 +772,11 @@ pub struct CreateMessageRequestParams {
     pub max_tokens: i64,
     pub messages: ::alloc::vec::Vec<SamplingMessage>,
     ///Optional metadata to pass through to the LLM provider. The format of this metadata is provider-specific.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub metadata: ::core::option::Option<JsonObject>,
     ///The server's preferences for which model to select. The client MAY ignore these preferences.
     #[serde(
         rename = "modelPreferences",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub model_preferences: ::core::option::Option<ModelPreferences>,
@@ -1846,29 +789,13 @@ pub struct CreateMessageRequestParams {
     ///An optional system prompt the server wants to use for sampling. The client MAY modify or omit this prompt.
     #[serde(
         rename = "systemPrompt",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub system_prompt: ::core::option::Option<::alloc::string::String>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub temperature: ::core::option::Option<f64>,
 }
 ///A request to include context from one or more MCP servers (including the caller), to be attached to the prompt. The client MAY ignore this request.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A request to include context from one or more MCP servers (including the caller), to be attached to the prompt. The client MAY ignore this request.",
-///  "type": "string",
-///  "enum": [
-///    "allServers",
-///    "none",
-///    "thisServer"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1915,16 +842,6 @@ impl ::core::convert::TryFrom<&str> for CreateMessageRequestParamsIncludeContext
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String>
-    for CreateMessageRequestParamsIncludeContext
-{
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String>
     for CreateMessageRequestParamsIncludeContext
 {
@@ -1936,52 +853,6 @@ impl ::core::convert::TryFrom<::alloc::string::String>
     }
 }
 ///The client's response to a sampling/create_message request from the server. The client should inform the user before returning the sampled message, to allow them to inspect the response (human in the loop) and decide whether to allow the server to see it.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The client's response to a sampling/create_message request from the server. The client should inform the user before returning the sampled message, to allow them to inspect the response (human in the loop) and decide whether to allow the server to see it.",
-///  "type": "object",
-///  "required": [
-///    "content",
-///    "model",
-///    "role"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "content": {
-///      "anyOf": [
-///        {
-///          "$ref": "#/definitions/TextContent"
-///        },
-///        {
-///          "$ref": "#/definitions/ImageContent"
-///        },
-///        {
-///          "$ref": "#/definitions/AudioContent"
-///        }
-///      ]
-///    },
-///    "model": {
-///      "description": "The name of the model that generated the message.",
-///      "type": "string"
-///    },
-///    "role": {
-///      "$ref": "#/definitions/Role"
-///    },
-///    "stopReason": {
-///      "description": "The reason why sampling stopped, if known.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CreateMessageResult {
     pub content: CreateMessageResultContent,
@@ -1998,31 +869,11 @@ pub struct CreateMessageResult {
     ///The reason why sampling stopped, if known.
     #[serde(
         rename = "stopReason",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub stop_reason: ::core::option::Option<::alloc::string::String>,
 }
 ///`CreateMessageResultContent`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/TextContent"
-///    },
-///    {
-///      "$ref": "#/definitions/ImageContent"
-///    },
-///    {
-///      "$ref": "#/definitions/AudioContent"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum CreateMessageResultContent {
@@ -2046,16 +897,6 @@ impl ::core::convert::From<AudioContent> for CreateMessageResultContent {
     }
 }
 ///An opaque token used to represent a cursor for pagination.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "An opaque token used to represent a cursor for pagination.",
-///  "type": "string"
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
@@ -2077,96 +918,24 @@ impl ::core::convert::From<::alloc::string::String> for Cursor {
         Self(value)
     }
 }
+impl ::core::fmt::Display for Cursor {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 impl ::core::str::FromStr for Cursor {
     type Err = ::core::convert::Infallible;
     fn from_str(value: &str) -> ::core::result::Result<Self, Self::Err> {
         Ok(Self(value.to_string()))
     }
 }
-impl ::core::fmt::Display for Cursor {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        self.0.fmt(f)
-    }
-}
 ///A request from the server to elicit additional information from the user via the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A request from the server to elicit additional information from the user via the client.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "elicitation/create"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "message",
-///        "requestedSchema"
-///      ],
-///      "properties": {
-///        "message": {
-///          "description": "The message to present to the user.",
-///          "type": "string"
-///        },
-///        "requestedSchema": {
-///          "description": "A restricted subset of JSON Schema.\nOnly top-level properties are allowed, without nesting.",
-///          "type": "object",
-///          "required": [
-///            "properties",
-///            "type"
-///          ],
-///          "properties": {
-///            "properties": {
-///              "type": "object",
-///              "additionalProperties": {}
-///            },
-///            "required": {
-///              "type": "array",
-///              "items": {
-///                "type": "string"
-///              }
-///            },
-///            "type": {
-///              "type": "string",
-///              "const": "object"
-///            }
-///          },
-///          "additionalProperties": {}
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ElicitRequest {
     pub method: ElicitRequestMethod,
     pub params: ElicitRequestParams,
 }
 ///`ElicitRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "elicitation/create"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2205,14 +974,6 @@ impl ::core::convert::TryFrom<&str> for ElicitRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ElicitRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ElicitRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -2222,50 +983,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ElicitRequestMethod {
     }
 }
 ///`ElicitRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "message",
-///    "requestedSchema"
-///  ],
-///  "properties": {
-///    "message": {
-///      "description": "The message to present to the user.",
-///      "type": "string"
-///    },
-///    "requestedSchema": {
-///      "description": "A restricted subset of JSON Schema.\nOnly top-level properties are allowed, without nesting.",
-///      "type": "object",
-///      "required": [
-///        "properties",
-///        "type"
-///      ],
-///      "properties": {
-///        "properties": {
-///          "type": "object",
-///          "additionalProperties": {}
-///        },
-///        "required": {
-///          "type": "array",
-///          "items": {
-///            "type": "string"
-///          }
-///        },
-///        "type": {
-///          "type": "string",
-///          "const": "object"
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ElicitRequestParams {
     ///The message to present to the user.
@@ -2275,37 +992,6 @@ pub struct ElicitRequestParams {
 }
 /**A restricted subset of JSON Schema.
 Only top-level properties are allowed, without nesting.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A restricted subset of JSON Schema.\nOnly top-level properties are allowed, without nesting.",
-///  "type": "object",
-///  "required": [
-///    "properties",
-///    "type"
-///  ],
-///  "properties": {
-///    "properties": {
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "required": {
-///      "type": "array",
-///      "items": {
-///        "type": "string"
-///      }
-///    },
-///    "type": {
-///      "type": "string",
-///      "const": "object"
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ElicitRequestParamsRequestedSchema {
     pub properties: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
@@ -2317,46 +1003,6 @@ pub struct ElicitRequestParamsRequestedSchema {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///The client's response to an elicitation request.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The client's response to an elicitation request.",
-///  "type": "object",
-///  "required": [
-///    "action"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "action": {
-///      "description": "The user action in response to the elicitation.\n- \"accept\": User submitted the form/confirmed the action\n- \"decline\": User explicitly declined the action\n- \"cancel\": User dismissed without making an explicit choice",
-///      "type": "string",
-///      "enum": [
-///        "accept",
-///        "cancel",
-///        "decline"
-///      ]
-///    },
-///    "content": {
-///      "description": "The submitted form data, only present when action is \"accept\".\nContains values matching the requested schema.",
-///      "type": "object",
-///      "additionalProperties": {
-///        "type": [
-///          "string",
-///          "integer",
-///          "boolean"
-///        ]
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ElicitResult {
     /**The user action in response to the elicitation.
@@ -2383,21 +1029,6 @@ pub struct ElicitResult {
 - "accept": User submitted the form/confirmed the action
 - "decline": User explicitly declined the action
 - "cancel": User dismissed without making an explicit choice*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The user action in response to the elicitation.\n- \"accept\": User submitted the form/confirmed the action\n- \"decline\": User explicitly declined the action\n- \"cancel\": User dismissed without making an explicit choice",
-///  "type": "string",
-///  "enum": [
-///    "accept",
-///    "cancel",
-///    "decline"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2444,14 +1075,6 @@ impl ::core::convert::TryFrom<&str> for ElicitResultAction {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ElicitResultAction {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ElicitResultAction {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -2461,19 +1084,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ElicitResultAction {
     }
 }
 ///`ElicitResultContentValue`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": [
-///    "string",
-///    "integer",
-///    "boolean"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ElicitResultContentValue {
@@ -2504,51 +1114,10 @@ impl ::core::convert::From<i64> for ElicitResultContentValue {
 
 It is up to the client how best to render embedded resources for the benefit
 of the LLM and/or the user.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The contents of a resource, embedded into a prompt or tool call result.\n\nIt is up to the client how best to render embedded resources for the benefit\nof the LLM and/or the user.",
-///  "type": "object",
-///  "required": [
-///    "resource",
-///    "type"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "annotations": {
-///      "description": "Optional annotations for the client.",
-///      "$ref": "#/definitions/Annotations"
-///    },
-///    "resource": {
-///      "anyOf": [
-///        {
-///          "$ref": "#/definitions/TextResourceContents"
-///        },
-///        {
-///          "$ref": "#/definitions/BlobResourceContents"
-///        }
-///      ]
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "resource"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct EmbeddedResource {
     ///Optional annotations for the client.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
     #[serde(
@@ -2562,22 +1131,6 @@ pub struct EmbeddedResource {
     pub type_: EmbeddedResourceType,
 }
 ///`EmbeddedResourceResource`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/TextResourceContents"
-///    },
-///    {
-///      "$ref": "#/definitions/BlobResourceContents"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum EmbeddedResourceResource {
@@ -2595,18 +1148,6 @@ impl ::core::convert::From<BlobResourceContents> for EmbeddedResourceResource {
     }
 }
 ///`EmbeddedResourceType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "resource"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2645,14 +1186,6 @@ impl ::core::convert::TryFrom<&str> for EmbeddedResourceType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for EmbeddedResourceType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for EmbeddedResourceType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -2662,15 +1195,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for EmbeddedResourceType 
     }
 }
 ///`EmptyResult`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "$ref": "#/definitions/Result"
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(transparent)]
 pub struct EmptyResult(pub Result);
@@ -2691,48 +1215,9 @@ impl ::core::convert::From<Result> for EmptyResult {
     }
 }
 ///`EnumSchema`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "enum",
-///    "type"
-///  ],
-///  "properties": {
-///    "description": {
-///      "type": "string"
-///    },
-///    "enum": {
-///      "type": "array",
-///      "items": {
-///        "type": "string"
-///      }
-///    },
-///    "enumNames": {
-///      "type": "array",
-///      "items": {
-///        "type": "string"
-///      }
-///    },
-///    "title": {
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "string"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct EnumSchema {
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "enum")]
     pub enum_: ::alloc::vec::Vec<::alloc::string::String>,
@@ -2742,24 +1227,12 @@ pub struct EnumSchema {
         skip_serializing_if = "::alloc::vec::Vec::is_empty"
     )]
     pub enum_names: ::alloc::vec::Vec<::alloc::string::String>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
     pub type_: EnumSchemaType,
 }
 ///`EnumSchemaType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "string"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2798,14 +1271,6 @@ impl ::core::convert::TryFrom<&str> for EnumSchemaType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for EnumSchemaType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for EnumSchemaType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -2815,65 +1280,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for EnumSchemaType {
     }
 }
 ///Used by the client to get a prompt provided by the server.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Used by the client to get a prompt provided by the server.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "prompts/get"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "name"
-///      ],
-///      "properties": {
-///        "arguments": {
-///          "description": "Arguments to use for templating the prompt.",
-///          "type": "object",
-///          "additionalProperties": {
-///            "type": "string"
-///          }
-///        },
-///        "name": {
-///          "description": "The name of the prompt or prompt template.",
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct GetPromptRequest {
     pub method: GetPromptRequestMethod,
     pub params: GetPromptRequestParams,
 }
 ///`GetPromptRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "prompts/get"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2912,14 +1324,6 @@ impl ::core::convert::TryFrom<&str> for GetPromptRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for GetPromptRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for GetPromptRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -2929,31 +1333,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for GetPromptRequestMetho
     }
 }
 ///`GetPromptRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "name"
-///  ],
-///  "properties": {
-///    "arguments": {
-///      "description": "Arguments to use for templating the prompt.",
-///      "type": "object",
-///      "additionalProperties": {
-///        "type": "string"
-///      }
-///    },
-///    "name": {
-///      "description": "The name of the prompt or prompt template.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct GetPromptRequestParams {
     ///Arguments to use for templating the prompt.
@@ -2966,40 +1345,10 @@ pub struct GetPromptRequestParams {
     pub name: ::alloc::string::String,
 }
 ///The server's response to a prompts/get request from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's response to a prompts/get request from the client.",
-///  "type": "object",
-///  "required": [
-///    "messages"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "description": {
-///      "description": "An optional description for the prompt.",
-///      "type": "string"
-///    },
-///    "messages": {
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/PromptMessage"
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct GetPromptResult {
     ///An optional description for the prompt.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     pub messages: ::alloc::vec::Vec<PromptMessage>,
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -3011,51 +1360,10 @@ pub struct GetPromptResult {
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///An image provided to or from an LLM.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "An image provided to or from an LLM.",
-///  "type": "object",
-///  "required": [
-///    "data",
-///    "mimeType",
-///    "type"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "annotations": {
-///      "description": "Optional annotations for the client.",
-///      "$ref": "#/definitions/Annotations"
-///    },
-///    "data": {
-///      "description": "The base64-encoded image data.",
-///      "type": "string",
-///      "format": "byte"
-///    },
-///    "mimeType": {
-///      "description": "The MIME type of the image. Different providers may support different image types.",
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "image"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ImageContent {
     ///Optional annotations for the client.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
     ///The base64-encoded image data.
     pub data: ::alloc::string::String,
@@ -3073,18 +1381,6 @@ pub struct ImageContent {
     pub type_: ImageContentType,
 }
 ///`ImageContentType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "image"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3123,14 +1419,6 @@ impl ::core::convert::TryFrom<&str> for ImageContentType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ImageContentType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ImageContentType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -3140,33 +1428,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ImageContentType {
     }
 }
 ///Describes the name and version of an MCP implementation, with an optional title for UI representation.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Describes the name and version of an MCP implementation, with an optional title for UI representation.",
-///  "type": "object",
-///  "required": [
-///    "name",
-///    "version"
-///  ],
-///  "properties": {
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    },
-///    "version": {
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Implementation {
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
@@ -3177,71 +1438,17 @@ pub struct Implementation {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     pub version: ::alloc::string::String,
 }
 ///This request is sent from the client to the server when it first connects, asking it to begin initialization.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "This request is sent from the client to the server when it first connects, asking it to begin initialization.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "initialize"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "capabilities",
-///        "clientInfo",
-///        "protocolVersion"
-///      ],
-///      "properties": {
-///        "capabilities": {
-///          "$ref": "#/definitions/ClientCapabilities"
-///        },
-///        "clientInfo": {
-///          "$ref": "#/definitions/Implementation"
-///        },
-///        "protocolVersion": {
-///          "description": "The latest version of the Model Context Protocol that the client supports. The client MAY decide to support older versions as well.",
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InitializeRequest {
     pub method: InitializeRequestMethod,
     pub params: InitializeRequestParams,
 }
 ///`InitializeRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "initialize"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3280,14 +1487,6 @@ impl ::core::convert::TryFrom<&str> for InitializeRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for InitializeRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for InitializeRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -3297,32 +1496,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for InitializeRequestMeth
     }
 }
 ///`InitializeRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "capabilities",
-///    "clientInfo",
-///    "protocolVersion"
-///  ],
-///  "properties": {
-///    "capabilities": {
-///      "$ref": "#/definitions/ClientCapabilities"
-///    },
-///    "clientInfo": {
-///      "$ref": "#/definitions/Implementation"
-///    },
-///    "protocolVersion": {
-///      "description": "The latest version of the Model Context Protocol that the client supports. The client MAY decide to support older versions as well.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InitializeRequestParams {
     pub capabilities: ClientCapabilities,
@@ -3333,49 +1506,13 @@ pub struct InitializeRequestParams {
     pub protocol_version: ::alloc::string::String,
 }
 ///After receiving an initialize request from the client, the server sends this response.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "After receiving an initialize request from the client, the server sends this response.",
-///  "type": "object",
-///  "required": [
-///    "capabilities",
-///    "protocolVersion",
-///    "serverInfo"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "capabilities": {
-///      "$ref": "#/definitions/ServerCapabilities"
-///    },
-///    "instructions": {
-///      "description": "Instructions describing how to use the server and its features.\n\nThis can be used by clients to improve the LLM's understanding of available tools, resources, etc. It can be thought of like a \"hint\" to the model. For example, this information MAY be added to the system prompt.",
-///      "type": "string"
-///    },
-///    "protocolVersion": {
-///      "description": "The version of the Model Context Protocol that the server wants to use. This may not match the version that the client requested. If the client cannot support this version, it MUST disconnect.",
-///      "type": "string"
-///    },
-///    "serverInfo": {
-///      "$ref": "#/definitions/Implementation"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InitializeResult {
     pub capabilities: ServerCapabilities,
     /**Instructions describing how to use the server and its features.
 
     This can be used by clients to improve the LLM's understanding of available tools, resources, etc. It can be thought of like a "hint" to the model. For example, this information MAY be added to the system prompt.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub instructions: ::core::option::Option<::alloc::string::String>,
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
     #[serde(
@@ -3391,57 +1528,13 @@ pub struct InitializeResult {
     pub server_info: Implementation,
 }
 ///This notification is sent from the client to the server after initialization has finished.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "This notification is sent from the client to the server after initialization has finished.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/initialized"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InitializedNotification {
     pub method: InitializedNotificationMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<InitializedNotificationParams>,
 }
 ///`InitializedNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/initialized"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3480,14 +1573,6 @@ impl ::core::convert::TryFrom<&str> for InitializedNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for InitializedNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for InitializedNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -3497,23 +1582,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for InitializedNotificati
     }
 }
 ///`InitializedNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InitializedNotificationParams {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -3527,17 +1595,6 @@ pub struct InitializedNotificationParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///An arbitrary JSON object.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "An arbitrary JSON object.",
-///  "type": "object",
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(transparent)]
 pub struct JsonObject(pub ::serde_json::Map<::alloc::string::String, ::serde_json::Value>);
@@ -3562,52 +1619,6 @@ impl ::core::convert::From<::serde_json::Map<::alloc::string::String, ::serde_js
     }
 }
 ///A response to a request that indicates an error occurred.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A response to a request that indicates an error occurred.",
-///  "type": "object",
-///  "required": [
-///    "error",
-///    "id",
-///    "jsonrpc"
-///  ],
-///  "properties": {
-///    "error": {
-///      "type": "object",
-///      "required": [
-///        "code",
-///        "message"
-///      ],
-///      "properties": {
-///        "code": {
-///          "description": "The error type that occurred.",
-///          "type": "integer"
-///        },
-///        "data": {
-///          "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
-///        },
-///        "message": {
-///          "description": "A short description of the error. The message SHOULD be limited to a concise single sentence.",
-///          "type": "string"
-///        }
-///      }
-///    },
-///    "id": {
-///      "$ref": "#/definitions/RequestId"
-///    },
-///    "jsonrpc": {
-///      "type": "string",
-///      "enum": [
-///        "2.0"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcError {
     pub error: JsonrpcErrorError,
@@ -3615,55 +1626,17 @@ pub struct JsonrpcError {
     pub jsonrpc: JsonrpcErrorJsonrpc,
 }
 ///`JsonrpcErrorError`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "code",
-///    "message"
-///  ],
-///  "properties": {
-///    "code": {
-///      "description": "The error type that occurred.",
-///      "type": "integer"
-///    },
-///    "data": {
-///      "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
-///    },
-///    "message": {
-///      "description": "A short description of the error. The message SHOULD be limited to a concise single sentence.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcErrorError {
     ///The error type that occurred.
     pub code: i64,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub data: ::core::option::Option<::serde_json::Value>,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
 }
 ///`JsonrpcErrorJsonrpc`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "2.0"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3702,14 +1675,6 @@ impl ::core::convert::TryFrom<&str> for JsonrpcErrorJsonrpc {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for JsonrpcErrorJsonrpc {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcErrorJsonrpc {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -3719,29 +1684,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcErrorJsonrpc {
     }
 }
 ///Refers to any valid JSON-RPC object that can be decoded off the wire, or encoded to be sent.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Refers to any valid JSON-RPC object that can be decoded off the wire, or encoded to be sent.",
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/JSONRPCRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/JSONRPCNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/JSONRPCResponse"
-///    },
-///    {
-///      "$ref": "#/definitions/JSONRPCError"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum JsonrpcMessage {
@@ -3771,62 +1713,14 @@ impl ::core::convert::From<JsonrpcError> for JsonrpcMessage {
     }
 }
 ///A notification which does not expect a response.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A notification which does not expect a response.",
-///  "type": "object",
-///  "required": [
-///    "jsonrpc",
-///    "method"
-///  ],
-///  "properties": {
-///    "jsonrpc": {
-///      "type": "string",
-///      "enum": [
-///        "2.0"
-///      ]
-///    },
-///    "method": {
-///      "type": "string"
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcNotification {
     pub jsonrpc: JsonrpcNotificationJsonrpc,
     pub method: ::alloc::string::String,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<JsonrpcNotificationParams>,
 }
 ///`JsonrpcNotificationJsonrpc`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "2.0"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3865,14 +1759,6 @@ impl ::core::convert::TryFrom<&str> for JsonrpcNotificationJsonrpc {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for JsonrpcNotificationJsonrpc {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcNotificationJsonrpc {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -3882,23 +1768,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcNotificationJs
     }
 }
 ///`JsonrpcNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcNotificationParams {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -3912,73 +1781,15 @@ pub struct JsonrpcNotificationParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///A request that expects a response.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A request that expects a response.",
-///  "type": "object",
-///  "required": [
-///    "id",
-///    "jsonrpc",
-///    "method"
-///  ],
-///  "properties": {
-///    "id": {
-///      "$ref": "#/definitions/RequestId"
-///    },
-///    "jsonrpc": {
-///      "type": "string",
-///      "enum": [
-///        "2.0"
-///      ]
-///    },
-///    "method": {
-///      "type": "string"
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "properties": {
-///            "progressToken": {
-///              "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///              "$ref": "#/definitions/ProgressToken"
-///            }
-///          },
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcRequest {
     pub id: RequestId,
     pub jsonrpc: JsonrpcRequestJsonrpc,
     pub method: ::alloc::string::String,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<JsonrpcRequestParams>,
 }
 ///`JsonrpcRequestJsonrpc`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "2.0"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4017,14 +1828,6 @@ impl ::core::convert::TryFrom<&str> for JsonrpcRequestJsonrpc {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for JsonrpcRequestJsonrpc {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcRequestJsonrpc {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -4034,34 +1837,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcRequestJsonrpc
     }
 }
 ///`JsonrpcRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "properties": {
-///        "progressToken": {
-///          "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///          "$ref": "#/definitions/ProgressToken"
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcRequestParams {
     #[serde(
         rename = "_meta",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<JsonrpcRequestParamsMeta>,
@@ -4069,29 +1848,11 @@ pub struct JsonrpcRequestParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///  "type": "object",
-///  "properties": {
-///    "progressToken": {
-///      "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///      "$ref": "#/definitions/ProgressToken"
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcRequestParamsMeta {
     ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
     #[serde(
         rename = "progressToken",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub progress_token: ::core::option::Option<ProgressToken>,
@@ -4099,35 +1860,6 @@ pub struct JsonrpcRequestParamsMeta {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///A successful (non-error) response to a request.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A successful (non-error) response to a request.",
-///  "type": "object",
-///  "required": [
-///    "id",
-///    "jsonrpc",
-///    "result"
-///  ],
-///  "properties": {
-///    "id": {
-///      "$ref": "#/definitions/RequestId"
-///    },
-///    "jsonrpc": {
-///      "type": "string",
-///      "enum": [
-///        "2.0"
-///      ]
-///    },
-///    "result": {
-///      "$ref": "#/definitions/Result"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcResponse {
     pub id: RequestId,
@@ -4135,18 +1867,6 @@ pub struct JsonrpcResponse {
     pub result: Result,
 }
 ///`JsonrpcResponseJsonrpc`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "2.0"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4185,14 +1905,6 @@ impl ::core::convert::TryFrom<&str> for JsonrpcResponseJsonrpc {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for JsonrpcResponseJsonrpc {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcResponseJsonrpc {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -4202,55 +1914,13 @@ impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcResponseJsonrp
     }
 }
 ///Sent from the client to request a list of prompts and prompt templates the server has.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Sent from the client to request a list of prompts and prompt templates the server has.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "prompts/list"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "cursor": {
-///          "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListPromptsRequest {
     pub method: ListPromptsRequestMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<ListPromptsRequestParams>,
 }
 ///`ListPromptsRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "prompts/list"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4289,14 +1959,6 @@ impl ::core::convert::TryFrom<&str> for ListPromptsRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ListPromptsRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ListPromptsRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -4306,66 +1968,14 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListPromptsRequestMet
     }
 }
 ///`ListPromptsRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "cursor": {
-///      "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ListPromptsRequestParams {
     /**An opaque token representing the current pagination position.
     If provided, the server should return results starting after this cursor.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
-impl ::core::default::Default for ListPromptsRequestParams {
-    fn default() -> Self {
-        Self {
-            cursor: Default::default(),
-        }
-    }
-}
 ///The server's response to a prompts/list request from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's response to a prompts/list request from the client.",
-///  "type": "object",
-///  "required": [
-///    "prompts"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "nextCursor": {
-///      "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
-///      "type": "string"
-///    },
-///    "prompts": {
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/Prompt"
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListPromptsResult {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -4379,62 +1989,19 @@ pub struct ListPromptsResult {
     If present, there may be more results available.*/
     #[serde(
         rename = "nextCursor",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     pub prompts: ::alloc::vec::Vec<Prompt>,
 }
 ///Sent from the client to request a list of resource templates the server has.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Sent from the client to request a list of resource templates the server has.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "resources/templates/list"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "cursor": {
-///          "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourceTemplatesRequest {
     pub method: ListResourceTemplatesRequestMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<ListResourceTemplatesRequestParams>,
 }
 ///`ListResourceTemplatesRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "resources/templates/list"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4473,14 +2040,6 @@ impl ::core::convert::TryFrom<&str> for ListResourceTemplatesRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ListResourceTemplatesRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ListResourceTemplatesRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -4490,66 +2049,14 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListResourceTemplates
     }
 }
 ///`ListResourceTemplatesRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "cursor": {
-///      "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ListResourceTemplatesRequestParams {
     /**An opaque token representing the current pagination position.
     If provided, the server should return results starting after this cursor.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
-impl ::core::default::Default for ListResourceTemplatesRequestParams {
-    fn default() -> Self {
-        Self {
-            cursor: Default::default(),
-        }
-    }
-}
 ///The server's response to a resources/templates/list request from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's response to a resources/templates/list request from the client.",
-///  "type": "object",
-///  "required": [
-///    "resourceTemplates"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "nextCursor": {
-///      "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
-///      "type": "string"
-///    },
-///    "resourceTemplates": {
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/ResourceTemplate"
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourceTemplatesResult {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -4563,7 +2070,6 @@ pub struct ListResourceTemplatesResult {
     If present, there may be more results available.*/
     #[serde(
         rename = "nextCursor",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
@@ -4571,55 +2077,13 @@ pub struct ListResourceTemplatesResult {
     pub resource_templates: ::alloc::vec::Vec<ResourceTemplate>,
 }
 ///Sent from the client to request a list of resources the server has.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Sent from the client to request a list of resources the server has.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "resources/list"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "cursor": {
-///          "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourcesRequest {
     pub method: ListResourcesRequestMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<ListResourcesRequestParams>,
 }
 ///`ListResourcesRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "resources/list"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4658,14 +2122,6 @@ impl ::core::convert::TryFrom<&str> for ListResourcesRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ListResourcesRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ListResourcesRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -4675,66 +2131,14 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListResourcesRequestM
     }
 }
 ///`ListResourcesRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "cursor": {
-///      "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ListResourcesRequestParams {
     /**An opaque token representing the current pagination position.
     If provided, the server should return results starting after this cursor.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
-impl ::core::default::Default for ListResourcesRequestParams {
-    fn default() -> Self {
-        Self {
-            cursor: Default::default(),
-        }
-    }
-}
 ///The server's response to a resources/list request from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's response to a resources/list request from the client.",
-///  "type": "object",
-///  "required": [
-///    "resources"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "nextCursor": {
-///      "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
-///      "type": "string"
-///    },
-///    "resources": {
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/Resource"
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourcesResult {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -4748,7 +2152,6 @@ pub struct ListResourcesResult {
     If present, there may be more results available.*/
     #[serde(
         rename = "nextCursor",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
@@ -4761,63 +2164,13 @@ on.
 
 This request is typically used when the server needs to understand the file system
 structure or access specific locations that the client has permission to read from.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Sent from the server to request a list of root URIs from the client. Roots allow\nservers to ask for specific directories or files to operate on. A common example\nfor roots is providing a set of repositories or directories a server should operate\non.\n\nThis request is typically used when the server needs to understand the file system\nstructure or access specific locations that the client has permission to read from.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "roots/list"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "properties": {
-///            "progressToken": {
-///              "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///              "$ref": "#/definitions/ProgressToken"
-///            }
-///          },
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsRequest {
     pub method: ListRootsRequestMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<ListRootsRequestParams>,
 }
 ///`ListRootsRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "roots/list"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4856,14 +2209,6 @@ impl ::core::convert::TryFrom<&str> for ListRootsRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ListRootsRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ListRootsRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -4873,34 +2218,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListRootsRequestMetho
     }
 }
 ///`ListRootsRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "properties": {
-///        "progressToken": {
-///          "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///          "$ref": "#/definitions/ProgressToken"
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsRequestParams {
     #[serde(
         rename = "_meta",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ListRootsRequestParamsMeta>,
@@ -4908,29 +2229,11 @@ pub struct ListRootsRequestParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///  "type": "object",
-///  "properties": {
-///    "progressToken": {
-///      "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///      "$ref": "#/definitions/ProgressToken"
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsRequestParamsMeta {
     ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
     #[serde(
         rename = "progressToken",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub progress_token: ::core::option::Option<ProgressToken>,
@@ -4940,32 +2243,6 @@ pub struct ListRootsRequestParamsMeta {
 /**The client's response to a roots/list request from the server.
 This result contains an array of Root objects, each representing a root directory
 or file that the server can operate on.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The client's response to a roots/list request from the server.\nThis result contains an array of Root objects, each representing a root directory\nor file that the server can operate on.",
-///  "type": "object",
-///  "required": [
-///    "roots"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "roots": {
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/Root"
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsResult {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -4978,55 +2255,13 @@ pub struct ListRootsResult {
     pub roots: ::alloc::vec::Vec<Root>,
 }
 ///Sent from the client to request a list of tools the server has.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Sent from the client to request a list of tools the server has.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "tools/list"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "cursor": {
-///          "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListToolsRequest {
     pub method: ListToolsRequestMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<ListToolsRequestParams>,
 }
 ///`ListToolsRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "tools/list"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -5065,14 +2300,6 @@ impl ::core::convert::TryFrom<&str> for ListToolsRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ListToolsRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ListToolsRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -5082,66 +2309,14 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListToolsRequestMetho
     }
 }
 ///`ListToolsRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "cursor": {
-///      "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ListToolsRequestParams {
     /**An opaque token representing the current pagination position.
     If provided, the server should return results starting after this cursor.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
-impl ::core::default::Default for ListToolsRequestParams {
-    fn default() -> Self {
-        Self {
-            cursor: Default::default(),
-        }
-    }
-}
 ///The server's response to a tools/list request from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's response to a tools/list request from the client.",
-///  "type": "object",
-///  "required": [
-///    "tools"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "nextCursor": {
-///      "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
-///      "type": "string"
-///    },
-///    "tools": {
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/Tool"
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListToolsResult {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -5155,7 +2330,6 @@ pub struct ListToolsResult {
     If present, there may be more results available.*/
     #[serde(
         rename = "nextCursor",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
@@ -5165,26 +2339,6 @@ pub struct ListToolsResult {
 
 These map to syslog message severities, as specified in RFC-5424:
 https://datatracker.ietf.org/doc/html/rfc5424#section-6.2.1*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The severity of a log message.\n\nThese map to syslog message severities, as specified in RFC-5424:\nhttps://datatracker.ietf.org/doc/html/rfc5424#section-6.2.1",
-///  "type": "string",
-///  "enum": [
-///    "alert",
-///    "critical",
-///    "debug",
-///    "emergency",
-///    "error",
-///    "info",
-///    "notice",
-///    "warning"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -5251,14 +2405,6 @@ impl ::core::convert::TryFrom<&str> for LoggingLevel {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for LoggingLevel {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for LoggingLevel {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -5268,66 +2414,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for LoggingLevel {
     }
 }
 ///Notification of a log message passed from server to client. If no logging/setLevel request has been sent from the client, the server MAY decide which messages to send automatically.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Notification of a log message passed from server to client. If no logging/setLevel request has been sent from the client, the server MAY decide which messages to send automatically.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/message"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "data",
-///        "level"
-///      ],
-///      "properties": {
-///        "data": {
-///          "description": "The data to be logged, such as a string message or an object. Any JSON serializable type is allowed here."
-///        },
-///        "level": {
-///          "description": "The severity of this log message.",
-///          "$ref": "#/definitions/LoggingLevel"
-///        },
-///        "logger": {
-///          "description": "An optional name of the logger issuing this message.",
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct LoggingMessageNotification {
     pub method: LoggingMessageNotificationMethod,
     pub params: LoggingMessageNotificationParams,
 }
 ///`LoggingMessageNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/message"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -5366,14 +2458,6 @@ impl ::core::convert::TryFrom<&str> for LoggingMessageNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for LoggingMessageNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for LoggingMessageNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -5383,32 +2467,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for LoggingMessageNotific
     }
 }
 ///`LoggingMessageNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "data",
-///    "level"
-///  ],
-///  "properties": {
-///    "data": {
-///      "description": "The data to be logged, such as a string message or an object. Any JSON serializable type is allowed here."
-///    },
-///    "level": {
-///      "description": "The severity of this log message.",
-///      "$ref": "#/definitions/LoggingLevel"
-///    },
-///    "logger": {
-///      "description": "An optional name of the logger issuing this message.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct LoggingMessageNotificationParams {
     ///The data to be logged, such as a string message or an object. Any JSON serializable type is allowed here.
@@ -5416,30 +2474,14 @@ pub struct LoggingMessageNotificationParams {
     ///The severity of this log message.
     pub level: LoggingLevel,
     ///An optional name of the logger issuing this message.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub logger: ::core::option::Option<::alloc::string::String>,
 }
 /**Hints to use for model selection.
 
 Keys not declared here are currently left unspecified by the spec and are up
 to the client to interpret.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Hints to use for model selection.\n\nKeys not declared here are currently left unspecified by the spec and are up\nto the client to interpret.",
-///  "type": "object",
-///  "properties": {
-///    "name": {
-///      "description": "A hint for a model name.\n\nThe client SHOULD treat this as a substring of a model name; for example:\n - `claude-3-5-sonnet` should match `claude-3-5-sonnet-20241022`\n - `sonnet` should match `claude-3-5-sonnet-20241022`, `claude-3-sonnet-20240229`, etc.\n - `claude` should match any Claude model\n\nThe client MAY also map the string to a different provider's model name or a different model family, as long as it fills a similar niche; for example:\n - `gemini-1.5-flash` could match `claude-3-haiku-20240307`",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ModelHint {
     /**A hint for a model name.
 
@@ -5450,15 +2492,8 @@ pub struct ModelHint {
 
     The client MAY also map the string to a different provider's model name or a different model family, as long as it fills a similar niche; for example:
      - `gemini-1.5-flash` could match `claude-3-haiku-20240307`*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::alloc::string::String>,
-}
-impl ::core::default::Default for ModelHint {
-    fn default() -> Self {
-        Self {
-            name: Default::default(),
-        }
-    }
 }
 /**The server's preferences for model selection, requested of the client during sampling.
 
@@ -5471,51 +2506,13 @@ dimensions to help clients make an appropriate selection for their use case.
 These preferences are always advisory. The client MAY ignore them. It is also
 up to the client to decide how to interpret these preferences and how to
 balance them against other considerations.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's preferences for model selection, requested of the client during sampling.\n\nBecause LLMs can vary along multiple dimensions, choosing the \"best\" model is\nrarely straightforward.  Different models excel in different areas—some are\nfaster but less capable, others are more capable but more expensive, and so\non. This interface allows servers to express their priorities across multiple\ndimensions to help clients make an appropriate selection for their use case.\n\nThese preferences are always advisory. The client MAY ignore them. It is also\nup to the client to decide how to interpret these preferences and how to\nbalance them against other considerations.",
-///  "type": "object",
-///  "properties": {
-///    "costPriority": {
-///      "description": "How much to prioritize cost when selecting a model. A value of 0 means cost\nis not important, while a value of 1 means cost is the most important\nfactor.",
-///      "type": "number",
-///      "maximum": 1.0,
-///      "minimum": 0.0
-///    },
-///    "hints": {
-///      "description": "Optional hints to use for model selection.\n\nIf multiple hints are specified, the client MUST evaluate them in order\n(such that the first match is taken).\n\nThe client SHOULD prioritize these hints over the numeric priorities, but\nMAY still use the priorities to select from ambiguous matches.",
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/ModelHint"
-///      }
-///    },
-///    "intelligencePriority": {
-///      "description": "How much to prioritize intelligence and capabilities when selecting a\nmodel. A value of 0 means intelligence is not important, while a value of 1\nmeans intelligence is the most important factor.",
-///      "type": "number",
-///      "maximum": 1.0,
-///      "minimum": 0.0
-///    },
-///    "speedPriority": {
-///      "description": "How much to prioritize sampling speed (latency) when selecting a model. A\nvalue of 0 means speed is not important, while a value of 1 means speed is\nthe most important factor.",
-///      "type": "number",
-///      "maximum": 1.0,
-///      "minimum": 0.0
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ModelPreferences {
     /**How much to prioritize cost when selecting a model. A value of 0 means cost
     is not important, while a value of 1 means cost is the most important
     factor.*/
     #[serde(
         rename = "costPriority",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub cost_priority: ::core::option::Option<f64>,
@@ -5533,7 +2530,6 @@ pub struct ModelPreferences {
     means intelligence is the most important factor.*/
     #[serde(
         rename = "intelligencePriority",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub intelligence_priority: ::core::option::Option<f64>,
@@ -5542,74 +2538,18 @@ pub struct ModelPreferences {
     the most important factor.*/
     #[serde(
         rename = "speedPriority",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub speed_priority: ::core::option::Option<f64>,
 }
-impl ::core::default::Default for ModelPreferences {
-    fn default() -> Self {
-        Self {
-            cost_priority: Default::default(),
-            hints: Default::default(),
-            intelligence_priority: Default::default(),
-            speed_priority: Default::default(),
-        }
-    }
-}
 ///`Notification`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string"
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Notification {
     pub method: ::alloc::string::String,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<NotificationParams>,
 }
 ///`NotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct NotificationParams {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -5623,66 +2563,20 @@ pub struct NotificationParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///`NumberSchema`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "type"
-///  ],
-///  "properties": {
-///    "description": {
-///      "type": "string"
-///    },
-///    "maximum": {
-///      "type": "number"
-///    },
-///    "minimum": {
-///      "type": "number"
-///    },
-///    "title": {
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "integer",
-///        "number"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct NumberSchema {
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub maximum: ::core::option::Option<f64>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub minimum: ::core::option::Option<f64>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
     pub type_: NumberSchemaType,
 }
 ///`NumberSchemaType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "integer",
-///    "number"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -5725,14 +2619,6 @@ impl ::core::convert::TryFrom<&str> for NumberSchemaType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for NumberSchemaType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for NumberSchemaType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -5742,90 +2628,22 @@ impl ::core::convert::TryFrom<::alloc::string::String> for NumberSchemaType {
     }
 }
 ///`PaginatedRequest`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string"
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "cursor": {
-///          "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///          "type": "string"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PaginatedRequest {
     pub method: ::alloc::string::String,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<PaginatedRequestParams>,
 }
 ///`PaginatedRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "cursor": {
-///      "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct PaginatedRequestParams {
     /**An opaque token representing the current pagination position.
     If provided, the server should return results starting after this cursor.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
-impl ::core::default::Default for PaginatedRequestParams {
-    fn default() -> Self {
-        Self {
-            cursor: Default::default(),
-        }
-    }
-}
 ///`PaginatedResult`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "nextCursor": {
-///      "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct PaginatedResult {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
     #[serde(
@@ -5838,77 +2656,18 @@ pub struct PaginatedResult {
     If present, there may be more results available.*/
     #[serde(
         rename = "nextCursor",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
 }
-impl ::core::default::Default for PaginatedResult {
-    fn default() -> Self {
-        Self {
-            meta: Default::default(),
-            next_cursor: Default::default(),
-        }
-    }
-}
 ///A ping, issued by either the server or the client, to check that the other party is still alive. The receiver must promptly respond, or else may be disconnected.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A ping, issued by either the server or the client, to check that the other party is still alive. The receiver must promptly respond, or else may be disconnected.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "ping"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "properties": {
-///            "progressToken": {
-///              "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///              "$ref": "#/definitions/ProgressToken"
-///            }
-///          },
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PingRequest {
     pub method: PingRequestMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<PingRequestParams>,
 }
 ///`PingRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "ping"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -5947,14 +2706,6 @@ impl ::core::convert::TryFrom<&str> for PingRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for PingRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for PingRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -5964,34 +2715,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for PingRequestMethod {
     }
 }
 ///`PingRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "properties": {
-///        "progressToken": {
-///          "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///          "$ref": "#/definitions/ProgressToken"
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PingRequestParams {
     #[serde(
         rename = "_meta",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<PingRequestParamsMeta>,
@@ -5999,29 +2726,11 @@ pub struct PingRequestParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///  "type": "object",
-///  "properties": {
-///    "progressToken": {
-///      "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///      "$ref": "#/definitions/ProgressToken"
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PingRequestParamsMeta {
     ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
     #[serde(
         rename = "progressToken",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub progress_token: ::core::option::Option<ProgressToken>,
@@ -6030,132 +2739,24 @@ pub struct PingRequestParamsMeta {
 }
 /**Restricted schema definitions that only allow primitive types
 without nested objects or arrays.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Restricted schema definitions that only allow primitive types\nwithout nested objects or arrays.",
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/StringSchema"
-///    },
-///    {
-///      "$ref": "#/definitions/NumberSchema"
-///    },
-///    {
-///      "$ref": "#/definitions/BooleanSchema"
-///    },
-///    {
-///      "$ref": "#/definitions/EnumSchema"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct PrimitiveSchemaDefinition {
-    #[serde(
-        flatten,
-        default,
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
+    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
     pub subtype_0: ::core::option::Option<StringSchema>,
-    #[serde(
-        flatten,
-        default,
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
+    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
     pub subtype_1: ::core::option::Option<NumberSchema>,
-    #[serde(
-        flatten,
-        default,
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
+    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
     pub subtype_2: ::core::option::Option<BooleanSchema>,
-    #[serde(
-        flatten,
-        default,
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
+    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
     pub subtype_3: ::core::option::Option<EnumSchema>,
 }
-impl ::core::default::Default for PrimitiveSchemaDefinition {
-    fn default() -> Self {
-        Self {
-            subtype_0: Default::default(),
-            subtype_1: Default::default(),
-            subtype_2: Default::default(),
-            subtype_3: Default::default(),
-        }
-    }
-}
 ///An out-of-band notification used to inform the receiver of a progress update for a long-running request.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "An out-of-band notification used to inform the receiver of a progress update for a long-running request.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/progress"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "progress",
-///        "progressToken"
-///      ],
-///      "properties": {
-///        "message": {
-///          "description": "An optional message describing the current progress.",
-///          "type": "string"
-///        },
-///        "progress": {
-///          "description": "The progress thus far. This should increase every time progress is made, even if the total is unknown.",
-///          "type": "number"
-///        },
-///        "progressToken": {
-///          "description": "The progress token which was given in the initial request, used to associate this notification with the request that is proceeding.",
-///          "$ref": "#/definitions/ProgressToken"
-///        },
-///        "total": {
-///          "description": "Total number of items to process (or total progress required), if known.",
-///          "type": "number"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ProgressNotification {
     pub method: ProgressNotificationMethod,
     pub params: ProgressNotificationParams,
 }
 ///`ProgressNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/progress"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -6194,14 +2795,6 @@ impl ::core::convert::TryFrom<&str> for ProgressNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ProgressNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ProgressNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -6211,41 +2804,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ProgressNotificationM
     }
 }
 ///`ProgressNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "progress",
-///    "progressToken"
-///  ],
-///  "properties": {
-///    "message": {
-///      "description": "An optional message describing the current progress.",
-///      "type": "string"
-///    },
-///    "progress": {
-///      "description": "The progress thus far. This should increase every time progress is made, even if the total is unknown.",
-///      "type": "number"
-///    },
-///    "progressToken": {
-///      "description": "The progress token which was given in the initial request, used to associate this notification with the request that is proceeding.",
-///      "$ref": "#/definitions/ProgressToken"
-///    },
-///    "total": {
-///      "description": "Total number of items to process (or total progress required), if known.",
-///      "type": "number"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ProgressNotificationParams {
     ///An optional message describing the current progress.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub message: ::core::option::Option<::alloc::string::String>,
     ///The progress thus far. This should increase every time progress is made, even if the total is unknown.
     pub progress: f64,
@@ -6253,23 +2815,10 @@ pub struct ProgressNotificationParams {
     #[serde(rename = "progressToken")]
     pub progress_token: ProgressToken,
     ///Total number of items to process (or total progress required), if known.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub total: ::core::option::Option<f64>,
 }
 ///A progress token, used to associate progress notifications with the original request.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A progress token, used to associate progress notifications with the original request.",
-///  "type": [
-///    "string",
-///    "integer"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ProgressToken {
@@ -6290,52 +2839,13 @@ impl ::core::convert::From<i64> for ProgressToken {
     }
 }
 ///A prompt or prompt template that the server offers.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A prompt or prompt template that the server offers.",
-///  "type": "object",
-///  "required": [
-///    "name"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "arguments": {
-///      "description": "A list of arguments to use for templating the prompt.",
-///      "type": "array",
-///      "items": {
-///        "$ref": "#/definitions/PromptArgument"
-///      }
-///    },
-///    "description": {
-///      "description": "An optional description of what this prompt provides",
-///      "type": "string"
-///    },
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Prompt {
     ///A list of arguments to use for templating the prompt.
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub arguments: ::alloc::vec::Vec<PromptArgument>,
     ///An optional description of what this prompt provides
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
     #[serde(
@@ -6352,50 +2862,19 @@ pub struct Prompt {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
 ///Describes an argument that a prompt can accept.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Describes an argument that a prompt can accept.",
-///  "type": "object",
-///  "required": [
-///    "name"
-///  ],
-///  "properties": {
-///    "description": {
-///      "description": "A human-readable description of the argument.",
-///      "type": "string"
-///    },
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "required": {
-///      "description": "Whether this argument must be provided.",
-///      "type": "boolean"
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptArgument {
     ///A human-readable description of the argument.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
     ///Whether this argument must be provided.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub required: ::core::option::Option<bool>,
     /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
     even by those unfamiliar with domain-specific terminology.
@@ -6403,61 +2882,17 @@ pub struct PromptArgument {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
 ///An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This may be issued by servers without any previous subscription from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This may be issued by servers without any previous subscription from the client.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/prompts/list_changed"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptListChangedNotification {
     pub method: PromptListChangedNotificationMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<PromptListChangedNotificationParams>,
 }
 ///`PromptListChangedNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/prompts/list_changed"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -6498,14 +2933,6 @@ impl ::core::convert::TryFrom<&str> for PromptListChangedNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for PromptListChangedNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for PromptListChangedNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -6515,23 +2942,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for PromptListChangedNoti
     }
 }
 ///`PromptListChangedNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptListChangedNotificationParams {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -6548,64 +2958,12 @@ pub struct PromptListChangedNotificationParams {
 
 This is similar to `SamplingMessage`, but also supports the embedding of
 resources from the MCP server.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Describes a message returned as part of a prompt.\n\nThis is similar to `SamplingMessage`, but also supports the embedding of\nresources from the MCP server.",
-///  "type": "object",
-///  "required": [
-///    "content",
-///    "role"
-///  ],
-///  "properties": {
-///    "content": {
-///      "$ref": "#/definitions/ContentBlock"
-///    },
-///    "role": {
-///      "$ref": "#/definitions/Role"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptMessage {
     pub content: ContentBlock,
     pub role: Role,
 }
 ///Identifies a prompt.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Identifies a prompt.",
-///  "type": "object",
-///  "required": [
-///    "name",
-///    "type"
-///  ],
-///  "properties": {
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "ref/prompt"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptReference {
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
@@ -6616,24 +2974,12 @@ pub struct PromptReference {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
     pub type_: PromptReferenceType,
 }
 ///`PromptReferenceType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "ref/prompt"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -6672,14 +3018,6 @@ impl ::core::convert::TryFrom<&str> for PromptReferenceType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for PromptReferenceType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for PromptReferenceType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -6689,59 +3027,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for PromptReferenceType {
     }
 }
 ///Sent from the client to the server, to read a specific resource URI.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Sent from the client to the server, to read a specific resource URI.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "resources/read"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "uri"
-///      ],
-///      "properties": {
-///        "uri": {
-///          "description": "The URI of the resource to read. The URI can use any protocol; it is up to the server how to interpret it.",
-///          "type": "string",
-///          "format": "uri"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ReadResourceRequest {
     pub method: ReadResourceRequestMethod,
     pub params: ReadResourceRequestParams,
 }
 ///`ReadResourceRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "resources/read"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -6780,14 +3071,6 @@ impl ::core::convert::TryFrom<&str> for ReadResourceRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ReadResourceRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ReadResourceRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -6797,64 +3080,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ReadResourceRequestMe
     }
 }
 ///`ReadResourceRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "uri"
-///  ],
-///  "properties": {
-///    "uri": {
-///      "description": "The URI of the resource to read. The URI can use any protocol; it is up to the server how to interpret it.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ReadResourceRequestParams {
     ///The URI of the resource to read. The URI can use any protocol; it is up to the server how to interpret it.
     pub uri: ::alloc::string::String,
 }
 ///The server's response to a resources/read request from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The server's response to a resources/read request from the client.",
-///  "type": "object",
-///  "required": [
-///    "contents"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "contents": {
-///      "type": "array",
-///      "items": {
-///        "anyOf": [
-///          {
-///            "$ref": "#/definitions/TextResourceContents"
-///          },
-///          {
-///            "$ref": "#/definitions/BlobResourceContents"
-///          }
-///        ]
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ReadResourceResult {
     pub contents: ::alloc::vec::Vec<ReadResourceResultContentsItem>,
@@ -6867,22 +3098,6 @@ pub struct ReadResourceResult {
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///`ReadResourceResultContentsItem`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/TextResourceContents"
-///    },
-///    {
-///      "$ref": "#/definitions/BlobResourceContents"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ReadResourceResultContentsItem {
@@ -6900,60 +3115,13 @@ impl ::core::convert::From<BlobResourceContents> for ReadResourceResultContentsI
     }
 }
 ///`Request`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string"
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "properties": {
-///            "progressToken": {
-///              "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///              "$ref": "#/definitions/ProgressToken"
-///            }
-///          },
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Request {
     pub method: ::alloc::string::String,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<RequestParams>,
 }
 ///A uniquely identifying ID for a request in JSON-RPC.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A uniquely identifying ID for a request in JSON-RPC.",
-///  "type": [
-///    "string",
-///    "integer"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum RequestId {
@@ -6974,34 +3142,10 @@ impl ::core::convert::From<i64> for RequestId {
     }
 }
 ///`RequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "properties": {
-///        "progressToken": {
-///          "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///          "$ref": "#/definitions/ProgressToken"
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RequestParams {
     #[serde(
         rename = "_meta",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<RequestParamsMeta>,
@@ -7009,29 +3153,11 @@ pub struct RequestParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///  "type": "object",
-///  "properties": {
-///    "progressToken": {
-///      "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.",
-///      "$ref": "#/definitions/ProgressToken"
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RequestParamsMeta {
     ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
     #[serde(
         rename = "progressToken",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub progress_token: ::core::option::Option<ProgressToken>,
@@ -7039,65 +3165,15 @@ pub struct RequestParamsMeta {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///A known resource that the server is capable of reading.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A known resource that the server is capable of reading.",
-///  "type": "object",
-///  "required": [
-///    "name",
-///    "uri"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "annotations": {
-///      "description": "Optional annotations for the client.",
-///      "$ref": "#/definitions/Annotations"
-///    },
-///    "description": {
-///      "description": "A description of what this resource represents.\n\nThis can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a \"hint\" to the model.",
-///      "type": "string"
-///    },
-///    "mimeType": {
-///      "description": "The MIME type of this resource, if known.",
-///      "type": "string"
-///    },
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "size": {
-///      "description": "The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.\n\nThis can be used by Hosts to display file sizes and estimate context window usage.",
-///      "type": "integer"
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    },
-///    "uri": {
-///      "description": "The URI of this resource.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Resource {
     ///Optional annotations for the client.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
     /**A description of what this resource represents.
 
     This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
     #[serde(
@@ -7109,7 +3185,6 @@ pub struct Resource {
     ///The MIME type of this resource, if known.
     #[serde(
         rename = "mimeType",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub mime_type: ::core::option::Option<::alloc::string::String>,
@@ -7118,7 +3193,7 @@ pub struct Resource {
     /**The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
 
     This can be used by Hosts to display file sizes and estimate context window usage.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub size: ::core::option::Option<i64>,
     /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
     even by those unfamiliar with domain-specific terminology.
@@ -7126,41 +3201,12 @@ pub struct Resource {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     ///The URI of this resource.
     pub uri: ::alloc::string::String,
 }
 ///The contents of a specific resource or sub-resource.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The contents of a specific resource or sub-resource.",
-///  "type": "object",
-///  "required": [
-///    "uri"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "mimeType": {
-///      "description": "The MIME type of this resource, if known.",
-///      "type": "string"
-///    },
-///    "uri": {
-///      "description": "The URI of this resource.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceContents {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -7173,7 +3219,6 @@ pub struct ResourceContents {
     ///The MIME type of this resource, if known.
     #[serde(
         rename = "mimeType",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub mime_type: ::core::option::Option<::alloc::string::String>,
@@ -7183,72 +3228,15 @@ pub struct ResourceContents {
 /**A resource that the server is capable of reading, included in a prompt or tool call result.
 
 Note: resource links returned by tools are not guaranteed to appear in the results of `resources/list` requests.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A resource that the server is capable of reading, included in a prompt or tool call result.\n\nNote: resource links returned by tools are not guaranteed to appear in the results of `resources/list` requests.",
-///  "type": "object",
-///  "required": [
-///    "name",
-///    "type",
-///    "uri"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "annotations": {
-///      "description": "Optional annotations for the client.",
-///      "$ref": "#/definitions/Annotations"
-///    },
-///    "description": {
-///      "description": "A description of what this resource represents.\n\nThis can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a \"hint\" to the model.",
-///      "type": "string"
-///    },
-///    "mimeType": {
-///      "description": "The MIME type of this resource, if known.",
-///      "type": "string"
-///    },
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "size": {
-///      "description": "The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.\n\nThis can be used by Hosts to display file sizes and estimate context window usage.",
-///      "type": "integer"
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "resource_link"
-///      ]
-///    },
-///    "uri": {
-///      "description": "The URI of this resource.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceLink {
     ///Optional annotations for the client.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
     /**A description of what this resource represents.
 
     This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
     #[serde(
@@ -7260,7 +3248,6 @@ pub struct ResourceLink {
     ///The MIME type of this resource, if known.
     #[serde(
         rename = "mimeType",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub mime_type: ::core::option::Option<::alloc::string::String>,
@@ -7269,7 +3256,7 @@ pub struct ResourceLink {
     /**The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
 
     This can be used by Hosts to display file sizes and estimate context window usage.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub size: ::core::option::Option<i64>,
     /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
     even by those unfamiliar with domain-specific terminology.
@@ -7277,7 +3264,7 @@ pub struct ResourceLink {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
     pub type_: ResourceLinkType,
@@ -7285,18 +3272,6 @@ pub struct ResourceLink {
     pub uri: ::alloc::string::String,
 }
 ///`ResourceLinkType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "resource_link"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7335,14 +3310,6 @@ impl ::core::convert::TryFrom<&str> for ResourceLinkType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ResourceLinkType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ResourceLinkType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -7352,57 +3319,13 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ResourceLinkType {
     }
 }
 ///An optional notification from the server to the client, informing it that the list of resources it can read from has changed. This may be issued by servers without any previous subscription from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "An optional notification from the server to the client, informing it that the list of resources it can read from has changed. This may be issued by servers without any previous subscription from the client.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/resources/list_changed"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceListChangedNotification {
     pub method: ResourceListChangedNotificationMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<ResourceListChangedNotificationParams>,
 }
 ///`ResourceListChangedNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/resources/list_changed"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7443,14 +3366,6 @@ impl ::core::convert::TryFrom<&str> for ResourceListChangedNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ResourceListChangedNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ResourceListChangedNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -7460,23 +3375,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ResourceListChangedNo
     }
 }
 ///`ResourceListChangedNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceListChangedNotificationParams {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -7490,61 +3388,15 @@ pub struct ResourceListChangedNotificationParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///A template description for resources available on the server.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A template description for resources available on the server.",
-///  "type": "object",
-///  "required": [
-///    "name",
-///    "uriTemplate"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "annotations": {
-///      "description": "Optional annotations for the client.",
-///      "$ref": "#/definitions/Annotations"
-///    },
-///    "description": {
-///      "description": "A description of what this template is for.\n\nThis can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a \"hint\" to the model.",
-///      "type": "string"
-///    },
-///    "mimeType": {
-///      "description": "The MIME type for all resources that match this template. This should only be included if all resources matching this template have the same type.",
-///      "type": "string"
-///    },
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    },
-///    "uriTemplate": {
-///      "description": "A URI template (according to RFC 6570) that can be used to construct resource URIs.",
-///      "type": "string",
-///      "format": "uri-template"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceTemplate {
     ///Optional annotations for the client.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
     /**A description of what this template is for.
 
     This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
     #[serde(
@@ -7556,7 +3408,6 @@ pub struct ResourceTemplate {
     ///The MIME type for all resources that match this template. This should only be included if all resources matching this template have the same type.
     #[serde(
         rename = "mimeType",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub mime_type: ::core::option::Option<::alloc::string::String>,
@@ -7568,40 +3419,13 @@ pub struct ResourceTemplate {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     ///A URI template (according to RFC 6570) that can be used to construct resource URIs.
     #[serde(rename = "uriTemplate")]
     pub uri_template: ::alloc::string::String,
 }
 ///A reference to a resource or resource template definition.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A reference to a resource or resource template definition.",
-///  "type": "object",
-///  "required": [
-///    "type",
-///    "uri"
-///  ],
-///  "properties": {
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "ref/resource"
-///      ]
-///    },
-///    "uri": {
-///      "description": "The URI or URI template of the resource.",
-///      "type": "string",
-///      "format": "uri-template"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceTemplateReference {
     #[serde(rename = "type")]
@@ -7610,18 +3434,6 @@ pub struct ResourceTemplateReference {
     pub uri: ::alloc::string::String,
 }
 ///`ResourceTemplateReferenceType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "ref/resource"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7660,14 +3472,6 @@ impl ::core::convert::TryFrom<&str> for ResourceTemplateReferenceType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ResourceTemplateReferenceType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ResourceTemplateReferenceType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -7677,59 +3481,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ResourceTemplateRefer
     }
 }
 ///A notification from the server to the client, informing it that a resource has changed and may need to be read again. This should only be sent if the client previously sent a resources/subscribe request.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A notification from the server to the client, informing it that a resource has changed and may need to be read again. This should only be sent if the client previously sent a resources/subscribe request.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/resources/updated"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "uri"
-///      ],
-///      "properties": {
-///        "uri": {
-///          "description": "The URI of the resource that has been updated. This might be a sub-resource of the one that the client actually subscribed to.",
-///          "type": "string",
-///          "format": "uri"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceUpdatedNotification {
     pub method: ResourceUpdatedNotificationMethod,
     pub params: ResourceUpdatedNotificationParams,
 }
 ///`ResourceUpdatedNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/resources/updated"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7768,14 +3525,6 @@ impl ::core::convert::TryFrom<&str> for ResourceUpdatedNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ResourceUpdatedNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ResourceUpdatedNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -7785,48 +3534,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ResourceUpdatedNotifi
     }
 }
 ///`ResourceUpdatedNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "uri"
-///  ],
-///  "properties": {
-///    "uri": {
-///      "description": "The URI of the resource that has been updated. This might be a sub-resource of the one that the client actually subscribed to.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceUpdatedNotificationParams {
     ///The URI of the resource that has been updated. This might be a sub-resource of the one that the client actually subscribed to.
     pub uri: ::alloc::string::String,
 }
 ///`Result`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Result {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -7840,20 +3553,6 @@ pub struct Result {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///The sender or recipient of messages and data in a conversation.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "The sender or recipient of messages and data in a conversation.",
-///  "type": "string",
-///  "enum": [
-///    "assistant",
-///    "user"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7896,14 +3595,6 @@ impl ::core::convert::TryFrom<&str> for Role {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for Role {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for Role {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -7913,35 +3604,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for Role {
     }
 }
 ///Represents a root directory or file that the server can operate on.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Represents a root directory or file that the server can operate on.",
-///  "type": "object",
-///  "required": [
-///    "uri"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "name": {
-///      "description": "An optional name for the root. This can be used to provide a human-readable\nidentifier for the root, which may be useful for display purposes or for\nreferencing the root in other parts of the application.",
-///      "type": "string"
-///    },
-///    "uri": {
-///      "description": "The URI identifying the root. This *must* start with file:// for now.\nThis restriction may be relaxed in future versions of the protocol to allow\nother URI schemes.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Root {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -7954,7 +3616,7 @@ pub struct Root {
     /**An optional name for the root. This can be used to provide a human-readable
     identifier for the root, which may be useful for display purposes or for
     referencing the root in other parts of the application.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::alloc::string::String>,
     /**The URI identifying the root. This *must* start with file:// for now.
     This restriction may be relaxed in future versions of the protocol to allow
@@ -7964,57 +3626,13 @@ pub struct Root {
 /**A notification from the client to the server, informing it that the list of roots has changed.
 This notification should be sent whenever the client adds, removes, or modifies any root.
 The server should then request an updated list of roots using the ListRootsRequest.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A notification from the client to the server, informing it that the list of roots has changed.\nThis notification should be sent whenever the client adds, removes, or modifies any root.\nThe server should then request an updated list of roots using the ListRootsRequest.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/roots/list_changed"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RootsListChangedNotification {
     pub method: RootsListChangedNotificationMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<RootsListChangedNotificationParams>,
 }
 ///`RootsListChangedNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/roots/list_changed"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -8053,14 +3671,6 @@ impl ::core::convert::TryFrom<&str> for RootsListChangedNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for RootsListChangedNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for RootsListChangedNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -8070,23 +3680,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for RootsListChangedNotif
     }
 }
 ///`RootsListChangedNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RootsListChangedNotificationParams {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -8100,63 +3693,12 @@ pub struct RootsListChangedNotificationParams {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///Describes a message issued to or received from an LLM API.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Describes a message issued to or received from an LLM API.",
-///  "type": "object",
-///  "required": [
-///    "content",
-///    "role"
-///  ],
-///  "properties": {
-///    "content": {
-///      "anyOf": [
-///        {
-///          "$ref": "#/definitions/TextContent"
-///        },
-///        {
-///          "$ref": "#/definitions/ImageContent"
-///        },
-///        {
-///          "$ref": "#/definitions/AudioContent"
-///        }
-///      ]
-///    },
-///    "role": {
-///      "$ref": "#/definitions/Role"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SamplingMessage {
     pub content: SamplingMessageContent,
     pub role: Role,
 }
 ///`SamplingMessageContent`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/TextContent"
-///    },
-///    {
-///      "$ref": "#/definitions/ImageContent"
-///    },
-///    {
-///      "$ref": "#/definitions/AudioContent"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum SamplingMessageContent {
@@ -8180,72 +3722,10 @@ impl ::core::convert::From<AudioContent> for SamplingMessageContent {
     }
 }
 ///Capabilities that a server may support. Known capabilities are defined here, in this schema, but this is not a closed set: any server can define its own, additional capabilities.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Capabilities that a server may support. Known capabilities are defined here, in this schema, but this is not a closed set: any server can define its own, additional capabilities.",
-///  "type": "object",
-///  "properties": {
-///    "completions": {
-///      "description": "Present if the server supports argument autocompletion suggestions.",
-///      "$ref": "#/definitions/JSONObject"
-///    },
-///    "experimental": {
-///      "description": "Experimental, non-standard capabilities that the server supports.",
-///      "type": "object",
-///      "additionalProperties": {
-///        "type": "object",
-///        "additionalProperties": true
-///      }
-///    },
-///    "logging": {
-///      "description": "Present if the server supports sending log messages to the client.",
-///      "$ref": "#/definitions/JSONObject"
-///    },
-///    "prompts": {
-///      "description": "Present if the server offers any prompt templates.",
-///      "type": "object",
-///      "properties": {
-///        "listChanged": {
-///          "description": "Whether this server supports notifications for changes to the prompt list.",
-///          "type": "boolean"
-///        }
-///      }
-///    },
-///    "resources": {
-///      "description": "Present if the server offers any resources to read.",
-///      "type": "object",
-///      "properties": {
-///        "listChanged": {
-///          "description": "Whether this server supports notifications for changes to the resource list.",
-///          "type": "boolean"
-///        },
-///        "subscribe": {
-///          "description": "Whether this server supports subscribing to resource updates.",
-///          "type": "boolean"
-///        }
-///      }
-///    },
-///    "tools": {
-///      "description": "Present if the server offers any tools to call.",
-///      "type": "object",
-///      "properties": {
-///        "listChanged": {
-///          "description": "Whether this server supports notifications for changes to the tool list.",
-///          "type": "boolean"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ServerCapabilities {
     ///Present if the server supports argument autocompletion suggestions.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub completions: ::core::option::Option<JsonObject>,
     ///Experimental, non-standard capabilities that the server supports.
     #[serde(
@@ -8257,169 +3737,49 @@ pub struct ServerCapabilities {
         ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
     >,
     ///Present if the server supports sending log messages to the client.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub logging: ::core::option::Option<JsonObject>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub prompts: ::core::option::Option<ServerCapabilitiesPrompts>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub resources: ::core::option::Option<ServerCapabilitiesResources>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub tools: ::core::option::Option<ServerCapabilitiesTools>,
 }
-impl ::core::default::Default for ServerCapabilities {
-    fn default() -> Self {
-        Self {
-            completions: Default::default(),
-            experimental: Default::default(),
-            logging: Default::default(),
-            prompts: Default::default(),
-            resources: Default::default(),
-            tools: Default::default(),
-        }
-    }
-}
 ///Present if the server offers any prompt templates.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Present if the server offers any prompt templates.",
-///  "type": "object",
-///  "properties": {
-///    "listChanged": {
-///      "description": "Whether this server supports notifications for changes to the prompt list.",
-///      "type": "boolean"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ServerCapabilitiesPrompts {
     ///Whether this server supports notifications for changes to the prompt list.
     #[serde(
         rename = "listChanged",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub list_changed: ::core::option::Option<bool>,
 }
-impl ::core::default::Default for ServerCapabilitiesPrompts {
-    fn default() -> Self {
-        Self {
-            list_changed: Default::default(),
-        }
-    }
-}
 ///Present if the server offers any resources to read.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Present if the server offers any resources to read.",
-///  "type": "object",
-///  "properties": {
-///    "listChanged": {
-///      "description": "Whether this server supports notifications for changes to the resource list.",
-///      "type": "boolean"
-///    },
-///    "subscribe": {
-///      "description": "Whether this server supports subscribing to resource updates.",
-///      "type": "boolean"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ServerCapabilitiesResources {
     ///Whether this server supports notifications for changes to the resource list.
     #[serde(
         rename = "listChanged",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub list_changed: ::core::option::Option<bool>,
     ///Whether this server supports subscribing to resource updates.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub subscribe: ::core::option::Option<bool>,
 }
-impl ::core::default::Default for ServerCapabilitiesResources {
-    fn default() -> Self {
-        Self {
-            list_changed: Default::default(),
-            subscribe: Default::default(),
-        }
-    }
-}
 ///Present if the server offers any tools to call.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Present if the server offers any tools to call.",
-///  "type": "object",
-///  "properties": {
-///    "listChanged": {
-///      "description": "Whether this server supports notifications for changes to the tool list.",
-///      "type": "boolean"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ServerCapabilitiesTools {
     ///Whether this server supports notifications for changes to the tool list.
     #[serde(
         rename = "listChanged",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub list_changed: ::core::option::Option<bool>,
 }
-impl ::core::default::Default for ServerCapabilitiesTools {
-    fn default() -> Self {
-        Self {
-            list_changed: Default::default(),
-        }
-    }
-}
 ///`ServerNotification`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/CancelledNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/ProgressNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/ResourceListChangedNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/ResourceUpdatedNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/PromptListChangedNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/ToolListChangedNotification"
-///    },
-///    {
-///      "$ref": "#/definitions/LoggingMessageNotification"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ServerNotification {
@@ -8467,28 +3827,6 @@ impl ::core::convert::From<LoggingMessageNotification> for ServerNotification {
     }
 }
 ///`ServerRequest`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/PingRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/CreateMessageRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/ListRootsRequest"
-///    },
-///    {
-///      "$ref": "#/definitions/ElicitRequest"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ServerRequest {
@@ -8518,46 +3856,6 @@ impl ::core::convert::From<ElicitRequest> for ServerRequest {
     }
 }
 ///`ServerResult`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "anyOf": [
-///    {
-///      "$ref": "#/definitions/Result"
-///    },
-///    {
-///      "$ref": "#/definitions/InitializeResult"
-///    },
-///    {
-///      "$ref": "#/definitions/ListResourcesResult"
-///    },
-///    {
-///      "$ref": "#/definitions/ListResourceTemplatesResult"
-///    },
-///    {
-///      "$ref": "#/definitions/ReadResourceResult"
-///    },
-///    {
-///      "$ref": "#/definitions/ListPromptsResult"
-///    },
-///    {
-///      "$ref": "#/definitions/GetPromptResult"
-///    },
-///    {
-///      "$ref": "#/definitions/ListToolsResult"
-///    },
-///    {
-///      "$ref": "#/definitions/CallToolResult"
-///    },
-///    {
-///      "$ref": "#/definitions/CompleteResult"
-///    }
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum ServerResult {
@@ -8623,58 +3921,12 @@ impl ::core::convert::From<CompleteResult> for ServerResult {
     }
 }
 ///A request from the client to the server, to enable or adjust logging.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A request from the client to the server, to enable or adjust logging.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "logging/setLevel"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "level"
-///      ],
-///      "properties": {
-///        "level": {
-///          "description": "The level of logging that the client wants to receive from the server. The server should send all logs at this level and higher (i.e., more severe) to the client as notifications/message.",
-///          "$ref": "#/definitions/LoggingLevel"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SetLevelRequest {
     pub method: SetLevelRequestMethod,
     pub params: SetLevelRequestParams,
 }
 ///`SetLevelRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "logging/setLevel"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -8713,14 +3965,6 @@ impl ::core::convert::TryFrom<&str> for SetLevelRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for SetLevelRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for SetLevelRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -8730,110 +3974,34 @@ impl ::core::convert::TryFrom<::alloc::string::String> for SetLevelRequestMethod
     }
 }
 ///`SetLevelRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "level"
-///  ],
-///  "properties": {
-///    "level": {
-///      "description": "The level of logging that the client wants to receive from the server. The server should send all logs at this level and higher (i.e., more severe) to the client as notifications/message.",
-///      "$ref": "#/definitions/LoggingLevel"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SetLevelRequestParams {
     ///The level of logging that the client wants to receive from the server. The server should send all logs at this level and higher (i.e., more severe) to the client as notifications/message.
     pub level: LoggingLevel,
 }
 ///`StringSchema`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "type"
-///  ],
-///  "properties": {
-///    "description": {
-///      "type": "string"
-///    },
-///    "format": {
-///      "type": "string",
-///      "enum": [
-///        "date",
-///        "date-time",
-///        "email",
-///        "uri"
-///      ]
-///    },
-///    "maxLength": {
-///      "type": "integer"
-///    },
-///    "minLength": {
-///      "type": "integer"
-///    },
-///    "title": {
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "string"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct StringSchema {
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub format: ::core::option::Option<StringSchemaFormat>,
     #[serde(
         rename = "maxLength",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub max_length: ::core::option::Option<i64>,
     #[serde(
         rename = "minLength",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub min_length: ::core::option::Option<i64>,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
     pub type_: StringSchemaType,
 }
 ///`StringSchemaFormat`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "date",
-///    "date-time",
-///    "email",
-///    "uri"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -8884,14 +4052,6 @@ impl ::core::convert::TryFrom<&str> for StringSchemaFormat {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for StringSchemaFormat {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for StringSchemaFormat {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -8901,18 +4061,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for StringSchemaFormat {
     }
 }
 ///`StringSchemaType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "string"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -8951,14 +4099,6 @@ impl ::core::convert::TryFrom<&str> for StringSchemaType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for StringSchemaType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for StringSchemaType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -8968,59 +4108,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for StringSchemaType {
     }
 }
 ///Sent from the client to request resources/updated notifications from the server whenever a particular resource changes.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Sent from the client to request resources/updated notifications from the server whenever a particular resource changes.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "resources/subscribe"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "uri"
-///      ],
-///      "properties": {
-///        "uri": {
-///          "description": "The URI of the resource to subscribe to. The URI can use any protocol; it is up to the server how to interpret it.",
-///          "type": "string",
-///          "format": "uri"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscribeRequest {
     pub method: SubscribeRequestMethod,
     pub params: SubscribeRequestParams,
 }
 ///`SubscribeRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "resources/subscribe"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -9059,14 +4152,6 @@ impl ::core::convert::TryFrom<&str> for SubscribeRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for SubscribeRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for SubscribeRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -9076,70 +4161,16 @@ impl ::core::convert::TryFrom<::alloc::string::String> for SubscribeRequestMetho
     }
 }
 ///`SubscribeRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "uri"
-///  ],
-///  "properties": {
-///    "uri": {
-///      "description": "The URI of the resource to subscribe to. The URI can use any protocol; it is up to the server how to interpret it.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscribeRequestParams {
     ///The URI of the resource to subscribe to. The URI can use any protocol; it is up to the server how to interpret it.
     pub uri: ::alloc::string::String,
 }
 ///Text provided to or from an LLM.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Text provided to or from an LLM.",
-///  "type": "object",
-///  "required": [
-///    "text",
-///    "type"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "annotations": {
-///      "description": "Optional annotations for the client.",
-///      "$ref": "#/definitions/Annotations"
-///    },
-///    "text": {
-///      "description": "The text content of the message.",
-///      "type": "string"
-///    },
-///    "type": {
-///      "type": "string",
-///      "enum": [
-///        "text"
-///      ]
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TextContent {
     ///Optional annotations for the client.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
     #[serde(
@@ -9154,18 +4185,6 @@ pub struct TextContent {
     pub type_: TextContentType,
 }
 ///`TextContentType`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "text"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -9204,14 +4223,6 @@ impl ::core::convert::TryFrom<&str> for TextContentType {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for TextContentType {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for TextContentType {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -9221,39 +4232,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for TextContentType {
     }
 }
 ///`TextResourceContents`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "text",
-///    "uri"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "mimeType": {
-///      "description": "The MIME type of this resource, if known.",
-///      "type": "string"
-///    },
-///    "text": {
-///      "description": "The text of the item. This must only be set if the item can actually be represented as text (not binary data).",
-///      "type": "string"
-///    },
-///    "uri": {
-///      "description": "The URI of this resource.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TextResourceContents {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -9266,7 +4244,6 @@ pub struct TextResourceContents {
     ///The MIME type of this resource, if known.
     #[serde(
         rename = "mimeType",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub mime_type: ::core::option::Option<::alloc::string::String>,
@@ -9276,100 +4253,17 @@ pub struct TextResourceContents {
     pub uri: ::alloc::string::String,
 }
 ///Definition for a tool the client can call.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Definition for a tool the client can call.",
-///  "type": "object",
-///  "required": [
-///    "inputSchema",
-///    "name"
-///  ],
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    },
-///    "annotations": {
-///      "description": "Optional additional tool information.\n\nDisplay name precedence order is: title, annotations.title, then name.",
-///      "$ref": "#/definitions/ToolAnnotations"
-///    },
-///    "description": {
-///      "description": "A human-readable description of the tool.\n\nThis can be used by clients to improve the LLM's understanding of available tools. It can be thought of like a \"hint\" to the model.",
-///      "type": "string"
-///    },
-///    "inputSchema": {
-///      "description": "A JSON Schema object defining the expected parameters for the tool.",
-///      "type": "object",
-///      "required": [
-///        "type"
-///      ],
-///      "properties": {
-///        "properties": {
-///          "$ref": "#/definitions/JSONObject"
-///        },
-///        "required": {
-///          "type": "array",
-///          "items": {
-///            "type": "string"
-///          }
-///        },
-///        "type": {
-///          "type": "string",
-///          "const": "object"
-///        }
-///      },
-///      "additionalProperties": {}
-///    },
-///    "name": {
-///      "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).",
-///      "type": "string"
-///    },
-///    "outputSchema": {
-///      "description": "An optional JSON Schema object defining the structure of the tool's output returned in\nthe structuredContent field of a CallToolResult.",
-///      "type": "object",
-///      "required": [
-///        "type"
-///      ],
-///      "properties": {
-///        "properties": {
-///          "$ref": "#/definitions/JSONObject"
-///        },
-///        "required": {
-///          "type": "array",
-///          "items": {
-///            "type": "string"
-///          }
-///        },
-///        "type": {
-///          "type": "string",
-///          "const": "object"
-///        }
-///      },
-///      "additionalProperties": {}
-///    },
-///    "title": {
-///      "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Tool {
     /**Optional additional tool information.
 
     Display name precedence order is: title, annotations.title, then name.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<ToolAnnotations>,
     /**A human-readable description of the tool.
 
     This can be used by clients to improve the LLM's understanding of available tools. It can be thought of like a "hint" to the model.*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "inputSchema")]
     pub input_schema: ToolInputSchema,
@@ -9384,7 +4278,6 @@ pub struct Tool {
     pub name: ::alloc::string::String,
     #[serde(
         rename = "outputSchema",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub output_schema: ::core::option::Option<ToolOutputSchema>,
@@ -9394,7 +4287,7 @@ pub struct Tool {
     If not provided, the name should be used for display (except for Tool,
     where `annotations.title` should be given precedence over using `name`,
     if present).*/
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
 /**Additional properties describing a Tool to clients.
@@ -9405,39 +4298,7 @@ tool behavior (including descriptive properties like `title`).
 
 Clients should never make tool use decisions based on ToolAnnotations
 received from untrusted servers.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Additional properties describing a Tool to clients.\n\nNOTE: all properties in ToolAnnotations are **hints**.\nThey are not guaranteed to provide a faithful description of\ntool behavior (including descriptive properties like `title`).\n\nClients should never make tool use decisions based on ToolAnnotations\nreceived from untrusted servers.",
-///  "type": "object",
-///  "properties": {
-///    "destructiveHint": {
-///      "description": "If true, the tool may perform destructive updates to its environment.\nIf false, the tool performs only additive updates.\n\n(This property is meaningful only when `readOnlyHint == false`)\n\nDefault: true",
-///      "type": "boolean"
-///    },
-///    "idempotentHint": {
-///      "description": "If true, calling the tool repeatedly with the same arguments\nwill have no additional effect on the its environment.\n\n(This property is meaningful only when `readOnlyHint == false`)\n\nDefault: false",
-///      "type": "boolean"
-///    },
-///    "openWorldHint": {
-///      "description": "If true, this tool may interact with an \"open world\" of external\nentities. If false, the tool's domain of interaction is closed.\nFor example, the world of a web search tool is open, whereas that\nof a memory tool is not.\n\nDefault: true",
-///      "type": "boolean"
-///    },
-///    "readOnlyHint": {
-///      "description": "If true, the tool does not modify its environment.\n\nDefault: false",
-///      "type": "boolean"
-///    },
-///    "title": {
-///      "description": "A human-readable title for the tool.",
-///      "type": "string"
-///    }
-///  }
-///}
-/// ```
-/// </details>
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ToolAnnotations {
     /**If true, the tool may perform destructive updates to its environment.
     If false, the tool performs only additive updates.
@@ -9447,7 +4308,6 @@ pub struct ToolAnnotations {
     Default: true*/
     #[serde(
         rename = "destructiveHint",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub destructive_hint: ::core::option::Option<bool>,
@@ -9459,7 +4319,6 @@ pub struct ToolAnnotations {
     Default: false*/
     #[serde(
         rename = "idempotentHint",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub idempotent_hint: ::core::option::Option<bool>,
@@ -9471,7 +4330,6 @@ pub struct ToolAnnotations {
     Default: true*/
     #[serde(
         rename = "openWorldHint",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub open_world_hint: ::core::option::Option<bool>,
@@ -9480,58 +4338,17 @@ pub struct ToolAnnotations {
     Default: false*/
     #[serde(
         rename = "readOnlyHint",
-        default,
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub read_only_hint: ::core::option::Option<bool>,
     ///A human-readable title for the tool.
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
-impl ::core::default::Default for ToolAnnotations {
-    fn default() -> Self {
-        Self {
-            destructive_hint: Default::default(),
-            idempotent_hint: Default::default(),
-            open_world_hint: Default::default(),
-            read_only_hint: Default::default(),
-            title: Default::default(),
-        }
-    }
-}
 ///A JSON Schema object defining the expected parameters for the tool.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "A JSON Schema object defining the expected parameters for the tool.",
-///  "type": "object",
-///  "required": [
-///    "type"
-///  ],
-///  "properties": {
-///    "properties": {
-///      "$ref": "#/definitions/JSONObject"
-///    },
-///    "required": {
-///      "type": "array",
-///      "items": {
-///        "type": "string"
-///      }
-///    },
-///    "type": {
-///      "type": "string",
-///      "const": "object"
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolInputSchema {
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub properties: ::core::option::Option<JsonObject>,
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub required: ::alloc::vec::Vec<::alloc::string::String>,
@@ -9541,57 +4358,13 @@ pub struct ToolInputSchema {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///An optional notification from the server to the client, informing it that the list of tools it offers has changed. This may be issued by servers without any previous subscription from the client.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "An optional notification from the server to the client, informing it that the list of tools it offers has changed. This may be issued by servers without any previous subscription from the client.",
-///  "type": "object",
-///  "required": [
-///    "method"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "notifications/tools/list_changed"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "properties": {
-///        "_meta": {
-///          "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///          "type": "object",
-///          "additionalProperties": {}
-///        }
-///      },
-///      "additionalProperties": {}
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolListChangedNotification {
     pub method: ToolListChangedNotificationMethod,
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<ToolListChangedNotificationParams>,
 }
 ///`ToolListChangedNotificationMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "notifications/tools/list_changed"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -9630,14 +4403,6 @@ impl ::core::convert::TryFrom<&str> for ToolListChangedNotificationMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for ToolListChangedNotificationMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for ToolListChangedNotificationMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -9647,23 +4412,6 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ToolListChangedNotifi
     }
 }
 ///`ToolListChangedNotificationParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "properties": {
-///    "_meta": {
-///      "description": "See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.",
-///      "type": "object",
-///      "additionalProperties": {}
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolListChangedNotificationParams {
     ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
@@ -9678,38 +4426,9 @@ pub struct ToolListChangedNotificationParams {
 }
 /**An optional JSON Schema object defining the structure of the tool's output returned in
 the structuredContent field of a CallToolResult.*/
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "An optional JSON Schema object defining the structure of the tool's output returned in\nthe structuredContent field of a CallToolResult.",
-///  "type": "object",
-///  "required": [
-///    "type"
-///  ],
-///  "properties": {
-///    "properties": {
-///      "$ref": "#/definitions/JSONObject"
-///    },
-///    "required": {
-///      "type": "array",
-///      "items": {
-///        "type": "string"
-///      }
-///    },
-///    "type": {
-///      "type": "string",
-///      "const": "object"
-///    }
-///  },
-///  "additionalProperties": {}
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolOutputSchema {
-    #[serde(default, skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub properties: ::core::option::Option<JsonObject>,
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub required: ::alloc::vec::Vec<::alloc::string::String>,
@@ -9719,59 +4438,12 @@ pub struct ToolOutputSchema {
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///Sent from the client to request cancellation of resources/updated notifications from the server. This should follow a previous resources/subscribe request.
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "description": "Sent from the client to request cancellation of resources/updated notifications from the server. This should follow a previous resources/subscribe request.",
-///  "type": "object",
-///  "required": [
-///    "method",
-///    "params"
-///  ],
-///  "properties": {
-///    "method": {
-///      "type": "string",
-///      "enum": [
-///        "resources/unsubscribe"
-///      ]
-///    },
-///    "params": {
-///      "type": "object",
-///      "required": [
-///        "uri"
-///      ],
-///      "properties": {
-///        "uri": {
-///          "description": "The URI of the resource to unsubscribe from.",
-///          "type": "string",
-///          "format": "uri"
-///        }
-///      }
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct UnsubscribeRequest {
     pub method: UnsubscribeRequestMethod,
     pub params: UnsubscribeRequestParams,
 }
 ///`UnsubscribeRequestMethod`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "string",
-///  "enum": [
-///    "resources/unsubscribe"
-///  ]
-///}
-/// ```
-/// </details>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -9810,14 +4482,6 @@ impl ::core::convert::TryFrom<&str> for UnsubscribeRequestMethod {
         value.parse()
     }
 }
-impl ::core::convert::TryFrom<&::alloc::string::String> for UnsubscribeRequestMethod {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: &::alloc::string::String,
-    ) -> ::core::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 impl ::core::convert::TryFrom<::alloc::string::String> for UnsubscribeRequestMethod {
     type Error = self::error::ConversionError;
     fn try_from(
@@ -9827,27 +4491,40 @@ impl ::core::convert::TryFrom<::alloc::string::String> for UnsubscribeRequestMet
     }
 }
 ///`UnsubscribeRequestParams`
-///
-/// <details><summary>JSON schema</summary>
-///
-/// ```json
-///{
-///  "type": "object",
-///  "required": [
-///    "uri"
-///  ],
-///  "properties": {
-///    "uri": {
-///      "description": "The URI of the resource to unsubscribe from.",
-///      "type": "string",
-///      "format": "uri"
-///    }
-///  }
-///}
-/// ```
-/// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct UnsubscribeRequestParams {
     ///The URI of the resource to unsubscribe from.
     pub uri: ::alloc::string::String,
+}
+/// Error types.
+pub mod error {
+    #[cfg(not(feature = "std"))]
+    #[allow(unused_imports)]
+    use ::alloc::{
+        borrow::ToOwned,
+        string::{String, ToString},
+    };
+    /// Error from a `TryFrom` or `FromStr` implementation.
+    pub struct ConversionError(::alloc::borrow::Cow<'static, str>);
+    impl ::core::error::Error for ConversionError {}
+    impl ::core::fmt::Display for ConversionError {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> Result<(), ::core::fmt::Error> {
+            ::core::fmt::Display::fmt(&self.0, f)
+        }
+    }
+    impl ::core::fmt::Debug for ConversionError {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> Result<(), ::core::fmt::Error> {
+            ::core::fmt::Debug::fmt(&self.0, f)
+        }
+    }
+    impl From<&'static str> for ConversionError {
+        fn from(value: &'static str) -> Self {
+            Self(value.into())
+        }
+    }
+    impl From<String> for ConversionError {
+        fn from(value: String) -> Self {
+            Self(value.into())
+        }
+    }
 }

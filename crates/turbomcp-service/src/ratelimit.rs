@@ -15,11 +15,15 @@
 //! limiter would implement for multi-instance deployments.
 
 use std::net::IpAddr;
+#[cfg(feature = "governor")]
 use std::num::NonZeroU32;
+#[cfg(feature = "governor")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+#[cfg(feature = "governor")]
 use governor::clock::{Clock, DefaultClock};
+#[cfg(feature = "governor")]
 use governor::{DefaultKeyedRateLimiter, Quota};
 
 /// The bucket a request is charged against.
@@ -50,6 +54,7 @@ pub trait RateLimiter: Send + Sync {
 /// per-key state map. `governor` never evicts on its own, so without this the
 /// map grows with every distinct subject/IP ever seen; `retain_recent` drops
 /// keys whose buckets have fully replenished (i.e. idle clients).
+#[cfg(feature = "governor")]
 const SHRINK_EVERY: usize = 1024;
 
 /// An in-process [GCRA](governor) rate limiter, keyed by [`RateKey`].
@@ -58,12 +63,15 @@ const SHRINK_EVERY: usize = 1024;
 /// rate and the burst allowance. Memory is bounded by opportunistic
 /// [`retain_recent`](DefaultKeyedRateLimiter::retain_recent) — idle keys are
 /// reclaimed once their bucket refills.
+#[cfg(feature = "governor")]
+#[cfg_attr(docsrs, doc(cfg(feature = "governor")))]
 pub struct GovernorRateLimiter {
     inner: DefaultKeyedRateLimiter<RateKey>,
     clock: DefaultClock,
     checks: AtomicUsize,
 }
 
+#[cfg(feature = "governor")]
 impl core::fmt::Debug for GovernorRateLimiter {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GovernorRateLimiter")
@@ -76,6 +84,7 @@ impl core::fmt::Debug for GovernorRateLimiter {
     }
 }
 
+#[cfg(feature = "governor")]
 impl GovernorRateLimiter {
     /// A limiter from an explicit [`Quota`] (full control over rate, burst, and
     /// replenish period).
@@ -103,6 +112,7 @@ impl GovernorRateLimiter {
     }
 }
 
+#[cfg(feature = "governor")]
 impl RateLimiter for GovernorRateLimiter {
     fn check(&self, key: &RateKey) -> Result<(), Duration> {
         // Bound the keyed state map: `governor` doesn't evict, so periodically
@@ -117,7 +127,7 @@ impl RateLimiter for GovernorRateLimiter {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "governor"))]
 mod tests {
     use super::*;
 

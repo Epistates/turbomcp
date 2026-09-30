@@ -15,7 +15,7 @@ categories = ["network-programming", "web-programming::http-server", "web-progra
 [features]
 default = ["server"]
 # The axum endpoint: `router`, `serve_http`, `HttpConfig`.
-server = ["dep:axum", "dep:ipnet", "dep:mime", "dep:tower", "dep:tower-http", "dep:uuid", "tokio/net"]
+server = ["dep:axum", "dep:ipnet", "dep:mime", "dep:tower", "dep:tower-http", "dep:uuid", "tokio/net", "turbomcp-service/governor"]
 # `HttpClientTransport` for turbomcp-client, and `connect_http`.
 client = [
     "dep:reqwest",
