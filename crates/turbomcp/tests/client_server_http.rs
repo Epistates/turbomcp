@@ -27,6 +27,13 @@ impl Demo {
         Ok(word.to_uppercase())
     }
 
+    /// Work for a while without a word, then answer.
+    #[tool(description = "A slow build")]
+    async fn build(&self) -> McpResult<String> {
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        Ok("built".to_string())
+    }
+
     /// A fixed greeting resource.
     #[resource("demo://greeting")]
     async fn greeting(&self) -> McpResult<String> {
@@ -37,13 +44,17 @@ impl Demo {
 /// Spawn the dual-stack HTTP server on an ephemeral port; return its `/mcp` URL
 /// and the shutdown token.
 async fn spawn_server() -> (String, CancellationToken) {
+    spawn_server_with(HttpConfig::new()).await
+}
+
+async fn spawn_server_with(config: HttpConfig) -> (String, CancellationToken) {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
 
     let shutdown = CancellationToken::new();
-    let config = HttpConfig::new().with_shutdown(shutdown.clone());
+    let config = config.with_shutdown(shutdown.clone());
     tokio::spawn(
         Demo.into_server()
             .serve(Http::listener(listener).config(config)),
@@ -140,4 +151,28 @@ async fn a_subscription_over_http_ends_gracefully_at_shutdown() {
         .expect("the subscription ends");
     assert!(ended.is_none());
     assert_eq!(sub.end(), Some(turbomcp::client::SubscriptionEnd::Closed));
+}
+
+/// A tool slower than the server's request deadline, emitting nothing, still
+/// answers: the response turns into a stream and the client waits on it.
+/// Before, the server answered `504` at the deadline and cancelled the tool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tool_slower_than_the_request_deadline_answers() {
+    let (url, shutdown) = spawn_server_with(
+        HttpConfig::new()
+            .request_timeout(Duration::from_millis(300))
+            .sse_upgrade_after(Duration::from_millis(50)),
+    )
+    .await;
+    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+        let client = connect_http(
+            ClientBuilder::new("c", "1.0.0").with_connect_mode(mode),
+            &url,
+        )
+        .await
+        .expect("connect");
+        let result = client.call_tool("build", Map::new()).await.expect("build");
+        assert_eq!(result.text_content().as_deref(), Some("built"), "{mode:?}");
+    }
+    shutdown.cancel();
 }

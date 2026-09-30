@@ -14,6 +14,9 @@ use super::WebSocketConfig;
 /// proxy/LB idle timeouts (often 30–60s).
 pub(super) const DEFAULT_SSE_KEEPALIVE: Duration = Duration::from_secs(15);
 
+/// Default time a request runs before its response becomes an SSE stream.
+pub(super) const DEFAULT_SSE_UPGRADE_AFTER: Duration = Duration::from_secs(5);
+
 /// Where a request's `Origin` header is checked against (DNS-rebinding guard).
 #[derive(Clone, Debug)]
 pub(super) enum OriginPolicy {
@@ -56,6 +59,7 @@ pub struct HttpConfig {
     pub(super) cors: bool,
     pub(super) shutdown: CancellationToken,
     pub(super) sse_keepalive: Duration,
+    pub(super) sse_upgrade_after: Duration,
     pub(super) authenticator: Option<Arc<dyn HttpAuthenticator>>,
     pub(super) rate_limiter: Option<Arc<dyn RateLimiter>>,
     pub(super) ip_rate_limiter: Option<Arc<dyn RateLimiter>>,
@@ -78,6 +82,7 @@ impl core::fmt::Debug for HttpConfig {
             .field("hosts", &self.hosts)
             .field("cors", &self.cors)
             .field("sse_keepalive", &self.sse_keepalive)
+            .field("sse_upgrade_after", &self.sse_upgrade_after)
             .field("authenticator", &self.authenticator.is_some())
             .field("rate_limiter", &self.rate_limiter.is_some())
             .field("ip_rate_limiter", &self.ip_rate_limiter.is_some())
@@ -105,6 +110,7 @@ impl Default for HttpConfig {
             cors: false,
             shutdown: CancellationToken::new(),
             sse_keepalive: DEFAULT_SSE_KEEPALIVE,
+            sse_upgrade_after: DEFAULT_SSE_UPGRADE_AFTER,
             authenticator: None,
             rate_limiter: None,
             ip_rate_limiter: None,
@@ -165,7 +171,13 @@ impl HttpConfig {
         self.max_streams_per_client = limit.max(1);
         self
     }
-    /// Deadline to authenticate, read the request, and produce response headers.
+    /// Deadline to be admitted, authenticate, read the request, and send
+    /// response headers (default 60 s). It does not bound how long a request
+    /// runs: a request still working after
+    /// [`sse_upgrade_after`](Self::sse_upgrade_after) has its headers sent
+    /// then, and keeps its connection open with keep-alives until it answers.
+    /// When the deadline passes first, the client gets `504` with a JSON-RPC
+    /// error body.
     #[must_use]
     pub fn request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
@@ -252,6 +264,27 @@ impl HttpConfig {
     #[must_use]
     pub fn shutdown_token(&self) -> CancellationToken {
         self.shutdown.clone()
+    }
+
+    /// How long a request may run before its response becomes an SSE stream
+    /// (default 5 s). A request that answers sooner, and sends nothing on the
+    /// way, gets a plain JSON response.
+    ///
+    /// A tool that works for minutes without a word used to hold its
+    /// response headers back all that time, and the request deadline (or any
+    /// proxy's idle timeout in front, typically 60 s) cut it off with a bare
+    /// `504` and cancelled the work. Once the stream is open, keep-alive
+    /// comments hold the connection until the result arrives. Keep this well
+    /// under [`request_timeout`](Self::request_timeout) and any proxy's idle
+    /// timeout.
+    ///
+    /// On `2026-07-28`, errors that carry an HTTP status (`-32601` is `404`)
+    /// only get it when they arrive before the upgrade; after it, the status
+    /// line has been sent and the error travels in the stream.
+    #[must_use]
+    pub fn sse_upgrade_after(mut self, after: Duration) -> Self {
+        self.sse_upgrade_after = after;
+        self
     }
 
     /// Set the SSE keep-alive comment interval (default 15s). Keep it shorter

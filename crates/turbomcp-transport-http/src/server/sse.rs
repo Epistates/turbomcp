@@ -73,14 +73,14 @@ pub(super) enum PostStream<F> {
 /// event; dropping the response body drops the call future.
 pub(super) fn streaming_post_sse<F>(
     codec: DefaultCodec,
-    first: JsonRpcMessage,
+    first: Option<JsonRpcMessage>,
     run: PostStream<F>,
     keepalive: Duration,
 ) -> Response
 where
     F: Future<Output = Result<Option<JsonRpcMessage>, ProtocolError>> + Send + 'static,
 {
-    let head = futures::stream::iter([Ok::<_, Infallible>(sse_event(&codec, &first))]);
+    let head = futures::stream::iter(first.map(|m| Ok::<_, Infallible>(sse_event(&codec, &m))));
     let tail = futures::stream::unfold(run, move |state| async move {
         match state {
             PostStream::Run {

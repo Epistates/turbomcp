@@ -102,6 +102,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A tool that runs longer than the HTTP request deadline (60 s by default)
+  without emitting anything no longer gets cut off. Its response headers
+  waited on its result, so the deadline answered a bare `504` and cancelled
+  the tool halfway; a proxy's idle timeout did the same even with the
+  deadline raised. Such a request's response now becomes an SSE stream after
+  `HttpConfig::sse_upgrade_after` (5 s), kept open by keep-alives until the
+  result arrives. A deadline that does pass answers `504` with a JSON-RPC
+  error body instead of an empty one.
 - Graceful HTTP shutdown no longer waits out the full `shutdown_timeout`
   while a legacy client holds a `GET` stream. Only the client could end one,
   so any connected 2025-11-25 client held every deploy for 30 seconds and then

@@ -45,8 +45,9 @@ use guards::{
     PeerIp, accepts, check_host, check_origin, client_key, enforce_auth, enforce_rate_limit,
 };
 use reject::{
-    envelope_rejection, invalid_frame_response, not_acceptable_rejection, protocol_error_response,
-    service_unavailable, session_required_rejection, too_many_requests, version_header_rejection,
+    deadline_passed, envelope_rejection, invalid_frame_response, not_acceptable_rejection,
+    protocol_error_response, service_unavailable, session_required_rejection, too_many_requests,
+    version_header_rejection,
 };
 use sse::{
     Outlet, PostStream, SSE_CHANNEL_CAPACITY, drain, finished_sse, sse_response, streaming_post_sse,
@@ -84,6 +85,7 @@ struct HttpState<S> {
     origins: OriginPolicy,
     hosts: HostPolicy,
     sse_keepalive: Duration,
+    sse_upgrade_after: Duration,
     authenticator: Option<Arc<dyn HttpAuthenticator>>,
     rate_limiter: Option<Arc<dyn RateLimiter>>,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
@@ -155,6 +157,7 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         origins: config.origins.clone(),
         hosts: config.hosts.clone(),
         sse_keepalive: config.sse_keepalive,
+        sse_upgrade_after: config.sse_upgrade_after,
         authenticator: config.authenticator.clone(),
         rate_limiter: config.rate_limiter.clone(),
         session_terminator,
@@ -235,7 +238,7 @@ async fn admit(
     request.extensions_mut().insert(slot.clone());
     let response = match tokio::time::timeout(request_timeout, next.run(request)).await {
         Ok(response) => response,
-        Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
+        Err(_) => return deadline_passed(),
     };
     let (parts, body) = response.into_parts();
     let stream = futures::stream::unfold(
@@ -702,11 +705,13 @@ where
 /// The request carries a [`Peer`] for its own channel under a minted
 /// per-request connection id, so anything the handler emits mid-flight —
 /// inline bidi requests on the legacy path, progress, log messages — reaches
-/// this response. If nothing is emitted the reply stays plain JSON; the first
-/// mid-flight message upgrades the response to `text/event-stream`, carrying
-/// the request-related messages followed by the final response, which
-/// terminates the stream. A client disconnect drops the in-flight call —
-/// HTTP's cancellation signal.
+/// this response. A request that answers within `sse_upgrade_after` and emits
+/// nothing gets plain JSON. Otherwise the response becomes
+/// `text/event-stream` at the first mid-flight message or when
+/// `sse_upgrade_after` passes, whichever is first, carrying the
+/// request-related messages followed by the final response, which terminates
+/// the stream. A client disconnect drops the in-flight call — HTTP's
+/// cancellation signal.
 async fn request_post<S>(
     state: &HttpState<S>,
     mut request: McpRequest,
@@ -779,7 +784,7 @@ where
             };
             streaming_post_sse(
                 state.codec,
-                first,
+                Some(first),
                 PostStream::Run {
                     rx,
                     call,
@@ -789,6 +794,20 @@ where
                 state.sse_keepalive,
             )
         }
+        // Still working: send the headers now and let keep-alives hold the
+        // connection, rather than keep them back until the deadline (ours,
+        // or a proxy's) cuts the call off.
+        () = tokio::time::sleep(state.sse_upgrade_after) => streaming_post_sse(
+            state.codec,
+            None,
+            PostStream::Run {
+                rx,
+                call,
+                id: request_id,
+                registration,
+            },
+            state.sse_keepalive,
+        ),
     }
 }
 

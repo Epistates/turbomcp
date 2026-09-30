@@ -416,3 +416,82 @@ async fn dropping_the_upgraded_stream_drops_the_call() {
     }
     panic!("dropping the SSE stream should drop the in-flight call");
 }
+
+// ---- a long, quiet tool outlives the request deadline -----------------------------
+
+/// Works for `.0` milliseconds without a word, then answers.
+#[derive(Clone)]
+struct Sleepy(u64);
+
+impl McpServerCore for Sleepy {
+    fn server_info(&self) -> Implementation {
+        Implementation::new("sleepy", "0.1.0")
+    }
+}
+
+impl WithTools for Sleepy {
+    async fn list_tools(
+        &self,
+        _ctx: &ListToolsContext,
+        _params: neutral::ListParams,
+    ) -> McpResult<neutral::ListToolsResult> {
+        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            "echo",
+            serde_json::json!({"type":"object"}),
+        )]))
+    }
+
+    async fn call_tool(
+        &self,
+        _ctx: &CallToolContext,
+        _params: neutral::CallToolParams,
+    ) -> McpResult<neutral::CallToolResult> {
+        tokio::time::sleep(Duration::from_millis(self.0)).await;
+        Ok(neutral::CallToolResult::text("built"))
+    }
+}
+
+/// A tool that runs past the request deadline without emitting anything used
+/// to be cut off with a bare `504` (its headers waited on its result), and the
+/// work was cancelled. It works on stdio, so it has to work here: the response
+/// becomes a stream once `sse_upgrade_after` passes, and the result arrives on
+/// it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_long_quiet_tool_outlives_the_request_deadline() {
+    let app = router(
+        VersionDispatcher::new(Sleepy(400), MethodRouter::new().with_tools()),
+        HttpConfig::new()
+            .request_timeout(Duration::from_millis(200))
+            .sse_upgrade_after(Duration::from_millis(50))
+            .sse_keepalive(Duration::from_millis(50)),
+    );
+    let resp = app.oneshot(call_request(8)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        resp.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+    let events = all_sse_events(resp.into_body()).await;
+    assert_eq!(events.len(), 1, "keep-alives are comments, not events");
+    assert_eq!(events[0]["id"], 8);
+    assert_eq!(events[0]["result"]["content"][0]["text"], "built");
+}
+
+/// When the deadline does pass before the response starts, the client gets a
+/// JSON-RPC error body it can parse, not an empty `504`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_passed_request_deadline_answers_a_json_rpc_error() {
+    let app = router(
+        VersionDispatcher::new(Sleepy(400), MethodRouter::new().with_tools()),
+        HttpConfig::new()
+            .request_timeout(Duration::from_millis(50))
+            .sse_upgrade_after(Duration::from_secs(10)),
+    );
+    let resp = app.oneshot(call_request(9)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::GATEWAY_TIMEOUT);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v["error"]["code"].is_i64());
+}

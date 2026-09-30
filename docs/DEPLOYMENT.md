@@ -109,10 +109,19 @@ Request admission uses the same deadline as response waiting. HTTP pumps and
 standalone streams are owned by the transport and cancelled on drop/close.
 
 `HttpConfig` defaults to 1,024 concurrent HTTP requests (`max_concurrent_requests`),
-a 60-second deadline to response headers, and a 30-second shutdown deadline.
-Admission precedes authentication. A request counts from admission until its
-response has been sent, including a tool call whose response streams; past the
-limit it receives `503` + `Retry-After`.
+a 60-second deadline to response headers (`request_timeout`), and a 30-second
+shutdown deadline. Admission precedes authentication. A request counts from
+admission until its response has been sent, including a tool call whose
+response streams; past the limit it receives `503` + `Retry-After`.
+
+The header deadline does not cap how long a tool runs. A request still working
+after 5 seconds (`sse_upgrade_after`) gets its headers then and an SSE
+response, held open by keep-alive comments every 15 seconds (`sse_keepalive`)
+until the result arrives; quicker requests get plain JSON. Keep both intervals
+under the idle timeout of any proxy or load balancer in front (nginx's
+`proxy_read_timeout` and an AWS ALB's idle timeout both default to 60 s), and
+disable response buffering there for SSE (the endpoint sends
+`X-Accel-Buffering: no` for nginx).
 
 Long-lived streams (a legacy session's `GET` stream, a `subscriptions/listen`
 stream) have their own budget and give their request slot back once open:

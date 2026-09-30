@@ -26,6 +26,19 @@ pub(super) fn too_many_requests(retry_after: Duration) -> Response {
     )
 }
 
+/// `504` + a JSON-RPC error: the request did not get as far as its response
+/// headers within `request_timeout` (admission, authentication, the body).
+/// The id is unknown here: the deadline wraps the whole handler.
+pub(super) fn deadline_passed() -> Response {
+    transport_error(
+        StatusCode::GATEWAY_TIMEOUT,
+        None,
+        turbomcp_core::codes::SERVER_ERROR,
+        "the request did not reach its response within the request deadline".to_owned(),
+        None,
+    )
+}
+
 /// `429` for a caller already holding as many open streams as one caller may.
 pub(super) fn too_many_streams() -> Response {
     retry_later(
