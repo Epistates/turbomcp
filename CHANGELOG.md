@@ -78,6 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requests. Without a duration it waits for them however long they take, as
   before.
 
+### Documentation
+
+- **`ClientBuilder::with_max_retries` and `with_retry_delay` only affect
+  `build_resilient`.** `build` and `build_sync` never retry, and the
+  `ClientBuilder` example set both and then called `build`. The methods and the
+  `ConnectionConfig` fields now say so, and the example calls `build_resilient`.
+
 ### Security
 
 - **`JwksClient` with an SSRF validator could be steered by DNS rebinding.**

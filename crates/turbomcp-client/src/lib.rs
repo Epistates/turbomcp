@@ -533,10 +533,10 @@ pub struct ConnectionConfig {
     /// Request timeout in milliseconds
     pub timeout_ms: u64,
 
-    /// Maximum number of retry attempts
+    /// Maximum number of retry attempts (used by `ClientBuilder::build_resilient`)
     pub max_retries: u32,
 
-    /// Retry delay in milliseconds
+    /// Retry delay in milliseconds (used by `ClientBuilder::build_resilient`)
     pub retry_delay_ms: u64,
 
     /// Keep-alive interval in milliseconds
@@ -625,7 +625,8 @@ impl Default for ConnectionConfig {
 ///         retry_delay_ms: 2_000,
 ///         keepalive_ms: 30_000,
 ///     })
-///     .build(StdioTransport::new())
+///     // `build` never retries; `build_resilient` uses the retry settings.
+///     .build_resilient(StdioTransport::new())
 ///     .await?;
 /// # Ok(())
 /// # }
@@ -775,6 +776,11 @@ impl ClientBuilder {
 
     /// Set maximum retry attempts
     ///
+    /// Only a client from [`build_resilient`](Self::build_resilient) retries,
+    /// and it uses this only when [`with_retry_config`](Self::with_retry_config)
+    /// hasn't set a policy. [`build`](Self::build) and
+    /// [`build_sync`](Self::build_sync) never retry.
+    ///
     /// # Arguments
     ///
     /// * `max_retries` - Maximum number of retries
@@ -785,6 +791,9 @@ impl ClientBuilder {
     }
 
     /// Set retry delay
+    ///
+    /// Like [`with_max_retries`](Self::with_max_retries), this only affects
+    /// [`build_resilient`](Self::build_resilient).
     ///
     /// # Arguments
     ///
