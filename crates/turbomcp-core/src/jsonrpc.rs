@@ -499,7 +499,7 @@ mod tests {
             assert!(r.id.is_none() && r.is_error());
         }
         let out = JsonRpcResponse::error_without_id(JsonRpcError {
-            code: -32700,
+            code: crate::codes::PARSE_ERROR,
             message: "Parse error".into(),
             data: None,
         });
@@ -552,7 +552,7 @@ mod tests {
         let bad = JsonRpcResponse::error(
             1,
             JsonRpcError {
-                code: -32603,
+                code: crate::codes::INTERNAL_ERROR,
                 message: "x".into(),
                 data: None,
             },

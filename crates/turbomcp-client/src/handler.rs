@@ -362,7 +362,7 @@ pub(crate) async fn dispatch_server_request(
             .map(|roots| neutral::Root::list_to_wire(&roots))
             .map_err(handler_error),
         other => Err(JsonRpcError {
-            code: -32601,
+            code: turbomcp_core::codes::METHOD_NOT_FOUND,
             message: format!("method not found: {other}"),
             data: None,
         }),
@@ -385,7 +385,7 @@ fn handler_error(err: ClientError) -> JsonRpcError {
 /// A method the client never declared a handler for.
 fn not_supported(method: &str) -> JsonRpcError {
     JsonRpcError {
-        code: -32601,
+        code: turbomcp_core::codes::METHOD_NOT_FOUND,
         message: format!("this client does not support {method}"),
         data: None,
     }
@@ -446,7 +446,7 @@ fn elicit_outcome_value(outcome: &neutral::ElicitOutcome) -> Value {
 
 fn invalid_params(msg: &str) -> JsonRpcError {
     JsonRpcError {
-        code: -32602,
+        code: turbomcp_core::codes::INVALID_PARAMS,
         message: msg.to_owned(),
         data: None,
     }
@@ -454,7 +454,7 @@ fn invalid_params(msg: &str) -> JsonRpcError {
 
 fn internal_error(msg: &str) -> JsonRpcError {
     JsonRpcError {
-        code: -32603,
+        code: turbomcp_core::codes::INTERNAL_ERROR,
         message: msg.to_owned(),
         data: None,
     }
@@ -615,7 +615,7 @@ mod must_tests {
             _p: neutral::CreateMessageParams,
         ) -> ClientResult<neutral::CreateMessageResult> {
             Err(ClientError::Rpc(JsonRpcError {
-                code: -32602,
+                code: turbomcp_core::codes::INVALID_PARAMS,
                 message: "messages must be non-empty".into(),
                 data: None,
             }))

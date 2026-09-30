@@ -323,7 +323,7 @@ mod tests {
                     JsonRpcResponse::error(
                         r.id,
                         JsonRpcError {
-                            code: -32000,
+                            code: turbomcp_core::codes::SERVER_ERROR,
                             message: "boom".into(),
                             data: None,
                         },

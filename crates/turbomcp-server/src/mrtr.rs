@@ -1552,7 +1552,7 @@ mod tests {
         pending.complete(JsonRpcResponse::error(
             req.id,
             turbomcp_core::JsonRpcError {
-                code: -32601,
+                code: turbomcp_core::codes::METHOD_NOT_FOUND,
                 message: "elicitation unsupported".into(),
                 data: None,
             },

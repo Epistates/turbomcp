@@ -172,6 +172,23 @@ refresh-locks:
 # run. Gating them would turn every shared-dependency bump into a two-commit
 # chore for no safety, so they warn and point at `just refresh-locks`.
 
+# Fail on a JSON-RPC error code written as a number instead of a
+# `turbomcp_core::codes` constant. The spec has reallocated these once already;
+# a literal is where the next reallocation gets missed.
+[group: 'quality']
+codes-check:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  hits=$(find crates -path '*/target' -prune -o -path '*/src/*' -name '*.rs' -print \
+    | grep -v '^crates/turbomcp-core/src/error.rs$' \
+    | xargs grep -nE 'code:[[:space:]]*-3[0-9]{4}|[=!]= -3[0-9]{4}|\(-3[0-9]{4},|unwrap_or\(-3[0-9]{4}\)|=> -3[0-9]{4}' || true)
+  if [ -n "$hits" ]; then
+    echo "error: use a turbomcp_core::codes constant, not a numeric code:" >&2
+    echo "$hits" >&2
+    exit 1
+  fi
+  echo "No numeric JSON-RPC codes outside turbomcp_core::codes."
+
 # Fail if a `--locked` lockfile has drifted; warn for the excluded crates.
 [group: 'quality']
 lock-check:
@@ -318,6 +335,7 @@ test:
   just docs-rs
   echo "Step 8/8: Checking generated artifacts still match their sources..."
   just lock-check
+  just codes-check
   just codegen-check
   echo "All tests, linting, and formatting checks passed!"
 

@@ -295,7 +295,7 @@ impl TaskStore {
         // implementations (`-32800`, the LSP convention, sits inside
         // JSON-RPC's *reserved* band and must not be used).
         entry.outcome = Some(Err(JsonRpcError {
-            code: -32010,
+            code: turbomcp_core::codes::TASK_CANCELLED,
             message: "task cancelled".to_owned(),
             data: None,
         }));
@@ -362,7 +362,7 @@ impl TaskStore {
                 if entry.status.is_terminal() {
                     return Ok(entry.outcome.clone().unwrap_or_else(|| {
                         Err(JsonRpcError {
-                            code: -32603,
+                            code: turbomcp_core::codes::INTERNAL_ERROR,
                             message: "task finished without an outcome".to_owned(),
                             data: None,
                         })

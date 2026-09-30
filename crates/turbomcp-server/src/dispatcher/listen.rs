@@ -70,7 +70,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // attaches one; the HTTP endpoint attaches a per-stream one).
     let Some(peer) = ext.get::<Peer>().filter(|p| p.is_open()).cloned() else {
         let err = JsonRpcError {
-            code: -32600,
+            code: turbomcp_core::codes::INVALID_REQUEST,
             message: "subscriptions/listen requires a connection that can stream notifications"
                 .to_owned(),
             data: None,
@@ -134,7 +134,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         serde_json::to_value(&agreed).unwrap_or_else(|_| Value::Object(Map::new()));
     // Offer the raw `notifications` filter to each extension (it reads its own
     // fields). A non-declaring client requesting an extension's notifications
-    // is `-32003` (SEP-2663); accepted filters are merged into the ack.
+    // is `-32021` (SEP-2663); accepted filters are merged into the ack.
     if !extensions.is_empty() {
         let raw_notifications = req
             .params

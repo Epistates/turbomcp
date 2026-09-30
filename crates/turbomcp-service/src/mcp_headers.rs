@@ -7,7 +7,7 @@
 //! `Mcp-Param-{name}` (tool arguments annotated `x-mcp-header`). Headers are
 //! pure **mirrors**: the body is authoritative, clients derive header values
 //! from it, and servers validate equality — a mismatch is `400` + a
-//! `HeaderMismatch` JSON-RPC error (`-32001`). Servers never source values
+//! `HeaderMismatch` JSON-RPC error (`-32020`). Servers never source values
 //! *from* headers.
 //!
 //! This module is what the client and the dispatcher share without knowing

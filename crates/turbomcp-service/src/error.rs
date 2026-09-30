@@ -56,8 +56,8 @@ impl ProtocolError {
             Self::MissingCapability(_) => turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
             Self::UnknownSession(_) => turbomcp_core::codes::NO_ACTIVE_SESSION,
             // `-32000` is the implementation-defined floor.
-            Self::Transport(_) | Self::ServerShuttingDown => -32000,
-            Self::Internal(_) => -32603,
+            Self::Transport(_) | Self::ServerShuttingDown => turbomcp_core::codes::SERVER_ERROR,
+            Self::Internal(_) => turbomcp_core::codes::INTERNAL_ERROR,
         }
     }
 

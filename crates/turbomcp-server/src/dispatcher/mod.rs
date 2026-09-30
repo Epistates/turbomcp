@@ -626,7 +626,7 @@ async fn handle<S: McpServerCore>(
                 JsonRpcResponse::error(
                     req.id,
                     JsonRpcError {
-                        code: -32600,
+                        code: turbomcp_core::codes::INVALID_REQUEST,
                         message: "invalid jsonrpc version (expected \"2.0\")".to_owned(),
                         data: None,
                     },
@@ -1251,7 +1251,7 @@ fn argument_at<'a>(arguments: &'a Value, path: &[String]) -> Option<&'a Value> {
 fn invalid_envelope(id: RequestId, field: &str, supported: &[ProtocolVersion]) -> JsonRpcMessage {
     let err = JsonRpcError {
         // JSON-RPC's own Invalid Params, not an MCP-allocated code.
-        code: -32602,
+        code: turbomcp_core::codes::INVALID_PARAMS,
         message: format!("request `_meta` is missing the required field `{field}`"),
         data: Some(serde_json::json!({
             "missingField": field,

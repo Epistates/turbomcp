@@ -722,7 +722,7 @@ fn route_inbound(
             Some(JsonRpcMessage::Response(JsonRpcResponse::error(
                 req.id,
                 JsonRpcError {
-                    code: -32603,
+                    code: turbomcp_core::codes::INTERNAL_ERROR,
                     message: "client is busy: too many server requests in flight".to_owned(),
                     data: None,
                 },
@@ -767,7 +767,7 @@ fn route_inbound(
                             "client handler panicked; answering -32603"
                         );
                         Err(JsonRpcError {
-                            code: -32603,
+                            code: turbomcp_core::codes::INTERNAL_ERROR,
                             message: "client handler panicked".to_owned(),
                             data: None,
                         })
@@ -792,7 +792,7 @@ fn route_inbound(
                 Some(JsonRpcMessage::Response(JsonRpcResponse::error(
                     req.id,
                     JsonRpcError {
-                        code: -32601,
+                        code: turbomcp_core::codes::METHOD_NOT_FOUND,
                         message: format!("method not found: {}", req.method),
                         data: None,
                     },

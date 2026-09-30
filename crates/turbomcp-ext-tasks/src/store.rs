@@ -352,7 +352,7 @@ impl DraftTaskStore {
                 let ttl = e.ttl_ms.unwrap_or_default();
                 let message = format!("the task did not finish within its TTL of {ttl} ms");
                 let error = JsonRpcError {
-                    code: -32603,
+                    code: turbomcp_core::codes::INTERNAL_ERROR,
                     message: message.clone(),
                     data: None,
                 };
@@ -487,7 +487,7 @@ mod tests {
         store.complete(
             &task.task_id,
             TaskOutcome::Failed(JsonRpcError {
-                code: -32603,
+                code: turbomcp_core::codes::INTERNAL_ERROR,
                 message: "boom".into(),
                 data: None,
             }),

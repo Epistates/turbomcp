@@ -180,7 +180,7 @@ async fn wipe(&self, ctx: &CallToolContext) -> McpResult<String> { … }
 
 A server answers all three supported protocol revisions by default. Pin it to the
 revision required by your deployment with
-`protocols(…)`; an excluded version is refused with `-32004` plus the list of
+`protocols(…)`; an excluded version is refused with `-32022` plus the list of
 versions that *are* served:
 
 ```rust,ignore

@@ -254,7 +254,7 @@ fn parse_task_id(request: &JsonRpcRequest) -> Result<String, JsonRpcError> {
 /// `-32602` (Invalid params).
 fn invalid_params(message: impl Into<String>) -> JsonRpcError {
     JsonRpcError {
-        code: -32602,
+        code: turbomcp_core::codes::INVALID_PARAMS,
         message: message.into(),
         data: None,
     }
@@ -354,7 +354,7 @@ impl Extension for TasksExtension {
             return SubscribeOutcome::NotApplicable;
         };
         // SEP-2663: a client requesting task notifications without declaring the
-        // extension capability is `-32003`.
+        // extension capability is `-32021`.
         if !client_declared {
             return SubscribeOutcome::MissingCapability;
         }
@@ -418,7 +418,7 @@ impl Extension for TasksExtension {
                 Err(panic) => {
                     tracing::error!(panic, task = %task_id, "task handler panicked");
                     TaskOutcome::Failed(turbomcp_core::JsonRpcError {
-                        code: -32603,
+                        code: turbomcp_core::codes::INTERNAL_ERROR,
                         message: "handler panicked".to_owned(),
                         data: None,
                     })
@@ -459,7 +459,7 @@ impl Extension for TasksExtension {
                     Err(e) => error(
                         id,
                         JsonRpcError {
-                            code: -32603,
+                            code: turbomcp_core::codes::INTERNAL_ERROR,
                             message: format!("serialize task: {e}"),
                             data: None,
                         },
@@ -505,7 +505,7 @@ impl Extension for TasksExtension {
             other => error(
                 id,
                 JsonRpcError {
-                    code: -32601,
+                    code: turbomcp_core::codes::METHOD_NOT_FOUND,
                     message: format!("method not found: {other}"),
                     data: None,
                 },

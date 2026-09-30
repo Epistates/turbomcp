@@ -20,8 +20,13 @@ use core::fmt;
 /// frozen spec moved the block to `-3202x`). Naming them keeps the next
 /// reallocation a one-line change instead of a grep.
 ///
-/// The MCP-allocated three are `2026-07-28` concepts; no earlier schema
-/// defines them.
+/// Three groups: JSON-RPC 2.0's own; the ones the MCP spec allocates from
+/// `-32020` up (the `2026-07-28` three, plus two from earlier revisions that
+/// stay reserved and are never reused); and this SDK's own, on the
+/// `-32000..-32019` floor the spec leaves to implementations, where a
+/// receiver must not read cross-implementation meaning into them.
+///
+/// `just test` refuses a numeric code literal outside this module.
 pub mod codes {
     /// JSON-RPC 2.0: the bytes were not valid JSON.
     pub const PARSE_ERROR: i32 = -32700;
@@ -43,6 +48,22 @@ pub mod codes {
     /// The requested protocol version is not supported; `data` carries
     /// `{ supported, requested }`. HTTP 400.
     pub const UNSUPPORTED_PROTOCOL_VERSION: i32 = -32022;
+
+    /// Resource not found, as `2025-11-25` and earlier spell it (`data`
+    /// carries `{ uri }`). `2026-07-28` answers `-32602` instead and keeps
+    /// this number reserved.
+    pub const LEGACY_RESOURCE_NOT_FOUND: i32 = -32002;
+    /// The server needs the user to visit a URL first (`2025-11-25` only;
+    /// `data` carries `{ elicitations }`). Later revisions elicit in-band.
+    pub const URL_ELICITATION_REQUIRED: i32 = -32042;
+
+    /// The implementation-defined floor: authentication, authorization,
+    /// timeouts, transport failures, rate limiting, and anything else with no
+    /// allocated number. The HTTP status, where there is one, is the signal.
+    pub const SERVER_ERROR: i32 = -32000;
+    /// A task was cancelled before it finished; the outcome its result
+    /// request reports.
+    pub const TASK_CANCELLED: i32 = -32010;
 
     /// A stateful (`2025-11-25`, `2025-06-18`) request arrived with no live
     /// session: none was ever opened, or the one it named is gone. HTTP 400 /

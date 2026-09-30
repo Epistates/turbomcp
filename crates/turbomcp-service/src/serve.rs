@@ -202,7 +202,7 @@ where
                             Err(_) => {
                                 if let JsonRpcMessage::Request(req) = msg {
                                     let reply = turbomcp_core::JsonRpcResponse::error(req.id,
-                                        turbomcp_core::JsonRpcError { code: -32000,
+                                        turbomcp_core::JsonRpcError { code: turbomcp_core::codes::SERVER_ERROR,
                                             message: "server at capacity".into(), data: None }).into();
                                     // Never park the reader behind its own writer queue.
                                     if tx.try_send(reply).is_err() {

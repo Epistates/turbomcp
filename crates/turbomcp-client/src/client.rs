@@ -1731,7 +1731,7 @@ impl Client {
                             .and_then(|e| e.get("code"))
                             .and_then(Value::as_i64)
                             .and_then(|c| i32::try_from(c).ok())
-                            .unwrap_or(-32603),
+                            .unwrap_or(turbomcp_core::codes::INTERNAL_ERROR),
                         message: err
                             .and_then(|e| e.get("message"))
                             .and_then(Value::as_str)

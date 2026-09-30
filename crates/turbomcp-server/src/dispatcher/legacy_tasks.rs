@@ -135,7 +135,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
                             },
                             Ok(v) => TaskOutcome::Completed(v),
                             Err(e) => TaskOutcome::Error(JsonRpcError {
-                                code: -32603,
+                                code: turbomcp_core::codes::INTERNAL_ERROR,
                                 message: format!("serialize result: {e}"),
                                 data: None,
                             }),
@@ -145,7 +145,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
                     Err(panic) => {
                         tracing::error!(panic, task = %task_id, "task handler panicked");
                         TaskOutcome::Error(JsonRpcError {
-                            code: -32603,
+                            code: turbomcp_core::codes::INTERNAL_ERROR,
                             message: "handler panicked".to_owned(),
                             data: None,
                         })
@@ -363,16 +363,22 @@ fn to_wire_task(s: &TaskSnapshot, poll_interval_ms: i64) -> legacy::Task {
 fn task_error_response(id: RequestId, e: &TaskError) -> JsonRpcMessage {
     let (code, message) = match e {
         TaskError::NotFound => (
-            -32602,
+            turbomcp_core::codes::INVALID_PARAMS,
             "unknown task id (expired, evicted, or never created)",
         ),
-        TaskError::AlreadyTerminal => (-32602, "task is already in a terminal status"),
-        TaskError::CapacityExhausted => (-32603, "task capacity exhausted; retry later"),
+        TaskError::AlreadyTerminal => (
+            turbomcp_core::codes::INVALID_PARAMS,
+            "task is already in a terminal status",
+        ),
+        TaskError::CapacityExhausted => (
+            turbomcp_core::codes::INTERNAL_ERROR,
+            "task capacity exhausted; retry later",
+        ),
         TaskError::SessionLimitReached => (
-            -32603,
+            turbomcp_core::codes::INTERNAL_ERROR,
             "this session has as many tasks running as it may; retry when one finishes",
         ),
-        TaskError::InvalidCursor => (-32602, "invalid cursor"),
+        TaskError::InvalidCursor => (turbomcp_core::codes::INVALID_PARAMS, "invalid cursor"),
     };
     JsonRpcResponse::error(
         id,

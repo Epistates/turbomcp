@@ -68,7 +68,7 @@ fn declared_version(msg: &JsonRpcMessage) -> Option<String> {
 /// messages whose body `_meta` declares a protocol version — the stateless
 /// draft envelope; the legacy `2025-11-25` session flow keeps its
 /// negotiated-version tolerance. Any failure is `400` + a
-/// `HeaderMismatch` JSON-RPC error (`-32001`).
+/// `HeaderMismatch` JSON-RPC error (`-32020`).
 ///
 /// Headers are pure **mirrors** — the body stays authoritative and values are
 /// never sourced *from* headers (the earlier fill-absent `Mcp-Param-*` merge
@@ -1096,7 +1096,7 @@ fn apply_stateless_error_status(resp: &mut Response, reply: &JsonRpcMessage, ena
     let Some(code) = r.error.as_ref().map(|e| e.code) else {
         return;
     };
-    if code == -32601 {
+    if code == turbomcp_core::codes::METHOD_NOT_FOUND {
         *resp.status_mut() = StatusCode::NOT_FOUND;
     } else if code == turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY
         || code == turbomcp_core::codes::HEADER_MISMATCH
@@ -1713,7 +1713,7 @@ fn too_many_requests(retry_after: Duration) -> Response {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": null,
-        "error": { "code": -32000, "message": "rate limit exceeded" },
+        "error": { "code": turbomcp_core::codes::SERVER_ERROR, "message": "rate limit exceeded" },
     });
     (
         StatusCode::TOO_MANY_REQUESTS,
@@ -1784,7 +1784,7 @@ fn envelope_rejection(id: &RequestId, field: &str) -> Response {
     transport_error(
         StatusCode::BAD_REQUEST,
         Some(id),
-        -32602,
+        turbomcp_core::codes::INVALID_PARAMS,
         format!("request `_meta` is missing the required field `{field}`"),
         Some(serde_json::json!({ "missingField": field })),
     )
@@ -1845,7 +1845,7 @@ fn not_acceptable_rejection(detail: &str) -> Response {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": null,
-        "error": { "code": -32000, "message": format!("not acceptable: {detail}") },
+        "error": { "code": turbomcp_core::codes::SERVER_ERROR, "message": format!("not acceptable: {detail}") },
     });
     (StatusCode::NOT_ACCEPTABLE, Json(body)).into_response()
 }

@@ -659,7 +659,7 @@ impl Transport for HttpClientTransport {
                     let refused = JsonRpcResponse::error(
                         id,
                         JsonRpcError {
-                            code: -32000,
+                            code: turbomcp_core::codes::SERVER_ERROR,
                             message: format!(
                                 "too many concurrent requests on this HTTP client (max_posts = {})",
                                 shared.limits.max_posts
@@ -782,7 +782,7 @@ async fn post_and_pump(
                 let resp = JsonRpcResponse::error(
                     id,
                     JsonRpcError {
-                        code: -32000,
+                        code: turbomcp_core::codes::SERVER_ERROR,
                         message,
                         data: None,
                     },

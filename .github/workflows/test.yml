@@ -298,6 +298,9 @@ jobs:
     - name: Lockfiles match the manifests
       run: just lock-check
 
+    - name: No numeric JSON-RPC codes
+      run: just codes-check
+
   wasm:
     name: WASM
     runs-on: ubuntu-latest
