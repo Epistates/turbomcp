@@ -155,6 +155,16 @@ trait Mounted: Send + Sync + 'static {
         ctx: ReadResourceContext,
         params: neutral::ReadResourceParams,
     ) -> Option<BoxFuture<'static, McpResult<neutral::ReadResourceResult>>>;
+    fn lookup_resource(
+        &self,
+        ctx: ListResourcesContext,
+        uri: String,
+    ) -> Option<BoxFuture<'static, McpResult<Option<neutral::Resource>>>>;
+    fn lookup_resource_template(
+        &self,
+        ctx: ListResourceTemplatesContext,
+        uri: String,
+    ) -> Option<BoxFuture<'static, McpResult<Option<neutral::ResourceTemplate>>>>;
     fn list_resource_templates(
         &self,
         ctx: ListResourceTemplatesContext,
@@ -237,6 +247,20 @@ impl<S: McpServerCore> Mounted for Erased<S> {
         ReadResourceContext,
         neutral::ReadResourceParams,
         neutral::ReadResourceResult
+    );
+    forward!(
+        lookup_resource,
+        dispatch_lookup_resource,
+        ListResourcesContext,
+        String,
+        Option<neutral::Resource>
+    );
+    forward!(
+        lookup_resource_template,
+        dispatch_lookup_resource_template,
+        ListResourceTemplatesContext,
+        String,
+        Option<neutral::ResourceTemplate>
     );
     forward!(
         list_resource_templates,
@@ -988,6 +1012,48 @@ impl WithTools for CompositeServer {
     }
 }
 
+/// What a mount's lookup found for a URI.
+enum Owned {
+    Resource(neutral::Resource),
+    Template(neutral::ResourceTemplate),
+}
+
+impl CompositeServer {
+    /// The mount that owns `uri`, and the component that makes it the owner:
+    /// the first mount that lists it exactly, or else the first whose template
+    /// matches it. Exact listings outrank templates across mounts, in the
+    /// order the dispatcher's visibility check asks (resource, then template).
+    async fn resource_owner(
+        &self,
+        base: &RequestContext,
+        uri: &str,
+    ) -> McpResult<Option<(&Mount, Owned)>> {
+        for mount in &self.inner.mounts {
+            let Some(fut) = mount
+                .server
+                .lookup_resource(ListResourcesContext::new(base.clone()), uri.to_owned())
+            else {
+                continue;
+            };
+            if let Some(resource) = fut.await? {
+                return Ok(Some((mount, Owned::Resource(resource))));
+            }
+        }
+        for mount in &self.inner.mounts {
+            let Some(fut) = mount.server.lookup_resource_template(
+                ListResourceTemplatesContext::new(base.clone()),
+                uri.to_owned(),
+            ) else {
+                continue;
+            };
+            if let Some(template) = fut.await? {
+                return Ok(Some((mount, Owned::Template(template))));
+            }
+        }
+        Ok(None)
+    }
+}
+
 impl WithResources for CompositeServer {
     async fn list_resources(
         &self,
@@ -1027,15 +1093,61 @@ impl WithResources for CompositeServer {
         )
     }
 
+    /// The first mount's own lookup that finds `uri` listed. A mount's
+    /// overridden lookup (a dynamic catalogue) is asked, not just its list.
+    async fn lookup_resource(
+        &self,
+        ctx: &ListResourcesContext,
+        uri: String,
+    ) -> McpResult<Option<neutral::Resource>> {
+        Ok(self
+            .resource_owner(&ctx.base, &uri)
+            .await?
+            .and_then(|(_, owned)| match owned {
+                Owned::Resource(resource) => Some(resource),
+                Owned::Template(_) => None,
+            }))
+    }
+
+    /// The first mount's template matching `uri`, when no mount lists it.
+    async fn lookup_resource_template(
+        &self,
+        ctx: &ListResourceTemplatesContext,
+        uri: String,
+    ) -> McpResult<Option<neutral::ResourceTemplate>> {
+        Ok(self
+            .resource_owner(&ctx.base, &uri)
+            .await?
+            .and_then(|(_, owned)| match owned {
+                Owned::Template(template) => Some(template),
+                Owned::Resource(_) => None,
+            }))
+    }
+
     async fn read_resource(
         &self,
         ctx: &ReadResourceContext,
         params: neutral::ReadResourceParams,
     ) -> McpResult<neutral::ReadResourceResult> {
         // URIs are not prefixed, so the owning mount can't be derived from the
-        // URI — ask each in turn. Only "not found" falls through: a mount that
-        // owns the URI and failed for its own reasons must report that, not be
-        // silently retried against a server that doesn't own it at all.
+        // URI. The owner is the mount whose own lookup declares it, found the
+        // same way the lookups above find the component a visibility policy
+        // judges, so the read goes to the server that component belongs to.
+        // Trying each mount until one didn't answer "not found" let a policy
+        // pass one mount's visible `note://{id}` and a second mount's hidden,
+        // overlapping `note://{+path}` serve the read.
+        if let Some((mount, _)) = self.resource_owner(&ctx.base, &params.uri).await? {
+            let Some(fut) = mount.server.read_resource(ctx.clone(), params.clone()) else {
+                return Err(McpError::resource_not_found(params.uri));
+            };
+            return fut.await;
+        }
+        // No mount declares it. Under a visibility policy the dispatcher
+        // refused it already (a URI the policy can't judge is hidden); with no
+        // policy the handlers decide, as a single server's would, so ask each
+        // in turn. Only "not found" falls through: a mount that serves the URI
+        // and failed for its own reasons must report that, not be retried
+        // against one that doesn't.
         for mount in &self.inner.mounts {
             let Some(fut) = mount.server.read_resource(ctx.clone(), params.clone()) else {
                 continue;

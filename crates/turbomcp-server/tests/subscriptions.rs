@@ -317,7 +317,7 @@ async fn malformed_listen_filter_is_invalid_params() {
     h.driver.await.unwrap().expect("clean shutdown on EOF");
 }
 
-/// Lists one resource the policy hides.
+/// Lists one resource the policy hides and one it doesn't.
 #[derive(Clone)]
 struct Guarded;
 
@@ -336,6 +336,7 @@ impl WithResources for Guarded {
         Ok(neutral::ListResourcesResult::new(vec![
             neutral::Resource::new("file://secret", "secret")
                 .with_meta_entry(turbomcp_core::meta::keys::TAGS, json!(["internal"])),
+            neutral::Resource::new("file://open", "open"),
         ]))
     }
 
@@ -351,7 +352,8 @@ impl WithResources for Guarded {
 /// The acknowledgment must not tell a hidden URI from one the server does not
 /// have. It used to drop the hidden one and echo the unknown one, so the
 /// difference between what was asked for and what was agreed enumerated
-/// exactly what the policy hides. Both are acknowledged; neither is watched.
+/// exactly what the policy hides. Both are acknowledged; neither is watched,
+/// since under a policy a URI it can't judge is treated as hidden.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_hidden_uri_is_acknowledged_like_an_unknown_one_but_never_watched() {
     let service = VersionDispatcher::new(Guarded, MethodRouter::new().with_resources())
@@ -370,22 +372,23 @@ async fn a_hidden_uri_is_acknowledged_like_an_unknown_one_but_never_watched() {
     in_tx
         .send(listen(
             1,
-            json!({ "resourceSubscriptions": ["file://secret", "file://nowhere"] }),
+            json!({ "resourceSubscriptions": ["file://secret", "file://nowhere", "file://open"] }),
         ))
         .await
         .unwrap();
     let ack = recv_notification(&mut out_rx).await;
     assert_eq!(
         ack.params.as_ref().unwrap()["notifications"]["resourceSubscriptions"],
-        json!(["file://secret", "file://nowhere"])
+        json!(["file://secret", "file://nowhere", "file://open"])
     );
 
-    // An update to the hidden URI is not delivered; one to the unknown URI is,
-    // as it always was (nothing checks existence).
+    // Updates to the hidden and the unknown URI are not delivered; the
+    // visible one's is, and it is the first to arrive.
     notifier.resource_updated("file://secret").await;
     notifier.resource_updated("file://nowhere").await;
+    notifier.resource_updated("file://open").await;
     let update = recv_notification(&mut out_rx).await;
-    assert_eq!(update.params.as_ref().unwrap()["uri"], "file://nowhere");
+    assert_eq!(update.params.as_ref().unwrap()["uri"], "file://open");
 
     drop(in_tx);
     driver.await.unwrap().expect("clean shutdown on EOF");

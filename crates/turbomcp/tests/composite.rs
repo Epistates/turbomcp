@@ -1008,3 +1008,65 @@ async fn preflight_catches_a_collision_that_spans_pages() {
         "the error must name the tool and both mounts, got: {message}"
     );
 }
+
+/// Serves `note://{id}` and knows only one note.
+#[derive(Clone)]
+struct PublicNotes;
+
+#[server(name = "public-notes", version = "1.0.0")]
+impl PublicNotes {
+    #[resource("note://{id}")]
+    async fn note(&self, id: String) -> McpResult<String> {
+        if id == "known" {
+            Ok("a public note".into())
+        } else {
+            Err(McpError::resource_not_found(format!("note://{id}")))
+        }
+    }
+}
+
+/// Serves anything under `note://`, and is hidden from the caller.
+#[derive(Clone)]
+struct Vault;
+
+#[server(name = "vault", version = "1.0.0")]
+impl Vault {
+    #[resource("note://{+path}", tags("internal"))]
+    async fn anything(&self, path: String) -> McpResult<String> {
+        Ok(format!("secret {path}"))
+    }
+}
+
+/// A read goes to the mount whose component the visibility policy judged.
+/// It used to go to the first mount that didn't answer "not found", so the
+/// visible `note://{id}` passed the policy, its handler didn't know the note,
+/// and the hidden `note://{+path}` on the next mount served it.
+#[tokio::test]
+async fn a_read_goes_to_the_mount_the_policy_judged() {
+    let svc = Composite::new(Implementation::new("gateway", "1.0.0"))
+        .mount_flat(PublicNotes.into_server())
+        .unwrap()
+        .mount_flat(Vault.into_server())
+        .unwrap()
+        .into_server()
+        .with_visibility(std::sync::Arc::new(
+            turbomcp::Visibility::new().hiding_tagged(["internal"]),
+        ))
+        .build();
+    let read = |id: i64, uri: &str| {
+        JsonRpcRequest::new(
+            id,
+            request::RESOURCES_READ,
+            Some(json!({ "uri": uri, "_meta": draft_meta() })),
+        )
+    };
+    let mut svc = svc;
+    let known = respond(&mut svc, read(1, "note://known")).await;
+    assert_eq!(
+        known.result.unwrap()["contents"][0]["text"],
+        "a public note"
+    );
+    let unknown = respond(&mut svc, read(2, "note://unknown")).await;
+    let error = unknown.error.expect("not found, not the vault's secret");
+    assert!(!error.message.contains("secret"), "{error:?}");
+}

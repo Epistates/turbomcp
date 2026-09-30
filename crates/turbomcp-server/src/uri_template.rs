@@ -287,11 +287,6 @@ pub(crate) fn compiled(template: &str) -> Arc<Result<UriTemplate, UriTemplateErr
     COMPILED.get_with_by_ref(template, || Arc::new(UriTemplate::parse(template)))
 }
 
-/// The literal text before a template's first expression.
-pub(crate) fn literal_prefix(template: &str) -> &str {
-    template.find('{').map_or(template, |i| &template[..i])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,7 +425,5 @@ mod tests {
         let a = compiled("cache://{v}");
         let b = compiled("cache://{v}");
         assert!(Arc::ptr_eq(&a, &b));
-        assert_eq!(literal_prefix("cache://{v}/x"), "cache://");
-        assert_eq!(literal_prefix("plain://x"), "plain://x");
     }
 }

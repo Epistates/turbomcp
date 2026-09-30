@@ -289,9 +289,13 @@ pub(super) async fn resource_hidden<S: McpServerCore>(
 /// extra list is the price of "hidden means unreachable"; it is paid only when
 /// a policy is installed, and skipped entirely otherwise.
 ///
-/// A component no list mentions is **not** treated as hidden: the handler owns
-/// that answer, and it already produces the right unknown-tool /
-/// unknown-prompt / not-found reply.
+/// A component no lookup finds **is** treated as hidden: the policy can only
+/// judge what it can see, so what it can't see is refused, exactly as one it
+/// hides. Deny by default, as every peer SDK with a component registry does.
+/// A server that serves URIs it doesn't list (legal: the spec never requires
+/// a readable URI to appear in `resources/list`) makes them judgeable by
+/// overriding [`WithResources::lookup_resource`](crate::WithResources::lookup_resource)
+/// to return a `Resource` for them, with the metadata the policy decides on.
 async fn hidden<S: McpServerCore>(
     shared: &Shared,
     router: &MethodRouter<S>,
@@ -338,48 +342,16 @@ async fn hidden<S: McpServerCore>(
                     &t.meta,
                 ));
             }
-            // A template this matcher cannot parse matches nothing, but the
-            // server may still serve URIs under it by hand. If the policy hides
-            // it, refuse URIs under its literal prefix rather than let them fall
-            // through to the handler below: failing open here would expose
-            // exactly what the policy was told to hide.
-            let malformed = crate::catalog::find(
-                |params| {
-                    let listed = router.dispatch_list_resource_templates(
-                        server.clone(),
-                        ListResourceTemplatesContext::new(ctx.clone()),
-                        params,
-                    );
-                    async move {
-                        let Some(listed) = listed else {
-                            return Ok((Vec::new(), None));
-                        };
-                        let page = listed.await?;
-                        Ok((page.resource_templates, page.next_cursor))
-                    }
-                },
-                |t: &neutral::ResourceTemplate| {
-                    crate::uri_template::compiled(&t.uri_template).is_err()
-                        && uri.starts_with(crate::uri_template::literal_prefix(&t.uri_template))
-                        && judge(ComponentKind::ResourceTemplate, &t.uri_template, &t.meta)
-                },
-            )
-            .await?;
-            if malformed.is_some() {
-                return Ok(true);
-            }
-            // Neither a listed resource nor a registered template — a URI the
-            // server never declared, so the policy has no component to judge
-            // and the handler is the only thing that knows whether it exists.
-            //
-            // Answering "hidden" here refused it outright, which turned any
-            // server serving URIs it does not enumerate (legal: the spec never
-            // requires a readable URI to appear in `resources/list`) into a
-            // broken one the moment a policy was installed. Nothing is
-            // disclosed by deferring: a URI outside the catalogue carries no
-            // tag or scope a policy could ever have matched, so the answer is
-            // the same one it would get with no policy at all.
-            Ok(false)
+            // Neither a listed resource nor a registered template matches, so
+            // there is nothing for the policy to judge: refused, as a hidden
+            // one is. Deferring to the handler here let through whatever the
+            // handler chose to serve, and for resources the policy is the only
+            // gate there is. A handler that normalizes URIs (case, a trailing
+            // slash, percent-encoding) served a hidden `secret://x` as
+            // `secret://x/`, which no exact-match lookup finds, and a URI under
+            // a template the matcher can't parse slipped past the template's
+            // own tags.
+            Ok(true)
         }
     }
 }

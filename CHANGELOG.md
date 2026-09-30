@@ -53,6 +53,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Under a visibility policy, `resources/read` of a URI no listed resource
+  or template matches is refused, as a hidden one is. It went to the
+  handler, and for resources the policy is the only gate: a handler that
+  normalizes URIs served a hidden `secret://x` as `secret://x/`, which no
+  exact-match lookup finds. Every peer SDK with a component registry
+  refuses too. A server that serves URIs it doesn't list overrides
+  `WithResources::lookup_resource` to return a `Resource` the policy can
+  judge. Without a policy, the handler still decides.
+- A `Composite` sends a resource read to the mount that owns the URI (the
+  first that lists it, else the first whose template matches), the same
+  component the visibility policy judged. It tried each mount until one
+  didn't answer "not found", so a visible `note://{id}` on one mount passed
+  the policy and a hidden, overlapping `note://{+path}` on the next served
+  the read. A mount's own `lookup_resource` override is now asked too.
 - Long-lived HTTP streams can no longer exhaust the endpoint. A legacy `GET`
   stream or a `subscriptions/listen` stream held a request slot for as long as
   the client kept it, so one anonymous client that opened 1,024 idle streams

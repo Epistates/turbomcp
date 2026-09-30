@@ -36,6 +36,18 @@
 //! metadata, and a `tools/call` carries only a name. The cost is paid only when
 //! a policy is installed.
 //!
+//! # What the policy can't see is hidden
+//!
+//! A call addressing something no lookup finds (a tool name, a prompt, a
+//! resource URI matching no listed resource and no template) is refused as a
+//! hidden one is: the policy can only judge what it can see. For resources
+//! that matters, because a handler may serve URIs it never lists (the spec
+//! allows it) and the policy is the only gate a resource read has. To serve
+//! such URIs under a policy, override
+//! [`WithResources::lookup_resource`](crate::WithResources::lookup_resource)
+//! to return a `Resource` for each, carrying the metadata the policy decides
+//! on. Without a policy, the handler decides, as always.
+//!
 //! # Visibility is not authorization
 //!
 //! [`Visibility::requiring_declared_scopes`] hides what the caller could not
