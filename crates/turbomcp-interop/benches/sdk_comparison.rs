@@ -20,7 +20,7 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ProtocolVersion,
-    ServerCapabilities, ServerInfo,
+    ServerCapabilities, ServerConfig,
 };
 use rmcp::{
     ErrorData as RmcpError, ServerHandler, ServiceExt, object, schemars, tool, tool_handler,
@@ -68,8 +68,8 @@ impl RmcpAdder {
 
 #[tool_handler]
 impl ServerHandler for RmcpAdder {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2025_11_25)
     }
