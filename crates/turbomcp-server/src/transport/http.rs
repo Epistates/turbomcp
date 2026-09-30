@@ -1293,7 +1293,8 @@ pub async fn run<H: McpHandler>(handler: &H, addr: &str) -> McpResult<()> {
     // Call lifecycle hooks
     handler.on_initialize().await?;
 
-    let app = build_router(handler.clone(), None, None);
+    let shutdown = CancellationToken::new();
+    let app = build_router_with_shutdown(handler.clone(), None, None, shutdown.clone());
 
     let socket_addr: SocketAddr = addr
         .parse()
@@ -1308,25 +1309,64 @@ pub async fn run<H: McpHandler>(handler: &H, addr: &str) -> McpResult<()> {
         socket_addr
     );
 
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal(None))
-    .await
-    .map_err(|e| McpError::internal(format!("Server error: {}", e)))?;
+    serve_until(listener, app, shutdown, shutdown_signal(), None).await?;
 
     // Call shutdown hook
     handler.on_shutdown().await?;
     Ok(())
 }
 
+/// Serve `app` until `signal`, then shut down gracefully: stop accepting
+/// connections, end the listening GET streams (by cancelling `shutdown`), and
+/// wait for in-flight requests to finish, for at most `drain` if it is set.
+///
+/// The drain used to be a delay *before* the signal took effect: the server
+/// went on accepting connections for that long, then waited for in-flight
+/// requests with no deadline, which open GET streams never let pass.
+async fn serve_until(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: CancellationToken,
+    signal: impl std::future::Future<Output = ()> + Send + 'static,
+    drain: Option<Duration>,
+) -> McpResult<()> {
+    let signalled = shutdown.clone();
+    let serve = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        signal.await;
+        tracing::info!("Shutdown signal received, draining HTTP server");
+        signalled.cancel();
+    });
+    let deadline = async {
+        shutdown.cancelled().await;
+        match drain {
+            Some(drain) => tokio::time::sleep(drain).await,
+            None => std::future::pending().await,
+        }
+    };
+
+    tokio::select! {
+        served = std::future::IntoFuture::into_future(serve) => {
+            served.map_err(|e| McpError::internal(format!("Server error: {}", e)))
+        }
+        () = deadline => {
+            tracing::warn!(
+                "In-flight requests outlived the {:?} graceful-shutdown drain; stopping",
+                drain.unwrap_or_default()
+            );
+            Ok(())
+        }
+    }
+}
+
 /// Wait for SIGINT (Ctrl-C) and, on Unix, SIGTERM. Returns when either fires.
 ///
-/// On signal, axum stops accepting new connections and gives in-flight requests up
-/// to `drain` to complete. Pre-3.1 the HTTP transport had no shutdown hook at all
-/// — SIGTERM aborted in-flight requests mid-response.
-async fn shutdown_signal(drain: Option<Duration>) {
+/// Pre-3.1 the HTTP transport had no shutdown hook at all — SIGTERM aborted
+/// in-flight requests mid-response.
+async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };
@@ -1346,14 +1386,6 @@ async fn shutdown_signal(drain: Option<Duration>) {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
-    }
-
-    tracing::info!("Shutdown signal received, draining HTTP server");
-    if let Some(drain) = drain {
-        // Give the runtime a chance to land the signal before axum starts dropping
-        // listeners; the actual drain happens inside axum::serve once this future
-        // resolves. We bound the wait so a stuck request can't block exit forever.
-        tokio::time::sleep(drain.min(Duration::from_secs(60))).await;
     }
 }
 
@@ -1388,7 +1420,13 @@ pub async fn run_with_shutdown<H: McpHandler>(
         .rate_limit
         .as_ref()
         .map(|cfg| Arc::new(RateLimiter::new(cfg.clone())));
-    let app = build_router(handler.clone(), rate_limiter, Some(config.clone()));
+    let shutdown = CancellationToken::new();
+    let app = build_router_with_shutdown(
+        handler.clone(),
+        rate_limiter,
+        Some(config.clone()),
+        shutdown.clone(),
+    );
 
     let socket_addr: SocketAddr = addr
         .parse()
@@ -1416,13 +1454,14 @@ pub async fn run_with_shutdown<H: McpHandler>(
         rate_limit_info
     );
 
-    axum::serve(
+    serve_until(
         listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
+        app,
+        shutdown,
+        shutdown_signal(),
+        graceful_shutdown,
     )
-    .with_graceful_shutdown(shutdown_signal(graceful_shutdown))
-    .await
-    .map_err(|e| McpError::internal(format!("Server error: {}", e)))?;
+    .await?;
 
     // Call shutdown hook
     handler.on_shutdown().await?;
@@ -1436,12 +1475,26 @@ pub(crate) struct SseState<H: McpHandler> {
     session_manager: SessionManager,
     rate_limiter: Option<Arc<RateLimiter>>,
     config: Option<ServerConfig>,
+    /// Cancelled when the server starts shutting down.
+    shutdown: CancellationToken,
 }
 
 pub(crate) fn build_router<H: McpHandler>(
     handler: H,
     rate_limiter: Option<Arc<RateLimiter>>,
     config: Option<ServerConfig>,
+) -> Router {
+    build_router_with_shutdown(handler, rate_limiter, config, CancellationToken::new())
+}
+
+/// [`build_router`], whose listening GET streams end when `shutdown` is
+/// cancelled. They carry no in-flight work, and left open they would hold a
+/// graceful shutdown's drain open for good.
+fn build_router_with_shutdown<H: McpHandler>(
+    handler: H,
+    rate_limiter: Option<Arc<RateLimiter>>,
+    config: Option<ServerConfig>,
+    shutdown: CancellationToken,
 ) -> Router {
     let max_body_size = config
         .as_ref()
@@ -1455,6 +1508,7 @@ pub(crate) fn build_router<H: McpHandler>(
         session_manager: SessionManager::with_limits(session_limits),
         rate_limiter,
         config,
+        shutdown,
     };
 
     let router = Router::new()
@@ -2541,8 +2595,8 @@ async fn handle_sse<H: McpHandler>(
     // explicitly chose to send here; other concurrent streams on the same
     // session have their own receivers.
     let activity = ResetOnDrop(state.session_manager.idle_clock(&session_id).await);
-    let stream =
-        futures::stream::iter(opening.into_iter().map(Ok)).chain(stream_events(rx, activity));
+    let events = stream_events(rx, activity).take_until(state.shutdown.clone().cancelled_owned());
+    let stream = futures::stream::iter(opening.into_iter().map(Ok)).chain(events);
 
     sse_response(&session_id, Body::from_stream(stream))
 }
@@ -2703,6 +2757,108 @@ mod tests {
             first_got ^ second_got,
             "message must reach exactly one subscriber, got first={first:?}, second={second:?}"
         );
+    }
+
+    /// Serve `TestHandler` until the returned sender fires.
+    async fn serve_for_shutdown(
+        drain: Option<Duration>,
+    ) -> (
+        String,
+        oneshot::Sender<()>,
+        tokio::task::JoinHandle<McpResult<()>>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let shutdown = CancellationToken::new();
+        let app = build_router_with_shutdown(TestHandler, None, None, shutdown.clone());
+        let (signal, signalled) = oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(
+            listener,
+            app,
+            shutdown,
+            async move {
+                let _ = signalled.await;
+            },
+            drain,
+        ));
+        (base, signal, server)
+    }
+
+    /// A listening GET stream carries no in-flight work, so shutdown ends it.
+    /// Left open, it held the graceful drain open for good.
+    #[tokio::test]
+    async fn shutdown_ends_listening_streams() {
+        let (base, signal, server) = serve_for_shutdown(None).await;
+        let client = reqwest::Client::new();
+
+        let initialized = client
+            .post(format!("{base}/mcp"))
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": { "name": "t", "version": "1" }
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let session = initialized.headers()["mcp-session-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let listening = client
+            .get(format!("{base}/mcp"))
+            .header(header::ACCEPT, "text/event-stream")
+            .header("mcp-session-id", &session)
+            .header("mcp-protocol-version", "2025-11-25")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(listening.status(), StatusCode::OK);
+
+        signal.send(()).unwrap();
+        let finished = tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("the server stops once its listening streams end");
+        finished.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), listening.bytes())
+            .await
+            .expect("the stream ended")
+            .unwrap();
+    }
+
+    /// `with_graceful_shutdown`'s duration bounds the drain. It used to be a
+    /// delay before shutdown began, with no bound on the drain after it.
+    #[tokio::test]
+    async fn the_drain_is_bounded() {
+        use tokio::io::AsyncWriteExt;
+
+        let (base, signal, server) = serve_for_shutdown(Some(Duration::from_millis(200))).await;
+
+        // A request whose body never finishes arriving is in flight for good.
+        let mut stuck = tokio::net::TcpStream::connect(base.trim_start_matches("http://"))
+            .await
+            .unwrap();
+        stuck
+            .write_all(
+                b"POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\
+                  Content-Length: 100\r\n\r\n{\"jsonrpc\":",
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let started = Instant::now();
+        signal.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("the drain stops at its deadline")
+            .unwrap()
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(200));
     }
 
     #[tokio::test]

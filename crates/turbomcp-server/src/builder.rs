@@ -320,8 +320,10 @@ impl<H: McpHandler> ServerBuilder<H> {
 
     /// Configure graceful shutdown timeout.
     ///
-    /// When the server receives a shutdown signal, it will wait up to
-    /// this duration for in-flight requests to complete.
+    /// When the server receives a shutdown signal (SIGINT, or SIGTERM on
+    /// Unix), it stops accepting connections and waits up to this duration
+    /// for in-flight requests to complete. Without it, the wait is unbounded.
+    /// Applies to the HTTP transport.
     ///
     /// # Example
     ///

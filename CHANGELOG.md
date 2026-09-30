@@ -69,6 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The readers did the same with incoming messages. Both now wait for room, so
   a slow peer slows the sender down instead, and a `send` that reaches no
   connection returns an error.
+- **HTTP graceful shutdown ran backwards.** On SIGINT or SIGTERM, the
+  `with_graceful_shutdown` duration was spent *before* shutdown began, capped
+  at 60 seconds, with the server still accepting connections; the drain that
+  followed had no deadline, and a client holding a listening GET stream kept it
+  open indefinitely. Now the server stops accepting connections at once, ends
+  listening GET streams, and waits up to the configured duration for in-flight
+  requests. Without a duration it waits for them however long they take, as
+  before.
 
 ### Security
 
