@@ -25,6 +25,7 @@
 //! happens on this path — handlers written for MRTR re-entry work unchanged.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -314,6 +315,10 @@ struct Inner {
     state_in: Option<Value>,
     /// Handler-stored outbound state (signed at result assembly).
     state_out: Mutex<Option<Value>>,
+    /// Set when this handle raised the MRTR abort. The dispatcher answers
+    /// `InputRequiredResult` from this, not from the error the handler
+    /// returned, which may have been wrapped along the way.
+    aborted: AtomicBool,
     /// When set, reusing an elicit `key` with a different request shape in one
     /// execution is a hard error instead of a warning (opt-in idempotency lint).
     strict_keys: bool,
@@ -351,6 +356,7 @@ impl ClientHandle {
                 client_capabilities: None,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
+                aborted: AtomicBool::new(false),
                 state_in: None,
                 state_out: Mutex::new(None),
                 strict_keys: false,
@@ -386,6 +392,7 @@ impl ClientHandle {
                 client_capabilities,
                 responses: merged,
                 collected: Mutex::new(BTreeMap::new()),
+                aborted: AtomicBool::new(false),
                 // Resume state lives until replaced or cleared, like the
                 // answers beside it. Starting each round empty dropped it the
                 // first round a handler read it without storing it again, so
@@ -414,6 +421,7 @@ impl ClientHandle {
                 client_capabilities,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
+                aborted: AtomicBool::new(false),
                 state_in: None,
                 state_out: Mutex::new(None),
                 strict_keys: false,
@@ -438,6 +446,7 @@ impl ClientHandle {
                 client_capabilities,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
+                aborted: AtomicBool::new(false),
                 state_in: None,
                 state_out: Mutex::new(None),
                 strict_keys: false,
@@ -631,7 +640,7 @@ impl ClientHandle {
                 self.record(key, elicit_request_value(params))?;
             }
         }
-        Err(McpError::InputRequired)
+        Err(self.abort())
     }
 
     /// Ask the client to sample its LLM (`sampling/createMessage`).
@@ -783,7 +792,7 @@ impl ClientHandle {
                     return Ok(raw.clone());
                 }
                 self.record(key, request)?;
-                Err(McpError::InputRequired)
+                Err(self.abort())
             }
             HandleMode::Bidi { pending } => {
                 send_and_await(&self.inner.route, pending, request).await
@@ -822,6 +831,18 @@ impl ClientHandle {
         }
         collected.insert(key.to_owned(), request);
         Ok(())
+    }
+
+    /// Raise the MRTR abort: the sentinel to carry out through `?`, and the
+    /// flag that says it happened whatever becomes of the sentinel.
+    fn abort(&self) -> McpError {
+        self.inner.aborted.store(true, Ordering::Release);
+        McpError::InputRequired
+    }
+
+    /// Whether this handle raised the MRTR abort this execution.
+    pub(crate) fn aborted(&self) -> bool {
+        self.inner.aborted.load(Ordering::Acquire)
     }
 
     /// The recorded input requests (dispatcher: `InputRequiredResult` assembly).

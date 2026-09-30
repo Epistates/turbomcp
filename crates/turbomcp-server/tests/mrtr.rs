@@ -44,6 +44,9 @@ impl WithTools for Asker {
             neutral::Tool::new("pair", serde_json::json!({"type":"object"})),
             neutral::Tool::new("leak", serde_json::json!({"type":"object"})),
             neutral::Tool::new("hoard", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("wrapped", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("flaky", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("vanished", serde_json::json!({"type":"object"})),
         ]))
     }
 
@@ -93,6 +96,24 @@ impl WithTools for Asker {
                 ctx.client.elicit("confirm", confirm_params()).await?;
                 Ok(neutral::CallToolResult::text("unreachable"))
             }
+            // Adds context to the elicit error, as error-handling code does:
+            // the abort must survive being wrapped.
+            "wrapped" => {
+                let outcome = ctx
+                    .client
+                    .elicit("confirm", confirm_params())
+                    .await
+                    .map_err(|e| McpError::internal(format!("while confirming: {e}")))?;
+                Ok(neutral::CallToolResult::text(format!(
+                    "{:?}",
+                    outcome.action
+                )))
+            }
+            // A hand-written tool that ran and failed.
+            "flaky" => Err(McpError::tool_execution_failed("flaky", "upstream quota")),
+            // Listed, but gone by the time the call lands (a dynamic
+            // registry): the handler reports it missing.
+            "vanished" => Err(McpError::tool_not_found("vanished")),
             other => Err(McpError::tool_not_found(other)),
         }
     }
@@ -554,4 +575,85 @@ async fn continuation_cannot_move_to_another_tool_or_arguments() {
         .await;
         assert_eq!(result["error"]["code"], -32602, "{result}");
     }
+}
+
+/// Wrapping the abort (`map_err` for context, `anyhow`, …) used to turn it
+/// into an internal error, discarding the questions the handle had collected;
+/// the tool could never succeed on the stateless wire.
+#[tokio::test]
+async fn a_wrapped_abort_still_asks_the_client() {
+    let mut svc = dispatcher();
+    let first = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "wrapped", "arguments": {}, "_meta": meta() })),
+        ),
+    )
+    .await;
+    assert_eq!(first["resultType"], "input_required", "{first}");
+    assert_eq!(
+        first["inputRequests"]["confirm"]["method"],
+        "elicitation/create"
+    );
+
+    let second = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            2,
+            "tools/call",
+            Some(json!({
+                "name": "wrapped", "arguments": {}, "_meta": meta(),
+                "inputResponses": { "confirm": accept() },
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(second["content"][0]["text"], "Accept", "{second}");
+}
+
+/// A tool failure is a result the model reads, whether or not the tool was
+/// written with `#[tool]`. A hand-written `call_tool` returning it sent a
+/// JSON-RPC `-32603`.
+#[tokio::test]
+async fn a_hand_written_tool_failure_is_an_is_error_result() {
+    let mut svc = dispatcher();
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "flaky", "arguments": {}, "_meta": meta() })),
+        ),
+    )
+    .await;
+    assert_eq!(out["isError"], true, "{out}");
+    assert_eq!(
+        out["content"][0]["text"],
+        "tool 'flaky' failed: upstream quota"
+    );
+}
+
+/// Every revision lists an unknown tool under Invalid Params. `-32601` says
+/// the server has no `tools/call` at all. (An unlisted name never reaches
+/// the handler: the dispatcher refuses it first. This is a tool that was
+/// listed and then went away.)
+#[tokio::test]
+async fn an_unknown_tool_from_a_handler_is_invalid_params() {
+    let mut svc = dispatcher();
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "vanished", "arguments": {}, "_meta": meta() })),
+        ),
+    )
+    .await;
+    assert_eq!(
+        out["error"]["code"],
+        turbomcp_core::codes::INVALID_PARAMS,
+        "{out}"
+    );
 }

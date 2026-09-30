@@ -315,6 +315,20 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** `McpError::ToolNotFound` is `-32602`, as every revision
+  lists an unknown tool (it was `-32601`, which tells a client the server has
+  no `tools/call`). `impl From<serde_json::Error> for McpError` gives
+  `Internal`, not `InvalidParams`: the macro validates a client's arguments
+  before the handler runs, so a JSON failure inside one is the server's, and
+  blaming the client stopped it retrying and quoted upstream internals at it.
+- `McpError::ToolExecutionFailed` from a hand-written `call_tool` reaches the
+  client as an `isError` result, as its docs said and as `#[tool]` already
+  did; it was a JSON-RPC `-32603`, which the model never sees.
+- An MRTR abort survives being wrapped. `ctx.client.elicit(…)` followed by
+  `.map_err(…)` for context, or `anyhow`, turned the abort into an internal
+  error and discarded the questions the handle had collected, so the tool
+  could never succeed on `2026-07-28`. The dispatcher now asks the handle
+  whether it aborted instead of matching the error.
 - `McpError::Rpc { code, message, data }` (`McpError::rpc(code, msg)
   .with_data(v)`) sends any JSON-RPC error exactly as given: a code of your
   own on the implementation floor, a `data` payload no variant models, or

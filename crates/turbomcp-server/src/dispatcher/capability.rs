@@ -997,41 +997,47 @@ where
     let Some(f) = fut else {
         return error_response_for(id, version, &McpError::method_not_found(method));
     };
-    match f.await {
-        Ok(result) => ok_value(id, &WIRE::from(result)),
-        Err(McpError::InputRequired) if mrtr_enabled => {
-            let collected = handle.collected();
-            let state_out = handle.state_out();
-            if collected.is_empty() && state_out.is_none() {
-                // The spec requires at least one of inputRequests/requestState;
-                // a bare sentinel means a handler leaked it manually.
-                return error_response_for(
-                    id,
-                    version,
-                    &McpError::internal("MRTR abort recorded no input requests"),
-                );
-            }
-            let mut result = Map::new();
+    let outcome = f.await;
+    // The handle, not the error, says whether the handler asked the client
+    // for input. Code that adds context to errors
+    // (`.map_err(|e| McpError::internal(format!("elicit: {e}")))?`), `anyhow`,
+    // or a `#[tool]` turning the error into an `isError` result, all hid the
+    // sentinel, and the client got a failure instead of the questions the
+    // handle had already collected. A handler that swallows the abort and
+    // returns anyway still gets the questions asked: it cannot have the
+    // answers yet.
+    if mrtr_enabled && handle.aborted() {
+        let collected = handle.collected();
+        let state_out = handle.state_out();
+        let mut result = Map::new();
+        result.insert(
+            "resultType".to_owned(),
+            serde_json::json!(neutral::result_type::INPUT_REQUIRED),
+        );
+        if !collected.is_empty() {
             result.insert(
-                "resultType".to_owned(),
-                serde_json::json!(neutral::result_type::INPUT_REQUIRED),
+                "inputRequests".to_owned(),
+                Value::Object(collected.into_iter().collect()),
             );
-            if !collected.is_empty() {
-                result.insert(
-                    "inputRequests".to_owned(),
-                    Value::Object(collected.into_iter().collect()),
-                );
-            }
-            if let Some(data) = state_out {
-                match signer.sign(method, subject.as_deref(), &data) {
-                    Ok(token) => {
-                        result.insert("requestState".to_owned(), serde_json::json!(token));
-                    }
-                    Err(e) => return error_response_for(id, version, &e),
-                }
-            }
-            JsonRpcResponse::success(id, Value::Object(result)).into()
         }
+        if let Some(data) = state_out {
+            match signer.sign(method, subject.as_deref(), &data) {
+                Ok(token) => {
+                    result.insert("requestState".to_owned(), serde_json::json!(token));
+                }
+                Err(e) => return error_response_for(id, version, &e),
+            }
+        }
+        return JsonRpcResponse::success(id, Value::Object(result)).into();
+    }
+    match outcome {
+        Ok(result) => ok_value(id, &WIRE::from(result)),
+        // The sentinel with no abort behind it: a handler returned it by hand.
+        Err(McpError::InputRequired) if mrtr_enabled => error_response_for(
+            id,
+            version,
+            &McpError::internal("MRTR abort recorded no input requests"),
+        ),
         Err(e) => error_response_for(id, version, &e),
     }
 }

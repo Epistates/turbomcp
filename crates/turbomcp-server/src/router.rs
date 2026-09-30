@@ -22,7 +22,7 @@
 
 use futures::future::BoxFuture;
 
-use turbomcp_core::McpResult;
+use turbomcp_core::{McpError, McpResult};
 use turbomcp_protocol::neutral;
 
 use crate::context::{
@@ -252,7 +252,18 @@ impl<S: McpServerCore> MethodRouter<S> {
             Box::pin(async move { server.list_tools(&ctx, params).await })
         }));
         self.call_tool = Some(Box::new(|server: S, ctx, params| {
-            Box::pin(async move { server.call_tool(&ctx, params).await })
+            Box::pin(async move {
+                // A tool that ran and failed is a result the model reads, not a
+                // protocol error, whichever way the handler was written. Only
+                // `#[tool]`'s return conversion did this; a hand-written
+                // `call_tool` returning the same error sent JSON-RPC `-32603`.
+                match server.call_tool(&ctx, params).await {
+                    Err(e @ McpError::ToolExecutionFailed { .. }) => {
+                        Ok(neutral::CallToolResult::error(e.to_string()))
+                    }
+                    other => other,
+                }
+            })
         }));
         self
     }

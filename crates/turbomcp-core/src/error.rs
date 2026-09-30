@@ -97,11 +97,14 @@ pub enum McpError {
     InvalidParams(String),
     /// The requested method is not implemented. JSON-RPC `-32601`, HTTP 404.
     MethodNotFound(String),
-    /// The named tool does not exist. JSON-RPC `-32601`, HTTP 404.
+    /// The named tool does not exist. JSON-RPC `-32602`, HTTP 404: every
+    /// revision lists an unknown tool under Invalid Params. (`-32601` would
+    /// tell the client the server has no `tools/call` at all.)
     ToolNotFound(String),
-    /// A tool ran but failed. **Not a protocol error** — the dispatcher
-    /// surfaces this as `CallToolResult { isError: true }` (HTTP 200), never as
-    /// a JSON-RPC error. See PLAN.md §4.11.
+    /// A tool ran but failed. **Not a protocol error**: returned from any
+    /// `tools/call` handler, `#[tool]` or hand-written, it reaches the client
+    /// as `CallToolResult { isError: true }` with this text, so the model can
+    /// read it and correct course.
     ToolExecutionFailed {
         /// Tool name.
         tool: String,
@@ -333,8 +336,10 @@ impl McpError {
             }
             Self::ResourceNotFound(_) if earlier => codes::LEGACY_RESOURCE_NOT_FOUND,
             Self::MissingRequiredCapability(_) if earlier => codes::INVALID_PARAMS,
-            Self::InvalidParams(_) | Self::ResourceNotFound(_) => codes::INVALID_PARAMS,
-            Self::MethodNotFound(_) | Self::ToolNotFound(_) => codes::METHOD_NOT_FOUND,
+            Self::InvalidParams(_) | Self::ResourceNotFound(_) | Self::ToolNotFound(_) => {
+                codes::INVALID_PARAMS
+            }
+            Self::MethodNotFound(_) => codes::METHOD_NOT_FOUND,
             Self::Authentication(_)
             | Self::PermissionDenied(_)
             | Self::Timeout(_)
@@ -502,9 +507,16 @@ fn capability_path(required: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// A JSON failure inside a handler is the server's: the macro has already
+/// validated the client's arguments before the handler runs, so what fails
+/// here is an upstream response, a stored document, or a value that won't
+/// serialize. Answering Invalid Params blamed the client, which then never
+/// retried, and quoted upstream internals at it. Map to
+/// [`McpError::invalid_params`] yourself where the input really is the
+/// client's.
 impl From<serde_json::Error> for McpError {
     fn from(e: serde_json::Error) -> Self {
-        Self::InvalidParams(e.to_string())
+        Self::Internal(e.to_string())
     }
 }
 
@@ -656,11 +668,14 @@ mod tests {
     }
 
     #[test]
-    fn serde_json_errors_become_invalid_params() {
+    fn serde_json_errors_are_the_servers() {
         let e = serde_json::from_str::<u32>("not json").unwrap_err();
         let mcp: McpError = e.into();
-        assert!(matches!(mcp, McpError::InvalidParams(_)));
-        assert_eq!(mcp.jsonrpc_code(&crate::ProtocolVersion::LATEST), -32602);
+        assert!(matches!(mcp, McpError::Internal(_)));
+        assert_eq!(
+            mcp.jsonrpc_code(&crate::ProtocolVersion::LATEST),
+            codes::INTERNAL_ERROR
+        );
     }
 
     /// A dotted sub-capability path comes back as the nesting
