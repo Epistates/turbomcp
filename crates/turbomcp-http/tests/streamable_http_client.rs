@@ -344,6 +344,63 @@ async fn a_404_for_the_session_is_a_typed_expiry_that_forgets_it() {
     );
 }
 
+/// A 404 while resuming a POST's stream comes after the request was delivered,
+/// so the request may have run. Reporting it as an expiry had the client start
+/// a new session and send it again, running a `tools/call` twice. It is lost
+/// instead, and the expiry goes to the next request, before that is sent.
+#[tokio::test]
+async fn a_404_while_resuming_loses_the_request_and_expires_the_next() {
+    let log = Log::default();
+    let base_url = serve(
+        log.clone(),
+        Arc::new(|method, headers, n| match *method {
+            Method::POST if n == 1 => initialize_result("2025-11-25", "sess-1"),
+            Method::POST if headers.contains_key("mcp-session-id") => {
+                sse(vec![(0, "retry: 10\nid: c-0\ndata:\n\n")])
+            }
+            Method::POST => initialize_result("2025-11-25", "sess-2"),
+            Method::GET if headers.contains_key("last-event-id") => {
+                StatusCode::NOT_FOUND.into_response()
+            }
+            _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+        }),
+    )
+    .await;
+    let transport = client(&base_url, StreamableHttpClientConfig::default());
+
+    transport.send(request(0, "initialize")).await.unwrap();
+    let lost = transport.send(request(1, "tools/call")).await;
+    assert!(
+        matches!(lost, Err(TransportError::ConnectionLost(_))),
+        "got {lost:?}"
+    );
+
+    let expired = transport.send(request(2, "tools/list")).await;
+    assert!(
+        matches!(expired, Err(TransportError::SessionExpired(_))),
+        "got {expired:?}"
+    );
+    assert_eq!(
+        log.all(Method::POST).len(),
+        2,
+        "the expired request is not sent"
+    );
+
+    transport.send(request(3, "initialize")).await.unwrap();
+    assert_eq!(
+        log.nth(Method::POST, 3).await.header("mcp-session-id"),
+        None
+    );
+    transport
+        .send(request(4, "tools/list"))
+        .await
+        .unwrap_or_default();
+    assert_eq!(
+        log.nth(Method::POST, 4).await.header("mcp-session-id"),
+        Some("sess-2")
+    );
+}
+
 /// §Listening for Messages: a server closing the GET stream SHOULD send
 /// `retry`, and the client MUST wait that long before reconnecting — with the
 /// stream's own `Last-Event-ID`. The field used to be ignored outright.

@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never checked either. Without the capability an abandoned task is now left
   to run, and `cancel_task` fails without sending anything, as the other
   capability-gated calls do.
+- **A request could run twice after its session expired.** When the server
+  answered 404 while the client was resuming a request's SSE stream, the
+  transport reported the session as expired, and the client started a new
+  session and sent the request again, though the server had already received
+  it and may have run it. That request now fails with `ConnectionLost`, and the
+  expiry is reported to the next request instead, before it is sent, so the
+  new session is still started automatically. A 404 on the POST itself, which
+  the server never ran, is still retried.
 
 ### Security
 

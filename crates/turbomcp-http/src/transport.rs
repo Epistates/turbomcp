@@ -405,6 +405,9 @@ struct SessionState {
     /// `None` until the `initialize` response is seen, at which point the
     /// configured default stops being used.
     negotiated_version: Arc<RwLock<Option<String>>>,
+
+    /// The server ended the session, and no `initialize` has been sent since.
+    expired: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SessionState {
@@ -413,6 +416,7 @@ impl SessionState {
             config,
             session_id: Arc::new(RwLock::new(None)),
             negotiated_version: Arc::new(RwLock::new(None)),
+            expired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -783,14 +787,12 @@ impl StreamableHttpClientTransport {
     /// 404.
     async fn expire_session(&self) -> TransportError {
         self.session.reset().await;
+        self.session.expired.store(true, Ordering::Release);
         *self.message_endpoint.write().await = None;
         if let Some(handle) = self.sse_task_handle.lock().await.take() {
             handle.abort();
         }
-        TransportError::SessionExpired(
-            "the server no longer knows this session (HTTP 404); initialize again to start a new one"
-                .to_string(),
-        )
+        session_expired()
     }
 
     /// Start SSE connection task
@@ -1205,7 +1207,16 @@ impl StreamableHttpClientTransport {
                 .send();
             match tokio::time::timeout(self.config.timeout, request).await {
                 Ok(Ok(resumed)) if resumed.status() == reqwest::StatusCode::NOT_FOUND => {
-                    return Err(self.expire_session().await);
+                    // Unlike a 404 on the POST, this request was delivered and
+                    // may have run, so it must not be sent again as if it had
+                    // not: it is lost, and the expiry is reported to the next
+                    // request instead, before that one is sent.
+                    self.expire_session().await;
+                    return Err(TransportError::ConnectionLost(
+                        "the session expired while this request's stream was resuming; \
+                         the request may have run on the server"
+                            .to_string(),
+                    ));
                 }
                 Ok(Ok(resumed)) if resumed.status().is_success() => response = Some(resumed),
                 Ok(Ok(resumed)) => warn!("Resuming POST SSE stream failed: {}", resumed.status()),
@@ -1329,6 +1340,23 @@ impl StreamableHttpClientTransport {
     }
 }
 
+fn session_expired() -> TransportError {
+    TransportError::SessionExpired(
+        "the server no longer knows this session (HTTP 404); initialize again to start a new one"
+            .to_string(),
+    )
+}
+
+/// Whether `payload` is an `initialize` request.
+fn is_initialize(payload: &[u8]) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Method<'a> {
+        #[serde(borrow)]
+        method: Option<&'a str>,
+    }
+    serde_json::from_slice::<Method<'_>>(payload).is_ok_and(|m| m.method == Some("initialize"))
+}
+
 /// The server's authorization challenge, if `response` is a refusal.
 ///
 /// `401` is always one. `403` is only when it carries a `Bearer` challenge:
@@ -1356,6 +1384,17 @@ impl Transport for StreamableHttpClientTransport {
 
             // Validate request size against configured limits (v2.2.0+)
             validate_request_size(message.payload.len(), &self.config.limits)?;
+
+            // The session expired under a request that could not be retried
+            // safely. This one hasn't been sent, so it can be: report the
+            // expiry until something starts a new session.
+            if self.session.expired.load(Ordering::Acquire) {
+                if is_initialize(&message.payload) {
+                    self.session.expired.store(false, Ordering::Release);
+                } else {
+                    return Err(session_expired());
+                }
+            }
 
             // Get message endpoint (discovered or default)
             let url = self.get_message_endpoint_url().await;
