@@ -315,6 +315,23 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** per-call options on the client. `Client::call_tool_with`,
+  `read_resource_with` and `get_prompt_with` take a `CallOptions`: a
+  timeout, `reset_timeout_on_progress` and a `max_total_timeout` ceiling (the
+  trio the spec's timeout guidance names), progress routed to a callback,
+  `_meta` (trace context or keys of your own), a per-call log level on
+  `2026-07-28`, cancellation through a `CancellationToken`
+  (`ClientError::Cancelled`, and the server is told), and task augmentation.
+  The client mints progress tokens, unique among its in-flight requests as
+  the spec requires, and delivers each call's updates to that call only, in
+  order, as `neutral::Progress`. `call_tool_with_progress`,
+  `read_resource_with_progress` and `get_prompt_with_progress`, which took a
+  caller-chosen token and reported to the global notification handler, are
+  gone; `call_tool_task` is `call_tool_with(…, CallOptions::new().task(ttl))`.
+- A request's timeout stops while the client is answering a server→client
+  request. On a stateful session a `tools/call` whose server asks the user
+  something timed out while the user was typing, and their answer went
+  nowhere.
 - `ServerBuilder::mask_internal_errors()`: clients get
   `internal error (ref: <id>)` instead of an internal error's text, which
   tends to carry SQL, hostnames or connection strings, and the original is

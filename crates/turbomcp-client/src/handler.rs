@@ -134,7 +134,9 @@ pub trait NotificationHandler: Send + Sync + 'static {
     /// The response cache is invalidated by `list_changed` notifications
     /// independently of this hook, and
     /// `notifications/elicitation/complete` also routes to
-    /// [`ElicitationHandler::on_elicitation_complete`].
+    /// [`ElicitationHandler::on_elicitation_complete`]. Progress for a call
+    /// made with [`CallOptions::on_progress`](crate::CallOptions::on_progress)
+    /// goes to that call instead of here.
     async fn on_notification(&self, method: String, params: Option<Value>);
 }
 

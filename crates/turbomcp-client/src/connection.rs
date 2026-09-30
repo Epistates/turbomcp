@@ -37,7 +37,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::{AbortHandle, JoinSet};
 use turbomcp_core::{
     Extensions, InvalidFrame, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
@@ -49,6 +49,7 @@ use turbomcp_service::Transport;
 use crate::cache::ResponseCache;
 use crate::error::{ClientError, ClientResult};
 use crate::handler::{ClientHandlers, dispatch_server_request};
+use crate::progress::ProgressRoutes;
 
 /// Default per-request timeout — a request with no answer in this window fails
 /// with [`ClientError::Timeout`] rather than hanging forever.
@@ -85,6 +86,12 @@ struct Inner {
     /// Whether the transport is Streamable HTTP, where header-level features
     /// (`x-mcp-header` mirrors, `MCP-Protocol-Version`) apply.
     carries_headers: bool,
+    /// Where each call's `notifications/progress` goes (shared with the actor).
+    progress: Arc<ProgressRoutes>,
+    /// How many server→client requests this client is answering right now.
+    /// A request's timeout stops while any are: the client, not the server,
+    /// is the one taking its time.
+    inbound: watch::Receiver<usize>,
 }
 
 impl Drop for Inner {
@@ -171,6 +178,8 @@ impl Connection {
         let done = tokio_util::sync::CancellationToken::new();
         let negotiated = Arc::new(Mutex::new(ProtocolVersion::LATEST));
         let carries_headers = transport.carries_headers();
+        let progress = Arc::new(ProgressRoutes::default());
+        let (inbound_tx, inbound) = watch::channel(0);
         tokio::spawn(actor(
             transport,
             rx,
@@ -180,6 +189,8 @@ impl Connection {
                 weak_out,
                 cache,
                 negotiated: Arc::clone(&negotiated),
+                progress: Arc::clone(&progress),
+                inbound: inbound_tx,
             },
             (shutdown.clone(), done.clone()),
         ));
@@ -194,6 +205,8 @@ impl Connection {
                 done,
                 admission: tokio::sync::Semaphore::new(1024),
                 carries_headers,
+                progress,
+                inbound,
             }),
         }
     }
@@ -248,7 +261,30 @@ impl Connection {
         params: Option<Value>,
         facts: Extensions,
     ) -> ClientResult<Value> {
-        let deadline = tokio::time::Instant::now() + self.inner.request_timeout;
+        self.request_waiting(method, params, facts, Wait::default())
+            .await
+    }
+
+    /// Per-call progress routes, for a caller that mints a token.
+    pub(crate) fn progress_routes(&self) -> &Arc<ProgressRoutes> {
+        &self.inner.progress
+    }
+
+    /// [`request_with`](Self::request_with), waiting as `wait` says.
+    ///
+    /// The clock stops while this client is answering a server→client request
+    /// (a legacy `tools/call` whose server asked the user something): the
+    /// protocol can't say which call such a request belongs to, and timing out
+    /// the call while its user types the answer threw the answer away.
+    pub(crate) async fn request_waiting(
+        &self,
+        method: impl Into<String>,
+        params: Option<Value>,
+        facts: Extensions,
+        wait: Wait,
+    ) -> ClientResult<Value> {
+        let timeout = wait.timeout.unwrap_or(self.inner.request_timeout);
+        let mut deadline = tokio::time::Instant::now() + timeout;
         let _admission = tokio::time::timeout_at(deadline, self.inner.admission.acquire())
             .await
             .map_err(|_| ClientError::Timeout)?
@@ -278,14 +314,40 @@ impl Connection {
             Err(_) => return Err(ClientError::Timeout),
         }
 
-        let outcome = match tokio::time::timeout_at(deadline, reply_rx).await {
-            Ok(Ok(Ok(value))) => Ok(value),
-            Ok(Ok(Err(err))) => Err(err),
+        let reply = |r: Result<ClientResult<Value>, oneshot::error::RecvError>| match r {
+            Ok(result) => result,
             // The actor dropped the sender (connection closed) before replying.
-            Ok(Err(_recv)) => Err(ClientError::Closed),
-            Err(_elapsed) => {
-                abandon.reason = Some("the client's request timeout elapsed");
-                return Err(ClientError::Timeout);
+            Err(_recv) => Err(ClientError::Closed),
+        };
+        let mut reply_rx = reply_rx;
+        let mut inbound = self.inner.inbound.clone();
+        let mut ticks = wait.progress;
+        let outcome = loop {
+            tokio::select! {
+                r = &mut reply_rx => break reply(r),
+                () = tokio::time::sleep_until(deadline) => {
+                    if *inbound.borrow() > 0 {
+                        // Paused: wait for the client to finish answering,
+                        // then give the request its full timeout again.
+                        tokio::select! {
+                            r = &mut reply_rx => break reply(r),
+                            _ = inbound.wait_for(|n| *n == 0) => {
+                                deadline = tokio::time::Instant::now() + timeout;
+                                continue;
+                            }
+                        }
+                    }
+                    abandon.reason = Some("the client's request timeout elapsed");
+                    return Err(ClientError::Timeout);
+                }
+                Ok(()) = async {
+                    match ticks.as_mut() {
+                        Some(ticks) => ticks.changed().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    deadline = tokio::time::Instant::now() + timeout;
+                }
             }
         };
         // Answered: `complete_pending` already took the entry, and there is
@@ -419,6 +481,15 @@ impl Drop for AbandonGuard<'_> {
     }
 }
 
+/// How long one request waits, when it isn't the connection's default.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Wait {
+    /// Instead of the connection's request timeout.
+    pub(crate) timeout: Option<Duration>,
+    /// Ticks on each progress update; each restarts the timeout.
+    pub(crate) progress: Option<watch::Receiver<()>>,
+}
+
 /// The connection actor: owns the transport, multiplexes both directions.
 /// Everything the actor and its inbound router need beyond the transport
 /// itself: what a frame might complete, who answers it, and how to reply.
@@ -435,6 +506,10 @@ struct SessionState {
     /// The revision the handshake settled on: written once, read per inbound
     /// server→client request to shape the reply.
     negotiated: Arc<Mutex<ProtocolVersion>>,
+    /// Per-call progress routes.
+    progress: Arc<ProgressRoutes>,
+    /// Published count of server→client requests in their handlers.
+    inbound: watch::Sender<usize>,
 }
 
 async fn actor<T>(
@@ -452,6 +527,12 @@ async fn actor<T>(
     let _done = done.drop_guard();
     let mut dispatch = Dispatch::new(&state.handler, transport.carries_headers());
     loop {
+        let answering = dispatch.inflight.len();
+        state.inbound.send_if_modified(|n| {
+            let changed = *n != answering;
+            *n = answering;
+            changed
+        });
         tokio::select! {
             () = shutdown.cancelled() => break,
             Some(finished) = dispatch.requests.join_next(), if !dispatch.requests.is_empty() => {
@@ -630,10 +711,18 @@ fn route_inbound(
         weak_out,
         cache,
         negotiated,
+        progress,
+        inbound: _,
     } = state;
     match msg {
         JsonRpcMessage::Response(resp) => {
             complete_pending(resp, pending, failure);
+            None
+        }
+        // Progress for a call that asked for it goes to that call, in order.
+        JsonRpcMessage::Notification(n)
+            if n.method == notification::PROGRESS && progress.deliver(n.params.as_ref()) =>
+        {
             None
         }
         JsonRpcMessage::Notification(n) => {

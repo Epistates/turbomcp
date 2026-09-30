@@ -30,6 +30,10 @@ pub enum ClientError {
     /// No response arrived within the configured request timeout.
     #[error("request timed out")]
     Timeout,
+    /// The caller cancelled the call (`CallOptions::cancel_on`). The server
+    /// was told to stop.
+    #[error("request cancelled")]
+    Cancelled,
 
     /// The response stream ended before the response arrived (a proxy idle
     /// timeout, a load balancer drain). The request may or may not have run;

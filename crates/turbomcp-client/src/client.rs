@@ -32,12 +32,14 @@ use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_service::{ParamHeaders, Transport, WireVersion, mcp_headers};
 
 use crate::cache::ResponseCache;
-use crate::connection::Connection;
+use crate::connection::{Connection, Wait};
 use crate::error::{ClientError, ClientResult};
 use crate::handler::{
     ClientHandlers, ElicitationHandler, NotificationHandler, RootsHandler, SamplingHandler,
     dispatch_server_request,
 };
+use crate::options::CallOptions;
+use crate::progress::Registration;
 
 /// Cap on MRTR re-issue rounds — a guard against a server that keeps answering
 /// `input_required` forever.
@@ -927,33 +929,33 @@ impl Client {
         name: impl Into<String>,
         arguments: Map<String, Value>,
     ) -> ClientResult<neutral::CallToolResult> {
-        self.call_tool_with(&name.into(), &arguments, None, None)
+        self.call_tool_with(name, arguments, &CallOptions::default())
             .await
     }
 
-    /// [`call_tool`](Self::call_tool), asking the server to report progress
-    /// against `progress_token`.
-    ///
-    /// The token is opaque and caller-chosen (a string or an integer) and must
-    /// be unique among this client's in-flight requests. Progress arrives as
-    /// `notifications/progress` at
-    /// [`NotificationHandler::on_notification`](crate::NotificationHandler::on_notification),
-    /// each carrying the token back; the server is never obliged to send any.
+    /// [`call_tool`](Self::call_tool) with per-call [`CallOptions`]: a
+    /// timeout, progress routed to a callback, `_meta`, a log level,
+    /// cancellation, task augmentation.
     ///
     /// # Errors
-    /// As [`call_tool`](Self::call_tool).
-    pub async fn call_tool_with_progress(
+    /// As [`call_tool`](Self::call_tool), plus [`ClientError::Cancelled`] when
+    /// the options' token fires and [`ClientError::Protocol`] for an option
+    /// this session can't express.
+    pub async fn call_tool_with(
         &self,
         name: impl Into<String>,
         arguments: Map<String, Value>,
-        progress_token: impl Into<Value>,
+        options: &CallOptions,
     ) -> ClientResult<neutral::CallToolResult> {
-        self.call_tool_with(&name.into(), &arguments, None, Some(&progress_token.into()))
+        let name = name.into();
+        self.run(options, self.call_tool_inner(&name, &arguments, options))
             .await
     }
 
     /// Call a tool requesting task-augmented execution (core Tasks,
-    /// `2025-11-25` spec §Creating Tasks).
+    /// `2025-11-25` spec §Creating Tasks). The same as
+    /// [`call_tool_with`](Self::call_tool_with) with
+    /// [`CallOptions::task`](CallOptions::task).
     ///
     /// On `2025-11-25` the request carries the spec's `task` field when the
     /// spec allows it: the server declared `tasks.requests.tools.call` and the
@@ -992,31 +994,25 @@ impl Client {
         arguments: Map<String, Value>,
         ttl_ms: Option<i64>,
     ) -> ClientResult<neutral::CallToolResult> {
-        let task = match ttl_ms {
-            Some(ttl) => json!({ "ttl": ttl }),
-            None => json!({}),
-        };
-        self.call_tool_with(&name.into(), &arguments, Some(&task), None)
+        self.call_tool_with(name, arguments, &CallOptions::new().task(ttl_ms))
             .await
     }
 
-    /// The shared `tools/call` path: issue the (optionally task-augmented)
-    /// call with the HeaderMismatch refresh-and-retry-once recovery, then settle
-    /// whatever came back into a final `CallToolResult`.
-    async fn call_tool_with(
+    async fn call_tool_inner(
         &self,
         name: &str,
         arguments: &Map<String, Value>,
-        task: Option<&Value>,
-        progress_token: Option<&Value>,
+        options: &CallOptions,
     ) -> ClientResult<neutral::CallToolResult> {
         self.require_server_capability("tools", request::TOOLS_CALL)?;
-        let task = self.task_augmentation(name, task).await?;
+        let per = self.prepare(options)?;
+        let task = options.task.map(|ttl| match ttl {
+            Some(ttl) => json!({ "ttl": ttl }),
+            None => json!({}),
+        });
+        let task = self.task_augmentation(name, task.as_ref()).await?;
         let build = |client: &Self| {
             let (mut params, facts) = client.tool_call_params(name, arguments);
-            if let Some(token) = progress_token {
-                with_progress_token(&mut params, token.clone());
-            }
             if let Some(task) = &task {
                 params.insert("task".into(), task.clone());
             }
@@ -1024,7 +1020,7 @@ impl Client {
         };
         let (params, facts) = build(self);
         let v = match self
-            .mrtr_request_with(request::TOOLS_CALL, params, facts)
+            .mrtr_request_with(request::TOOLS_CALL, params, facts, &per)
             .await
         {
             // HeaderMismatch: our mirror headers may be built from a stale
@@ -1048,7 +1044,7 @@ impl Client {
                 self.clear_response_cache();
                 self.list_all_tools().await?;
                 let (params, facts) = build(self);
-                self.mrtr_request_with(request::TOOLS_CALL, params, facts)
+                self.mrtr_request_with(request::TOOLS_CALL, params, facts, &per)
                     .await?
             }
             other => other?,
@@ -1248,31 +1244,31 @@ impl Client {
         &self,
         uri: impl Into<String>,
     ) -> ClientResult<neutral::ReadResourceResult> {
-        self.read_resource_inner(uri.into(), None).await
+        self.read_resource_with(uri, &CallOptions::default()).await
     }
 
-    /// [`read_resource`](Self::read_resource), asking the server to report
-    /// progress against `progress_token`. See
-    /// [`call_tool_with_progress`](Self::call_tool_with_progress) for how the
-    /// token is chosen and where the notifications arrive.
+    /// [`read_resource`](Self::read_resource) with per-call [`CallOptions`].
     ///
     /// # Errors
-    /// As [`read_resource`](Self::read_resource).
-    pub async fn read_resource_with_progress(
+    /// As [`read_resource`](Self::read_resource) and
+    /// [`call_tool_with`](Self::call_tool_with).
+    pub async fn read_resource_with(
         &self,
         uri: impl Into<String>,
-        progress_token: impl Into<Value>,
+        options: &CallOptions,
     ) -> ClientResult<neutral::ReadResourceResult> {
-        self.read_resource_inner(uri.into(), Some(progress_token.into()))
+        let uri = uri.into();
+        self.run(options, self.read_resource_inner(uri, options))
             .await
     }
 
     async fn read_resource_inner(
         &self,
         uri: String,
-        progress_token: Option<Value>,
+        options: &CallOptions,
     ) -> ClientResult<neutral::ReadResourceResult> {
         self.require_server_capability("resources", request::RESOURCES_READ)?;
+        let per = self.prepare(options)?;
         // `resources/read` runs the MRTR loop, so it can't share
         // `cached_request`; the cache wraps the *settled* result (never an
         // `input_required` intermediate). A progress request is still cacheable
@@ -1284,10 +1280,9 @@ impl Client {
         }
         let mut params = Map::new();
         params.insert("uri".into(), json!(&uri));
-        if let Some(token) = progress_token {
-            with_progress_token(&mut params, token);
-        }
-        let v = self.mrtr_request(request::RESOURCES_READ, params).await?;
+        let v = self
+            .mrtr_request_with(request::RESOURCES_READ, params, Extensions::new(), &per)
+            .await?;
         if let Some(cache) = &self.cache {
             cache.store(request::RESOURCES_READ, Some(&uri), &v);
         }
@@ -1373,23 +1368,23 @@ impl Client {
         name: impl Into<String>,
         arguments: Map<String, Value>,
     ) -> ClientResult<neutral::GetPromptResult> {
-        self.get_prompt_inner(name.into(), arguments, None).await
+        self.get_prompt_with(name, arguments, &CallOptions::default())
+            .await
     }
 
-    /// [`get_prompt`](Self::get_prompt), asking the server to report progress
-    /// against `progress_token`. See
-    /// [`call_tool_with_progress`](Self::call_tool_with_progress) for how the
-    /// token is chosen and where the notifications arrive.
+    /// [`get_prompt`](Self::get_prompt) with per-call [`CallOptions`].
     ///
     /// # Errors
-    /// As [`get_prompt`](Self::get_prompt).
-    pub async fn get_prompt_with_progress(
+    /// As [`get_prompt`](Self::get_prompt) and
+    /// [`call_tool_with`](Self::call_tool_with).
+    pub async fn get_prompt_with(
         &self,
         name: impl Into<String>,
         arguments: Map<String, Value>,
-        progress_token: impl Into<Value>,
+        options: &CallOptions,
     ) -> ClientResult<neutral::GetPromptResult> {
-        self.get_prompt_inner(name.into(), arguments, Some(progress_token.into()))
+        let name = name.into();
+        self.run(options, self.get_prompt_inner(name, arguments, options))
             .await
     }
 
@@ -1397,16 +1392,16 @@ impl Client {
         &self,
         name: String,
         arguments: Map<String, Value>,
-        progress_token: Option<Value>,
+        options: &CallOptions,
     ) -> ClientResult<neutral::GetPromptResult> {
         self.require_server_capability("prompts", request::PROMPTS_GET)?;
+        let per = self.prepare(options)?;
         let mut params = Map::new();
         params.insert("name".into(), json!(name));
         params.insert("arguments".into(), Value::Object(arguments));
-        if let Some(token) = progress_token {
-            with_progress_token(&mut params, token);
-        }
-        let v = self.mrtr_request(request::PROMPTS_GET, params).await?;
+        let v = self
+            .mrtr_request_with(request::PROMPTS_GET, params, Extensions::new(), &per)
+            .await?;
         self.decode::<v0728::GetPromptResult, legacy::GetPromptResult, _>(v)
     }
 
@@ -1906,28 +1901,22 @@ impl Client {
     /// `requestState`, until a real result comes back. On the legacy path the
     /// server elicits inline (handled by the connection actor), so the first
     /// result is final and the loop runs exactly once.
-    async fn mrtr_request(
-        &self,
-        method: &str,
-        original: Map<String, Value>,
-    ) -> ClientResult<Value> {
-        self.mrtr_request_with(method, original, Extensions::new())
-            .await
-    }
-
-    /// [`mrtr_request`](Self::mrtr_request), with transport facts sent on
-    /// every round.
+    ///
+    /// `facts` go to the transport on every round, and `per` (one call's
+    /// options) applies to each.
     async fn mrtr_request_with(
         &self,
         method: &str,
-        original: Map<String, Value>,
+        mut original: Map<String, Value>,
         facts: Extensions,
+        per: &Prepared,
     ) -> ClientResult<Value> {
+        per.stamp(&mut original);
         let mut params = original.clone();
         let mut state_only_rounds = 0u32;
         for _ in 0..MAX_MRTR_ROUNDS {
             let result = self
-                .versioned_request_with(method, params, facts.clone())
+                .versioned_request_waiting(method, params, facts.clone(), per.wait())
                 .await?;
             if !self.result_is_input_required(&result)? {
                 return Ok(result);
@@ -2045,8 +2034,21 @@ impl Client {
     async fn versioned_request_with(
         &self,
         method: &str,
+        params: Map<String, Value>,
+        facts: Extensions,
+    ) -> ClientResult<Value> {
+        self.versioned_request_waiting(method, params, facts, Wait::default())
+            .await
+    }
+
+    /// [`versioned_request_with`](Self::versioned_request_with), waiting as
+    /// `wait` says.
+    async fn versioned_request_waiting(
+        &self,
+        method: &str,
         mut params: Map<String, Value>,
         mut facts: Extensions,
+        wait: Wait,
     ) -> ClientResult<Value> {
         if self.version == ProtocolVersion::V2026_07_28
             && let Some(meta) = params
@@ -2064,7 +2066,7 @@ impl Client {
         let params = Value::Object(params);
         match self
             .conn
-            .request_with(method, Some(params.clone()), facts.clone())
+            .request_waiting(method, Some(params.clone()), facts.clone(), wait.clone())
             .await
         {
             // The stream carrying the response broke first. `Connection` mints
@@ -2073,9 +2075,63 @@ impl Client {
             // out a proxy or load balancer dropping one stream.
             Err(ClientError::StreamLost) if REISSUABLE.contains(&method) => {
                 tracing::debug!(method, "response stream lost; re-issuing once");
-                self.conn.request_with(method, Some(params), facts).await
+                self.conn
+                    .request_waiting(method, Some(params), facts, wait)
+                    .await
             }
             other => other,
+        }
+    }
+
+    /// Resolve one call's options against this session.
+    fn prepare(&self, options: &CallOptions) -> ClientResult<Prepared> {
+        let mut meta = options.checked_meta()?;
+        if let Some(level) = options.log_level {
+            if !self.version.is_stateless() {
+                return Err(ClientError::Protocol(format!(
+                    "a per-call log level needs 2026-07-28; this {} session sets its level with `set_level`",
+                    self.version.as_str()
+                )));
+            }
+            meta.insert(keys::LOG_LEVEL.into(), json!(level));
+        }
+        let progress = options.wants_progress().then(|| {
+            self.conn
+                .progress_routes()
+                .register(options.on_progress.clone())
+        });
+        if let Some(registration) = &progress {
+            meta.insert(keys::PROGRESS_TOKEN.into(), json!(registration.token));
+        }
+        Ok(Prepared {
+            meta,
+            timeout: options.timeout,
+            reset_on_progress: options.reset_timeout_on_progress,
+            progress,
+        })
+    }
+
+    /// Run one call under its options' overall limit and cancellation. Either
+    /// drops the call, which tells the server to stop.
+    async fn run<T>(
+        &self,
+        options: &CallOptions,
+        call: impl std::future::Future<Output = ClientResult<T>>,
+    ) -> ClientResult<T> {
+        let bounded = async {
+            match options.max_total_timeout {
+                Some(max) => tokio::time::timeout(max, call)
+                    .await
+                    .unwrap_or(Err(ClientError::Timeout)),
+                None => call.await,
+            }
+        };
+        match &options.cancel {
+            Some(token) => tokio::select! {
+                result = bounded => result,
+                () = token.cancelled() => Err(ClientError::Cancelled),
+            },
+            None => bounded.await,
         }
     }
 
@@ -2095,18 +2151,6 @@ impl Client {
                 .map(Into::into)
                 .map_err(|e| ClientError::Decode(e.to_string()))
         }
-    }
-}
-
-/// Stamp `_meta.progressToken` onto a request's params, merging into whatever
-/// `_meta` is already there (the `#[mcp_header]` mirror signal, typically).
-fn with_progress_token(params: &mut Map<String, Value>, token: Value) {
-    if let Some(meta) = params
-        .entry("_meta")
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-    {
-        meta.insert("progressToken".into(), token);
     }
 }
 
@@ -2445,5 +2489,43 @@ mod header_param_tests {
             }
         });
         assert!(header_params_from_schema(&in_items).is_err());
+    }
+}
+
+/// One call's options, resolved: the `_meta` its requests carry and how each
+/// waits. Holding it keeps the call's progress route alive.
+#[derive(Default)]
+struct Prepared {
+    meta: Map<String, Value>,
+    timeout: Option<Duration>,
+    reset_on_progress: bool,
+    progress: Option<Registration>,
+}
+
+impl Prepared {
+    /// Merge this call's `_meta` into a request's params, beside whatever is
+    /// there already (the `#[mcp_header]` mirror signal, typically).
+    fn stamp(&self, params: &mut Map<String, Value>) {
+        if self.meta.is_empty() {
+            return;
+        }
+        if let Some(meta) = params
+            .entry("_meta")
+            .or_insert_with(|| Value::Object(Map::new()))
+            .as_object_mut()
+        {
+            meta.extend(self.meta.clone());
+        }
+    }
+
+    fn wait(&self) -> Wait {
+        Wait {
+            timeout: self.timeout,
+            progress: self
+                .progress
+                .as_ref()
+                .filter(|_| self.reset_on_progress)
+                .map(|registration| registration.ticks.clone()),
+        }
     }
 }

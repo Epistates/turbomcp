@@ -491,6 +491,47 @@ impl CallToolResult {
     }
 }
 
+// ---- progress -----------------------------------------------------------------
+
+/// One `notifications/progress` update, as a requester sees it: how far along,
+/// out of how much if known, and what is happening. The same on every
+/// revision.
+///
+/// "The `progress` value MUST increase with each notification, even if the
+/// total is unknown", so a consumer can treat them as a running figure.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Progress {
+    /// Progress so far.
+    pub progress: f64,
+    /// The total, if the sender knows it.
+    pub total: Option<f64>,
+    /// A human-readable description of the current step.
+    pub message: Option<String>,
+}
+
+impl Progress {
+    /// Read a progress update from `notifications/progress` params. `None` if
+    /// they carry no numeric `progress`.
+    #[must_use]
+    pub fn from_params(params: &Value) -> Option<Self> {
+        Some(Self {
+            progress: params.get("progress")?.as_f64()?,
+            total: params.get("total").and_then(Value::as_f64),
+            message: params
+                .get("message")
+                .and_then(Value::as_str)
+                .map(String::from),
+        })
+    }
+
+    /// `progress / total`, when the total is known and positive.
+    #[must_use]
+    pub fn fraction(&self) -> Option<f64> {
+        self.total.filter(|t| *t > 0.0).map(|t| self.progress / t)
+    }
+}
+
 // ---- pagination ---------------------------------------------------------------
 
 /// Inbound parameters shared by every `*/list` method: an opaque pagination
