@@ -1918,9 +1918,7 @@ fn invalid_frame_response(bad: &InvalidFrame) -> Response {
 /// client can't correlate an error that doesn't name its request.
 fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>) -> Response {
     let status = match err {
-        ProtocolError::Parse(_)
-        | ProtocolError::UnsupportedVersion { .. }
-        | ProtocolError::MissingCapability(_) => StatusCode::BAD_REQUEST,
+        ProtocolError::Parse(_) => StatusCode::BAD_REQUEST,
         // Spec §Session Management: an expired/unknown session answers 404 so
         // the client starts over with a fresh initialize.
         ProtocolError::UnknownSession(_) => StatusCode::NOT_FOUND,

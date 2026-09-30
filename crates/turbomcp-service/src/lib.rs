@@ -124,14 +124,13 @@ mod tests {
 
     #[test]
     fn protocol_error_codes() {
-        assert_eq!(ProtocolError::Parse("x".into()).jsonrpc_code(), -32700);
         assert_eq!(
-            ProtocolError::UnsupportedVersion {
-                requested: None,
-                supported: vec![]
-            }
-            .jsonrpc_code(),
-            turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION
+            ProtocolError::Parse("x".into()).jsonrpc_code(),
+            turbomcp_core::codes::PARSE_ERROR
+        );
+        assert_eq!(
+            ProtocolError::UnknownSession("x".into()).jsonrpc_code(),
+            turbomcp_core::codes::NO_ACTIVE_SESSION
         );
     }
 }

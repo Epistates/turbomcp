@@ -315,6 +315,20 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- `McpError::Rpc { code, message, data }` (`McpError::rpc(code, msg)
+  .with_data(v)`) sends any JSON-RPC error exactly as given: a code of your
+  own on the implementation floor, a `data` payload no variant models, or
+  `-32042` URL-elicitation-required on `2025-11-25`, which no path could
+  produce before. `McpError::from_jsonrpc(&err, &version)` reads a peer's
+  error back, losslessly for a relay on the same revision, and with the
+  version-split codes named so a relay to another revision translates them
+  (`-32602` resource-not-found from a `2026-07-28` server becomes `-32002`
+  for a `2025-11-25` client). `McpError::InvalidRequest` (`-32600`).
+- **Breaking:** `McpError::UnsupportedProtocolVersion` carries
+  `{ requested, supported }` and renders the `data` the schema requires;
+  `ProtocolError::UnsupportedVersion` and the never-produced
+  `ProtocolError::MissingCapability` are gone, since both are refusals a
+  well-formed request gets, which is `McpError`'s job.
 - **Breaking:** an `McpError` renders through
   `McpError::to_jsonrpc_error(&version)`, in core, with the spec-required
   `data`; `McpError::jsonrpc_code` takes the version too. The version-less

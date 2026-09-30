@@ -622,17 +622,10 @@ async fn handle<S: McpServerCore>(
     // decode defaults it to "2.0" — so only explicit wrong versions land here.
     if !msg.has_valid_version() {
         return Ok(match msg {
-            JsonRpcMessage::Request(req) => Some(
-                JsonRpcResponse::error(
-                    req.id,
-                    JsonRpcError {
-                        code: turbomcp_core::codes::INVALID_REQUEST,
-                        message: "invalid jsonrpc version (expected \"2.0\")".to_owned(),
-                        data: None,
-                    },
-                )
-                .into(),
-            ),
+            JsonRpcMessage::Request(req) => Some(error_response(
+                req.id,
+                &McpError::invalid_request("invalid jsonrpc version (expected \"2.0\")"),
+            )),
             // No id to answer with: drop the frame.
             JsonRpcMessage::Notification(_) | JsonRpcMessage::Response(_) => None,
         });
@@ -1367,9 +1360,9 @@ pub(super) fn unsupported_version(
     requested: Option<String>,
     supported: &[ProtocolVersion],
 ) -> JsonRpcMessage {
-    let err = ProtocolError::UnsupportedVersion {
+    let err = McpError::UnsupportedProtocolVersion {
         requested,
         supported: supported.iter().map(|v| v.as_str().to_owned()).collect(),
     };
-    err.into_response(id).into()
+    error_response(id, &err)
 }

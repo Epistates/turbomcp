@@ -6,8 +6,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use turbomcp_core::{
-    CancellationToken, Extensions, JsonRpcError, JsonRpcMessage, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse, McpError, ProtocolVersion, meta,
+    CancellationToken, Extensions, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, McpError,
+    ProtocolVersion, meta,
 };
 use turbomcp_protocol::methods;
 use turbomcp_protocol::v2026_07_28::types as v0728;
@@ -69,13 +69,12 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // Streaming needs an ordered writer for this connection (the serve driver
     // attaches one; the HTTP endpoint attaches a per-stream one).
     let Some(peer) = ext.get::<Peer>().filter(|p| p.is_open()).cloned() else {
-        let err = JsonRpcError {
-            code: turbomcp_core::codes::INVALID_REQUEST,
-            message: "subscriptions/listen requires a connection that can stream notifications"
-                .to_owned(),
-            data: None,
-        };
-        return Ok(Some(JsonRpcResponse::error(id, err).into()));
+        return Ok(Some(error_response(
+            id,
+            &McpError::invalid_request(
+                "subscriptions/listen requires a connection that can stream notifications",
+            ),
+        )));
     };
     let requested: RawListenParams = match req
         .params
