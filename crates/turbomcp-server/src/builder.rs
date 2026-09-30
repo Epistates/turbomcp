@@ -42,6 +42,7 @@ impl<S> core::fmt::Debug for ServerBuilder<S> {
             // Never the key itself: it signs resumable MRTR state.
             .field("state_key", &self.state_key.is_some())
             .field("visibility_policy", &self.visibility.is_some())
+            .field("mask_internal_errors", &self.mask_internal_errors)
             .finish_non_exhaustive()
     }
 }
@@ -62,6 +63,7 @@ pub struct ServerBuilder<S> {
     request_state_ttl: Option<std::time::Duration>,
     visibility: Option<Arc<dyn crate::VisibilityPolicy>>,
     roots_changed: Option<Arc<crate::dispatcher::RootsChangedHandler>>,
+    mask_internal_errors: bool,
 }
 
 impl<S: McpServerCore> ServerBuilder<S> {
@@ -84,6 +86,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             request_state_ttl: None,
             visibility: None,
             roots_changed: None,
+            mask_internal_errors: false,
         }
     }
 
@@ -106,6 +109,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             request_state_ttl: None,
             visibility: None,
             roots_changed: None,
+            mask_internal_errors: false,
         }
     }
 
@@ -248,6 +252,22 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
+    /// Send clients a reference instead of an internal error's text.
+    ///
+    /// An internal error is written for the operator, and often wraps
+    /// something a client should not see: a SQL statement, a hostname, a
+    /// connection string. With this set, every internal error the server
+    /// answers, as a JSON-RPC `-32603` or as the text of a tool's `isError`
+    /// result, reads `internal error (ref: <id>)`, and the original is logged
+    /// through `tracing` at `error` under the same `error_ref`. Errors a tool
+    /// meant the model to read (`McpError::tool_execution_failed`, invalid
+    /// arguments) are unchanged.
+    #[must_use]
+    pub fn mask_internal_errors(mut self) -> Self {
+        self.mask_internal_errors = true;
+        self
+    }
+
     /// Register the `tools/*` capability (requires `S: WithTools`).
     #[must_use]
     pub fn with_tools(mut self) -> Self
@@ -384,6 +404,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             request_state_ttl,
             visibility,
             roots_changed,
+            mask_internal_errors,
         } = self;
         if *tasks {
             return Some("with_tasks");
@@ -420,6 +441,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if roots_changed.is_some() {
             return Some("on_roots_changed");
+        }
+        if *mask_internal_errors {
+            return Some("mask_internal_errors");
         }
         None
     }
@@ -486,6 +510,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if let Some(handler) = self.roots_changed {
             dispatcher = dispatcher.on_roots_changed(handler);
+        }
+        if self.mask_internal_errors {
+            dispatcher = dispatcher.mask_internal_errors();
         }
         dispatcher
     }

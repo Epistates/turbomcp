@@ -18,6 +18,21 @@ use turbomcp_protocol::neutral;
 pub trait IntoCallToolResult {
     /// Perform the conversion.
     fn into_call_tool_result(self) -> McpResult<neutral::CallToolResult>;
+
+    /// The conversion for a call made in `ctx`, which is what `#[server]`
+    /// calls: the same, except that an internal error's text is masked when
+    /// the server was built with `mask_internal_errors`. Implement
+    /// [`into_call_tool_result`](Self::into_call_tool_result) only.
+    fn into_call_tool_result_for(
+        self,
+        ctx: &crate::CallToolContext,
+    ) -> McpResult<neutral::CallToolResult>
+    where
+        Self: Sized,
+    {
+        let _ = ctx;
+        self.into_call_tool_result()
+    }
 }
 
 /// Wrap a serializable value to return it from a `#[tool]` as **structured
@@ -146,9 +161,8 @@ impl<T: Serialize> IntoCallToolResult for Json<T> {
 /// its text is the tool-failure message.
 ///
 /// Two errors are *protocol*-level and keep propagating instead, because they
-/// say the call could not be made rather than that the tool ran and failed:
-/// the MRTR abort sentinel (the dispatcher answers an `InputRequiredResult`),
-/// and a missing client capability (SEP-2575 requires
+/// say the call could not be made rather than that the tool ran and failed: the MRTR abort sentinel (the dispatcher answers an
+/// `InputRequiredResult`), and a missing client capability (SEP-2575 requires
 /// `MissingRequiredClientCapabilityError`, which a `CallToolResult` cannot
 /// express — a client that saw `isError` would have no way to learn it needs
 /// to re-declare and retry).
@@ -161,6 +175,19 @@ where
             Ok(v) => v.into_call_tool_result(),
             Err(e @ (McpError::InputRequired | McpError::MissingRequiredCapability(_))) => Err(e),
             Err(e) => Ok(neutral::CallToolResult::error(e.to_string())),
+        }
+    }
+
+    fn into_call_tool_result_for(
+        self,
+        ctx: &crate::CallToolContext,
+    ) -> McpResult<neutral::CallToolResult> {
+        match self {
+            Ok(v) => v.into_call_tool_result_for(ctx),
+            Err(e @ McpError::Internal(_)) if crate::masking::enabled(&ctx.base.extensions) => Ok(
+                neutral::CallToolResult::error(crate::masking::masked(&e.to_string())),
+            ),
+            other => other.into_call_tool_result(),
         }
     }
 }

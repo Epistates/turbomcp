@@ -113,6 +113,8 @@ struct Shared {
     validators: Arc<crate::catalog::Validators>,
     /// Observer for `notifications/roots/list_changed`, if one was registered.
     roots_changed: Option<Arc<RootsChangedHandler>>,
+    /// Replace internal errors' text with a logged reference.
+    mask_internal_errors: bool,
 }
 
 /// What a server runs when a client's roots change. See
@@ -387,6 +389,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 visibility: None,
                 validators: Arc::new(crate::catalog::Validators::default()),
                 roots_changed: None,
+                mask_internal_errors: false,
             },
         }
     }
@@ -432,6 +435,14 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         DispatcherSessionTerminator {
             shared: self.shared.clone(),
         }
+    }
+
+    /// Mask internal errors. See
+    /// [`ServerBuilder::mask_internal_errors`](crate::ServerBuilder::mask_internal_errors).
+    #[must_use]
+    pub(crate) fn mask_internal_errors(mut self) -> Self {
+        self.shared.mask_internal_errors = true;
+        self
     }
 
     /// What ends a connection's session when the connection closes.
@@ -581,8 +592,12 @@ impl<S: McpServerCore> Service<McpRequest> for VersionDispatcher<S> {
     fn call(&mut self, request: McpRequest) -> Self::Future {
         let McpRequest {
             message: msg,
-            extensions: ext,
+            extensions: mut ext,
         } = request;
+        let mask = self.shared.mask_internal_errors;
+        if mask {
+            ext.insert(crate::masking::MaskInternalErrors);
+        }
         let server = self.server.clone();
         let router = Arc::clone(&self.router);
         let supported = self.supported.clone();
@@ -604,7 +619,15 @@ impl<S: McpServerCore> Service<McpRequest> for VersionDispatcher<S> {
             }
             _ => None,
         };
-        Box::pin(async move { handle(server, router, supported, shared, msg, ext, tracked).await })
+        Box::pin(async move {
+            let reply = handle(server, router, supported, shared, msg, ext, tracked).await;
+            if mask {
+                // Every internal error this dispatcher answers, whichever path
+                // produced it, passes here on its way out.
+                return reply.map(|reply| reply.map(crate::masking::mask_response));
+            }
+            reply
+        })
     }
 }
 

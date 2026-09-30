@@ -315,6 +315,14 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- `ServerBuilder::mask_internal_errors()`: clients get
+  `internal error (ref: <id>)` instead of an internal error's text, which
+  tends to carry SQL, hostnames or connection strings, and the original is
+  logged through `tracing` under the same `error_ref`. It covers JSON-RPC
+  `-32603` responses and the `isError` text of a `#[tool]` that returned
+  `McpError::internal`; errors a tool meant the model to read are unchanged.
+  `IntoCallToolResult::into_call_tool_result_for(ctx)` (defaulted) is what
+  `#[server]` now calls, so the masking reaches the macro path.
 - **Breaking:** `McpError::ToolNotFound` is `-32602`, as every revision
   lists an unknown tool (it was `-32601`, which tells a client the server has
   no `tools/call`). `impl From<serde_json::Error> for McpError` gives

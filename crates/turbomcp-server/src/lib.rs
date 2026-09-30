@@ -27,6 +27,7 @@ mod dispatcher;
 mod extension;
 mod inflight;
 mod logging;
+mod masking;
 mod mrtr;
 mod progress;
 mod response;

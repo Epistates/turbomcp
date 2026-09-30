@@ -1301,8 +1301,9 @@ fn gen_tool_call_arm(self_ty: &Type, t: &Handler) -> TokenStream {
                     );
                 }
             };
-            ::turbomcp::IntoCallToolResult::into_call_tool_result(
-                self.#method(#(#call_args),*).await
+            ::turbomcp::IntoCallToolResult::into_call_tool_result_for(
+                self.#method(#(#call_args),*).await,
+                ctx,
             )
         }
     }
