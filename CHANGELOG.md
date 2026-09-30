@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missed this grant. An authorization server that sets a token's audience from
   `resource` issued a token the MCP server could then reject.
 
+### Security
+
+- **`JwksClient` with an SSRF validator could be steered by DNS rebinding.**
+  It validated the JWKS URI and then let its own client resolve the host again
+  to connect, the gap 3.5.0 closed for the discovery and client-metadata
+  fetchers. It now connects to the address the validator checked, and still
+  never follows a redirect. Its 64 KB response limit was also only checked
+  after the whole body had been read into memory; it's now enforced as the body
+  arrives.
+
 ## [3.5.0] - 2026-09-25
 
 A downstream team reported that a long-running handler could not report progress

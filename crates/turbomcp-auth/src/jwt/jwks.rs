@@ -109,14 +109,7 @@ impl JwksClient {
         Self {
             jwks_uri,
             cache: Arc::new(RwLock::new(None)),
-            http_client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                // A JWKS URI can be attacker-influenced (multi-issuer setups,
-                // JWT-driven discovery). Following redirects would let a
-                // malicious or compromised endpoint hand back keys from an
-                // arbitrary host, defeating both the HTTPS check below and any
-                // SSRF policy applied to the original URI.
-                .redirect(reqwest::redirect::Policy::none())
+            http_client: Self::http_client_builder()
                 .build()
                 .expect("Failed to create HTTP client"),
             cache_ttl: Duration::from_secs(600), // 10 minutes (industry standard)
@@ -127,10 +120,23 @@ impl JwksClient {
         }
     }
 
+    fn http_client_builder() -> reqwest::ClientBuilder {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            // A JWKS URI can be attacker-influenced (multi-issuer setups,
+            // JWT-driven discovery). Following redirects would let a
+            // malicious or compromised endpoint hand back keys from an
+            // arbitrary host, defeating both the HTTPS check below and any
+            // SSRF policy applied to the original URI.
+            .redirect(reqwest::redirect::Policy::none())
+    }
+
     /// Create a JWKS client with SSRF protection
     ///
     /// The SSRF validator is applied to the JWKS URI before each fetch attempt,
     /// preventing server-side request forgery via user-controlled JWKS endpoints.
+    /// The fetch then connects to an address the validator checked, rather
+    /// than resolving the host a second time.
     pub fn with_ssrf_validator(
         jwks_uri: String,
         ssrf_validator: Arc<crate::ssrf::SsrfValidator>,
@@ -262,23 +268,32 @@ impl JwksClient {
             ));
         }
 
-        // Validate URI against SSRF policy before fetching
-        if let Some(ref validator) = self.ssrf_validator {
-            validator.validate_url(&self.jwks_uri).map_err(|e| {
-                McpError::authentication(format!("SSRF validation failed for JWKS URI: {e}"))
-            })?;
-        }
+        // Validate URI against SSRF policy before fetching, and pin the
+        // connection to an address that validation checked: letting the client
+        // resolve the host again afterwards is a DNS-rebinding gap.
+        let http_client = match &self.ssrf_validator {
+            Some(validator) => {
+                let (host, pinned) = validator
+                    .validate_url(&self.jwks_uri)
+                    .and_then(|()| validator.resolve_for_pinning(&self.jwks_uri))
+                    .map_err(|e| {
+                        McpError::authentication(format!(
+                            "SSRF validation failed for JWKS URI: {e}"
+                        ))
+                    })?;
+                Self::http_client_builder()
+                    .resolve(&host, pinned)
+                    .build()
+                    .map_err(|e| McpError::internal(format!("JWKS client: {e}")))?
+            }
+            None => self.http_client.clone(),
+        };
 
         // Fetch JWKS
-        let response = self
-            .http_client
-            .get(&self.jwks_uri)
-            .send()
-            .await
-            .map_err(|e| {
-                error!(jwks_uri = %self.jwks_uri, error = %e, "Failed to fetch JWKS");
-                McpError::internal(format!("JWKS fetch failed: {e}"))
-            })?;
+        let mut response = http_client.get(&self.jwks_uri).send().await.map_err(|e| {
+            error!(jwks_uri = %self.jwks_uri, error = %e, "Failed to fetch JWKS");
+            McpError::internal(format!("JWKS fetch failed: {e}"))
+        })?;
 
         if !response.status().is_success() {
             error!(
@@ -292,24 +307,34 @@ impl JwksClient {
             )));
         }
 
-        // Read response with size limit to prevent memory exhaustion
+        // Read the response with a size limit to prevent memory exhaustion,
+        // enforced as it arrives rather than after buffering all of it.
         const MAX_JWKS_RESPONSE_SIZE: usize = 65_536; // 64 KB — sufficient for hundreds of keys
-        let bytes = response.bytes().await.map_err(|e| {
-            error!(jwks_uri = %self.jwks_uri, error = %e, "Failed to read JWKS response body");
-            McpError::internal(format!("Failed to read JWKS response: {e}"))
-        })?;
-        if bytes.len() > MAX_JWKS_RESPONSE_SIZE {
+        let too_large = |size: u64| {
             error!(
                 jwks_uri = %self.jwks_uri,
-                size = bytes.len(),
+                size,
                 max = MAX_JWKS_RESPONSE_SIZE,
                 "JWKS response exceeds size limit"
             );
-            return Err(McpError::internal(format!(
-                "JWKS response too large: {} bytes (max: {} bytes)",
-                bytes.len(),
-                MAX_JWKS_RESPONSE_SIZE
-            )));
+            McpError::internal(format!(
+                "JWKS response too large: at least {size} bytes (max: {MAX_JWKS_RESPONSE_SIZE} bytes)"
+            ))
+        };
+        if let Some(length) = response.content_length()
+            && length > MAX_JWKS_RESPONSE_SIZE as u64
+        {
+            return Err(too_large(length));
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| {
+            error!(jwks_uri = %self.jwks_uri, error = %e, "Failed to read JWKS response body");
+            McpError::internal(format!("Failed to read JWKS response: {e}"))
+        })? {
+            if bytes.len() + chunk.len() > MAX_JWKS_RESPONSE_SIZE {
+                return Err(too_large((bytes.len() + chunk.len()) as u64));
+            }
+            bytes.extend_from_slice(&chunk);
         }
         let jwks: JwkSet = serde_json::from_slice(&bytes).map_err(|e| {
             error!(jwks_uri = %self.jwks_uri, error = %e, "Failed to parse JWKS JSON");
@@ -533,5 +558,77 @@ mod tests {
 
         let cache = client.cache.read().await;
         assert!(cache.is_none());
+    }
+
+    fn localhost_policy() -> Arc<crate::ssrf::SsrfValidator> {
+        Arc::new(crate::ssrf::SsrfValidator::new(crate::ssrf::SsrfPolicy {
+            allow_localhost: true,
+            allow_private_networks: true,
+            require_https: false,
+            ip_denylist: Vec::new(),
+            ..Default::default()
+        }))
+    }
+
+    /// With an SSRF policy the fetch goes to the address the policy checked.
+    #[tokio::test]
+    async fn an_ssrf_checked_fetch_uses_the_validated_address() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "keys": []
+            })))
+            .mount(&server)
+            .await;
+
+        let client = JwksClient::with_ssrf_validator(server.uri(), localhost_policy());
+        let jwks = client
+            .get_jwks()
+            .await
+            .expect("the policy allows localhost");
+        assert!(jwks.keys.is_empty());
+
+        let strict = JwksClient::with_ssrf_validator(
+            server.uri(),
+            Arc::new(crate::ssrf::SsrfValidator::default()),
+        );
+        assert!(
+            strict.get_jwks().await.is_err(),
+            "the default policy refuses it"
+        );
+    }
+
+    /// The size limit applies before the body is buffered, including when the
+    /// server sends no `Content-Length`.
+    #[tokio::test]
+    async fn an_oversized_jwks_is_refused() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let uri = format!("http://{}/jwks", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            // Chunked, so there is no length to check up front.
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n")
+                .await;
+            let chunk = vec![b' '; 16 * 1024];
+            for _ in 0..8 {
+                let _ = socket
+                    .write_all(format!("{:x}\r\n", chunk.len()).as_bytes())
+                    .await;
+                let _ = socket.write_all(&chunk).await;
+                let _ = socket.write_all(b"\r\n").await;
+            }
+            let _ = socket.write_all(b"0\r\n\r\n").await;
+        });
+
+        let error = JwksClient::new(uri).get_jwks().await.unwrap_err();
+        assert!(error.to_string().contains("too large"), "{error}");
     }
 }

@@ -593,7 +593,40 @@ impl SsrfValidator {
         &self,
         url_str: &str,
     ) -> Result<(reqwest::Client, String), SsrfError> {
-        // Parse URL
+        let (hostname, pinned) = self.resolve_for_pinning(url_str)?;
+
+        // Create reqwest client with DNS pinned to the validated address
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(self.policy.request_timeout)
+            .resolve(&hostname, pinned);
+
+        // Configure redirect policy
+        if !self.policy.allow_redirects {
+            client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
+        } else {
+            client_builder = client_builder.redirect(reqwest::redirect::Policy::limited(
+                self.policy.max_redirects as usize,
+            ));
+        }
+
+        let client = client_builder
+            .build()
+            .map_err(|e| SsrfError::InvalidUrl(format!("Failed to create HTTP client: {}", e)))?;
+
+        // Return the original URL - the client will use pinned DNS
+        Ok((client, url_str.to_string()))
+    }
+
+    /// Resolve `url_str`'s host once and validate every address it resolves
+    /// to, returning the host and the address to pin it to with
+    /// `reqwest::ClientBuilder::resolve`.
+    ///
+    /// For callers that build their own client, for a redirect policy
+    /// stricter than this validator's.
+    pub(crate) fn resolve_for_pinning(
+        &self,
+        url_str: &str,
+    ) -> Result<(String, SocketAddr), SsrfError> {
         let url = Url::parse(url_str)
             .map_err(|e| SsrfError::InvalidUrl(format!("Failed to parse URL: {}", e)))?;
 
@@ -613,49 +646,20 @@ impl SsrfValidator {
             .map_err(|e| SsrfError::ResolutionFailed(format!("{}: {}", hostname, e)))?
             .collect();
 
-        if addrs.is_empty() {
-            return Err(SsrfError::ResolutionFailed(format!(
-                "No IP addresses resolved for: {}",
-                hostname
-            )));
-        }
-
-        // Validate all resolved IPs
+        // Validate all resolved IPs; any of them is pinnable after that.
         for socket_addr in &addrs {
-            let ip = socket_addr.ip();
-            self.validate_ip_address(&ip)?;
+            self.validate_ip_address(&socket_addr.ip())?;
         }
+        let pinned = *addrs.first().ok_or_else(|| {
+            SsrfError::ResolutionFailed(format!("No IP addresses resolved for: {}", hostname))
+        })?;
 
-        // Create reqwest client with pinned DNS
-        let mut client_builder = reqwest::Client::builder().timeout(self.policy.request_timeout);
-
-        // Pin DNS resolution to the validated IPs
-        // Note: reqwest's resolve() takes a hostname and a single SocketAddr
-        // We'll use the first validated IP (they're all validated at this point)
-        if let Some(first_addr) = addrs.first() {
-            debug!(
-                hostname = hostname,
-                resolved_ip = %first_addr.ip(),
-                "Pinning DNS resolution to validated IP"
-            );
-            client_builder = client_builder.resolve(hostname, *first_addr);
-        }
-
-        // Configure redirect policy
-        if !self.policy.allow_redirects {
-            client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
-        } else {
-            client_builder = client_builder.redirect(reqwest::redirect::Policy::limited(
-                self.policy.max_redirects as usize,
-            ));
-        }
-
-        let client = client_builder
-            .build()
-            .map_err(|e| SsrfError::InvalidUrl(format!("Failed to create HTTP client: {}", e)))?;
-
-        // Return the original URL - the client will use pinned DNS
-        Ok((client, url_str.to_string()))
+        debug!(
+            hostname = hostname,
+            resolved_ip = %pinned.ip(),
+            "Pinning DNS resolution to validated IP"
+        );
+        Ok((hostname.to_string(), pinned))
     }
 
     /// Fetch a URL with SSRF protection and DNS pinning
