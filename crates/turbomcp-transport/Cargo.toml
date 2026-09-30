@@ -23,9 +23,7 @@ turbomcp-websocket = { workspace = true, optional = true }
 turbomcp-tcp = { workspace = true, optional = true }
 turbomcp-unix = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["net", "io-std", "io-util", "process", "sync", "time", "fs"] }
-tokio-util = { workspace = true, features = ["codec", "io"] }
 futures = { workspace = true }
-pin-project-lite = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -34,7 +32,6 @@ bytes = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
-anyhow = { workspace = true }
 
 # Compression (optional)
 flate2 = { version = "1.1", optional = true }
@@ -42,15 +39,12 @@ brotli = { version = "9.0.0", optional = true }
 lz4_flex = { version = "0.14", optional = true }
 
 # TLS support (optional)
-rustls = { version = "0.23", optional = true }
-tokio-rustls = { version = "0.26", optional = true }
 
 # Observability
 tracing = { workspace = true }
 metrics = { workspace = true, optional = true }
 
 subtle = { workspace = true }
-sha2 = { workspace = true }
 # Wipe API keys from memory on Drop
 zeroize = "1.9"
 
@@ -58,9 +52,7 @@ zeroize = "1.9"
 uuid = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
-ahash = { workspace = true }
 parking_lot = { workspace = true }
-arc-swap = { workspace = true }
 dashmap = { workspace = true }
 fastrand = { workspace = true }
 rand = { workspace = true }
@@ -99,7 +91,10 @@ unix = ["dep:turbomcp-unix", "tokio/net"]
 compression = ["flate2", "brotli", "lz4_flex"]
 
 # TLS support
-tls = ["rustls", "tokio-rustls"]
+tls = []
+# Accepted for compatibility; enable nothing.
+rustls = []
+tokio-rustls = []
 
 # Legacy feature aliases retained for downstream compatibility. Authentication
 # for HTTP servers lives in `turbomcp-server` and `turbomcp-auth`.

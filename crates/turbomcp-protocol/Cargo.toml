@@ -24,7 +24,6 @@ turbomcp-wire = { workspace = true, optional = true }
 # rt/time/sync/macros only (Cargo forbids default-features=false when inheriting
 # from a workspace dep that doesn't itself set default-features=false).
 tokio = { version = "1.53", default-features = false, features = ["rt", "time", "sync", "macros"] }
-tokio-util = { workspace = true }
 futures = { workspace = true }
 pin-project-lite = { workspace = true }
 
@@ -38,20 +37,14 @@ flate2 = "1.1" # For gzip compression
 
 # Error handling
 thiserror = { workspace = true }
-miette = { workspace = true, optional = true }
 
 # URL encoding/decoding for security validation
 percent-encoding = { workspace = true }
 
 # Observability
 tracing = { workspace = true }
-tracing-opentelemetry = { workspace = true, optional = true }
-metrics = { workspace = true, optional = true }
 
 # Performance
-smallvec = { workspace = true }
-compact_str = { workspace = true }
-arc-swap = { workspace = true }
 
 # SIMD support
 simd-json = { workspace = true, optional = true }
@@ -95,10 +88,12 @@ std = []
 simd = ["simd-json", "sonic-rs", "simdutf8"]
 zero-copy = ["bytes/serde"]
 messagepack = ["msgpacker"]
-tracing = ["dep:tracing-opentelemetry"]
-metrics = ["dep:metrics"]
+tracing = []
+metrics = []
 wasm = []
-fancy-errors = ["miette"]
+fancy-errors = []
+# Accepted for compatibility; enables nothing.
+miette = []
 mmap = ["memmap2"]  # Enable memory-mapped file support
 lock-free = []  # Enable lock-free data structures (requires unsafe)
 

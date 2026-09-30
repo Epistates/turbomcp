@@ -22,32 +22,24 @@ proc-macro = true
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "3.0", features = ["full", "extra-traits", "parsing", "visit"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 proc-macro-crate = "3.5"
-# JSON Schema generation (always required - macros always generate schemas)
-schemars = { version = "1.2" }
 
-# CRITICAL FIX: Add dependencies for macro-generated code
-# These are required because the #[server] macro generates code that uses these crates
-axum = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
-
-turbomcp-protocol = { workspace = true }
-turbomcp-transport = { workspace = true, optional = true }
+# The code the macros generate names its dependencies through the user's
+# `turbomcp` (see `proc-macro-crate`); a proc-macro crate's own dependencies are
+# invisible to it. Depending on the runtime crates here only compiled them a
+# second time, for the host.
 
 [dev-dependencies]
 trybuild = "1.0"
-tokio = { workspace = true }
+# The compile_fail cases import it.
+turbomcp-protocol = { workspace = true }
 
 [features]
 default = []
-# CRITICAL FIX: Feature flags for macro-generated code
-http = ["axum"]
-tcp = ["tokio", "dep:turbomcp-transport"]
-unix = ["tokio", "dep:turbomcp-transport"]
-
-# Experimental features (pass-through to turbomcp-protocol)
-experimental-tasks = ["turbomcp-protocol/experimental-tasks"]
-
-# Note: schemars is always required and not a feature - it's used by all macros
+# Accepted for compatibility; the macros don't read them.
+http = []
+tcp = []
+unix = []
+experimental-tasks = []
+axum = []
+tokio = []

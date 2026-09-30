@@ -18,13 +18,11 @@ turbomcp-core = { workspace = true }
 turbomcp-types = { workspace = true }
 turbomcp-protocol = { workspace = true }
 turbomcp-transport = { workspace = true, optional = true }
-turbomcp-macros = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 futures = "0.3"
-async-trait = "0.1"
 
 # Serialization
 serde = { workspace = true }

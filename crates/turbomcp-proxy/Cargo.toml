@@ -48,10 +48,6 @@ tower-service = { version = "0.3", optional = true }
 tower-http = { version = "0.7", features = ["cors", "trace"], optional = true }
 futures-util = { version = "0.3", optional = true }
 
-# REST API & OpenAPI (optional)
-utoipa = { version = "5.5", features = ["axum_extras", "macros"], optional = true }
-utoipa-swagger-ui = { version = "9.0", features = ["axum"], optional = true }
-
 # GraphQL (optional) - note: graphql support scaffolded for Phase 6
 # Requires: async-graphql and async-graphql-axum from latest releases
 # Currently using placeholder versions - will update when integrating async-graphql 7.0+
@@ -61,10 +57,6 @@ handlebars = { version = "6.4", optional = true }
 convert_case = { version = "0.12", optional = true }
 chrono = { version = "0.4", optional = true }
 syn = { version = "3", features = ["parsing", "full"], optional = true }
-proc-macro2 = { version = "1", optional = true }
-
-# Schema generation (optional)
-schemars = { version = "1.2", optional = true }
 
 # Concurrency
 dashmap = "6.2"
@@ -85,13 +77,8 @@ jsonwebtoken = { workspace = true, optional = true }
 turbomcp-transport = { workspace = true, features = ["unix"] }
 
 [dev-dependencies]
-tokio-test = "0.4"
-tempfile = "3.27"
-proptest = "1.11"
-pretty_assertions = "1.4"
 criterion = { workspace = true, features = ["async_tokio"] }
 tracing-subscriber = { workspace = true }
-wiremock = { workspace = true }
 
 [features]
 default = ["cli", "runtime", "introspection"]
@@ -102,12 +89,12 @@ default = ["cli", "runtime", "introspection"]
 introspection = []
 runtime = ["introspection", "dep:turbomcp-server", "axum", "dep:tower", "tower-service", "tower-http", "futures-util", "auth"]
 tower = ["runtime"]  # Alias for runtime Tower integration (for consistency with other turbomcp crates)
-codegen = ["introspection", "handlebars", "convert_case", "chrono", "syn", "proc-macro2"]
-schema = ["schemars"]
+codegen = ["introspection", "handlebars", "convert_case", "chrono", "syn"]
+schema = []
 auth = ["dep:turbomcp-auth", "dep:jsonwebtoken", "turbomcp-auth/jwt"]
 
 # Adapters (Phase 6)
-rest = ["utoipa", "utoipa-swagger-ui", "axum", "tower", "tower-http"]
+rest = ["axum", "tower", "tower-http"]
 # NOTE (audit-v3.0.13 #38): The `graphql` feature is a Phase 6 placeholder. The
 # scaffolded `adapters/graphql.rs` exists but no `async-graphql` deps are pinned,
 # so enabling this feature does not produce a working GraphQL adapter — the gated
@@ -125,6 +112,13 @@ cli = ["runtime", "clap", "colored", "tracing-subscriber"]
 
 # Full feature set
 full = ["introspection", "runtime", "codegen", "schema", "cli", "auth", "adapters"]
+
+# Once optional dependencies that no code used; accepted for compatibility and
+# enable nothing.
+proc-macro2 = []
+schemars = []
+utoipa = []
+utoipa-swagger-ui = []
 
 [[bin]]
 name = "turbomcp-proxy"

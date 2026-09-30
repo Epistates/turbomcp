@@ -36,7 +36,6 @@ oauth2 = { version = "5.0", default-features = false }
 jsonwebtoken = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
-urlencoding = "2.1"
 url = "2.5"
 
 # HTTP types
@@ -46,10 +45,7 @@ http = "1.5"
 tower = { workspace = true, optional = true }
 tower-service = { version = "0.3", optional = true }
 futures-util = { version = "0.3", optional = true }
-pin-project-lite = { version = "0.2", optional = true }
 
-# Time handling
-chrono = { workspace = true }
 
 # UUID for session/token management
 uuid = { workspace = true, features = ["v4", "v7", "serde"] }
@@ -85,11 +81,9 @@ turbomcp-dpop = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
+# The jwt module's doctests use it.
 tokio-test = { workspace = true }
-tempfile = { workspace = true }
 wiremock = { workspace = true }
-proptest = { workspace = true }
-rand = { workspace = true }
 
 [features]
 # Default features - minimal but useful
@@ -114,7 +108,7 @@ metrics = ["dep:metrics"]                       # Metrics collection (counters, 
 tracing-ext = []                                # Extended tracing (already have tracing as hard dep)
 
 # Middleware / Tower integration
-middleware = ["dep:tower", "dep:tower-service", "dep:futures-util", "dep:pin-project-lite"]  # Tower middleware support
+middleware = ["dep:tower", "dep:tower-service", "dep:futures-util"]  # Tower middleware support
 tower = ["middleware"]  # Alias for middleware (for consistency with other turbomcp crates)
 
 # MCP 2025-11-25 Draft Specification Features (Authorization)

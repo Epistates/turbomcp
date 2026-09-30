@@ -38,8 +38,6 @@ hex = "0.4"
 zeroize = "1.9"
 subtle = "2.6"
 
-# HTTP types for DPoP proof generation
-http = "1.5"
 url = "2.5"
 
 # Time handling
@@ -69,7 +67,6 @@ yubihsm = { version = "0.42", optional = true, features = ["usb", "http"] }
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
-proptest = { workspace = true }
 
 [features]
 default = []

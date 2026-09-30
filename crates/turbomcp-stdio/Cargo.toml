@@ -36,7 +36,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
 criterion = { workspace = true }
 

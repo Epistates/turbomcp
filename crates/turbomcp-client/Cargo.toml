@@ -20,13 +20,10 @@ turbomcp-transport = { workspace = true, default-features = false }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 # LLM backend integration
-reqwest = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-uuid = { workspace = true }
 # Plugin system dependencies (legacy)
-chrono = { workspace = true, features = ["serde"] }
 # LLM integration dependencies
 futures = { workspace = true }
 

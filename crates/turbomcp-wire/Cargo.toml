@@ -25,14 +25,15 @@ sonic-rs = { workspace = true, optional = true }
 rmp-serde = { version = "1.3", optional = true }  # MessagePack
 
 # Error handling (no_std compatible)
-thiserror = { workspace = true, optional = true }
 
 # Logging (optional, std only)
 tracing = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
-std = ["serde/std", "serde_json/std", "thiserror", "tracing"]
+std = ["serde/std", "serde_json/std", "tracing"]
+# Accepted for compatibility; enables nothing.
+thiserror = []
 # `json` is always available — `serde_json` and `JsonCodec` are unconditional.
 # Kept as an alias for downstream callers that already write `features = ["json"]`,
 # but disabling it has no effect.

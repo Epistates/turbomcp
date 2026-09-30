@@ -28,7 +28,6 @@ thiserror = { workspace = true }
 turbomcp-protocol = { workspace = true }
 
 [dev-dependencies]
-tokio-test = { workspace = true }
 
 [features]
 default = []

@@ -22,7 +22,7 @@ default = ["browser"]
 # turbomcp-transport-streamable parses SSE answers to client POSTs.
 browser = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-wasm-bindgen", "futures-channel", "dep:turbomcp-transport-streamable"]
 # WASI Preview 2 target - full runtime support for Wasmtime, WasmEdge, etc.
-wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url", "dep:turbomcp-transport-streamable"]
+wasi = ["dep:wasi", "dep:url", "dep:turbomcp-transport-streamable"]
 # Console logging for debugging
 console-log = ["browser", "console_error_panic_hook"]
 # WASM server support - MCP servers running in WASM environments (Cloudflare Workers, etc.)
@@ -44,6 +44,10 @@ macros = ["wasm-server", "dep:turbomcp-wasm-macros"]
 # implementations:
 # - WASM: Use `#[turbomcp_wasm::wasm_server]` macro for WASM targets
 # - Native: Use `#[turbomcp::server]` macro from turbomcp for native targets
+#
+# Accepted for compatibility: it enabled a dependency on the native `turbomcp`
+# crate that no code in this crate used.
+turbomcp = []
 
 [dependencies]
 # Core MCP types - no_std compatible with WASM optimizations
@@ -79,7 +83,6 @@ console_error_panic_hook = { version = "0.1", optional = true }
 
 # WASI Preview 2 dependencies (optional - for wasi feature)
 wasi = { version = "0.14", optional = true }
-wit-bindgen = { version = "0.61", optional = true }
 url = { version = "2.5", optional = true }
 urlencoding = { version = "2.1", optional = true }
 
@@ -101,9 +104,6 @@ turbomcp-wasm-macros = { workspace = true, optional = true }
 # Streamable HTTP transport types (SSE, sessions, MCP 2025-11-25 spec)
 # Note: Uses std feature since WASM Workers have std-like environment
 turbomcp-transport-streamable = { workspace = true, optional = true, features = ["std"] }
-
-# Native MCP server (optional - for portable servers)
-turbomcp = { workspace = true, optional = true }
 
 [dependencies.web-sys]
 version = "0.3.105"
@@ -150,7 +150,6 @@ uuid = { workspace = true, features = ["js"] }
 getrandom = { version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3"
 tokio = { workspace = true, features = ["full"] }
 # For native tests that need random number generation
 getrandom = "0.4"

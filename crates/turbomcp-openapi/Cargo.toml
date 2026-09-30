@@ -27,7 +27,6 @@ reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true }
 
 # Serialization
-serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_norway = "0.9"
 
@@ -45,8 +44,6 @@ regex = "1.13"
 ipnetwork = "0.21"
 
 [dev-dependencies]
-tokio-test = { workspace = true }
-tempfile = { workspace = true }
 wiremock = { workspace = true }
 
 [[example]]

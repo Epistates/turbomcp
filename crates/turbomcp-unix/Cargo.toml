@@ -23,7 +23,6 @@ tokio-util = { workspace = true, features = ["codec"] }
 futures = { workspace = true }
 
 # Serialization
-serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
 parking_lot = { workspace = true }
@@ -33,8 +32,6 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio-test = { workspace = true }
-tempfile = { workspace = true }
 
 [features]
 default = []

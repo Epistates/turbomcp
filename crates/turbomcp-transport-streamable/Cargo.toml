@@ -14,7 +14,7 @@ rust-version = "1.89.0"
 
 [features]
 default = ["std"]
-std = ["serde/std", "serde_json/std"]
+std = ["serde/std"]
 # WASM-specific optimizations
 wasm = ["alloc"]
 # Compatibility marker for no_std + alloc environments. The crate uses
@@ -25,7 +25,6 @@ alloc = []
 [dependencies]
 # Serialization (no_std compatible with alloc)
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
-serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 # Cryptographically secure random number generation (works on WASM via wasm_js feature)
 getrandom = { version = "0.4", default-features = false, features = ["wasm_js"] }
