@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documented `args: Option<T>` failed with a type mismatch, and so did a bare
   `T`. `Option<T>` now works; a bare `T` gets an error saying to take
   `Option<T>`, since a client may call a prompt without arguments.
+- **`TelemetryConfig::prometheus_port` started no listener.** The exporter
+  called `install_recorder`, which installs the recorder and nothing else, so
+  scrapes were refused while the log said the endpoint had started, and
+  histogram upkeep never ran. The listener now runs on the current Tokio
+  runtime, or on a thread of its own outside one. The exporter answers on any
+  path, so `prometheus_path` is informational; its docs now say so.
 
 ### Security
 

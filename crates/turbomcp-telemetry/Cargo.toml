@@ -26,6 +26,8 @@ tracing-opentelemetry = { version = "0.33", optional = true }
 # Prometheus metrics (alternative to OTLP)
 metrics = { version = "0.24", optional = true }
 metrics-exporter-prometheus = { version = "0.18", optional = true, default-features = false, features = ["http-listener"] }
+# To run the exporter's listener; the exporter already depends on tokio.
+tokio = { version = "1", optional = true, default-features = false, features = ["rt"] }
 
 # Tower integration
 tower = { workspace = true, optional = true }
@@ -61,7 +63,7 @@ opentelemetry = [
 ]
 
 # Prometheus metrics (standalone, without OpenTelemetry)
-prometheus = ["dep:metrics", "dep:metrics-exporter-prometheus"]
+prometheus = ["dep:metrics", "dep:metrics-exporter-prometheus", "dep:tokio"]
 
 # Tower middleware integration
 tower = ["dep:tower", "dep:tower-service", "dep:futures-util"]

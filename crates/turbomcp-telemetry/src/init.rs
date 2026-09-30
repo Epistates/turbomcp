@@ -447,10 +447,39 @@ fn init_prometheus(config: &TelemetryConfig, port: u16) -> Result<MetricsHandle,
         );
     }
 
-    let handle = PrometheusBuilder::new()
-        .with_http_listener(addr)
-        .install_recorder()
-        .map_err(|e| TelemetryError::MetricsError(e.to_string()))?;
+    // `install_recorder` only installs the recorder: the listener, and the
+    // upkeep that keeps histograms bounded, run in the future `build` returns.
+    // This is `PrometheusBuilder::install`, keeping the handle: the future
+    // runs on the current runtime, or a thread of its own outside one.
+    let metrics_error = |e: &dyn std::fmt::Display| TelemetryError::MetricsError(e.to_string());
+    let builder = PrometheusBuilder::new().with_http_listener(addr);
+    let recorder = match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => {
+            let (recorder, exporter) = {
+                let _entered = runtime.enter();
+                builder.build().map_err(|e| metrics_error(&e))?
+            };
+            runtime.spawn(exporter);
+            recorder
+        }
+        Err(_) => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| metrics_error(&e))?;
+            let (recorder, exporter) = {
+                let _entered = runtime.enter();
+                builder.build().map_err(|e| metrics_error(&e))?
+            };
+            std::thread::Builder::new()
+                .name("turbomcp-prometheus".to_string())
+                .spawn(move || runtime.block_on(exporter))
+                .map_err(|e| metrics_error(&e))?;
+            recorder
+        }
+    };
+    let handle = recorder.handle();
+    metrics::set_global_recorder(recorder).map_err(|e| metrics_error(&e))?;
 
     info!(
         bind_addr = %addr,
@@ -480,4 +509,39 @@ mod tests {
 
     // Note: Full initialization tests require careful handling to avoid
     // conflicts with the global tracing subscriber. See integration tests.
+
+    /// The exporter used to install only its recorder, and nothing listened
+    /// on `prometheus_port`. (This installs the process's global recorder, so
+    /// it is the only test here that may.)
+    #[cfg(feature = "prometheus")]
+    #[tokio::test]
+    async fn the_prometheus_endpoint_answers_a_scrape() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let _handle = init_prometheus(&TelemetryConfig::default(), port).unwrap();
+
+        let mut stream = None;
+        for _ in 0..50 {
+            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(connected) => {
+                    stream = Some(connected);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
+            }
+        }
+        let mut stream = stream.expect("the exporter listens on prometheus_port");
+        stream
+            .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    }
 }

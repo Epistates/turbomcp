@@ -52,6 +52,8 @@ pub struct TelemetryConfig {
     #[cfg(feature = "prometheus")]
     pub prometheus_port: Option<u16>,
     /// Prometheus metrics endpoint path
+    ///
+    /// Informational: the exporter answers a scrape on any path.
     #[cfg(feature = "prometheus")]
     pub prometheus_path: String,
     /// Prometheus listener bind address (defaults to `127.0.0.1` — loopback only).
