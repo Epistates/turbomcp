@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registered before `connect` returns. The server side registers accepted
   connections the same way, so the connection limit counts a connection from
   the moment it's accepted.
+- **`FetcherConfig`'s timeout and user agent were ignored again** (regressed in
+  3.5.0). The authorization-server discovery and client-metadata fetchers moved
+  onto the SSRF validator's DNS-pinned client, which carried the SSRF policy's
+  timeout and no user agent. Both are set on each request again.
 
 ## [3.5.0] - 2026-09-25
 

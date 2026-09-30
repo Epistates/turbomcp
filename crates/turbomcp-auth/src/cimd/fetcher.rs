@@ -70,10 +70,6 @@ pub struct FetcherConfig {
     pub max_response_size: usize,
 
     /// Request timeout (default: 5 seconds)
-    ///
-    /// NOTE: requests go through `SsrfValidator`'s DNS-pinned client (see
-    /// `fetch_pinned`), so the *effective* timeout is the `SsrfPolicy`'s, not
-    /// this field's. Both default to 5s.
     pub request_timeout: Duration,
 
     /// Default cache TTL if no cache headers present (default: 1 hour)
@@ -89,8 +85,6 @@ pub struct FetcherConfig {
     pub rate_limit_window: Duration,
 
     /// User agent for HTTP requests
-    ///
-    /// NOTE: not currently applied — see the note on `request_timeout`.
     pub user_agent: String,
 }
 
@@ -277,14 +271,15 @@ impl MetadataFetcher {
     /// an attacker can exploit via DNS rebinding (resolve to a public IP for
     /// the check, a private/metadata IP for the fetch moments later).
     ///
-    /// NOTE: as with `discovery::DiscoveryFetcher::fetch_pinned`, the
-    /// effective request timeout and redirect policy come from
-    /// `self.ssrf_validator`'s `SsrfPolicy`, not from `self.config`.
+    /// The redirect policy is the SSRF policy's; the timeout and user agent
+    /// are `self.config`'s, set on the request.
     async fn fetch_pinned(&self, url: &str) -> Result<reqwest::Response, FetcherError> {
         self.ssrf_validator.validate_url(url)?;
         let (client, pinned_url) = self.ssrf_validator.create_pinned_client(url)?;
         client
             .get(&pinned_url)
+            .timeout(self.config.request_timeout)
+            .header(reqwest::header::USER_AGENT, &self.config.user_agent)
             .send()
             .await
             .map_err(|e| FetcherError::HttpError(format!("Request failed: {}", e)))

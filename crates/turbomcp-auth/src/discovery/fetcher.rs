@@ -70,14 +70,6 @@ pub struct FetcherConfig {
     pub max_response_size: usize,
 
     /// Request timeout (default: 5 seconds)
-    ///
-    /// NOTE: requests now go through [`crate::ssrf::SsrfValidator`]'s
-    /// DNS-pinned client (see `fetch_pinned`) rather than a client built from
-    /// this config, so the *effective* timeout is
-    /// `SsrfPolicy::request_timeout` on the validator passed to
-    /// [`DiscoveryFetcher::new`]/[`DiscoveryFetcher::with_config`]. Both
-    /// default to 5s; set the SSRF policy's timeout if you need a different
-    /// value.
     pub request_timeout: Duration,
 
     /// Default cache TTL if no cache headers present (default: 1 hour)
@@ -87,8 +79,6 @@ pub struct FetcherConfig {
     pub max_cache_ttl: Duration,
 
     /// User agent for HTTP requests
-    ///
-    /// NOTE: not currently applied — see the note on `request_timeout`.
     pub user_agent: String,
 
     /// Whether to try OIDC discovery if RFC 8414 fails (default: true)
@@ -392,10 +382,9 @@ impl DiscoveryFetcher {
     /// whose DNS resolution is pinned to the IP addresses that validation
     /// just checked.
     ///
-    /// `self.client` (built once, in `with_config`, from `FetcherConfig`) is
-    /// deliberately *not* used for the actual request: resolving the
-    /// hostname during `validate_url` and then handing the same hostname to
-    /// an independent client for the real connection is a TOCTOU gap — an
+    /// Resolving the hostname during `validate_url` and then handing the same
+    /// hostname to an independent client for the real connection is a TOCTOU
+    /// gap — an
     /// attacker who controls DNS for the issuer's host can return a benign IP
     /// for the validation lookup and a private/metadata IP for the follow-up
     /// lookup the independent client performs milliseconds later (DNS
@@ -403,16 +392,15 @@ impl DiscoveryFetcher {
     /// validates every resolved IP, and returns a client hard-pinned to that
     /// address, so the request physically cannot land anywhere else.
     ///
-    /// Note this means the request's timeout and redirect policy come from
-    /// `self.ssrf_validator`'s [`crate::ssrf::SsrfPolicy`], not from
-    /// `self.config` — both default to 5s / no-redirects, but a caller who
-    /// customizes only `FetcherConfig::request_timeout` won't see it applied
-    /// here.
+    /// The redirect policy is the SSRF policy's; the timeout and user agent
+    /// are `self.config`'s, set on the request.
     async fn fetch_pinned(&self, url: &str) -> Result<reqwest::Response, FetcherError> {
         self.ssrf_validator.validate_url(url)?;
         let (client, pinned_url) = self.ssrf_validator.create_pinned_client(url)?;
         client
             .get(&pinned_url)
+            .timeout(self.config.request_timeout)
+            .header(reqwest::header::USER_AGENT, &self.config.user_agent)
             .send()
             .await
             .map_err(|e| FetcherError::HttpError(format!("Request failed: {}", e)))
@@ -650,5 +638,48 @@ mod tests {
         assert_eq!(stats.total_entries, 0);
         assert_eq!(stats.valid_entries, 0);
         assert_eq!(stats.expired_entries, 0);
+    }
+
+    /// 3.5.0 moved requests onto the SSRF validator's DNS-pinned client and
+    /// stopped applying `FetcherConfig`'s timeout and user agent.
+    #[tokio::test]
+    async fn the_config_timeout_and_user_agent_are_applied() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+            .mount(&server)
+            .await;
+
+        let validator = SsrfValidator::new(crate::ssrf::SsrfPolicy {
+            allow_localhost: true,
+            allow_private_networks: true,
+            require_https: false,
+            request_timeout: Duration::from_secs(30),
+            ip_denylist: Vec::new(),
+            ..Default::default()
+        });
+        let fetcher = DiscoveryFetcher::with_config(
+            validator,
+            FetcherConfig {
+                request_timeout: Duration::from_millis(200),
+                user_agent: "custom-agent/1".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let started = std::time::Instant::now();
+        let result = fetcher.fetch_pinned(&server.uri()).await;
+        assert!(
+            result.is_err(),
+            "the 5s response outlives the 200ms timeout"
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].headers["user-agent"], "custom-agent/1");
     }
 }
