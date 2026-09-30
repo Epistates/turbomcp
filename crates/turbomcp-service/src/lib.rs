@@ -12,8 +12,8 @@
 //! - [`Transport`] — a bidirectional `JsonRpcMessage` channel (stdio, HTTP, WS).
 //! - [`ServerHandle`] / [`Serve`] — a server as its transports see it, and a
 //!   transport that can run one: the one serving path every transport shares.
-//! - [`ProtocolError`] — the service/transport boundary error, with the
-//!   canonical [`mcp_to_jsonrpc_error`] mapping for user errors.
+//! - [`ProtocolError`] — the service/transport boundary error. User errors
+//!   render through `McpError::to_jsonrpc_error`.
 //! - [`TracingLayer`] — the first shared RPC middleware.
 //! - [`io`] — newline-delimited JSON-RPC over any byte stream
 //!   ([`LineTransport`](io::LineTransport)), specialized to stdin/stdout by
@@ -39,7 +39,7 @@ mod session;
 mod transport;
 
 pub use auth::{AuthDecision, AuthFuture, HttpAuthenticator};
-pub use error::{ProtocolError, mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
+pub use error::ProtocolError;
 pub use host::{Pipe, Serve, ServerHandle, close_then_shut_down};
 pub use middleware::{Tracing, TracingLayer};
 pub use panic::{catch_handler_panic, catch_panic};

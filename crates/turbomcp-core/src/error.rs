@@ -184,68 +184,86 @@ impl McpError {
         Self::Transport(msg.into())
     }
 
-    /// The JSON-RPC error code for this variant (PLAN.md §4.10).
+    /// The JSON-RPC error code for this error **as `version` spells it**.
     ///
-    /// Note: [`McpError::ToolExecutionFailed`] has no protocol-level code — the
-    /// dispatcher must surface it as `CallToolResult { isError: true }` and not
-    /// call this. We return `-32603` as a defensive fallback only.
+    /// There is no version-less form: two codes differ by revision, and a
+    /// default would be right for one and wrong for the other.
+    ///
+    /// - Resource not found is `-32002` through `2025-11-25` and `-32602`
+    ///   (Invalid Params) from `2026-07-28`, which renumbered it to align with
+    ///   JSON-RPC.
+    /// - A missing client capability is `-32021` only from `2026-07-28`, which
+    ///   allocated it. No older schema defines that code, and on the stateful
+    ///   revisions capabilities are fixed at `initialize`, so its "re-declare
+    ///   and retry" affordance cannot be used either: there it is `-32602`.
+    ///
+    /// [`McpError::ToolExecutionFailed`] has no protocol-level code: a tool
+    /// failure is a `CallToolResult { isError: true }`. It answers `-32603`
+    /// only as a fallback.
     #[must_use]
-    pub fn jsonrpc_code(&self) -> i32 {
+    pub fn jsonrpc_code(&self, version: &crate::ProtocolVersion) -> i32 {
+        use crate::ProtocolVersion as V;
+        // The revisions before `2026-07-28` renumbered. An unknown version
+        // gets the current codes.
+        let earlier = matches!(
+            version,
+            V::V2024_11_05 | V::V2025_03_26 | V::V2025_06_18 | V::V2025_11_25
+        );
         match self {
-            Self::Internal(_) | Self::ToolExecutionFailed { .. } | Self::InputRequired => -32603,
-            Self::InvalidParams(_) | Self::ResourceNotFound(_) => -32602,
-            Self::MethodNotFound(_) | Self::ToolNotFound(_) => -32601,
-            // `-32000` is the implementation-defined server-error floor;
-            // `-32001..` upward is claimed by the spec's allocations below.
+            Self::Internal(_) | Self::ToolExecutionFailed { .. } | Self::InputRequired => {
+                codes::INTERNAL_ERROR
+            }
+            Self::ResourceNotFound(_) if earlier => codes::LEGACY_RESOURCE_NOT_FOUND,
+            Self::MissingRequiredCapability(_) if earlier => codes::INVALID_PARAMS,
+            Self::InvalidParams(_) | Self::ResourceNotFound(_) => codes::INVALID_PARAMS,
+            Self::MethodNotFound(_) | Self::ToolNotFound(_) => codes::METHOD_NOT_FOUND,
             Self::Authentication(_)
             | Self::PermissionDenied(_)
             | Self::Timeout(_)
-            | Self::Transport(_) => -32000,
-            // Spec-allocated codes (see [`codes`]). All three are
-            // `2026-07-28` allocations; `jsonrpc_code_for` says what an older
-            // revision gets instead.
+            | Self::Transport(_) => codes::SERVER_ERROR,
             Self::HeaderMismatch(_) => codes::HEADER_MISMATCH,
             Self::MissingRequiredCapability(_) => codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
             Self::UnsupportedProtocolVersion(_) => codes::UNSUPPORTED_PROTOCOL_VERSION,
         }
     }
 
-    /// The JSON-RPC error code for this variant **as `version` spells it**.
+    /// This error as the JSON-RPC error object `version` expects: its code
+    /// ([`jsonrpc_code`](Self::jsonrpc_code)), its message, and the `data` the
+    /// spec requires for the codes that carry one.
     ///
-    /// Two codes are version-split:
-    ///
-    /// - resource-not-found is `-32002` through `2025-11-25` and `-32602`
-    ///   (Invalid Params) from the `2026-07-28` RC on, which renumbered it to
-    ///   align with JSON-RPC;
-    /// - a missing client capability is `-32021` only from `2026-07-28`, which
-    ///   allocated it. No older schema defines that code, and on the stateful
-    ///   revisions capabilities are fixed at `initialize`, so its "re-declare
-    ///   and retry" affordance cannot be used either: there it is `-32602`.
-    ///
-    /// Everything else matches [`jsonrpc_code`](Self::jsonrpc_code), which
-    /// answers for the current revision — prefer this method wherever the
-    /// negotiated version is known.
+    /// The one place an `McpError` becomes a wire error. Middleware that
+    /// refuses a request itself should answer with this, reading the version
+    /// from `McpRequest::protocol_version`, so its refusal matches what the
+    /// dispatcher would have said.
     #[must_use]
-    pub fn jsonrpc_code_for(&self, version: &crate::ProtocolVersion) -> i32 {
-        use crate::ProtocolVersion as V;
+    pub fn to_jsonrpc_error(&self, version: &crate::ProtocolVersion) -> crate::JsonRpcError {
+        crate::JsonRpcError {
+            code: self.jsonrpc_code(version),
+            message: self.to_string(),
+            data: self.data(),
+        }
+    }
+
+    /// The spec-mandated `error.data` for the errors that carry one.
+    fn data(&self) -> Option<serde_json::Value> {
+        use serde_json::json;
         match self {
-            Self::ResourceNotFound(_)
-                if matches!(
-                    version,
-                    V::V2024_11_05 | V::V2025_03_26 | V::V2025_06_18 | V::V2025_11_25
-                ) =>
-            {
-                -32002
+            Self::ResourceNotFound(uri) => Some(json!({ "uri": uri })),
+            // `MissingRequiredClientCapabilityError` names what the client
+            // failed to declare as a `ClientCapabilities` object it can merge
+            // into its own declaration and retry. The carried string may be a
+            // dotted sub-capability path (`elicitation.url`); emitted flat, the
+            // client would re-declare a bogus top-level key, fail the same
+            // check, and retry forever. Fold the path into the nesting the type
+            // actually has.
+            Self::MissingRequiredCapability(capability) => {
+                let required = capability
+                    .split('.')
+                    .rev()
+                    .fold(json!({}), |acc, segment| json!({ segment: acc }));
+                Some(json!({ "requiredCapabilities": required }))
             }
-            Self::MissingRequiredCapability(_)
-                if matches!(
-                    version,
-                    V::V2024_11_05 | V::V2025_03_26 | V::V2025_06_18 | V::V2025_11_25
-                ) =>
-            {
-                -32602
-            }
-            other => other.jsonrpc_code(),
+            _ => None,
         }
     }
 
@@ -321,34 +339,48 @@ mod tests {
 
     #[test]
     fn code_and_status_mapping() {
-        assert_eq!(McpError::internal("x").jsonrpc_code(), -32603);
-        assert_eq!(McpError::invalid_params("x").jsonrpc_code(), -32602);
-        assert_eq!(McpError::method_not_found("x").jsonrpc_code(), -32601);
+        assert_eq!(
+            McpError::internal("x").jsonrpc_code(&crate::ProtocolVersion::LATEST),
+            -32603
+        );
+        assert_eq!(
+            McpError::invalid_params("x").jsonrpc_code(&crate::ProtocolVersion::LATEST),
+            -32602
+        );
+        assert_eq!(
+            McpError::method_not_found("x").jsonrpc_code(&crate::ProtocolVersion::LATEST),
+            -32601
+        );
         // The frozen `2026-07-28` allocation; the RC used -32004/-32003 and
         // had no header-mismatch code at all.
         assert_eq!(
-            McpError::UnsupportedProtocolVersion("x".into()).jsonrpc_code(),
+            McpError::UnsupportedProtocolVersion("x".into())
+                .jsonrpc_code(&crate::ProtocolVersion::LATEST),
             -32022
         );
         assert_eq!(
-            McpError::MissingRequiredCapability("x".into()).jsonrpc_code(),
+            McpError::MissingRequiredCapability("x".into())
+                .jsonrpc_code(&crate::ProtocolVersion::LATEST),
             -32021
         );
         // `-32021` is a `2026-07-28` allocation; no older schema defines it.
         let missing = McpError::MissingRequiredCapability("x".into());
         assert_eq!(
-            missing.jsonrpc_code_for(&crate::ProtocolVersion::V2026_07_28),
+            missing.jsonrpc_code(&crate::ProtocolVersion::V2026_07_28),
             -32021
         );
         assert_eq!(
-            missing.jsonrpc_code_for(&crate::ProtocolVersion::V2025_11_25),
+            missing.jsonrpc_code(&crate::ProtocolVersion::V2025_11_25),
             -32602
         );
         assert_eq!(
-            missing.jsonrpc_code_for(&crate::ProtocolVersion::V2025_06_18),
+            missing.jsonrpc_code(&crate::ProtocolVersion::V2025_06_18),
             -32602
         );
-        assert_eq!(McpError::HeaderMismatch("x".into()).jsonrpc_code(), -32020);
+        assert_eq!(
+            McpError::HeaderMismatch("x".into()).jsonrpc_code(&crate::ProtocolVersion::LATEST),
+            -32020
+        );
         assert_eq!(McpError::authentication("x").http_status(), 401);
         assert_eq!(McpError::permission_denied("x").http_status(), 403);
         assert_eq!(McpError::timeout("x").http_status(), 504);
@@ -365,15 +397,19 @@ mod tests {
         let err = McpError::resource_not_found("mem://gone");
         // The RC renumbered it to Invalid Params; earlier revisions keep the
         // MCP-specific -32002 their spec text prescribes.
-        assert_eq!(err.jsonrpc_code(), -32602, "version-agnostic = current");
-        assert_eq!(err.jsonrpc_code_for(&V::V2026_07_28), -32602);
+        assert_eq!(
+            err.jsonrpc_code(&V::Unknown("2099-01-01".into())),
+            -32602,
+            "an unknown version gets the current code"
+        );
+        assert_eq!(err.jsonrpc_code(&V::V2026_07_28), -32602);
         for legacy in [
             V::V2024_11_05,
             V::V2025_03_26,
             V::V2025_06_18,
             V::V2025_11_25,
         ] {
-            assert_eq!(err.jsonrpc_code_for(&legacy), -32002, "{legacy:?}");
+            assert_eq!(err.jsonrpc_code(&legacy), -32002, "{legacy:?}");
         }
         // Every other variant is version-stable.
         for e in [
@@ -382,7 +418,11 @@ mod tests {
             McpError::tool_not_found("x"),
             McpError::HeaderMismatch("x".into()),
         ] {
-            assert_eq!(e.jsonrpc_code_for(&V::V2025_11_25), e.jsonrpc_code(), "{e}");
+            assert_eq!(
+                e.jsonrpc_code(&V::V2025_11_25),
+                e.jsonrpc_code(&crate::ProtocolVersion::LATEST),
+                "{e}"
+            );
         }
     }
 
@@ -396,7 +436,11 @@ mod tests {
             McpError::timeout("x"),
             McpError::transport("x"),
         ] {
-            assert_eq!(e.jsonrpc_code(), -32000, "{e}");
+            assert_eq!(
+                e.jsonrpc_code(&crate::ProtocolVersion::LATEST),
+                -32000,
+                "{e}"
+            );
         }
     }
 
@@ -433,7 +477,43 @@ mod tests {
         let e = serde_json::from_str::<u32>("not json").unwrap_err();
         let mcp: McpError = e.into();
         assert!(matches!(mcp, McpError::InvalidParams(_)));
-        assert_eq!(mcp.jsonrpc_code(), -32602);
+        assert_eq!(mcp.jsonrpc_code(&crate::ProtocolVersion::LATEST), -32602);
+    }
+
+    /// A dotted sub-capability path comes back as the nesting
+    /// `ClientCapabilities` actually has. `{"elicitation.url": {}}` names no
+    /// field; a client that merges it and retries declares a bogus top-level
+    /// key, fails the same check, and loops.
+    #[test]
+    fn a_dotted_capability_path_nests() {
+        let v = crate::ProtocolVersion::V2026_07_28;
+        let flat = McpError::MissingRequiredCapability("sampling".into()).to_jsonrpc_error(&v);
+        assert_eq!(flat.code, codes::MISSING_REQUIRED_CLIENT_CAPABILITY);
+        assert_eq!(
+            flat.data,
+            Some(serde_json::json!({ "requiredCapabilities": { "sampling": {} } }))
+        );
+        let nested =
+            McpError::MissingRequiredCapability("elicitation.url".into()).to_jsonrpc_error(&v);
+        assert_eq!(
+            nested.data,
+            Some(serde_json::json!({
+                "requiredCapabilities": { "elicitation": { "url": {} } }
+            }))
+        );
+    }
+
+    #[test]
+    fn resource_not_found_carries_its_uri_on_every_revision() {
+        for v in crate::ProtocolVersion::SUPPORTED {
+            let err = McpError::resource_not_found("mem://gone").to_jsonrpc_error(v);
+            assert_eq!(
+                err.data,
+                Some(serde_json::json!({ "uri": "mem://gone" })),
+                "{v:?}"
+            );
+            assert_eq!(err.message, "resource not found: mem://gone");
+        }
     }
 
     #[test]

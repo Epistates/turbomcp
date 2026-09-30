@@ -46,6 +46,26 @@ impl McpRequest {
         self.extensions.insert(fact);
         self
     }
+
+    /// The protocol revision this request speaks, from its `_meta`.
+    ///
+    /// A `2026-07-28` request states it itself. A stateful one states it once,
+    /// at `initialize`; by the time a request reaches middleware the runtime
+    /// has stamped its session's negotiated revision in, so this answers for
+    /// both. `None` for a response, or a request with no version anywhere
+    /// (which the dispatcher refuses).
+    ///
+    /// For rendering a refusal the way that revision spells it:
+    /// `McpError::to_jsonrpc_error(&version)`.
+    #[must_use]
+    pub fn protocol_version(&self) -> Option<crate::ProtocolVersion> {
+        let params = match &self.message {
+            JsonRpcMessage::Request(r) => r.params.as_ref(),
+            JsonRpcMessage::Notification(n) => n.params.as_ref(),
+            JsonRpcMessage::Response(_) => None,
+        }?;
+        crate::meta::extract_protocol_version(params.get("_meta")?.as_object()?)
+    }
 }
 
 impl From<JsonRpcMessage> for McpRequest {
@@ -149,5 +169,29 @@ impl ObservedHeaders {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Option<&str>> {
         self.0.get(name).map(Option::as_deref)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{JsonRpcRequest, JsonRpcResponse, ProtocolVersion};
+    use serde_json::json;
+
+    #[test]
+    fn protocol_version_reads_the_request_meta() {
+        let stamped = McpRequest::new(JsonRpcRequest::new(
+            1,
+            "tools/list",
+            Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "2025-11-25" } })),
+        ));
+        assert_eq!(
+            stamped.protocol_version(),
+            Some(ProtocolVersion::V2025_11_25)
+        );
+        let bare = McpRequest::new(JsonRpcRequest::new(1, "tools/list", None));
+        assert_eq!(bare.protocol_version(), None);
+        let response = McpRequest::new(JsonRpcResponse::success(1, json!({})));
+        assert_eq!(response.protocol_version(), None);
     }
 }

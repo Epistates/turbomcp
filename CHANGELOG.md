@@ -315,6 +315,15 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** an `McpError` renders through
+  `McpError::to_jsonrpc_error(&version)`, in core, with the spec-required
+  `data`; `McpError::jsonrpc_code` takes the version too. The version-less
+  forms answered for the newest revision, so middleware refusing a resource
+  on a `2025-11-25` session sent `-32602` where the dispatcher would send
+  `-32002`. `mcp_to_jsonrpc_error` and `mcp_to_jsonrpc_error_for` are gone
+  (from `turbomcp-service` and the facade), and `jsonrpc_code_for` is now
+  `jsonrpc_code`. Middleware reads the request's revision with the new
+  `McpRequest::protocol_version`.
 - **Breaking:** WebSocket is a route on the HTTP endpoint, and
   `turbomcp-transport-ws` is gone (12 workspace crates). Serve it with
   `HttpConfig::new().with_websocket(WebSocketConfig::new("/ws"))` (feature

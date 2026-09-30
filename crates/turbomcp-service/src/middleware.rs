@@ -25,28 +25,22 @@
 //!   inbound frame, so layer state must be shared (`Arc<…>`), not owned.
 //!
 //! To short-circuit — reject before the inner service runs — build the response
-//! yourself and skip `inner.call`. Use
-//! [`mcp_to_jsonrpc_error`](crate::mcp_to_jsonrpc_error) so the code matches the
-//! rest of the SDK rather than hand-picking one.
+//! yourself and skip `inner.call`, with
+//! `err.to_jsonrpc_error(&version)` for the version
+//! [`McpRequest::protocol_version`](turbomcp_core::McpRequest::protocol_version)
+//! reads, so the code matches what the dispatcher would have answered on that
+//! revision rather than a hand-picked one.
 //!
 //! # Where a layer sits
 //!
-//! Both of these are valid and they see different things:
-//!
-//! ```text
-//! serve_stdio(MyLayer.layer(LegacySessionAdapter::new(dispatcher)))   // outside
-//! serve_stdio(LegacySessionAdapter::new(MyLayer.layer(dispatcher)))   // inside
-//! ```
-//!
-//! Outside the adapter a layer sees the frame as the client sent it. Inside, it
-//! sees the negotiated protocol version the adapter stamped into `_meta`, and
-//! the [`SessionId`](turbomcp_core::SessionId) it attached, which is what a
-//! layer keyed on protocol version or session needs. Either way the facts in
+//! Add layers with `ServerBuilder::layer`; the first added is the outermost.
+//! On a connection that is its own session (stdio, a WebSocket), the runtime
+//! puts the session adapter outside every layer, so a layer sees a stateful
+//! request with its negotiated protocol version in `_meta` and its
+//! [`SessionId`](turbomcp_core::SessionId) attached. On HTTP the endpoint
+//! attaches the same facts before dispatch. Either way the facts in
 //! `request.extensions` (identity, connection, session) come from the
-//! transport and the adapter; a client has no way to put them there.
-//!
-//! Stack several with `tower::ServiceBuilder`; the first layer added is the
-//! outermost.
+//! transport and the runtime; a client has no way to put them there.
 
 use std::task::{Context, Poll};
 

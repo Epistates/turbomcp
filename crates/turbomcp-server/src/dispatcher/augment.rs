@@ -8,12 +8,11 @@ use futures::future::BoxFuture;
 use serde_json::Value;
 
 use turbomcp_core::{
-    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, McpError, RequestContext,
-    RequestId,
+    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, McpError, ProtocolVersion,
+    RequestContext, RequestId,
 };
 use turbomcp_protocol::methods;
 use turbomcp_protocol::v2026_07_28::types as v0728;
-use turbomcp_service::mcp_to_jsonrpc_error;
 
 use crate::context::CallToolContext;
 use crate::extension::{CallAugmentRequest, CallRunner, Extension};
@@ -25,6 +24,14 @@ use super::params::parse_call_tool_params;
 use super::{context_declares_extension, error_response};
 
 // ---- draft Tasks extension augmentation (SEP-2663) -----------------------------
+
+/// The Tasks extension rides the stateless wire, so its errors take that
+/// revision's codes.
+const VERSION: ProtocolVersion = ProtocolVersion::V2026_07_28;
+
+fn wire_error(err: &McpError) -> JsonRpcError {
+    err.to_jsonrpc_error(&VERSION)
+}
 
 /// Offer a draft `tools/call` to each call-augmenting extension the client
 /// declared. The first extension to take over returns the response (a
@@ -116,7 +123,7 @@ fn build_call_runner<S: McpServerCore>(
     );
     let future: BoxFuture<'static, Result<Value, JsonRpcError>> = Box::pin(async move {
         match fut {
-            None => Err(mcp_to_jsonrpc_error(&McpError::method_not_found(
+            None => Err(wire_error(&McpError::method_not_found(
                 methods::request::TOOLS_CALL,
             ))),
             Some(f) => match f.await {
@@ -124,10 +131,10 @@ fn build_call_runner<S: McpServerCore>(
                     contract
                         .0
                         .output(contract.1.as_ref(), result)
-                        .map_err(|e| mcp_to_jsonrpc_error(&e))?,
+                        .map_err(|e| wire_error(&e))?,
                 ))
-                .map_err(|e| mcp_to_jsonrpc_error(&McpError::internal(e.to_string()))),
-                Err(e) => Err(mcp_to_jsonrpc_error(&e)),
+                .map_err(|e| wire_error(&McpError::internal(e.to_string()))),
+                Err(e) => Err(wire_error(&e)),
             },
         }
     });

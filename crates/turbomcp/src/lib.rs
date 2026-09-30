@@ -174,12 +174,6 @@ pub use turbomcp_service::TracingLayer;
 /// The service [`TracingLayer`] produces.
 pub use turbomcp_service::Tracing;
 
-/// The canonical [`McpError`] → JSON-RPC error mapping, for middleware that
-/// rejects a request before it reaches a handler. Use
-/// [`mcp_to_jsonrpc_error_for`] when the negotiated [`ProtocolVersion`] is in
-/// hand — two codes are version-split.
-pub use turbomcp_service::{mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
-
 /// Re-export of [`tower`], version-matched to the one behind [`McpService`], so
 /// middleware written against it composes without a duplicate-crate mismatch.
 pub use tower;

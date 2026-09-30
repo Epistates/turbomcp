@@ -38,8 +38,8 @@ use turbomcp::methods::request;
 use turbomcp::prelude::*;
 use turbomcp::tower::{Layer, Service, ServiceExt};
 use turbomcp::{
-    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpRequest, ProtocolError, Serve,
-    ServerHandle, mcp_to_jsonrpc_error,
+    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpRequest, ProtocolError, ProtocolVersion,
+    Serve, ServerHandle,
 };
 
 // ---- the server being wrapped ------------------------------------------------
@@ -203,12 +203,12 @@ where
             let JsonRpcMessage::Request(r) = &req.message else {
                 unreachable!("called_tool only matches requests")
             };
-            // `mcp_to_jsonrpc_error` keeps the code identical to what the
-            // dispatcher would have produced for the same refusal — a
+            // `to_jsonrpc_error` renders the code the dispatcher would have
+            // produced for the same refusal on this request's revision — a
             // hand-picked number here would drift from the rest of the SDK.
-            let error = mcp_to_jsonrpc_error(&McpError::permission_denied(
-                "this deployment does not permit that tool",
-            ));
+            let version = req.protocol_version().unwrap_or(ProtocolVersion::LATEST);
+            let error = McpError::permission_denied("this deployment does not permit that tool")
+                .to_jsonrpc_error(&version);
             let response = JsonRpcResponse::error(r.id.clone(), error);
             return Box::pin(std::future::ready(Ok(Some(response.into()))));
         }

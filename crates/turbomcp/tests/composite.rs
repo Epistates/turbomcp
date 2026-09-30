@@ -298,7 +298,7 @@ async fn an_unowned_uri_is_not_found() {
     let error = r.error.expect("expected an error response");
     assert_eq!(
         error.code,
-        McpError::resource_not_found("x").jsonrpc_code_for(&ProtocolVersion::V2025_11_25),
+        McpError::resource_not_found("x").jsonrpc_code(&ProtocolVersion::V2025_11_25),
     );
     assert!(error.message.contains("nowhere://x"), "{}", error.message);
 }

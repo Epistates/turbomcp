@@ -162,8 +162,9 @@ Two things have no v3 analogue and are worth knowing:
 - The driver clones the service stack per request, so layer state must sit behind
   an `Arc`.
 
-Build refusals with `turbomcp::mcp_to_jsonrpc_error` so the code matches what the
-dispatcher would have produced. See
+Build refusals with `McpError::to_jsonrpc_error(&version)`, the version
+from `McpRequest::protocol_version`, so the code matches what the dispatcher
+would have produced on that revision. See
 [`examples/middleware.rs`](examples/middleware.rs) for an observing layer and a
 short-circuiting one, end to end.
 

@@ -1,14 +1,14 @@
-//! The service-layer error type and the canonical `McpError → JsonRpcError`
-//! mapping used everywhere a user error must become a wire response.
+//! The service-layer error type. A user [`McpError`](turbomcp_core::McpError)
+//! becomes a wire error through `McpError::to_jsonrpc_error`, in core.
 
 use turbomcp_core::codec::CodecError;
-use turbomcp_core::{JsonRpcError, JsonRpcResponse, McpError, ProtocolVersion, RequestId};
+use turbomcp_core::{JsonRpcError, JsonRpcResponse, RequestId};
 
 /// Errors at the service/transport boundary — *not* normal protocol responses.
 ///
 /// A user handler returning `Err(McpError)` is **not** a `ProtocolError`: it
 /// becomes a JSON-RPC error response inside the `Ok` arm of the service (see
-/// [`mcp_to_jsonrpc_error`]). `ProtocolError` is reserved for the conditions a
+/// `McpError::to_jsonrpc_error`). `ProtocolError` is reserved for the conditions a
 /// well-formed request can't itself produce: malformed frames, version
 /// mismatch, a dead transport, shutdown.
 #[derive(Debug, thiserror::Error)]
@@ -101,91 +101,5 @@ impl From<CodecError> for ProtocolError {
         // Both encode and decode failures surface as parse errors at the
         // protocol boundary — the frame could not be turned into/from a value.
         ProtocolError::Parse(e.to_string())
-    }
-}
-
-/// Convert a user [`McpError`] into a JSON-RPC error object using the single
-/// canonical code mapping (PLAN §4.10). The dispatcher wraps this in an `Ok`
-/// error *response*; it is never a [`ProtocolError`].
-///
-/// Note: [`McpError::ToolExecutionFailed`] has no protocol-level code — it is
-/// surfaced as `CallToolResult { isError: true }`, handled upstream, and must
-/// not reach this function.
-#[must_use]
-pub fn mcp_to_jsonrpc_error(err: &McpError) -> JsonRpcError {
-    JsonRpcError {
-        code: err.jsonrpc_code(),
-        message: err.to_string(),
-        data: error_data(err),
-    }
-}
-
-/// The spec-mandated `error.data` for the errors that carry one.
-///
-/// `MissingRequiredClientCapabilityError` must name what the client failed to
-/// declare, as a `ClientCapabilities` **object** of capability objects
-/// (`{ "sampling": {} }`) — not a list of names — so the client can merge it
-/// into its own declaration and retry.
-fn error_data(err: &McpError) -> Option<serde_json::Value> {
-    match err {
-        McpError::ResourceNotFound(uri) => Some(serde_json::json!({"uri":uri})),
-        // The carried string may be a dotted sub-capability path
-        // (`elicitation.url`, `sampling.tools`), and `ClientCapabilities` has
-        // no key by that name — emitting it flat hands the client something it
-        // cannot merge, so it re-declares a bogus top-level key, fails the same
-        // check, and retries forever. Fold the path back into the nesting the
-        // type actually has.
-        McpError::MissingRequiredCapability(capability) => {
-            let required = capability.split('.').rev().fold(
-                serde_json::json!({}),
-                |acc, segment| serde_json::json!({ segment: acc }),
-            );
-            Some(serde_json::json!({ "requiredCapabilities": required }))
-        }
-        _ => None,
-    }
-}
-
-/// [`mcp_to_jsonrpc_error`] for a known protocol version: resource-not-found
-/// is version-split (`-32002` through `2025-11-25`, `-32602` from the
-/// 2026-07-28 RC on, which renumbered it to align with JSON-RPC). Use this
-/// wherever the negotiated version is in hand.
-#[must_use]
-pub fn mcp_to_jsonrpc_error_for(err: &McpError, version: &ProtocolVersion) -> JsonRpcError {
-    JsonRpcError {
-        code: err.jsonrpc_code_for(version),
-        message: err.to_string(),
-        data: error_data(err),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A dotted sub-capability path has to come back as the nesting
-    /// `ClientCapabilities` actually has.
-    ///
-    /// `{"elicitation.url": {}}` is not a `ClientCapabilities` value: there is
-    /// no field by that name. A client that merges it and retries declares a
-    /// bogus top-level key, fails the same check, and loops.
-    #[test]
-    fn a_dotted_capability_path_nests() {
-        let flat = mcp_to_jsonrpc_error(&McpError::MissingRequiredCapability("sampling".into()));
-        assert_eq!(
-            flat.data,
-            Some(serde_json::json!({ "requiredCapabilities": { "sampling": {} } }))
-        );
-
-        let nested = mcp_to_jsonrpc_error(&McpError::MissingRequiredCapability(
-            "elicitation.url".into(),
-        ));
-        assert_eq!(
-            nested.data,
-            Some(serde_json::json!({
-                "requiredCapabilities": { "elicitation": { "url": {} } }
-            })),
-            "the client must be able to merge this into its own declaration"
-        );
     }
 }

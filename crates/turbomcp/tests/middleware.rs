@@ -24,7 +24,7 @@ use turbomcp::prelude::*;
 use turbomcp::tower::{Layer, Service, ServiceBuilder, ServiceExt};
 use turbomcp::{
     DefaultCodec, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, LegacySessionAdapter,
-    McpRequest, ProtocolError, VersionDispatcher, mcp_to_jsonrpc_error, serve,
+    McpRequest, ProtocolError, ProtocolVersion, VersionDispatcher, serve,
 };
 use turbomcp_service::io::LineTransport;
 
@@ -162,8 +162,9 @@ where
                 .and_then(Value::as_str)
                 == Some(self.tool)
         {
+            let version = req.protocol_version().unwrap_or(ProtocolVersion::LATEST);
             let error =
-                mcp_to_jsonrpc_error(&McpError::permission_denied("not in this deployment"));
+                McpError::permission_denied("not in this deployment").to_jsonrpc_error(&version);
             let response = JsonRpcResponse::error(r.id.clone(), error);
             return Box::pin(std::future::ready(Ok(Some(response.into()))));
         }
@@ -284,7 +285,7 @@ async fn a_layer_refuses_before_the_dispatcher_runs() {
         .expect("the refusal must be an error response");
     assert_eq!(
         error.code,
-        McpError::permission_denied("x").jsonrpc_code(),
+        McpError::permission_denied("x").jsonrpc_code(&ProtocolVersion::LATEST),
         "a refusal must carry the SDK's canonical code"
     );
     assert_eq!(

@@ -38,7 +38,7 @@ use turbomcp_core::{
 };
 use turbomcp_protocol::neutral::{CachePolicy, TaskSupport};
 use turbomcp_protocol::{methods, version};
-use turbomcp_service::{ProtocolError, mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
+use turbomcp_service::ProtocolError;
 
 use crate::extension::{Extension, ExtensionRequest};
 use crate::inflight::InFlightRegistry;
@@ -1327,27 +1327,25 @@ fn ok_value<T: Serialize>(id: RequestId, value: &T) -> JsonRpcMessage {
     }
 }
 
-/// Render `err` for a request whose version isn't known (or isn't relevant to
-/// the code): uses the current revision's mapping. Prefer
-/// [`error_response_for`] anywhere the negotiated version is in hand.
 /// Render an error whose code is the same on every revision (`-32601`,
-/// `-32602`, `-32603`, …). An error that might carry a version-split code —
-/// anything a handler returned — goes through [`error_response_for`] with the
-/// revision the request speaks; the debug assertion catches a mix-up in tests.
+/// `-32602`, `-32603`, …), for the paths that answer before the request's
+/// version is known: an unknown method, a malformed envelope. An error that
+/// might carry a version-split code — anything a handler returned — goes
+/// through [`error_response_for`] with the revision the request speaks; the
+/// debug assertion catches a mix-up in tests.
 fn error_response(id: RequestId, err: &McpError) -> JsonRpcMessage {
     debug_assert_eq!(
-        err.jsonrpc_code_for(&ProtocolVersion::V2025_06_18),
-        err.jsonrpc_code_for(&ProtocolVersion::V2026_07_28),
+        err.jsonrpc_code(&ProtocolVersion::V2025_06_18),
+        err.jsonrpc_code(&ProtocolVersion::V2026_07_28),
         "error_response on a version-split error; use error_response_for: {err}"
     );
-    JsonRpcResponse::error(id, mcp_to_jsonrpc_error(err)).into()
+    error_response_for(id, &ProtocolVersion::LATEST, err)
 }
 
-/// Render `err` as `version` spells it — resource-not-found is the one
-/// version-split code (`-32002` through `2025-11-25`, `-32602` from the
-/// 2026-07-28 RC on).
+/// Render `err` as `version` spells it (see `McpError::jsonrpc_code` for the
+/// codes that differ by revision).
 fn error_response_for(id: RequestId, version: &ProtocolVersion, err: &McpError) -> JsonRpcMessage {
-    JsonRpcResponse::error(id, mcp_to_jsonrpc_error_for(err, version)).into()
+    JsonRpcResponse::error(id, err.to_jsonrpc_error(version)).into()
 }
 
 /// Missing Required Client Capability (SEP-2663): the client requested an

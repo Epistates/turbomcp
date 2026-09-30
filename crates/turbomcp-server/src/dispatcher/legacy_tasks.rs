@@ -14,7 +14,7 @@ use turbomcp_core::{
 use turbomcp_protocol::methods;
 use turbomcp_protocol::neutral::{self, TaskSupport};
 use turbomcp_protocol::v2025_11_25::types as legacy;
-use turbomcp_service::{catch_panic, mcp_to_jsonrpc_error_for};
+use turbomcp_service::catch_panic;
 
 use crate::context::{CallToolContext, ListToolsContext};
 use crate::router::MethodRouter;
@@ -141,7 +141,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
                             }),
                         }
                     }
-                    Ok(Err(e)) => TaskOutcome::Error(mcp_to_jsonrpc_error_for(&e, &VERSION)),
+                    Ok(Err(e)) => TaskOutcome::Error(e.to_jsonrpc_error(&VERSION)),
                     Err(panic) => {
                         tracing::error!(panic, task = %task_id, "task handler panicked");
                         TaskOutcome::Error(JsonRpcError {
