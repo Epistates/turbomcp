@@ -155,6 +155,13 @@ defined a feature, the feature stays and enables nothing.
   `turbomcp-transport`'s `generate_secure_token` reads the OS random source
   through `getrandom` (already in the build via `uuid`) instead of `rand`'s
   thread-local generator.
+- **One `tungstenite` instead of two.** The WebSocket server accepted
+  connections through axum's `ws` feature, which carries `tungstenite` 0.29,
+  while the WebSocket client uses 0.30, so every WebSocket build compiled both,
+  along with two `sha1`s. The server now performs the RFC 6455 handshake itself
+  over hyper's upgrade and runs the connection on the same `tokio-tungstenite`
+  as the client, with the same frame limits. Its `websocket` feature also no
+  longer enables the WebSocket *client* transport, which it never used.
 - **Latest majors of internal dependencies.** OpenTelemetry 0.33 with
   `tracing-opentelemetry` 0.34 in `turbomcp-telemetry`, and `nix` 0.31 in
   `turbomcp-transport`. None of their types appear in a public signature.

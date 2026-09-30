@@ -45,6 +45,12 @@ tower-http = { workspace = true, optional = true }
 http = { version = "1.5", optional = true }
 async-stream = { version = "0.3", optional = true }
 
+# WebSocket (optional): the same tungstenite as turbomcp-websocket, rather than
+# the older one axum's `ws` feature carries, so a build has one.
+tokio-tungstenite = { workspace = true, optional = true }
+hyper = { version = "1", optional = true }
+hyper-util = { version = "0.1", features = ["tokio"], optional = true }
+
 # Schema generation
 schemars = { version = "1.2", features = ["chrono04", "uuid1"] }
 
@@ -75,7 +81,7 @@ http = [
     "dep:http",
     "dep:async-stream",
 ]
-websocket = ["dep:turbomcp-transport", "turbomcp-transport/websocket", "http"]
+websocket = ["http", "dep:tokio-tungstenite", "dep:hyper", "dep:hyper-util"]
 tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 channel = ["dep:turbomcp-transport"]

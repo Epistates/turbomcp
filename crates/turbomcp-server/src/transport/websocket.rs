@@ -15,12 +15,19 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode};
+use axum::body::Body;
+use axum::extract::Request;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::Response;
 use axum::routing::get;
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
+use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 use tokio_util::sync::CancellationToken;
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
@@ -143,14 +150,55 @@ struct WebSocketState<H: McpHandler> {
     config: Option<ServerConfig>,
 }
 
+/// A server-side WebSocket over an upgraded HTTP connection.
+type WebSocket = WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>;
+
+/// The `Sec-WebSocket-Accept` value for an RFC 6455 opening handshake, or the
+/// status to refuse it with.
+///
+/// The upgrade itself is hyper's and the framing is tokio-tungstenite's, the
+/// one `turbomcp-websocket` uses; axum's `WebSocketUpgrade` did the same over
+/// an older tungstenite, so a build carried two.
+fn websocket_accept(request: &Request) -> Result<HeaderValue, StatusCode> {
+    let headers = request.headers();
+    let has_token = |name: header::HeaderName, token: &str| {
+        headers
+            .get_all(name)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .any(|part| part.trim().eq_ignore_ascii_case(token))
+    };
+    if !has_token(header::CONNECTION, "upgrade") || !has_token(header::UPGRADE, "websocket") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if headers
+        .get(header::SEC_WEBSOCKET_VERSION)
+        .is_none_or(|version| version != "13")
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let key = headers
+        .get(header::SEC_WEBSOCKET_KEY)
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    if request
+        .extensions()
+        .get::<hyper::upgrade::OnUpgrade>()
+        .is_none()
+    {
+        return Err(StatusCode::UPGRADE_REQUIRED);
+    }
+    HeaderValue::from_str(&derive_accept_key(key.as_bytes())).map_err(|_| StatusCode::BAD_REQUEST)
+}
+
 /// Axum handler for WebSocket upgrade.
 async fn ws_upgrade_handler<H: McpHandler>(
-    ws: WebSocketUpgrade,
     axum::extract::State(state): axum::extract::State<WebSocketState<H>>,
-    headers: HeaderMap,
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<SocketAddr>,
-) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
-    validate_websocket_origin(&headers, addr, state.config.as_ref())?;
+    request: Request,
+) -> Result<Response, StatusCode> {
+    let accept = websocket_accept(&request)?;
+    validate_websocket_origin(request.headers(), addr, state.config.as_ref())?;
 
     // Check connection limit
     let guard = match state.connection_counter.try_acquire_arc() {
@@ -192,13 +240,35 @@ async fn ws_upgrade_handler<H: McpHandler>(
     // JSON-RPC error. Left at tungstenite's 64 MiB default, the configured
     // limit only applied after that much had been buffered.
     let frame_limit = max_message_size(config.as_ref()).saturating_mul(2);
+    let ws_config = WebSocketConfig::default()
+        .max_message_size(Some(frame_limit))
+        .max_frame_size(Some(frame_limit));
 
-    Ok(ws
-        .max_message_size(frame_limit)
-        .max_frame_size(frame_limit)
-        .on_upgrade(move |socket| {
-            handle_websocket(socket, handler, rate_limiter, client_addr, guard, config)
-        }))
+    let upgrade = hyper::upgrade::on(request);
+    tokio::spawn(async move {
+        match upgrade.await {
+            Ok(upgraded) => {
+                let socket = WebSocketStream::from_raw_socket(
+                    TokioIo::new(upgraded),
+                    Role::Server,
+                    Some(ws_config),
+                )
+                .await;
+                handle_websocket(socket, handler, rate_limiter, client_addr, guard, config).await;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "WebSocket upgrade from {} failed", client_addr);
+            }
+        }
+    });
+
+    Ok(Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(header::CONNECTION, "upgrade")
+        .header(header::UPGRADE, "websocket")
+        .header(header::SEC_WEBSOCKET_ACCEPT, accept)
+        .body(Body::empty())
+        .expect("a 101 response with valid headers"))
 }
 
 fn to_security_headers(headers: &HeaderMap) -> SecurityHeaders {
@@ -589,7 +659,9 @@ fn extract_text(msg: Message) -> Option<String> {
     match msg {
         Message::Text(text) => Some(text.to_string()),
         Message::Binary(data) => String::from_utf8(data.to_vec()).ok(),
-        Message::Ping(_) | Message::Pong(_) | Message::Close(_) => None,
+        // tungstenite answers pings itself; a raw `Frame` never comes out
+        // of a read.
+        Message::Ping(_) | Message::Pong(_) | Message::Close(_) | Message::Frame(_) => None,
     }
 }
 

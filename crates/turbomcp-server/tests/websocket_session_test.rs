@@ -531,3 +531,35 @@ async fn a_cancelled_request_is_not_answered() {
         "the cancelled request must not be answered; got {next}"
     );
 }
+
+/// The server performs the RFC 6455 opening handshake itself, and refuses a
+/// request that isn't one rather than upgrading it.
+#[tokio::test]
+async fn a_request_that_is_not_a_websocket_handshake_is_refused() {
+    let url = spawn_server().await.replacen("ws://", "http://", 1);
+    let client = reqwest::Client::new();
+
+    let plain = client.get(&url).send().await.unwrap();
+    assert_eq!(plain.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let wrong_version = client
+        .get(&url)
+        .header("connection", "Upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "8")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_version.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let no_key = client
+        .get(&url)
+        .header("connection", "keep-alive, Upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_key.status(), reqwest::StatusCode::BAD_REQUEST);
+}
