@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A TCP client couldn't send until its connection task had run.**
+  `TcpTransport`'s client `connect` registered the connection from inside the
+  task it spawned to handle it, so a `send` straight after `connect` found no
+  connection and failed with "No active TCP connections". `Client::connect_tcp`
+  sends `initialize` exactly then, so it failed against every server, on every
+  runtime that didn't happen to schedule the task first. The connection is now
+  registered before `connect` returns. The server side registers accepted
+  connections the same way, so the connection limit counts a connection from
+  the moment it's accepted.
+
 ## [3.5.0] - 2026-09-25
 
 A downstream team reported that a long-running handler could not report progress
