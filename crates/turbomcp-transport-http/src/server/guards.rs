@@ -6,15 +6,15 @@ use std::net::{IpAddr, SocketAddr};
 
 use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::http::{HeaderMap, header};
+use axum::response::Response;
 use ipnet::IpNet;
 use turbomcp_core::Identity;
 use turbomcp_service::{AuthDecision, RateKey};
 
 use super::HttpState;
 use super::config::{HostPolicy, OriginPolicy};
-use super::reject::{challenge_response, too_many_requests};
+use super::reject::{challenge_response, forbidden, too_many_requests};
 
 // ---- auth --------------------------------------------------------------------
 
@@ -175,8 +175,7 @@ pub(super) fn check_origin(policy: &OriginPolicy, headers: &HeaderMap) -> Option
         OriginPolicy::Any => None,
         OriginPolicy::Allowlist(list) => {
             let origin = origin.to_str().unwrap_or_default();
-            (!list.iter().any(|allowed| allowed == origin))
-                .then(|| (StatusCode::FORBIDDEN, "origin not allowed").into_response())
+            (!list.iter().any(|allowed| allowed == origin)).then(|| forbidden("origin not allowed"))
         }
     }
 }
@@ -192,8 +191,7 @@ pub(super) fn check_host(policy: &HostPolicy, headers: &HeaderMap) -> Option<Res
                 .get(header::HOST)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or_default();
-            (!list.iter().any(|allowed| allowed == host))
-                .then(|| (StatusCode::FORBIDDEN, "host not allowed").into_response())
+            (!list.iter().any(|allowed| allowed == host)).then(|| forbidden("host not allowed"))
         }
     }
 }

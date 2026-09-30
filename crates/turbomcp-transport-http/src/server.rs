@@ -45,8 +45,9 @@ use guards::{
     PeerIp, accepts, check_host, check_origin, client_key, enforce_auth, enforce_rate_limit,
 };
 use reject::{
-    deadline_passed, envelope_rejection, invalid_frame_response, not_acceptable_rejection,
-    protocol_error_response, service_unavailable, session_required_rejection, too_many_requests,
+    deadline_passed, envelope_rejection, invalid_frame_response, method_not_allowed,
+    not_acceptable_rejection, protocol_error_response, service_unavailable, session_not_found,
+    session_required_rejection, sessions_need_an_owner, too_many_requests,
     version_header_rejection,
 };
 use sse::{
@@ -109,6 +110,14 @@ impl<S> HttpState<S> {
     fn serves(&self, version: &str) -> bool {
         let requested = ProtocolVersion::from_wire(version);
         self.supported_versions.contains(&requested)
+    }
+
+    /// Whether this endpoint serves any revision with sessions. One that
+    /// serves only `2026-07-28` has no `GET` stream and nothing to `DELETE`.
+    fn serves_sessions(&self) -> bool {
+        self.supported_versions
+            .iter()
+            .any(ProtocolVersion::is_stateful)
     }
 
     /// The `400` for a `MCP-Protocol-Version` this endpoint does not serve, on
@@ -454,11 +463,11 @@ where
     // is the primary signal, but a request whose envelope is *missing* has no
     // body signal to read — the header is what still identifies the wire, and
     // rejecting such a request is the whole point (SEP-2575).
-    let stateless_request = matches!(&msg, JsonRpcMessage::Request(_))
-        && declared_version(&msg)
-            .as_deref()
-            .or(header_version)
-            .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28);
+    let modern_wire = declared_version(&msg)
+        .as_deref()
+        .or(header_version)
+        .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28);
+    let stateless_request = modern_wire && matches!(&msg, JsonRpcMessage::Request(_));
 
     // SEP-2575: a stateless request MUST carry `protocolVersion` and
     // `clientCapabilities` in `_meta`. The dispatcher rejects these too (every
@@ -492,10 +501,19 @@ where
         ));
     }
 
-    let session_header = headers
-        .get(&headers::SESSION_ID)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
+    // "An `Mcp-Session-Id` header on a request: ignore it" (2026-07-28, for a
+    // stateless request). Honouring it sent a modern request carrying a stale
+    // id (a dual-era client, a gateway replaying a sticky header) down the
+    // session path to a bodiless 404, which the spec's own fallback algorithm
+    // reads as "legacy HTTP+SSE server".
+    let session_header = if modern_wire {
+        None
+    } else {
+        headers
+            .get(&headers::SESSION_ID)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+    };
 
     // Dual-stack routing (module docs): legacy traffic carries its session;
     // modern stateless bodies pass through untouched.
@@ -504,11 +522,7 @@ where
         && state.session_terminator.is_none()
         && (is_initialize || session_header.is_some())
     {
-        return (
-            StatusCode::NOT_IMPLEMENTED,
-            "authenticated sessions require a session ownership backend",
-        )
-            .into_response();
+        return sessions_need_an_owner();
     }
     let mut minted_session = None;
     if is_initialize {
@@ -519,7 +533,7 @@ where
         if let Some(terminator) = &state.session_terminator
             && !terminator.owns(&sid, subject.as_deref()).await
         {
-            return StatusCode::NOT_FOUND.into_response();
+            return session_not_found(request_id(&msg).as_ref());
         }
         if !message_has_version(&msg) {
             // What this session actually negotiated, in preference order:
@@ -552,12 +566,14 @@ where
             );
         }
         ext.insert(SessionId::new(sid));
-    } else if header_version
-        .map(ProtocolVersion::from_wire)
-        .is_some_and(|v| v.is_stateful())
-    {
-        // Declared-legacy request with no session and not initialize: the
-        // stateful path requires a session (spec §Session Management).
+    } else if !modern_wire && msg.method() != Some("server/discover") {
+        // Neither a session nor the stateless envelope: the session path
+        // requires a session (spec §Session Management), and 2026-07-28 "MUST
+        // reject a request without the header". This used to be dispatched
+        // and answered `200` with an in-band error, which a probe or a
+        // gateway counts as a working call. `server/discover`, like
+        // `initialize`, is how a client finds out which of the two it is
+        // talking to, so it needs neither.
         return session_required_rejection(request_id(&msg).as_ref());
     }
 
@@ -628,15 +644,21 @@ where
 /// `-32602`, which a perfectly well-formed request earns by naming a missing
 /// resource or a bad tool argument.
 fn apply_stateless_error_status(resp: &mut Response, reply: &JsonRpcMessage, enabled: bool) {
-    if !enabled {
-        return;
-    }
     let JsonRpcMessage::Response(r) = reply else {
         return;
     };
     let Some(code) = r.error.as_ref().map(|e| e.code) else {
         return;
     };
+    // `UnsupportedProtocolVersionError`: "For HTTP, the response status code
+    // MUST be `400 Bad Request`", whichever wire the body arrived on.
+    if code == turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION {
+        *resp.status_mut() = StatusCode::BAD_REQUEST;
+        return;
+    }
+    if !enabled {
+        return;
+    }
     if code == turbomcp_core::codes::METHOD_NOT_FOUND {
         *resp.status_mut() = StatusCode::NOT_FOUND;
     } else if code == turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY
@@ -836,6 +858,12 @@ where
     if let Some(rejection) = check_host(&state.hosts, &headers) {
         return rejection;
     }
+    // A server that supports only 2026-07-28 "SHOULD respond as follows:
+    // HTTP GET or DELETE to the MCP endpoint: respond with `405 Method Not
+    // Allowed`."
+    if !state.serves_sessions() {
+        return method_not_allowed("this endpoint serves only 2026-07-28, which has no GET stream");
+    }
     // Transports spec §Listening for Messages from the Server: the client
     // MUST list `text/event-stream` in `Accept`.
     if !accepts(&headers, &mime::TEXT_EVENT_STREAM) {
@@ -857,25 +885,18 @@ where
         .get(&headers::SESSION_ID)
         .and_then(|v| v.to_str().ok())
     else {
-        return (
-            StatusCode::METHOD_NOT_ALLOWED,
-            [(header::ALLOW, "POST")],
-            "no GET stream without Mcp-Session-Id: the draft subscribes via subscriptions/listen",
-        )
-            .into_response();
+        return method_not_allowed(
+            "no GET stream without Mcp-Session-Id: 2026-07-28 subscribes via subscriptions/listen",
+        );
     };
 
     if state.authenticator.is_some() && state.session_terminator.is_none() {
-        return (
-            StatusCode::NOT_IMPLEMENTED,
-            "authenticated sessions require a session ownership backend",
-        )
-            .into_response();
+        return sessions_need_an_owner();
     }
     if let Some(terminator) = &state.session_terminator
         && !terminator.owns(sid, subject.as_deref()).await
     {
-        return (StatusCode::NOT_FOUND, "session not found").into_response();
+        return session_not_found(None);
     }
     let slot = match state
         .stream_budget
@@ -920,6 +941,9 @@ where
     if let Some(rejection) = check_host(&state.hosts, &headers) {
         return rejection;
     }
+    if !state.serves_sessions() {
+        return method_not_allowed("this endpoint serves only 2026-07-28, which has no sessions");
+    }
     if let Some(rejection) = state.reject_version_header(&headers) {
         return rejection;
     }
@@ -937,22 +961,15 @@ where
         return rejection;
     }
     let Some(terminator) = &state.session_terminator else {
-        return (
-            StatusCode::METHOD_NOT_ALLOWED,
-            [(header::ALLOW, "POST")],
+        return method_not_allowed(
             "client-initiated session termination is not supported; sessions expire by eviction",
-        )
-            .into_response();
+        );
     };
     let Some(sid) = headers
         .get(&headers::SESSION_ID)
         .and_then(|v| v.to_str().ok())
     else {
-        return (
-            StatusCode::BAD_REQUEST,
-            "DELETE requires an Mcp-Session-Id header",
-        )
-            .into_response();
+        return session_required_rejection(None);
     };
     if terminator.terminate(sid, subject.as_deref()).await {
         state.streams.close(sid);
@@ -960,7 +977,7 @@ where
     } else {
         // Unknown/already-terminated session: the spec maps this to 404 so the
         // client knows it's gone.
-        StatusCode::NOT_FOUND.into_response()
+        session_not_found(None)
     }
 }
 

@@ -26,6 +26,62 @@ pub(super) fn too_many_requests(retry_after: Duration) -> Response {
     )
 }
 
+/// `403` + a JSON-RPC error with no id (the check runs before the body is
+/// read): "the HTTP response body MAY comprise a JSON-RPC error response that
+/// has no `id`".
+pub(super) fn forbidden(detail: &str) -> Response {
+    transport_error(
+        StatusCode::FORBIDDEN,
+        None,
+        turbomcp_core::codes::SERVER_ERROR,
+        detail.to_owned(),
+        None,
+    )
+}
+
+/// `405` + `Allow: POST` + a JSON-RPC error. A 2026-07-28 client reads a
+/// `405` whose body is a recognized JSON-RPC error as a modern server; a
+/// plain-text one as a legacy HTTP+SSE server.
+pub(super) fn method_not_allowed(detail: &str) -> Response {
+    let mut response = transport_error(
+        StatusCode::METHOD_NOT_ALLOWED,
+        None,
+        turbomcp_core::codes::SERVER_ERROR,
+        detail.to_owned(),
+        None,
+    );
+    response
+        .headers_mut()
+        .insert(header::ALLOW, HeaderValue::from_static("POST"));
+    response
+}
+
+/// `404` for a session this endpoint doesn't have (expired, deleted, or
+/// never minted): "the server MUST respond to requests containing that
+/// session ID with HTTP 404 Not Found", and the client starts over with a
+/// fresh `initialize`.
+pub(super) fn session_not_found(id: Option<&RequestId>) -> Response {
+    transport_error(
+        StatusCode::NOT_FOUND,
+        id,
+        turbomcp_core::codes::NO_ACTIVE_SESSION,
+        "session not found; initialize a new one".to_owned(),
+        None,
+    )
+}
+
+/// `501` for authenticated sessions with no ownership backend to tie a
+/// session to its principal.
+pub(super) fn sessions_need_an_owner() -> Response {
+    transport_error(
+        StatusCode::NOT_IMPLEMENTED,
+        None,
+        turbomcp_core::codes::SERVER_ERROR,
+        "authenticated sessions require a session ownership backend".to_owned(),
+        None,
+    )
+}
+
 /// `504` + a JSON-RPC error: the request did not get as far as its response
 /// headers within `request_timeout` (admission, authentication, the body).
 /// The id is unknown here: the deadline wraps the whole handler.
@@ -145,13 +201,18 @@ pub(super) fn version_header_rejection(
     )
 }
 
-/// `400` for a declared-legacy request missing its `Mcp-Session-Id`.
+/// `400` for a message on the session (pre-2026-07-28) path without an
+/// `Mcp-Session-Id`: "Servers that require a session ID SHOULD respond to
+/// requests without an `MCP-Session-Id` header (other than initialization)
+/// with HTTP 400 Bad Request."
 pub(super) fn session_required_rejection(id: Option<&RequestId>) -> Response {
     transport_error(
         StatusCode::BAD_REQUEST,
         id,
         turbomcp_core::codes::NO_ACTIVE_SESSION,
-        "the 2025-11-25 path requires an Mcp-Session-Id header (initialize first)".to_owned(),
+        "missing Mcp-Session-Id: initialize a session first, or send a 2026-07-28 request \
+         with its MCP-Protocol-Version header"
+            .to_owned(),
         None,
     )
 }

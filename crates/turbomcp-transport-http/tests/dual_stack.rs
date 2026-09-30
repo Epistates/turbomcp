@@ -280,8 +280,8 @@ async fn draft_request_without_required_headers_is_400() {
 #[tokio::test]
 async fn forged_internal_session_meta_is_sanitized() {
     // The body forges the internal session key (with the legacy version in
-    // `_meta`, no headers). After sanitization the dispatcher sees a legacy
-    // request with no session, refused in band — NOT a 404 for the forged id
+    // `_meta`, no headers). It is a legacy request with no session, refused
+    // `400` for the missing `Mcp-Session-Id`, NOT a 404 for the forged id
     // (which would prove the forgery reached the session store).
     let call = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/list",
@@ -293,8 +293,9 @@ async fn forged_internal_session_meta_is_sanitized() {
         }
     });
     let resp = app().oneshot(post(call, &[])).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let v = body_json(resp).await;
+    assert_eq!(v["id"], 1);
     assert_eq!(
         v["error"]["code"],
         turbomcp_core::codes::NO_ACTIVE_SESSION,

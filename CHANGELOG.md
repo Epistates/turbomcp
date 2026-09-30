@@ -102,6 +102,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- HTTP status codes now match the revision a request is on:
+  - A 2026-07-28 request ignores an `Mcp-Session-Id` header, as that
+    revision says. A stale one (a dual-era client, a gateway replaying a
+    sticky header) sent it down the session path to a bodiless `404`, which
+    the spec's fallback algorithm reads as "legacy HTTP+SSE server".
+  - An endpoint serving only 2026-07-28 answers `GET` and `DELETE` with
+    `405`, not `404`.
+  - A message with neither a session nor the 2026-07-28 envelope (other
+    than `initialize` and `server/discover`) is `400`. It was dispatched and
+    answered `200` with an in-band error, which probes and gateways count as
+    success.
+  - `-32022` (unsupported protocol version) is `400` on every wire; the
+    schema says it MUST be.
+  - Every refusal (`403`, `404`, `405`, `501`, `504`) carries a JSON-RPC
+    error body; several were empty or plain text, which a 2026-07-28 client
+    reads as a legacy server.
 - A tool that runs longer than the HTTP request deadline (60 s by default)
   without emitting anything no longer gets cut off. Its response headers
   waited on its result, so the deadline answered a bare `504` and cancelled

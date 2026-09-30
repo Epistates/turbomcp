@@ -151,11 +151,32 @@ async fn discover_list_and_call_over_http() {
     assert_eq!(v["result"]["isError"], false);
 }
 
+/// A legacy session on `app`, for requests that need one.
+async fn legacy_session(app: &axum::Router) -> String {
+    let init = r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#;
+    let resp = app.clone().oneshot(post(init)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    resp.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn in_session(mut request: Request<Body>, sid: &str) -> Request<Body> {
+    request
+        .headers_mut()
+        .insert("mcp-session-id", sid.parse().unwrap());
+    request
+}
+
 #[tokio::test]
 async fn notification_yields_202_no_body() {
-    let resp = app(HttpConfig::new())
-        .oneshot(post(
-            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+    let app = app(HttpConfig::new());
+    let sid = legacy_session(&app).await;
+    let resp = app
+        .oneshot(in_session(
+            post(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#),
+            &sid,
         ))
         .await
         .unwrap();
@@ -214,7 +235,9 @@ async fn draft_unknown_method_is_http_404_with_32601_body() {
 
     // The same miss on the legacy wire stays HTTP 200 (errors ride the body).
     let legacy = r#"{"jsonrpc":"2.0","id":2,"method":"does/not/exist","params":{}}"#;
-    let resp = app(HttpConfig::new()).oneshot(post(legacy)).await.unwrap();
+    let app = app(HttpConfig::new());
+    let sid = legacy_session(&app).await;
+    let resp = app.oneshot(in_session(post(legacy), &sid)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let v: Value = serde_json::from_slice(&bytes).unwrap();

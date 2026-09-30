@@ -31,7 +31,8 @@
 //!   `text/event-stream`. A notification yields `202 Accepted` with no body. A
 //!   request yields either `200 application/json` with the response, or — if
 //!   the handler emits server→client messages mid-flight (inline bidi
-//!   requests on the legacy path, progress, log messages) — a
+//!   requests on the legacy path, progress, log messages), or is still
+//!   running after [`HttpConfig::sse_upgrade_after`] — a
 //!   `200 text/event-stream` *scoped to that request*: the request-related
 //!   messages as events, then the final response, which terminates the stream
 //!   (transports spec §Sending Messages). Events carry no `id`, which is a
@@ -45,18 +46,22 @@
 //!   cancellation signal for the work it carries.
 //! - **`GET {path}`** — with an `Mcp-Session-Id` header: the legacy
 //!   (`2025-11-25`) server→client SSE stream for that session (list_changed,
-//!   resources/updated). Without one: `405` — the draft replaced the GET
-//!   stream with `subscriptions/listen`.
+//!   resources/updated). Without one, or on an endpoint that serves only
+//!   `2026-07-28`: `405` — that revision replaced the GET stream with
+//!   `subscriptions/listen`.
 //! - **`DELETE {path}`** — with a [`SessionTerminator`](turbomcp_service::SessionTerminator) configured
 //!   ([`HttpConfig::with_session_terminator`]): ends the `Mcp-Session-Id`
 //!   session (`204`, or `404` if unknown). Without one: `405` — the
 //!   `2025-11-25` spec lets a server refuse termination (sessions then expire
-//!   by store eviction / idle timeout).
+//!   by store eviction / idle timeout). An endpoint serving only `2026-07-28`
+//!   answers `405`.
 //!
 //! ## Dual-stack request routing (PLAN §11)
 //!
-//! Modern `2026-07-28` requests are stateless (version inside the body's
-//! `_meta`) and pass through untouched. The legacy `2025-11-25` stateful path
+//! Modern `2026-07-28` messages are stateless (version inside the body's
+//! `_meta`, or the `MCP-Protocol-Version` header) and pass through untouched;
+//! an `Mcp-Session-Id` header on one is ignored, as that revision says. The
+//! legacy `2025-11-25` stateful path
 //! is routed from HTTP headers, and what the endpoint learns (the session, the
 //! authenticated identity, the mirrored headers) is attached to the request
 //! beside the message, where a client can't write:
@@ -67,8 +72,12 @@
 //! 3. `Mcp-Session-Id` header present → attach the session id (and, for
 //!    version-less bodies, the legacy version) and dispatch; an unknown
 //!    session answers `404` so the client re-initializes.
-//! 4. `MCP-Protocol-Version: 2025-11-25` without a session id (and not
-//!    `initialize`) → `400` (the legacy path requires a session).
+//! 4. Anything else without a session id (other than `initialize` and
+//!    `server/discover`) → `400` (the legacy path requires a session).
+//!
+//! Every refusal carries a JSON-RPC error body (with the request's id when
+//! it was read), so a client can tell this endpoint from a legacy HTTP+SSE
+//! server by the body, as the 2026-07-28 fallback rules have it.
 //!
 //! ## Security
 //!
