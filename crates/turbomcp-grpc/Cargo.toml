@@ -61,7 +61,7 @@ server = []
 client = []
 # rustls for tonic: `Server::tls_config` on the server side, and `https://`
 # endpoints verified against the platform's root certificates on the client.
-tls = ["tonic/tls-ring", "tonic/tls-native-roots"]
+tls = ["tonic/tls-aws-lc", "tonic/tls-native-roots"]
 
 [package.metadata.docs.rs]
 all-features = true

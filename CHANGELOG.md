@@ -140,6 +140,11 @@ defined a feature, the feature stays and enables nothing.
   `simd` feature built both `simd-json` and `sonic-rs`. The `SimdJson`
   serialization format now parses with `sonic-rs`, which the rest of the SIMD
   paths already used; `simd-json` is gone.
+- **One TLS crypto provider instead of two in `turbomcp-grpc`.** Its default
+  `tls` feature built tonic's rustls on `ring`, while `reqwest` and
+  `jsonwebtoken` build on `aws-lc-rs`, so both were compiled. It now uses
+  `tonic/tls-aws-lc`. `ring` remains only with `turbomcp-dpop`, whose public
+  `From<ring::error::Unspecified>` impl can't be removed in a patch release.
 
 ### Internal
 
