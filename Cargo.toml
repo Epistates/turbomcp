@@ -102,7 +102,6 @@ serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.151", features = ["raw_value", "preserve_order"] }
 msgpacker = { version = "0.7", features = ["derive"] }  # MessagePack for binary efficiency
 sonic-rs = "0.5.8"   # High-performance JSON
-simd-json = "0.18" # SIMD-accelerated JSON parsing
 
 # Schema generation
 schemars = { version = "1.2.2", features = ["chrono04", "uuid1"] }

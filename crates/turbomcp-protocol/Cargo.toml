@@ -47,7 +47,6 @@ tracing = { workspace = true }
 # Performance
 
 # SIMD support
-simd-json = { workspace = true, optional = true }
 sonic-rs = { workspace = true, optional = true }
 simdutf8 = { version = "0.1", optional = true }
 
@@ -85,7 +84,9 @@ proptest = "1.11"
 [features]
 default = ["std", "simd"]
 std = []
-simd = ["simd-json", "sonic-rs", "simdutf8"]
+simd = ["sonic-rs", "simdutf8"]
+# Accepted for compatibility; the SIMD JSON paths use sonic-rs.
+simd-json = []
 zero-copy = ["bytes/serde"]
 messagepack = ["msgpacker"]
 tracing = []

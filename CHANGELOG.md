@@ -122,6 +122,25 @@ No public API changed; `cargo semver-checks` finds nothing to flag against
   `ClientBuilder` example set both and then called `build`. The methods and the
   `ConnectionConfig` fields now say so, and the example calls `build_resilient`.
 
+### Dependencies
+
+A default `turbomcp` build now compiles 185 crates instead of 199, a
+`turbomcp-client` build 174 instead of 235, and the whole workspace 553 instead
+of 608. No feature was removed: where a dependency that no code used had
+defined a feature, the feature stays and enables nothing.
+
+- **Removed dependencies no code used.** `turbomcp-client` depended on
+  `reqwest`, `chrono` and `uuid`; `turbomcp-macros`, a proc-macro crate, on
+  `axum`, `tokio`, `turbomcp-transport`, `turbomcp-protocol`, `schemars` and
+  `serde`, all compiled a second time for the host; `turbomcp-proxy`'s `rest`
+  feature on `utoipa` and `utoipa-swagger-ui`; and `turbomcp-wasm` on the whole
+  native `turbomcp` crate. Twelve other crates lost one or more unused
+  dependencies.
+- **One SIMD JSON library instead of two.** `turbomcp-protocol`'s default
+  `simd` feature built both `simd-json` and `sonic-rs`. The `SimdJson`
+  serialization format now parses with `sonic-rs`, which the rest of the SIMD
+  paths already used; `simd-json` is gone.
+
 ### Internal
 
 - **Removed the workspace-root `tests/` directory.** The root manifest is a

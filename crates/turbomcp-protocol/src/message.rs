@@ -430,8 +430,7 @@ impl Message {
                 || {
                     #[cfg(feature = "simd")]
                     {
-                        let mut json_bytes = json_payload.raw.to_vec();
-                        simd_json::from_slice(&mut json_bytes).map_err(|e| {
+                        sonic_rs::from_slice(&json_payload.raw).map_err(|e| {
                             Error::serialization(format!("SIMD JSON parsing failed: {e}"))
                         })
                     }
@@ -549,8 +548,7 @@ impl Message {
                     // Fallback: attempt to parse then encode
                     #[cfg(feature = "simd")]
                     {
-                        let mut json_bytes = json_payload.raw.to_vec();
-                        let value: serde_json::Value = simd_json::from_slice(&mut json_bytes)
+                        let value: serde_json::Value = sonic_rs::from_slice(&json_payload.raw)
                             .map_err(|e| {
                                 Error::serialization(format!(
                                     "SIMD JSON parsing failed before CBOR: {e}"
@@ -605,8 +603,8 @@ impl Message {
 
     #[cfg(feature = "simd")]
     fn deserialize_simd_json(bytes: Bytes) -> Self {
-        let mut json_bytes = bytes.to_vec();
-        let is_valid = simd_json::from_slice::<serde_json::Value>(&mut json_bytes).is_ok();
+        // Validated without building a value.
+        let is_valid = sonic_rs::from_slice::<serde::de::IgnoredAny>(&bytes).is_ok();
 
         let payload = MessagePayload::Json(JsonPayload {
             raw: bytes,
