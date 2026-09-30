@@ -44,7 +44,7 @@ pub use error::ProtocolError;
 pub use host::{Pipe, Serve, ServerHandle, close_then_shut_down};
 pub use middleware::{Tracing, TracingLayer};
 pub use panic::{catch_handler_panic, catch_panic};
-pub use peer::{Delivery, Peer, PeerClosed, SessionStreams, StreamGuard};
+pub use peer::{Delivery, Peer, PeerClosed, Reserved, SessionStreams, StreamGuard};
 #[cfg(feature = "governor")]
 #[cfg_attr(docsrs, doc(cfg(feature = "governor")))]
 pub use ratelimit::GovernorRateLimiter;

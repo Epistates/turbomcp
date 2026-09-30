@@ -97,6 +97,20 @@ impl Peer {
         tx.send(msg).await.map_err(|_| PeerClosed)
     }
 
+    /// Reserve room for one message, waiting for it as [`send`](Self::send)
+    /// does, so it can be queued later without waiting: under a lock, where
+    /// it has to land in the same step as something else.
+    ///
+    /// # Errors
+    /// [`PeerClosed`] when the connection has gone.
+    pub async fn reserve(&self) -> Result<Reserved, PeerClosed> {
+        let tx = self.tx.upgrade().ok_or(PeerClosed)?;
+        tx.reserve_owned()
+            .await
+            .map(Reserved)
+            .map_err(|_| PeerClosed)
+    }
+
     /// Hand a broadcast notification over without waiting.
     ///
     /// A fan-out that awaited each writer in turn let one connection that
@@ -120,6 +134,18 @@ impl Peer {
             }
             Err(mpsc::error::TrySendError::Closed(_)) => Delivery::Closed,
         }
+    }
+}
+
+/// Room for one message on a [`Peer`]'s queue, from [`Peer::reserve`].
+/// Holding it keeps the connection's queue open, so use it promptly.
+#[derive(Debug)]
+pub struct Reserved(mpsc::OwnedPermit<JsonRpcMessage>);
+
+impl Reserved {
+    /// Queue `msg` in the reserved slot. Never waits.
+    pub fn send(self, msg: JsonRpcMessage) {
+        self.0.send(msg);
     }
 }
 

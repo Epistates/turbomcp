@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 use turbomcp_core::{Extensions, JsonRpcMessage, JsonRpcNotification, RequestId, SessionId, meta};
 use turbomcp_protocol::methods;
 use turbomcp_protocol::v2026_07_28::types as v0728;
-use turbomcp_service::{Delivery, Peer, SessionStreams};
+use turbomcp_service::{Delivery, Peer, Reserved, SessionStreams};
 
 /// How long a `*_list_changed` burst is allowed to accumulate before the one
 /// coalesced notification goes out.
@@ -127,8 +127,40 @@ pub(crate) struct SubscriptionRegistry {
 }
 
 impl SubscriptionRegistry {
+    #[cfg(test)]
     pub(crate) fn insert(&self, peer: &Peer, id: &RequestId, filter: v0728::SubscriptionFilter) {
+        self.insert_with(peer, id, filter, || {});
+    }
+
+    /// [`insert`](Self::insert), queueing `ack` in the same step.
+    ///
+    /// The acknowledgement has to be the first message on the stream, and
+    /// nothing published after the client holds it may be missed. Sending it
+    /// and then inserting left a gap where a publish found no subscription;
+    /// inserting first would let a publish queue its notification ahead of
+    /// the ack. [`publish`](Self::publish) collects its targets under this
+    /// lock, so doing both here means a publish either predates the
+    /// subscription or finds the ack already queued.
+    pub(crate) fn insert_acknowledged(
+        &self,
+        peer: &Peer,
+        id: &RequestId,
+        filter: v0728::SubscriptionFilter,
+        slot: Reserved,
+        ack: JsonRpcMessage,
+    ) {
+        self.insert_with(peer, id, filter, move || slot.send(ack));
+    }
+
+    fn insert_with(
+        &self,
+        peer: &Peer,
+        id: &RequestId,
+        filter: v0728::SubscriptionFilter,
+        under_lock: impl FnOnce(),
+    ) {
         let mut live = self.lock();
+        under_lock();
         // Reclaim subscriptions whose connection has since closed. `publish`
         // does this too, but a server whose data never changes never publishes,
         // and would otherwise accumulate one entry per client that ever
@@ -513,6 +545,36 @@ mod tests {
             prompts_list_changed: None,
             resource_subscriptions: uris.iter().map(|s| (*s).to_owned()).collect(),
         }
+    }
+
+    #[tokio::test]
+    async fn the_acknowledgement_is_queued_with_the_subscription() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let peer = Peer::new("ack-test-conn", &tx);
+        let reg = Arc::new(SubscriptionRegistry::default());
+        let ack = JsonRpcNotification::new("notifications/subscriptions/acknowledged", None);
+        let slot = peer.reserve().await.unwrap();
+        reg.insert_acknowledged(
+            &peer,
+            &RequestId::from(1i64),
+            filter(false, &["file://a"]),
+            slot,
+            ack.into(),
+        );
+        reg.publish_resource_updated("file://a").await;
+        let methods: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|m| match m {
+                JsonRpcMessage::Notification(n) => Some(n.method),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            methods,
+            [
+                "notifications/subscriptions/acknowledged",
+                "notifications/resources/updated"
+            ]
+        );
     }
 
     #[tokio::test]

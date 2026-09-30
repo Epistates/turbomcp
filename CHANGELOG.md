@@ -116,6 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `subscriptions/listen` subscription no longer misses a notification
+  published just after its acknowledgement. The server queued the ack and
+  only then recorded the subscription, so an event in between (for example
+  one the client triggered on seeing the ack) found nothing to deliver to;
+  a test caught it about once in 200 runs. The ack and the subscription now
+  land in one step against publishers (`Peer::reserve` holds the ack's
+  queue slot), so a publish either predates the subscription or follows
+  the ack.
 - Browsers can use a bearer-authenticated HTTP endpoint. `enable_cors` added
   a permissive layer whose `Access-Control-Allow-Headers: *` does not cover
   `Authorization` (Fetch standard), so every authenticated preflight failed,

@@ -179,16 +179,16 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
             "notifications": ack_notifications,
         })),
     );
-    if peer.send(ack.into()).await.is_err() {
+    let Ok(slot) = peer.reserve().await else {
         return Ok(None); // connection already gone; nothing to answer
-    }
-    for (extension, accepted) in &accepted_by {
-        extension.activate(&peer, &id, accepted);
-    }
+    };
     agreed
         .resource_subscriptions
         .retain(|uri| !unwatched.contains(uri));
-    subs.insert(&peer, &id, agreed);
+    subs.insert_acknowledged(&peer, &id, agreed, slot, ack.into());
+    for (extension, accepted) in &accepted_by {
+        extension.activate(&peer, &id, accepted);
+    }
     // A `notifications/cancelled` that raced this dispatch fired our in-flight
     // token before the insert could be seen — honor it now.
     if cancel.is_cancelled() {
