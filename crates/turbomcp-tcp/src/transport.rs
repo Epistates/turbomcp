@@ -246,6 +246,9 @@ impl TcpTransport {
 
                                 // Generate UUID-based connection ID (NAT-safe)
                                 let conn_id = format!("tcp-{}-{}", addr, uuid::Uuid::new_v4());
+                                // Registered here, not in the handler task, so the
+                                // connection limit above counts it immediately.
+                                let outgoing = register_connection(&connections, &conn_id);
 
                                 // ✅ Handle connection in separate task and store handle
                                 connection_tasks.spawn(async move {
@@ -254,6 +257,7 @@ impl TcpTransport {
                                         addr,
                                         conn_id,
                                         incoming_sender,
+                                        outgoing,
                                         connections_ref,
                                         idle_timeout,
                                         strict_mode,
@@ -323,13 +327,17 @@ impl TcpTransport {
 
         // Generate UUID-based connection ID for client
         let conn_id = format!("tcp-client-{}-{}", remote_addr, uuid::Uuid::new_v4());
+        // Registered before `connect` returns: a `send` straight after it
+        // (the client's `initialize`) used to find no connection, because the
+        // handler task that registered it had not run yet.
+        let outgoing = register_connection(&connections, &conn_id);
 
         task_handles.lock().await.spawn(async move {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     info!("TCP client connection received shutdown signal");
                 }
-                result = handle_tcp_connection_framed(stream, remote_addr, conn_id, tx, connections, idle_timeout, strict_mode, max_message_size) => {
+                result = handle_tcp_connection_framed(stream, remote_addr, conn_id, tx, outgoing, connections, idle_timeout, strict_mode, max_message_size) => {
                     if let Err(e) = result {
                         error!("TCP client connection handler failed: {}", e);
                     }
@@ -341,14 +349,35 @@ impl TcpTransport {
     }
 }
 
+/// Add a connection to the send map under `conn_id` and return the receiving
+/// end of its outgoing channel, for [`handle_tcp_connection_framed`] to drain.
+///
+/// Callers do this before spawning the handler, so a connection can be sent to
+/// (and is counted against the connection limit) as soon as `connect` or
+/// `accept` returns, rather than whenever its handler task first runs.
+fn register_connection(
+    connections: &Mutex<HashMap<String, mpsc::Sender<String>>>,
+    conn_id: &str,
+) -> mpsc::Receiver<String> {
+    // Bounded for backpressure.
+    let (outgoing_sender, outgoing_receiver) = mpsc::channel::<String>(100);
+    connections
+        .lock()
+        .insert(conn_id.to_string(), outgoing_sender);
+    outgoing_receiver
+}
+
 /// Handle a TCP connection using tokio-util::codec::Framed with LinesCodec
-/// This provides proven newline-delimited JSON framing with proper bidirectional communication
+/// This provides proven newline-delimited JSON framing with proper bidirectional communication.
+/// The connection must already be registered with [`register_connection`],
+/// which returned `outgoing_receiver`.
 #[allow(clippy::too_many_arguments)]
 async fn handle_tcp_connection_framed(
     stream: TcpStream,
     addr: SocketAddr,
     conn_id: String,
     incoming_sender: mpsc::Sender<TransportMessage>,
+    mut outgoing_receiver: mpsc::Receiver<String>,
     connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
     idle_timeout: std::time::Duration,
     strict_mode: bool,
@@ -363,12 +392,6 @@ async fn handle_tcp_connection_framed(
     // anything can look at its length, so a newline-free stream was an OOM.
     let framed = Framed::new(stream, BoundedLines::new(max_message_size));
     let (mut sink, mut stream) = framed.split();
-
-    // Channel for outgoing messages to this specific connection (bounded for backpressure)
-    let (outgoing_sender, mut outgoing_receiver) = mpsc::channel::<String>(100);
-
-    // Register this connection in the connections map with UUID-based key
-    connections.lock().insert(conn_id.clone(), outgoing_sender);
 
     // Clone for cleanup
     let connections_cleanup = connections.clone();
@@ -930,6 +953,33 @@ mod tests {
             .read_line(&mut line)
             .await
             .unwrap();
+        assert_eq!(line.trim_end(), ping);
+    }
+
+    /// A client can send the moment `connect` returns. The connection used to
+    /// be registered by its handler task, so a send before that task first ran
+    /// (the client's `initialize`, every time on a single-threaded runtime)
+    /// failed with "No active TCP connections".
+    #[tokio::test]
+    async fn a_client_can_send_as_soon_as_connect_returns() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let transport = TcpTransportBuilder::new()
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .remote_addr(listener.local_addr().unwrap())
+            .build();
+        transport.connect().await.unwrap();
+
+        let ping = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        transport
+            .send(TransportMessage::new(MessageId::from(1), Bytes::from(ping)))
+            .await
+            .expect("send straight after connect");
+
+        let (peer, _) = listener.accept().await.unwrap();
+        let mut line = String::new();
+        BufReader::new(peer).read_line(&mut line).await.unwrap();
         assert_eq!(line.trim_end(), ping);
     }
 
