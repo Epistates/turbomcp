@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expiry is reported to the next request instead, before it is sent, so the
   new session is still started automatically. A 404 on the POST itself, which
   the server never ran, is still retried.
+- **`StdioTransport` reported a 1 MiB maximum message size while accepting
+  10 MiB.** 3.5.0 made it enforce the configured inbound limit
+  (`limits.max_response_size`, 10 MiB by default) and left the reported
+  `capabilities().max_message_size` at 1 MiB. It now reports the limit it
+  enforces, as the TCP and Unix transports do.
 
 ### Security
 

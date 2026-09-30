@@ -28,7 +28,7 @@ use tokio_util::codec::{Decoder, FramedRead, FramedWrite, LinesCodec, LinesCodec
 use tracing::{debug, error, trace, warn};
 use turbomcp_protocol::MessageId;
 use turbomcp_transport_traits::{
-    AtomicMetrics, Transport, TransportCapabilities, TransportConfig, TransportError,
+    AtomicMetrics, LimitsConfig, Transport, TransportCapabilities, TransportConfig, TransportError,
     TransportEventEmitter, TransportFactory, TransportMessage, TransportMessageMetadata,
     TransportMetrics, TransportResult, TransportState, TransportType, validate_request_size,
     validate_response_size,
@@ -199,6 +199,20 @@ impl std::fmt::Debug for StdioTransport {
     }
 }
 
+/// What a stdio transport reports. Its maximum message size is the inbound
+/// line limit it enforces, `limits.max_response_size`; `None` is unlimited.
+fn stdio_capabilities(limits: &LimitsConfig) -> TransportCapabilities {
+    TransportCapabilities {
+        max_message_size: limits.max_response_size,
+        supports_compression: false,
+        supports_streaming: true,
+        supports_bidirectional: true,
+        supports_multiplexing: false,
+        compression_algorithms: Vec::new(),
+        custom: std::collections::HashMap::new(),
+    }
+}
+
 impl StdioTransport {
     /// Create a new stdio transport using the current process's stdin/stdout
     #[must_use]
@@ -207,15 +221,7 @@ impl StdioTransport {
 
         Self {
             state: Arc::new(Mutex::new(TransportState::Disconnected)),
-            capabilities: TransportCapabilities {
-                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
-                supports_compression: false,
-                supports_streaming: true,
-                supports_bidirectional: true,
-                supports_multiplexing: false,
-                compression_algorithms: Vec::new(),
-                custom: std::collections::HashMap::new(),
-            },
+            capabilities: stdio_capabilities(&LimitsConfig::default()),
             config: Arc::new(Mutex::new(TransportConfig {
                 transport_type: TransportType::Stdio,
                 ..Default::default()
@@ -321,15 +327,7 @@ impl StdioTransport {
 
         Ok(Self {
             state: Arc::new(Mutex::new(TransportState::Disconnected)),
-            capabilities: TransportCapabilities {
-                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
-                supports_compression: false,
-                supports_streaming: true,
-                supports_bidirectional: true,
-                supports_multiplexing: false,
-                compression_algorithms: Vec::new(),
-                custom: std::collections::HashMap::new(),
-            },
+            capabilities: stdio_capabilities(&LimitsConfig::default()),
             config: Arc::new(Mutex::new(TransportConfig {
                 transport_type: TransportType::Stdio,
                 ..Default::default()
@@ -350,8 +348,8 @@ impl StdioTransport {
     /// Create a stdio transport with custom configuration
     #[must_use]
     pub fn with_config(config: TransportConfig) -> Self {
-        let transport = Self::new();
-        // std::sync::Mutex: .lock() returns LockResult, use expect() for poisoned mutex
+        let mut transport = Self::new();
+        transport.capabilities = stdio_capabilities(&config.limits);
         *transport.config.lock() = config;
         transport
     }
@@ -363,15 +361,7 @@ impl StdioTransport {
 
         Self {
             state: Arc::new(Mutex::new(TransportState::Disconnected)),
-            capabilities: TransportCapabilities {
-                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
-                supports_compression: false,
-                supports_streaming: true,
-                supports_bidirectional: true,
-                supports_multiplexing: false,
-                compression_algorithms: Vec::new(),
-                custom: std::collections::HashMap::new(),
-            },
+            capabilities: stdio_capabilities(&LimitsConfig::default()),
             config: Arc::new(Mutex::new(TransportConfig {
                 transport_type: TransportType::Stdio,
                 ..Default::default()
@@ -908,6 +898,24 @@ mod tests {
             transport.config.lock().connect_timeout,
             Duration::from_secs(10)
         );
+    }
+
+    /// 3.5.0 raised the inbound limit to the configured one (10 MiB by
+    /// default) and kept reporting 1 MiB.
+    #[test]
+    fn the_reported_maximum_is_the_enforced_one() {
+        assert_eq!(
+            StdioTransport::new().capabilities().max_message_size,
+            LimitsConfig::default().max_response_size
+        );
+
+        let mut config = TransportConfig {
+            transport_type: TransportType::Stdio,
+            ..Default::default()
+        };
+        config.limits.max_response_size = Some(256);
+        let transport = StdioTransport::with_config(config);
+        assert_eq!(transport.capabilities().max_message_size, Some(256));
     }
 
     #[tokio::test]
