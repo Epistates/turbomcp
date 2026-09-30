@@ -124,8 +124,8 @@ async fn discover_reports_the_extension() {
     // The modern handshake ran `server/discover`; the extension is advertised.
     let caps = client.server_capabilities();
     assert!(
-        caps["extensions"].get(EXTENSION_ID).is_some(),
-        "discover should advertise the tasks extension, got {caps}"
+        caps.extensions.contains_key(EXTENSION_ID),
+        "discover should advertise the tasks extension, got {caps:?}"
     );
 }
 

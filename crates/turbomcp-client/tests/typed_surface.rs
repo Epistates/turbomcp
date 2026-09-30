@@ -4,7 +4,7 @@
 //! (Modern `2026-07-28` and Legacy `2025-11-25`) against a real
 //! `VersionDispatcher` server.
 
-use serde_json::{Map, json};
+use serde_json::json;
 use tokio::io::{BufReader, split};
 use turbomcp_client::{Client, ClientBuilder, ClientError, ConnectMode};
 use turbomcp_core::codec::DefaultCodec;
@@ -176,10 +176,12 @@ async fn typed_surface_round_trips_on_both_wires() {
         );
 
         let completions = client
-            .complete(
-                json!({ "type": "ref/prompt", "name": "greet" }),
-                json!({ "name": "text", "value": "al" }),
-            )
+            .complete(neutral::CompleteParams::new(
+                neutral::CompletionReference::Prompt {
+                    name: "greet".into(),
+                },
+                neutral::CompletionArgument::new("text", "al"),
+            ))
             .await
             .expect("complete");
         assert_eq!(completions.values, vec!["alpha", "beta"]);
@@ -208,7 +210,7 @@ async fn handler_errors_surface_as_rpc_errors_through_typed_methods() {
     for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
         let client = connect(mode).await;
         let err = client
-            .get_prompt("nope", Map::new())
+            .get_prompt("nope", Default::default())
             .await
             .expect_err("unknown prompt");
         match &err {

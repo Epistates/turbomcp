@@ -279,10 +279,10 @@ async fn exercise_prompts_and_resources(client: &Client) {
         Ok(prompts) => {
             eprintln!("prompts: {}", prompts.len());
             if let Some(prompt) = prompts.first() {
-                let arguments: Map<String, Value> = prompt
+                let arguments: std::collections::BTreeMap<String, String> = prompt
                     .arguments
                     .iter()
-                    .map(|a| (a.name.clone(), Value::String("conformance".into())))
+                    .map(|a| (a.name.clone(), "conformance".to_owned()))
                     .collect();
                 match client.get_prompt(&prompt.name, arguments).await {
                     Ok(_) => eprintln!("got prompt {}", prompt.name),

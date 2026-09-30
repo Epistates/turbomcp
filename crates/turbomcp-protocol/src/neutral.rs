@@ -489,6 +489,42 @@ impl CallToolResult {
             structured_content: None,
         }
     }
+
+    /// The result's text blocks, joined by newlines; `None` if it has none.
+    #[must_use]
+    pub fn text_content(&self) -> Option<String> {
+        let texts: Vec<&str> = self
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                Content::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        (!texts.is_empty()).then(|| texts.join("\n"))
+    }
+
+    /// The structured result as `T`; `Ok(None)` if the tool returned none.
+    ///
+    /// # Errors
+    /// If `structuredContent` doesn't deserialize as `T`.
+    pub fn structured<T: serde::de::DeserializeOwned>(
+        &self,
+    ) -> Result<Option<T>, serde_json::Error> {
+        self.structured_content
+            .clone()
+            .map(serde_json::from_value)
+            .transpose()
+    }
+
+    /// `Err(self)` if the tool failed (`is_error`), for `?` in code that treats
+    /// a tool failure as an error rather than a result to show a model.
+    ///
+    /// # Errors
+    /// When [`is_error`](Self::is_error) is set.
+    pub fn into_result(self) -> Result<Self, Self> {
+        if self.is_error { Err(self) } else { Ok(self) }
+    }
 }
 
 // ---- progress -----------------------------------------------------------------
@@ -2861,6 +2897,86 @@ impl CompleteParams {
             reference,
             argument,
             context_arguments: BTreeMap::new(),
+        }
+    }
+}
+
+// ---- server capabilities --------------------------------------------------
+
+/// What a server declared it offers, as a client reads it: from
+/// `initialize` on a stateful revision, from `server/discover` on
+/// `2026-07-28`. The shared names are typed; what one revision alone has
+/// (`2025-11-25`'s core `tasks`, `2026-07-28`'s `extensions`) is carried as
+/// sent.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
+pub struct ServerCapabilities {
+    /// `tools`, if declared.
+    pub tools: Option<ListChangedCapability>,
+    /// `resources`, if declared.
+    pub resources: Option<ResourcesCapability>,
+    /// `prompts`, if declared.
+    pub prompts: Option<ListChangedCapability>,
+    /// Whether `logging` is declared.
+    pub logging: bool,
+    /// Whether `completions` is declared.
+    pub completions: bool,
+    /// Core Tasks (`2025-11-25`), as sent.
+    pub tasks: Option<Value>,
+    /// Extensions (`2026-07-28`), by id, as sent.
+    pub extensions: BTreeMap<String, Value>,
+    /// Non-standard capabilities, as sent.
+    pub experimental: BTreeMap<String, Value>,
+}
+
+/// A capability whose only sub-capability is `listChanged`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ListChangedCapability {
+    /// The server sends `notifications/*/list_changed` for it.
+    pub list_changed: bool,
+}
+
+/// The `resources` capability.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ResourcesCapability {
+    /// The server takes `resources/subscribe` (stateful revisions).
+    pub subscribe: bool,
+    /// The server sends `notifications/resources/list_changed`.
+    pub list_changed: bool,
+}
+
+impl ServerCapabilities {
+    /// Read a capabilities object as any revision sends it. Absent or
+    /// malformed members read as undeclared.
+    #[must_use]
+    pub fn from_wire(capabilities: &Value) -> Self {
+        let flag = |v: &Value, key: &str| v.get(key).and_then(Value::as_bool).unwrap_or(false);
+        let declared = |key: &str| capabilities.get(key).filter(|v| v.is_object());
+        let map = |key: &str| -> BTreeMap<String, Value> {
+            capabilities
+                .get(key)
+                .and_then(Value::as_object)
+                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default()
+        };
+        Self {
+            tools: declared("tools").map(|v| ListChangedCapability {
+                list_changed: flag(v, "listChanged"),
+            }),
+            resources: declared("resources").map(|v| ResourcesCapability {
+                subscribe: flag(v, "subscribe"),
+                list_changed: flag(v, "listChanged"),
+            }),
+            prompts: declared("prompts").map(|v| ListChangedCapability {
+                list_changed: flag(v, "listChanged"),
+            }),
+            logging: declared("logging").is_some(),
+            completions: declared("completions").is_some(),
+            tasks: declared("tasks").cloned(),
+            extensions: map("extensions"),
+            experimental: map("experimental"),
         }
     }
 }

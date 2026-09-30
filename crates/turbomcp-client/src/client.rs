@@ -16,7 +16,7 @@
 //! # Ok(()) }
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -323,6 +323,7 @@ impl ClientBuilder {
             conn,
             version: outcome.version,
             server_info: outcome.server_info,
+            capabilities: neutral::ServerCapabilities::from_wire(&outcome.server_capabilities),
             server_capabilities: outcome.server_capabilities,
             instructions: outcome.instructions,
             request_meta,
@@ -616,6 +617,7 @@ pub struct Client {
     version: ProtocolVersion,
     server_info: Option<Implementation>,
     server_capabilities: Value,
+    capabilities: neutral::ServerCapabilities,
     instructions: Option<String>,
     request_meta: Map<String, Value>,
     handler: ClientHandlers,
@@ -636,7 +638,7 @@ impl fmt::Debug for Client {
         f.debug_struct("Client")
             .field("version", &self.version)
             .field("server_info", &self.server_info)
-            .field("server_capabilities", &self.server_capabilities)
+            .field("server_capabilities", &self.capabilities)
             .field("instructions", &self.instructions)
             .field("handler", &self.handler)
             .field("response_cache", &self.cache.is_some())
@@ -657,10 +659,11 @@ impl Client {
         self.server_info.as_ref()
     }
 
-    /// The server's advertised capabilities (raw JSON, version-shaped).
+    /// What the server declared it offers. [`server_supports`](Self::server_supports)
+    /// asks about any dotted path, including ones this type doesn't name.
     #[must_use]
-    pub fn server_capabilities(&self) -> &Value {
-        &self.server_capabilities
+    pub fn server_capabilities(&self) -> &neutral::ServerCapabilities {
+        &self.capabilities
     }
 
     /// The server's optional usage instructions.
@@ -1367,7 +1370,7 @@ impl Client {
     pub async fn get_prompt(
         &self,
         name: impl Into<String>,
-        arguments: Map<String, Value>,
+        arguments: BTreeMap<String, String>,
     ) -> ClientResult<neutral::GetPromptResult> {
         self.get_prompt_with(name, arguments, &CallOptions::default())
             .await
@@ -1381,7 +1384,7 @@ impl Client {
     pub async fn get_prompt_with(
         &self,
         name: impl Into<String>,
-        arguments: Map<String, Value>,
+        arguments: BTreeMap<String, String>,
         options: &CallOptions,
     ) -> ClientResult<neutral::GetPromptResult> {
         let name = name.into();
@@ -1392,66 +1395,60 @@ impl Client {
     async fn get_prompt_inner(
         &self,
         name: String,
-        arguments: Map<String, Value>,
+        arguments: BTreeMap<String, String>,
         options: &CallOptions,
     ) -> ClientResult<neutral::GetPromptResult> {
         self.require_server_capability("prompts", request::PROMPTS_GET)?;
         let per = self.prepare(options)?;
         let mut params = Map::new();
         params.insert("name".into(), json!(name));
-        params.insert("arguments".into(), Value::Object(arguments));
+        params.insert("arguments".into(), json!(arguments));
         let v = self
             .mrtr_request_with(request::PROMPTS_GET, params, Extensions::new(), &per)
             .await?;
         self.decode::<v0728::GetPromptResult, legacy::GetPromptResult, _>(v)
     }
 
-    /// Request completion suggestions for a prompt/resource argument.
-    ///
-    /// `reference` and `argument` are passed through as the spec shapes them
-    /// (`{ type, name }` / `{ name, value }`).
+    /// Ask for completions of a prompt argument or resource-template
+    /// variable (`completion/complete`). Put arguments already chosen in
+    /// `params.context_arguments`: completing the second argument of a
+    /// multi-argument prompt usually depends on the first.
     ///
     /// # Errors
     /// [`ClientError::Protocol`] if the server never declared `completions`;
     /// otherwise propagates RPC and decode failures.
     pub async fn complete(
         &self,
-        reference: Value,
-        argument: Value,
-    ) -> ClientResult<neutral::CompleteResult> {
-        self.complete_with_context(reference, argument, Map::new())
-            .await
-    }
-
-    /// [`complete`](Self::complete), with the arguments already resolved
-    /// earlier in the same form.
-    ///
-    /// Completing the second argument of a multi-argument prompt needs the
-    /// first one: "what repository?" narrows "what branch?". The spec carries
-    /// that as `context.arguments`, and without a way to send it the whole
-    /// point of multi-argument completion is unreachable — the server parses
-    /// the field and v4's own client had no parameter for it.
-    ///
-    /// # Errors
-    /// [`ClientError::Protocol`] if the server never declared `completions`;
-    /// otherwise propagates RPC and decode failures.
-    pub async fn complete_with_context(
-        &self,
-        reference: Value,
-        argument: Value,
-        resolved: Map<String, Value>,
+        params: neutral::CompleteParams,
     ) -> ClientResult<neutral::CompleteResult> {
         self.require_server_capability("completions", request::COMPLETION_COMPLETE)?;
-        let mut params = Map::new();
-        params.insert("ref".into(), reference);
-        params.insert("argument".into(), argument);
-        if !resolved.is_empty() {
-            let mut context = Map::new();
-            context.insert("arguments".into(), Value::Object(resolved));
-            params.insert("context".into(), Value::Object(context));
+        let reference = match &params.reference {
+            neutral::CompletionReference::Prompt { name } => {
+                json!({ "type": "ref/prompt", "name": name })
+            }
+            neutral::CompletionReference::ResourceTemplate { uri } => {
+                json!({ "type": "ref/resource", "uri": uri })
+            }
+            other => {
+                return Err(ClientError::Protocol(format!(
+                    "no wire form for completion reference {other:?}"
+                )));
+            }
+        };
+        let mut wire = Map::new();
+        wire.insert("ref".into(), reference);
+        wire.insert(
+            "argument".into(),
+            json!({ "name": params.argument.name, "value": params.argument.value }),
+        );
+        if !params.context_arguments.is_empty() {
+            wire.insert(
+                "context".into(),
+                json!({ "arguments": params.context_arguments }),
+            );
         }
         let v = self
-            .versioned_request(request::COMPLETION_COMPLETE, params)
+            .versioned_request(request::COMPLETION_COMPLETE, wire)
             .await?;
         self.decode::<v0728::CompleteResult, legacy::CompleteResult, _>(v)
     }

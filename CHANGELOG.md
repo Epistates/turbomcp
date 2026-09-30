@@ -315,6 +315,19 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** the client speaks neutral types where it spoke JSON.
+  `Client::server_capabilities()` returns a `neutral::ServerCapabilities`
+  (typed `tools`/`resources`/`prompts`/`logging`/`completions`, with
+  `tasks`, `extensions` and `experimental` as sent); `server_supports(path)`
+  still answers for any dotted path. `complete(neutral::CompleteParams)`
+  replaces `complete(reference: Value, argument: Value)` and
+  `complete_with_context`. `get_prompt` takes `BTreeMap<String, String>`,
+  since prompt arguments are strings on every revision.
+- `ClientError::to_mcp_error(&version)`: relay a call's failure from a
+  server that calls another server, through `McpError::from_jsonrpc`, so the
+  version-split codes translate to the caller's revision.
+- `neutral::CallToolResult::{text_content, structured::<T>, into_result}`
+  for consuming a tool result.
 - **Breaking:** `Client::listen` returns a `Subscription`: its id (the listen
   request's, which every notification on it carries), the filter the server
   `accepted()`, its notifications as typed `SubscriptionEvent`s (`next()`, or

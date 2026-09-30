@@ -131,8 +131,7 @@ async fn exercise_named(client: &Client, server_name: &str) {
     let prompts = client.list_prompts(None).await.expect("list_prompts");
     assert!(prompts.prompts.iter().any(|p| p.name == "welcome"));
 
-    let mut pargs = Map::new();
-    pargs.insert("name".into(), json!("Ada"));
+    let pargs = std::collections::BTreeMap::from([("name".to_owned(), "Ada".to_owned())]);
     let prompt = client
         .get_prompt("welcome", pargs)
         .await

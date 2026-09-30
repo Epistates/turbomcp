@@ -119,8 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resources and prompts are enumerated the same way; this server has none,
     // and asking a server that doesn't advertise the capability is an error, so
     // check what it announced first.
-    let caps = client.server_capabilities();
-    if caps.get("resources").is_some() {
+    if client.server_capabilities().resources.is_some() {
         println!("\nresources: {:?}", client.list_all_resources().await?);
     } else {
         println!("\nserver advertises no resources capability");
