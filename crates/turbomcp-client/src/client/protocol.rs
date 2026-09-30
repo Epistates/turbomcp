@@ -87,6 +87,12 @@ pub(super) struct RequestOptions {
     /// `tasks/cancel`, never `notifications/cancelled`; and its progress
     /// token stays live, past the response, for the task it created.
     pub(super) task_augmented: bool,
+    /// Whether the server declared `tasks.cancel`.
+    ///
+    /// Without it an abandoned task-augmented request is left to run: the
+    /// server has not offered `tasks/cancel`, and `notifications/cancelled`
+    /// is not allowed for these requests.
+    pub(super) server_cancels_tasks: bool,
 }
 
 impl RequestOptions {
@@ -391,7 +397,11 @@ impl<T: Transport + 'static> ProtocolClient<T> {
             on_abandon: if method == "initialize" {
                 Abandon::Nothing
             } else if options.task_augmented {
-                Abandon::CancelTask
+                if options.server_cancels_tasks {
+                    Abandon::CancelTask
+                } else {
+                    Abandon::Nothing
+                }
             } else {
                 Abandon::Notify
             },
@@ -583,7 +593,8 @@ pub(super) fn created_task_id(response: &JsonRpcResponse) -> Option<&str> {
 /// What an abandoned request owes the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Abandon {
-    /// Nothing: the response arrived, or the request is `initialize`.
+    /// Nothing: the response arrived, the request is `initialize`, or it is
+    /// task-augmented and the server offers no `tasks/cancel`.
     Nothing,
     /// `notifications/cancelled` for the request id.
     Notify,

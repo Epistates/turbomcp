@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exchange and refresh requests, as MCP's authorization spec requires, and
   missed this grant. An authorization server that sets a token's audience from
   `resource` issued a token the MCP server could then reject.
+- **The client sent `tasks/cancel` to servers that never offered it.** 3.5.0
+  began cancelling the task an abandoned task-augmented call creates, without
+  checking that the server declared `tasks.cancel`, and `Client::cancel_task`
+  never checked either. Without the capability an abandoned task is now left
+  to run, and `cancel_task` fails without sending anything, as the other
+  capability-gated calls do.
 
 ### Security
 

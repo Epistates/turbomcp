@@ -1854,11 +1854,17 @@ impl<T: Transport + 'static> Client<T> {
     /// # Returns
     ///
     /// Returns the updated `Task` state (typically with status "cancelled").
+    /// Fails without sending anything if the server did not declare
+    /// `tasks.cancel`.
     #[cfg(feature = "experimental-tasks")]
     pub async fn cancel_task(&self, task_id: &str) -> Result<Task> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::invalid_request("Client not initialized"));
         }
+        self.require_server_capability(
+            |caps| caps.tasks.as_ref().is_some_and(|t| t.cancel.is_some()),
+            "tasks.cancel",
+        )?;
         let request = CancelTaskRequest {
             task_id: task_id.to_string(),
         };

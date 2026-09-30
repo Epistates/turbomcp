@@ -709,6 +709,53 @@ async fn an_abandoned_task_augmented_call_cancels_its_task() {
     assert!(server.received_method("notifications/cancelled").is_empty());
 }
 
+/// A server that runs tool calls as tasks but never declared `tasks.cancel`
+/// has not offered `tasks/cancel`, and a task-augmented request may not be
+/// cancelled with `notifications/cancelled` either: the task is left to run.
+#[tokio::test]
+async fn an_abandoned_task_is_left_alone_without_tasks_cancel() {
+    let capabilities = json!({ "tools": {}, "tasks": { "requests": { "tools": { "call": {} } } } });
+    let (transport, server) = scripted_wire(capabilities, |request, server| {
+        if request["method"] != "tools/call" {
+            return None;
+        }
+        let (request, server) = (request.clone(), server.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            server.reply(
+                &request,
+                json!({ "task": {
+                    "taskId": "t-1",
+                    "status": "working",
+                    "createdAt": "2025-11-25T10:30:00Z",
+                    "lastUpdatedAt": "2025-11-25T10:30:00Z",
+                    "ttl": null
+                }}),
+            );
+        });
+        None
+    });
+    let client = Client::new(transport);
+    client.initialize().await.expect("handshake");
+
+    client
+        .with_timeout(Duration::from_millis(50))
+        .call_tool_task("work", None, TaskMetadata { ttl: None })
+        .await
+        .expect_err("timed out before the task was created");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(server.received_method("tasks/cancel").is_empty());
+    assert!(server.received_method("notifications/cancelled").is_empty());
+
+    #[cfg(feature = "experimental-tasks")]
+    {
+        let refused = client.cancel_task("t-1").await;
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(server.received_method("tasks/cancel").is_empty());
+    }
+}
+
 /// tasks.mdx: without `tasks.requests.tools.call` a client "MUST NOT attempt
 /// to use task augmentation". The call is refused before it is sent.
 #[tokio::test]

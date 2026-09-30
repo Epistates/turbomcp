@@ -256,6 +256,13 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
                 "tasks.requests.tools.call",
             )?;
         }
+        let server_cancels_tasks = task_augmented
+            && self
+                .require_server_capability(
+                    |caps| caps.tasks.as_ref().is_some_and(|t| t.cancel.is_some()),
+                    "tasks.cancel",
+                )
+                .is_ok();
 
         let request_data = CallToolRequest {
             name: name.to_string(),
@@ -278,6 +285,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
                     deadline: self.deadline(),
                     progress_token,
                     task_augmented,
+                    server_cancels_tasks,
                 },
             )
             .await?;
