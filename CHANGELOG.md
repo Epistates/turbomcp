@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   3.5.0). The authorization-server discovery and client-metadata fetchers moved
   onto the SSRF validator's DNS-pinned client, which carried the SSRF policy's
   timeout and no user agent. Both are set on each request again.
+- **`OAuth2Client::client_credentials_flow` sent no `resource` parameter.**
+  3.5.0 added RFC 8707 resource indicators to the authorization-code, code
+  exchange and refresh requests, as MCP's authorization spec requires, and
+  missed this grant. An authorization server that sets a token's audience from
+  `resource` issued a token the MCP server could then reject.
 
 ## [3.5.0] - 2026-09-25
 

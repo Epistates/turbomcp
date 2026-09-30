@@ -633,10 +633,18 @@ impl OAuth2Client {
             McpError::internal("Client credentials flow requires client secret".to_string())
         })?;
 
-        // oauth2 5.0: Pass HTTP client directly
-        let token_response = client
+        let mut request = client
             .exchange_client_credentials()
-            .add_scopes(scopes.into_iter().map(Scope::new))
+            .add_scopes(scopes.into_iter().map(Scope::new));
+
+        // RFC 8707, as for the other grants: the token must be scoped to this
+        // MCP server.
+        if let Some(resource) = self.resource_for_request() {
+            request = request.add_extra_param("resource", resource);
+        }
+
+        // oauth2 5.0: Pass HTTP client directly
+        let token_response = request
             .request_async(&self.http_client)
             .await
             .map_err(|e| McpError::internal(format!("Client credentials flow failed: {e}")))?;
@@ -826,5 +834,38 @@ mod tests {
             client.authorization_code_flow(vec!["openid".to_string()], "state123".to_string());
 
         assert!(!auth_url.contains("resource="));
+    }
+
+    /// The client credentials grant was the one token request without it.
+    #[tokio::test]
+    async fn test_client_credentials_flow_sends_resource_parameter() {
+        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=client_credentials"))
+            .and(body_string_contains(
+                "resource=https%3A%2F%2Fmcp.example.com",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "service-token",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            })))
+            .mount(&server)
+            .await;
+
+        let mut config = base_config("https://app.example.com/callback");
+        config.client_secret = "s3cret".to_string().into();
+        config.token_url = format!("{}/token", server.uri());
+        let client = OAuth2Client::new(&config, ProviderType::Generic).unwrap();
+
+        let token = client
+            .client_credentials_flow(vec!["tools".to_string()])
+            .await
+            .expect("the token endpoint matched a request carrying `resource`");
+        assert_eq!(token.access_token, "service-token");
     }
 }
