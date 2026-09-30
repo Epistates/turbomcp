@@ -72,6 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never follows a redirect. Its 64 KB response limit was also only checked
   after the whole body had been read into memory; it's now enforced as the body
   arrives.
+- **`ChildProcessTransport` buffered a child's stdout line in full before
+  checking its size**, so a child that wrote without newlines grew the parent's
+  memory without bound. Lines are now read holding at most
+  `max_message_size` bytes; an oversized response is still answered with an
+  error for its id, found in the first 4 KiB of the line. A line that isn't
+  UTF-8 is now skipped instead of ending the reader.
 
 ## [3.5.0] - 2026-09-25
 

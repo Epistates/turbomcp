@@ -245,31 +245,43 @@ impl ChildProcessTransport {
 
         // Start STDOUT reader task
         let stdout_task = {
-            let reader = BufReader::new(stdout);
+            let mut reader = BufReader::new(stdout);
             let max_size = self.config.max_message_size;
             tokio::spawn(async move {
-                let mut lines = reader.lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if line.len() > max_size {
-                        warn!(
-                            "Discarded a {} byte message from the child process (limit {} bytes)",
-                            line.len(),
-                            max_size
-                        );
-                        // Dropping a response leaves the request that asked
-                        // for it waiting until its timeout, or forever without
-                        // one. Answer it with an error instead.
-                        if let Some(error) = oversize_error_response(&line, max_size)
-                            && stdout_tx.send(error).await.is_err()
-                        {
+                loop {
+                    let line = match read_bounded_line(&mut reader, max_size).await {
+                        Ok(Some(line)) => line,
+                        Ok(None) => break,
+                        Err(e) => {
+                            debug!("Reading the child process's stdout failed: {}", e);
                             break;
                         }
-                        continue;
-                    }
-                    trace!("Received message from child process: {}", line);
-                    if stdout_tx.send(line).await.is_err() {
-                        debug!("STDOUT receiver dropped, stopping reader task");
-                        break;
+                    };
+                    match line {
+                        ChildLine::Message(line) => {
+                            trace!("Received message from child process: {}", line);
+                            if stdout_tx.send(line).await.is_err() {
+                                debug!("STDOUT receiver dropped, stopping reader task");
+                                break;
+                            }
+                        }
+                        ChildLine::TooLong { prefix, len } => {
+                            warn!(
+                                "Discarded a {} byte message from the child process (limit {} bytes)",
+                                len, max_size
+                            );
+                            // Dropping a response leaves the request that asked
+                            // for it waiting until its timeout, or forever
+                            // without one. Answer it with an error instead.
+                            if let Some(error) = oversize_error_response(&prefix, len, max_size)
+                                && stdout_tx.send(error).await.is_err()
+                            {
+                                break;
+                            }
+                        }
+                        ChildLine::NotUtf8 => {
+                            warn!("Discarded a message from the child process that isn't UTF-8");
+                        }
                     }
                 }
                 debug!("STDOUT reader task completed");
@@ -454,24 +466,126 @@ impl ChildProcessTransport {
     }
 }
 
+/// How much of an oversized line is kept, to find the id of the response it
+/// carried. JSON-RPC serializers write `id` ahead of `result`.
+const OVERSIZED_PREFIX: usize = 4096;
+
+/// One line of the child's stdout.
+enum ChildLine {
+    /// A line within the size limit.
+    Message(String),
+    /// A line past the limit: its first bytes, and its full length. The rest
+    /// was discarded as it was read.
+    TooLong { prefix: Vec<u8>, len: usize },
+    /// A line within the limit that isn't UTF-8.
+    NotUtf8,
+}
+
+/// Read one line, holding at most `limit` bytes of it in memory.
+///
+/// `lines()` buffered a line in full before its length could be checked, so a
+/// child writing without newlines grew this process's memory without bound.
+async fn read_bounded_line<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    limit: usize,
+) -> std::io::Result<Option<ChildLine>> {
+    let mut line = Vec::new();
+    let mut len = 0usize;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            // End of input. A final line without a newline still counts.
+            if len == 0 {
+                return Ok(None);
+            }
+            break;
+        }
+
+        let newline = available.iter().position(|&b| b == b'\n');
+        let content = &available[..newline.unwrap_or(available.len())];
+        len += content.len();
+        let keep = if len > limit { OVERSIZED_PREFIX } else { limit };
+        let room = keep.saturating_sub(line.len());
+        line.extend_from_slice(&content[..room.min(content.len())]);
+        if len > limit {
+            line.truncate(OVERSIZED_PREFIX);
+        }
+
+        let consumed = newline.map_or(available.len(), |at| at + 1);
+        reader.consume(consumed);
+        if newline.is_some() {
+            break;
+        }
+    }
+
+    Ok(Some(if len > limit {
+        ChildLine::TooLong { prefix: line, len }
+    } else {
+        match String::from_utf8(line) {
+            Ok(line) => ChildLine::Message(line.trim_end_matches('\r').to_string()),
+            Err(_) => ChildLine::NotUtf8,
+        }
+    }))
+}
+
+/// The id of the response an oversized line began, from its `prefix`.
+///
+/// Keys are read in order until the prefix runs out. A line whose `method`
+/// appears first is a request, and gets `None`: see
+/// [`oversize_error_response`].
+fn leading_response_id(prefix: &[u8]) -> Option<serde_json::Value> {
+    use serde::Deserializer;
+    use serde::de::{IgnoredAny, MapAccess, Visitor};
+
+    struct Scan<'a> {
+        id: &'a mut Option<serde_json::Value>,
+        is_request: &'a mut bool,
+    }
+
+    impl<'de> Visitor<'de> for Scan<'_> {
+        type Value = ();
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a JSON-RPC message")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "id" => *self.id = Some(map.next_value()?),
+                    "method" => {
+                        *self.is_request = true;
+                        return Ok(());
+                    }
+                    _ => {
+                        map.next_value::<IgnoredAny>()?;
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    let (mut id, mut is_request) = (None, false);
+    // The prefix usually ends mid-value; what was read before that stands.
+    let _ = serde_json::Deserializer::from_slice(prefix).deserialize_map(Scan {
+        id: &mut id,
+        is_request: &mut is_request,
+    });
+    if is_request {
+        return None;
+    }
+    id.filter(|id| id.is_string() || id.is_number())
+}
+
 /// A JSON-RPC error standing in for a response too large to deliver.
 ///
 /// Only a *response* is answered this way — a line with an `id` and no
 /// `method`. An oversized request from the child carries an id in the child's
 /// id space, and fabricating a response to it here would resolve whichever of
 /// our own requests happened to share that id.
-fn oversize_error_response(line: &str, max_size: usize) -> Option<String> {
-    #[derive(serde::Deserialize)]
-    struct Envelope {
-        id: Option<serde_json::Value>,
-        method: Option<serde::de::IgnoredAny>,
-    }
-
-    let envelope: Envelope = serde_json::from_str(line).ok()?;
-    let id = envelope.id.filter(|id| id.is_string() || id.is_number())?;
-    if envelope.method.is_some() {
-        return None;
-    }
+fn oversize_error_response(prefix: &[u8], len: usize, max_size: usize) -> Option<String> {
+    let id = leading_response_id(prefix)?;
 
     Some(
         serde_json::json!({
@@ -481,7 +595,7 @@ fn oversize_error_response(line: &str, max_size: usize) -> Option<String> {
                 "code": -32603,
                 "message": format!(
                     "response of {} bytes exceeds the transport's max_message_size of {max_size} bytes",
-                    line.len()
+                    len
                 ),
             },
         })
@@ -754,6 +868,8 @@ mod tests {
         // id "9" (which must not be answered on the child's behalf), then a
         // normal response to id "8"; then stays alive until stdin closes.
         let script = r#"pad=$(printf '%0200d' 0)
+big=$(printf '%010000d' 0)
+printf '{"jsonrpc":"2.0","id":"6","result":{"pad":"%s"}}\n' "$big"
 printf '{"jsonrpc":"2.0","id":"7","result":{"pad":"%s"}}\n' "$pad"
 printf '{"jsonrpc":"2.0","id":"9","method":"sampling/createMessage","params":{"pad":"%s"}}\n' "$pad"
 printf '{"jsonrpc":"2.0","id":"8","result":{}}\n'
@@ -772,7 +888,7 @@ cat >/dev/null"#;
         }
 
         let mut received = Vec::new();
-        for _ in 0..2 {
+        for _ in 0..3 {
             let message = tokio::time::timeout(Duration::from_secs(5), transport.receive())
                 .await
                 .expect("a message within the timeout")
@@ -782,12 +898,51 @@ cat >/dev/null"#;
             received.push(value);
         }
 
-        assert_eq!(received[0]["id"], "7", "{received:?}");
+        // "6" is longer than the prefix kept of an oversized line; its id is
+        // found all the same.
+        assert_eq!(received[0]["id"], "6", "{received:?}");
         assert_eq!(received[0]["error"]["code"], -32603, "{received:?}");
-        assert_eq!(received[1]["id"], "8", "{received:?}");
-        assert!(received[1].get("result").is_some(), "{received:?}");
+        assert_eq!(received[1]["id"], "7", "{received:?}");
+        assert_eq!(received[1]["error"]["code"], -32603, "{received:?}");
+        assert_eq!(received[2]["id"], "8", "{received:?}");
+        assert!(received[2].get("result").is_some(), "{received:?}");
 
         let _ = transport.disconnect().await;
+    }
+
+    /// A line is never held past the limit (or the prefix kept to answer
+    /// it), however long it runs without a newline.
+    #[tokio::test]
+    async fn an_over_long_line_is_read_in_bounded_memory() {
+        use tokio::io::BufReader;
+
+        let input = format!("{}\r\nok\r\n", "x".repeat(1 << 20));
+        let mut reader = BufReader::with_capacity(64, std::io::Cursor::new(input.into_bytes()));
+
+        match read_bounded_line(&mut reader, 16).await.unwrap() {
+            Some(ChildLine::TooLong { prefix, len }) => {
+                assert_eq!(len, (1 << 20) + 1);
+                assert_eq!(prefix.len(), OVERSIZED_PREFIX);
+            }
+            _ => panic!("expected an over-long line"),
+        }
+        assert!(matches!(
+            read_bounded_line(&mut reader, 16).await.unwrap(),
+            Some(ChildLine::Message(line)) if line == "ok"
+        ));
+        assert!(read_bounded_line(&mut reader, 16).await.unwrap().is_none());
+    }
+
+    #[test]
+    fn the_id_of_a_truncated_response_is_found() {
+        let response = br#"{"jsonrpc":"2.0","id":42,"result":{"text":"trunc"#;
+        assert_eq!(leading_response_id(response), Some(serde_json::json!(42)));
+
+        let request = br#"{"jsonrpc":"2.0","id":"r","method":"sampling/createMessage","params":{"#;
+        assert_eq!(leading_response_id(request), None);
+
+        let cut_before_id = br#"{"jsonrpc":"2.0","result":{"text":"trunc"#;
+        assert_eq!(leading_response_id(cut_before_id), None);
     }
 
     /// stdio messages "MUST NOT contain embedded newlines"; one would reach
