@@ -28,8 +28,8 @@ use axum::extract::{DefaultBodyLimit, Extension, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use axum::serve::ListenerExt as _;
 use serde_json::json;
-use tower_http::cors::CorsLayer;
 use turbomcp_core::codec::{Codec, DefaultCodec};
 use turbomcp_core::{
     Extensions, JsonRpcMessage, McpRequest, ObservedHeaders, ProtocolVersion, SessionId, meta,
@@ -184,12 +184,23 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
                 .delete(mcp_delete::<H::Service>),
         )
         .layer(DefaultBodyLimit::max(config.max_body_bytes));
-    // RFC 9728 Protected Resource Metadata is public (no auth) discovery.
+    // RFC 9728 Protected Resource Metadata is public (no auth) discovery, at
+    // the root and at the location RFC 9728 §3.1 derives for this endpoint
+    // (the resource's path inserted after the well-known segment), which is
+    // where a correctly configured `resource_metadata` challenge URL points
+    // and where MCP clients look first.
     if config.authenticator.is_some() {
         app = app.route(
             RESOURCE_METADATA_PATH,
             axum::routing::get(resource_metadata::<H::Service>),
         );
+        let path_inserted = format!("{RESOURCE_METADATA_PATH}{}", config.path);
+        if path_inserted != RESOURCE_METADATA_PATH {
+            app = app.route(
+                &path_inserted,
+                axum::routing::get(resource_metadata::<H::Service>),
+            );
+        }
     }
     #[cfg_attr(not(feature = "websocket"), allow(unused_mut))]
     let mut app = app.with_state(state.clone());
@@ -199,10 +210,9 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
     }
     #[cfg(not(feature = "websocket"))]
     drop((server, state));
-    let app = if config.cors {
-        app.layer(CorsLayer::permissive())
-    } else {
-        app
+    let app = match config.origins.cors_layer() {
+        Some(cors) => app.layer(cors),
+        None => app,
     };
     app.layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
@@ -351,6 +361,12 @@ async fn serve_listener<H: ServerHandle>(
     }
     // `with_connect_info` so the rate limiter can key anonymous requests on the
     // peer IP (a no-op when no limiter is configured).
+    // Small SSE events shouldn't wait on Nagle's algorithm.
+    let listener = listener.tap_io(|tcp| {
+        if let Err(e) = tcp.set_nodelay(true) {
+            tracing::debug!(error = %e, "could not set TCP_NODELAY");
+        }
+    });
     let serving = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

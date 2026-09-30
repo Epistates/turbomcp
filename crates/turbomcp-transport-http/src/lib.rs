@@ -91,8 +91,11 @@
 //!   others with `403`.
 //! - **Body limit:** `POST` bodies above [`HttpConfig::max_body_bytes`] (default
 //!   1 MiB) are rejected with `413`.
-//! - **CORS:** off by default; [`HttpConfig::enable_cors`] adds a permissive
-//!   `tower-http` `CorsLayer` (intended for `allow_any_origin` dev setups).
+//! - **CORS:** follows the Origin policy. Each allowed origin (or any, under
+//!   [`HttpConfig::allow_any_origin`]) gets CORS headers that work with
+//!   bearer auth: `Authorization` and the request's own headers allowed by
+//!   name, `Mcp-Session-Id`/`WWW-Authenticate`/`Retry-After` exposed. With no
+//!   origin allowed (the default), there are none.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

@@ -162,6 +162,13 @@ pub(super) fn accepts(headers: &HeaderMap, required: &mime::Mime) -> bool {
     accept
         .split(',')
         .filter_map(|part| part.trim().parse::<mime::Mime>().ok())
+        // "A weight of 0 means not acceptable" (RFC 9110 §12.4.2).
+        .filter(|range| {
+            range
+                .get_param("q")
+                .and_then(|q| q.as_str().parse::<f32>().ok())
+                .is_none_or(|q| q > 0.0)
+        })
         .any(|range| {
             (range.type_() == mime::STAR || range.type_() == required.type_())
                 && (range.subtype() == mime::STAR || range.subtype() == required.subtype())
@@ -180,6 +187,23 @@ pub(super) fn check_origin(policy: &OriginPolicy, headers: &HeaderMap) -> Option
     }
 }
 
+/// Whether a `Host` header value matches an allowlist entry: exactly, or by
+/// host alone when the entry names no port (`localhost` admits
+/// `localhost:8080`; `localhost:8080` admits only that port). Case-insensitive,
+/// as host names are.
+fn host_matches(allowed: &str, host: &str) -> bool {
+    let (Ok(allowed), Ok(host)) = (
+        allowed.parse::<axum::http::uri::Authority>(),
+        host.parse::<axum::http::uri::Authority>(),
+    ) else {
+        return false;
+    };
+    allowed.host().eq_ignore_ascii_case(host.host())
+        && allowed
+            .port_u16()
+            .is_none_or(|port| host.port_u16() == Some(port))
+}
+
 /// Returns `Some(rejection)` if the request's `Host` is disallowed, else `None`.
 /// Unlike `Origin`, `Host` is always present, so `Allowlist` mode rejects a
 /// missing/unmatched `Host` — the point is to pin the server's expected host(s).
@@ -191,7 +215,8 @@ pub(super) fn check_host(policy: &HostPolicy, headers: &HeaderMap) -> Option<Res
                 .get(header::HOST)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or_default();
-            (!list.iter().any(|allowed| allowed == host)).then(|| forbidden("host not allowed"))
+            (!list.iter().any(|allowed| host_matches(allowed, host)))
+                .then(|| forbidden("host not allowed"))
         }
     }
 }
@@ -292,5 +317,38 @@ mod tests {
             .client_ip(&trusted),
             None
         );
+    }
+
+    /// An allowlisted host without a port admits it on any port: the
+    /// natural `allow_host("localhost")` refused `Host: localhost:8080`.
+    #[test]
+    fn a_host_entry_matches_by_authority() {
+        assert!(host_matches("localhost", "localhost:8080"));
+        assert!(host_matches("localhost", "localhost"));
+        assert!(host_matches("MCP.example.com", "mcp.example.com:443"));
+        assert!(host_matches("localhost:8080", "localhost:8080"));
+        assert!(!host_matches("localhost:8080", "localhost:9090"));
+        assert!(!host_matches("localhost:8080", "localhost"));
+        assert!(!host_matches("localhost", "localhost.evil.com"));
+        assert!(!host_matches("localhost", ""));
+    }
+
+    /// "A weight of 0 means not acceptable."
+    #[test]
+    fn a_zero_weight_media_range_is_not_accepted() {
+        let with = |accept: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(header::ACCEPT, HeaderValue::from_str(accept).unwrap());
+            h
+        };
+        assert!(accepts(
+            &with("application/json, text/event-stream;q=0.5"),
+            &mime::TEXT_EVENT_STREAM
+        ));
+        assert!(!accepts(
+            &with("application/json, text/event-stream;q=0"),
+            &mime::TEXT_EVENT_STREAM
+        ));
+        assert!(!accepts(&with("*/*;q=0.0"), &mime::APPLICATION_JSON));
     }
 }

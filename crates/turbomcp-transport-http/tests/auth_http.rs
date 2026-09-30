@@ -329,3 +329,24 @@ async fn forged_identity_meta_is_stripped_before_auth() {
     let resp = app().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// RFC 9728 §3.1 puts a resource's metadata at the well-known segment
+/// followed by the resource's path, and MCP clients look there first. Only
+/// the root was served, so an authenticator configured with the correct
+/// path-inserted URL sent clients to a 404.
+#[tokio::test]
+async fn metadata_is_served_at_the_path_inserted_location_too() {
+    for uri in [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+    ] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+        assert_eq!(body_json(resp).await["resource"], RESOURCE, "{uri}");
+    }
+}

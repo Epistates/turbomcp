@@ -102,6 +102,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Browsers can use a bearer-authenticated HTTP endpoint. `enable_cors` added
+  a permissive layer whose `Access-Control-Allow-Headers: *` does not cover
+  `Authorization` (Fetch standard), so every authenticated preflight failed,
+  and an origin allowed without `enable_cors` got no CORS headers at all
+  (the preflight was a `405`). CORS now follows the Origin allowlist.
+- `HttpConfig::allow_host("localhost")` admits `Host: localhost:8080`; an
+  entry without a port matches the host on any port. It was an exact string
+  match, port included.
+- The RFC 9728 metadata document is also served at the path-inserted
+  location (`/.well-known/oauth-protected-resource/mcp`), where RFC 9728
+  §3.1 puts it and MCP clients look first; an authenticator configured with
+  that URL sent clients to a `404`.
+- An `Accept` range with `q=0` counts as not acceptable (RFC 9110).
+- Accepted HTTP connections set `TCP_NODELAY`, so small SSE events don't
+  wait on Nagle's algorithm, and every refusal logs its reason at `debug`.
 - HTTP status codes now match the revision a request is on:
   - A 2026-07-28 request ignores an `Mcp-Session-Id` header, as that
     revision says. A stale one (a dual-era client, a gateway replaying a
@@ -292,6 +307,8 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `HttpConfig::enable_cors` is gone: CORS follows the Origin
+  policy (`allow_origin`, `allow_any_origin`).
 - **Breaking:** `SessionStreams::register` takes the stream's close token,
   fired when a newer stream replaces it or `SessionStreams::close` ends the
   session. An HTTP endpoint over its request limit answers `503` +

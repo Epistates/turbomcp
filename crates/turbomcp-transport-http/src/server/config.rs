@@ -3,12 +3,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::http::{HeaderValue, Method, header};
 use ipnet::IpNet;
+use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use turbomcp_core::ProtocolVersion;
 use turbomcp_service::{CancellationToken, HttpAuthenticator, RateLimiter, SessionTerminator};
 
 #[cfg(feature = "websocket")]
 use super::WebSocketConfig;
+use crate::headers;
 
 /// Default keep-alive comment interval — short enough to outlive common
 /// proxy/LB idle timeouts (often 30–60s).
@@ -25,6 +28,41 @@ pub(super) enum OriginPolicy {
     Allowlist(Vec<String>),
     /// Accept any `Origin` (development only).
     Any,
+}
+
+impl OriginPolicy {
+    /// The CORS layer for the origins this policy admits, if it admits any.
+    ///
+    /// An allowed origin is only ever a browser, and a browser can't call a
+    /// cross-origin endpoint without CORS, so the two are one setting. The
+    /// preflight answer lists `Authorization` by name: a `*` in
+    /// `Access-Control-Allow-Headers` does not cover it (Fetch standard), so
+    /// the permissive layer this replaces broke bearer auth, the MCP
+    /// authorization spec's only mechanism, in every browser. Request headers
+    /// are mirrored so each tool's `Mcp-Param-*` names pass, and the headers a
+    /// client has to read (`Mcp-Session-Id`, `WWW-Authenticate`,
+    /// `Retry-After`) are exposed.
+    pub(super) fn cors_layer(&self) -> Option<CorsLayer> {
+        let origins = match self {
+            Self::Any => AllowOrigin::any(),
+            Self::Allowlist(list) if list.is_empty() => return None,
+            Self::Allowlist(list) => {
+                AllowOrigin::list(list.iter().filter_map(|o| HeaderValue::from_str(o).ok()))
+            }
+        };
+        Some(
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([Method::GET, Method::POST, Method::DELETE])
+                .allow_headers(AllowHeaders::mirror_request())
+                .expose_headers([
+                    headers::SESSION_ID,
+                    headers::PROTOCOL_VERSION,
+                    header::WWW_AUTHENTICATE,
+                    header::RETRY_AFTER,
+                ]),
+        )
+    }
 }
 
 /// Where a request's `Host` header is checked against — DNS-rebinding defense in
@@ -56,7 +94,6 @@ pub struct HttpConfig {
     pub(super) max_body_bytes: usize,
     pub(super) origins: OriginPolicy,
     pub(super) hosts: HostPolicy,
-    pub(super) cors: bool,
     pub(super) shutdown: CancellationToken,
     pub(super) sse_keepalive: Duration,
     pub(super) sse_upgrade_after: Duration,
@@ -80,7 +117,6 @@ impl core::fmt::Debug for HttpConfig {
             .field("max_body_bytes", &self.max_body_bytes)
             .field("origins", &self.origins)
             .field("hosts", &self.hosts)
-            .field("cors", &self.cors)
             .field("sse_keepalive", &self.sse_keepalive)
             .field("sse_upgrade_after", &self.sse_upgrade_after)
             .field("authenticator", &self.authenticator.is_some())
@@ -107,7 +143,6 @@ impl Default for HttpConfig {
             max_body_bytes: 1 << 20, // 1 MiB
             origins: OriginPolicy::Allowlist(Vec::new()),
             hosts: HostPolicy::Any,
-            cors: false,
             shutdown: CancellationToken::new(),
             sse_keepalive: DEFAULT_SSE_KEEPALIVE,
             sse_upgrade_after: DEFAULT_SSE_UPGRADE_AFTER,
@@ -211,6 +246,7 @@ impl HttpConfig {
     }
 
     /// Add an allowed `Origin` (exact match, e.g. `https://app.example.com`).
+    /// Browsers on it get CORS headers too.
     #[must_use]
     pub fn allow_origin(mut self, origin: impl Into<String>) -> Self {
         match &mut self.origins {
@@ -220,17 +256,17 @@ impl HttpConfig {
         self
     }
 
-    /// Accept requests from any `Origin` (development only). Also enables a
-    /// permissive CORS layer so browsers can actually use it.
+    /// Accept requests from any `Origin` (development only), with CORS
+    /// headers for all of them.
     #[must_use]
     pub fn allow_any_origin(mut self) -> Self {
         self.origins = OriginPolicy::Any;
-        self.cors = true;
         self
     }
 
-    /// Add an allowed `Host` (exact match, e.g. `localhost:8080` or
-    /// `mcp.example.com`). By default any `Host` is accepted; once at least one
+    /// Add an allowed `Host`: a host (`mcp.example.com`, `localhost`), which
+    /// matches it on any port, or a host and port (`localhost:8080`), which
+    /// matches only that port. By default any `Host` is accepted; once at least one
     /// host is allow-listed, a request whose `Host` isn't listed is rejected
     /// with `403`. Combined with [`allow_origin`](Self::allow_origin) this
     /// hardens the server against DNS-rebinding (a spoofed `Host`/`Origin` from
@@ -242,13 +278,6 @@ impl HttpConfig {
             HostPolicy::Allowlist(list) => list.push(host.into()),
             HostPolicy::Any => self.hosts = HostPolicy::Allowlist(vec![host.into()]),
         }
-        self
-    }
-
-    /// Toggle the permissive CORS layer (off by default).
-    #[must_use]
-    pub fn enable_cors(mut self, enabled: bool) -> Self {
-        self.cors = enabled;
         self
     }
 

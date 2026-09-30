@@ -12,6 +12,7 @@ use turbomcp_service::ProtocolError;
 /// `WWW-Authenticate` header.
 pub(super) fn challenge_response(status: u16, www_authenticate: &str) -> Response {
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::UNAUTHORIZED);
+    tracing::debug!(status = status.as_u16(), "refused: authentication");
     let header = HeaderValue::from_str(www_authenticate)
         .unwrap_or_else(|_| HeaderValue::from_static("Bearer"));
     (status, [(axum::http::header::WWW_AUTHENTICATE, header)]).into_response()
@@ -146,6 +147,9 @@ pub(super) fn transport_error(
     message: String,
     data: Option<serde_json::Value>,
 ) -> Response {
+    // Every refusal passes here, so this is where they become visible: a
+    // DNS-rebinding probe, a misconfigured proxy, a flood.
+    tracing::debug!(status = status.as_u16(), code, %message, "refused");
     let mut error = serde_json::json!({ "code": code, "message": message });
     if let (Some(obj), Some(data)) = (error.as_object_mut(), data) {
         obj.insert("data".into(), data);
