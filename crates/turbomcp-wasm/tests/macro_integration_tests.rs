@@ -57,6 +57,27 @@ impl TestServer {
     async fn greeting(&self) -> PromptResult {
         PromptResult::user("Hello! How can I help?")
     }
+
+    // A prompt with arguments used to wrap them in a second `Option`, so no
+    // form of one compiled.
+    #[prompt("Greet someone by name")]
+    async fn named_greeting(&self, args: Option<GreetArgs>) -> PromptResult {
+        let name = args.map(|a| a.name).unwrap_or_else(|| "World".into());
+        PromptResult::user(format!("Hello, {name}!"))
+    }
+
+    #[prompt("Greet the caller")]
+    async fn caller_greeting(
+        &self,
+        ctx: std::sync::Arc<turbomcp_wasm::wasm_server::RequestContext>,
+        args: Option<GreetArgs>,
+    ) -> PromptResult {
+        let _ = ctx;
+        PromptResult::user(format!(
+            "Hello, {}!",
+            args.map(|a| a.name).unwrap_or_default()
+        ))
+    }
 }
 
 #[test]
@@ -99,7 +120,7 @@ fn test_resources_metadata() {
 #[test]
 fn test_prompts_metadata() {
     let prompts = TestServer::get_prompts_metadata();
-    assert_eq!(prompts.len(), 1);
+    assert_eq!(prompts.len(), 3);
 
     // Tuple format: name, description, tags, version
     let (name, desc, _tags, _version) = prompts[0];

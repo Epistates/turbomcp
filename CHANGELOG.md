@@ -46,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`limits.max_response_size`, 10 MiB by default) and left the reported
   `capabilities().max_message_size` at 1 MiB. It now reports the limit it
   enforces, as the TCP and Unix transports do.
+- **A WASM `#[prompt]` that took arguments didn't compile.** The generated
+  registration wrapped the arguments type in a second `Option`, so the
+  documented `args: Option<T>` failed with a type mismatch, and so did a bare
+  `T`. `Option<T>` now works; a bare `T` gets an error saying to take
+  `Option<T>`, since a client may call a prompt without arguments.
 
 ### Security
 

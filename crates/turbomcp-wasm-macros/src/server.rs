@@ -512,7 +512,7 @@ fn extract_prompt_methods(impl_block: &ItemImpl) -> syn::Result<Vec<PromptMethod
                     let attrs = ComponentAttrs::parse(attr)?;
                     let description = attrs.description.unwrap_or_else(|| "Prompt".to_string());
                     let (has_context, has_args, arg_type) =
-                        extract_prompt_arg_info_with_ctx(&method.sig);
+                        extract_prompt_arg_info_with_ctx(&method.sig)?;
 
                     prompts.push(PromptMethod {
                         name: method.sig.ident.clone(),
@@ -565,7 +565,12 @@ fn method_has_context(sig: &syn::Signature) -> bool {
 
 /// Extract argument info from a prompt method signature, including context detection.
 /// Returns (has_context, has_args, arg_type).
-fn extract_prompt_arg_info_with_ctx(sig: &syn::Signature) -> (bool, bool, Option<Type>) {
+///
+/// The arguments parameter is `Option<T>`, since a client may call a prompt
+/// without arguments; the returned type is that `T`.
+fn extract_prompt_arg_info_with_ctx(
+    sig: &syn::Signature,
+) -> syn::Result<(bool, bool, Option<Type>)> {
     let mut has_context = false;
     let mut arg_type = None;
 
@@ -577,13 +582,38 @@ fn extract_prompt_arg_info_with_ctx(sig: &syn::Signature) -> (bool, bool, Option
                 && let Pat::Ident(pat_ident) = pat.as_ref()
                 && pat_ident.ident != "self"
             {
-                arg_type = Some((**ty).clone());
+                let inner = option_inner_type(ty).ok_or_else(|| {
+                    syn::Error::new_spanned(
+                        ty,
+                        "a prompt's arguments are optional: a client may send none, \
+                         so take them as `Option<T>`",
+                    )
+                })?;
+                arg_type = Some(inner.clone());
             }
         }
     }
 
     let has_args = arg_type.is_some();
-    (has_context, has_args, arg_type)
+    Ok((has_context, has_args, arg_type))
+}
+
+/// `T`, if `ty` is `Option<T>`.
+fn option_inner_type(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != "Option" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    match args.args.first()? {
+        syn::GenericArgument::Type(inner) if args.args.len() == 1 => Some(inner),
+        _ => None,
+    }
 }
 
 /// Check if type is a context type (Context, RequestContext, or Arc<RequestContext>)
