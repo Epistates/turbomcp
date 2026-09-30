@@ -169,7 +169,6 @@ turbomcp/
 │   ├── turbomcp-dpop/         # DPoP support
 │   └── turbomcp-proxy/        # Universal adapter
 │
-├── tests/                      # Workspace-level integration tests
 ├── benches/                    # Benchmarks
 ├── scripts/                    # Build and utility scripts
 ├── docs/                       # Documentation

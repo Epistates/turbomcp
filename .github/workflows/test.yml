@@ -61,10 +61,10 @@ jobs:
     - name: Unit tests
       run: cargo test --workspace --all-features --lib --bins
 
-    # Workspace-level integration / compliance tests live in `tests/` and per-crate
-    # `tests/` directories. Pre-3.1 these were never executed in CI — only `--lib
-    # --bins` ran, so ~600 integration tests across compliance, fault-injection,
-    # transport conformance, and performance silently never ran.
+    # Integration tests live in each crate's `tests/` directory. Pre-3.1 these
+    # were never executed in CI — only `--lib --bins` ran, so integration tests
+    # across compliance, fault-injection, transport conformance, and performance
+    # silently never ran.
     - name: Integration tests
       run: cargo test --workspace --all-features --tests
 

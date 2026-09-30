@@ -85,6 +85,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ClientBuilder` example set both and then called `build`. The methods and the
   `ConnectionConfig` fields now say so, and the example calls `build_resilient`.
 
+### Internal
+
+- **Removed the workspace-root `tests/` directory.** The root manifest is a
+  virtual workspace, so no cargo target ever compiled those 17 files; they were
+  written against v2-era APIs that no longer exist. Every crate's own tests are
+  unaffected. A new `transport_e2e` test runs a real client against a real
+  server over TCP, Unix, HTTP and WebSocket; nothing did before, which is how
+  the TCP client bug above shipped.
+
 ### Security
 
 - **`JwksClient` with an SSRF validator could be steered by DNS rebinding.**
