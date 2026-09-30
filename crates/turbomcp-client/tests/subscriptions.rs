@@ -194,7 +194,7 @@ async fn listen_resolves_on_the_acknowledgement_notification() {
     })
     .await;
 
-    let agreed = client
+    let subscription = client
         .listen(
             neutral::SubscriptionFilter::all_list_changed().with_resource("file:///watched.txt"),
         )
@@ -202,7 +202,9 @@ async fn listen_resolves_on_the_acknowledgement_notification() {
         .expect("the acknowledgement resolves the listen");
 
     // The agreed subset is what the server said, not what we requested.
-    assert_eq!(agreed, json!({ "toolsListChanged": true }));
+    let mut expected = neutral::SubscriptionFilter::new();
+    expected.tools_list_changed = true;
+    assert_eq!(*subscription.accepted(), expected);
 
     // The ack still reaches the handler like any other notification.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -487,4 +489,44 @@ async fn with_log_level_opts_in_on_both_wires() {
     )
     .await;
     assert_eq!(*levels.lock().unwrap(), vec![json!("error")]);
+}
+
+/// Dropping a subscription tells the server, by the listen request's id:
+/// "send `notifications/cancelled` referencing the `subscriptions/listen`
+/// request ID (stdio)". There was no way to end one short of closing the
+/// client.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropping_a_subscription_cancels_it_by_its_id() {
+    let (cancelled_tx, mut cancelled_rx) = tokio::sync::mpsc::unbounded_channel();
+    let client = connect(None, move |method, frame| match method {
+        "subscriptions/listen" => {
+            let id = frame.get("id").cloned().unwrap_or(Value::Null);
+            vec![json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/subscriptions/acknowledged",
+                "params": {
+                    "_meta": { "io.modelcontextprotocol/subscriptionId": id },
+                    "notifications": { "toolsListChanged": true }
+                }
+            })]
+        }
+        "notifications/cancelled" => {
+            let _ = cancelled_tx.send(frame["params"]["requestId"].clone());
+            vec![]
+        }
+        other => panic!("unexpected method {other}"),
+    })
+    .await;
+
+    let subscription = client
+        .listen(neutral::SubscriptionFilter::all_list_changed())
+        .await
+        .expect("listen");
+    let id = serde_json::to_value(subscription.id()).unwrap();
+    drop(subscription);
+    let cancelled = tokio::time::timeout(std::time::Duration::from_secs(5), cancelled_rx.recv())
+        .await
+        .expect("the client cancels the subscription")
+        .unwrap();
+    assert_eq!(cancelled, id);
 }

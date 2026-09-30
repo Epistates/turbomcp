@@ -40,6 +40,7 @@ use crate::handler::{
 };
 use crate::options::CallOptions;
 use crate::progress::Registration;
+use crate::subscription::Subscription;
 
 /// Cap on MRTR re-issue rounds — a guard against a server that keeps answering
 /// `input_required` forever.
@@ -1459,22 +1460,15 @@ impl Client {
 
     /// Open a notification subscription (`subscriptions/listen`, `2026-07-28`).
     ///
-    /// This is how a draft-protocol client receives server→client
-    /// notifications at all: the draft replaced both `resources/subscribe` and
-    /// the HTTP GET stream with this one long-lived subscription. Notifications
-    /// then arrive at [`NotificationHandler::on_notification`], each stamped with
-    /// this subscription's id in `_meta`.
+    /// This is how a `2026-07-28` client receives server→client notifications
+    /// at all: that revision replaced both `resources/subscribe` and the HTTP
+    /// GET stream with long-lived subscriptions. The returned [`Subscription`]
+    /// carries this subscription's notifications and no other's (several may
+    /// run at once), says how it ended, and cancels it when dropped.
     ///
-    /// Returns the acknowledgement's `notifications` object — the filter subset
-    /// the server actually **agreed** to, which may be narrower than what you
-    /// asked for (it intersects your filter with the capabilities it
-    /// registered). Check it rather than assuming; a server with no prompts
-    /// silently drops `promptsListChanged`.
-    ///
-    /// Unlike every other request, this one is answered by that acknowledgement
-    /// rather than a JSON-RPC response — only a *failure* answers in band. The
-    /// subscription lasts until the connection ends; the server closes it by
-    /// ending the stream.
+    /// [`Subscription::accepted`] is the filter the server actually **agreed**
+    /// to, which may be narrower than what you asked for (a server with no
+    /// prompts drops `promptsListChanged`). Check it rather than assuming.
     ///
     /// Older revisions don't have it; use
     /// [`subscribe_resource`](Self::subscribe_resource) there instead.
@@ -1483,7 +1477,7 @@ impl Client {
     /// [`ClientError::Protocol`] before `2026-07-28`; otherwise propagates RPC
     /// failures, and [`ClientError::Timeout`] if neither an acknowledgement
     /// nor an error arrives within the request timeout.
-    pub async fn listen(&self, filter: neutral::SubscriptionFilter) -> ClientResult<Value> {
+    pub async fn listen(&self, filter: neutral::SubscriptionFilter) -> ClientResult<Subscription> {
         self.require_stateless(
             request::SUBSCRIPTIONS_LISTEN,
             "use `subscribe_resource`, and list-changed notifications arrive unasked",
@@ -1494,13 +1488,31 @@ impl Client {
             "notifications".into(),
             serde_json::to_value(wire).map_err(|e| ClientError::Decode(e.to_string()))?,
         );
+        let mut facts = Extensions::new();
+        self.stamp_version(&mut params, &mut facts);
+        // The subscription's id is its listen request's, and its notifications
+        // may follow the acknowledgement before this call returns: route them
+        // before the request goes out.
+        let id = self.conn.mint_id();
+        let route = self.conn.subscriptions().register(id.clone());
+        // Answered by the acknowledgement (only a failure answers in band).
         let ack = self
-            .versioned_request(request::SUBSCRIPTIONS_LISTEN, params)
+            .conn
+            .request_as(
+                id.clone(),
+                request::SUBSCRIPTIONS_LISTEN,
+                Some(Value::Object(params)),
+                facts,
+                Wait::default(),
+            )
             .await?;
-        Ok(ack
-            .get("notifications")
-            .cloned()
-            .unwrap_or(Value::Object(Map::new())))
+        let accepted = match ack.get("notifications") {
+            Some(filter) => serde_json::from_value::<v0728::SubscriptionFilter>(filter.clone())
+                .map_err(|e| ClientError::Decode(e.to_string()))?
+                .into(),
+            None => neutral::SubscriptionFilter::default(),
+        };
+        Ok(Subscription::new(id, accepted, route, self.conn.clone()))
     }
 
     /// Subscribe to updates for one resource (`resources/subscribe`,
@@ -2050,19 +2062,7 @@ impl Client {
         mut facts: Extensions,
         wait: Wait,
     ) -> ClientResult<Value> {
-        if self.version == ProtocolVersion::V2026_07_28
-            && let Some(meta) = params
-                .entry("_meta")
-                .or_insert_with(|| Value::Object(Map::new()))
-                .as_object_mut()
-        {
-            // Merge the version envelope into any `_meta` the caller set (a
-            // progress token) rather than clobbering it.
-            for (key, value) in &self.request_meta {
-                meta.entry(key.clone()).or_insert_with(|| value.clone());
-            }
-        }
-        facts.insert(WireVersion(self.version.clone()));
+        self.stamp_version(&mut params, &mut facts);
         let params = Value::Object(params);
         match self
             .conn
@@ -2081,6 +2081,24 @@ impl Client {
             }
             other => other,
         }
+    }
+
+    /// Stamp a request with the negotiated version: the `2026-07-28` `_meta`
+    /// envelope, merged into any `_meta` the caller set (a progress token)
+    /// rather than clobbering it, and on every revision a [`WireVersion`]
+    /// fact for the transport.
+    fn stamp_version(&self, params: &mut Map<String, Value>, facts: &mut Extensions) {
+        if self.version == ProtocolVersion::V2026_07_28
+            && let Some(meta) = params
+                .entry("_meta")
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+        {
+            for (key, value) in &self.request_meta {
+                meta.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
+        facts.insert(WireVersion(self.version.clone()));
     }
 
     /// Resolve one call's options against this session.

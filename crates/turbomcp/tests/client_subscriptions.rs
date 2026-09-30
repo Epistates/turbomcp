@@ -105,26 +105,23 @@ async fn connect(mode: ConnectMode) -> (Client, Arc<Spy>) {
 async fn listen_negotiates_a_filter_with_the_real_server() {
     let (client, spy) = connect(ConnectMode::Modern).await;
 
-    let agreed = client
+    let subscription = client
         .listen(neutral::SubscriptionFilter::all_list_changed().with_resource("demo://watched"))
         .await
         .expect("the server acknowledges the subscription");
+    let agreed = subscription.accepted();
 
-    assert_eq!(
-        agreed.get("toolsListChanged"),
-        Some(&Value::Bool(true)),
-        "tools are registered, so this must be agreed: {agreed}"
-    );
-    assert_eq!(
-        agreed.get("resourcesListChanged"),
-        Some(&Value::Bool(true)),
-        "resources are registered: {agreed}"
+    assert!(
+        agreed.tools_list_changed,
+        "tools are registered: {agreed:?}"
     );
     assert!(
-        agreed
-            .get("promptsListChanged")
-            .is_none_or(|v| v == &Value::Bool(false)),
-        "this server has no prompts, so it must not agree to them: {agreed}"
+        agreed.resources_list_changed,
+        "resources are registered: {agreed:?}"
+    );
+    assert!(
+        !agreed.prompts_list_changed,
+        "this server has no prompts, so it must not agree to them: {agreed:?}"
     );
 
     // The ack also reached the handler, stamped with the subscription id.
@@ -165,4 +162,134 @@ async fn listen_is_refused_on_the_legacy_wire() {
         .unsubscribe_resource("demo://watched")
         .await
         .expect("and unsubscribing works too");
+}
+
+struct Running {
+    client: Client,
+    notifier: turbomcp::ServerNotifier,
+    shutdown: turbomcp::CancellationToken,
+    server: tokio::task::JoinHandle<Result<(), turbomcp::ProtocolError>>,
+}
+
+async fn run_modern() -> Running {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (s_rd, s_wr) = split(server_io);
+    let server = turbomcp::Server::new(Watched.into_server().build());
+    let notifier = server.notifier();
+    let shutdown = turbomcp::CancellationToken::new();
+    let pipe = turbomcp::Pipe::new(LineTransport::new(
+        BufReader::new(s_rd),
+        s_wr,
+        SerdeJsonCodec,
+    ))
+    .config(turbomcp::ServeConfig {
+        shutdown: shutdown.clone(),
+        ..turbomcp::ServeConfig::default()
+    });
+    let server = tokio::spawn(server.serve(pipe));
+    let (c_rd, c_wr) = split(client_io);
+    let client = ClientBuilder::new("subscriber", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .connect(LineTransport::new(
+            BufReader::new(c_rd),
+            c_wr,
+            SerdeJsonCodec,
+        ))
+        .await
+        .expect("handshake");
+    Running {
+        client,
+        notifier,
+        shutdown,
+        server,
+    }
+}
+
+async fn next(
+    sub: &mut turbomcp::client::Subscription,
+) -> Option<turbomcp::client::SubscriptionEvent> {
+    tokio::time::timeout(Duration::from_secs(5), sub.next())
+        .await
+        .expect("the subscription yields or ends")
+}
+
+/// Two subscriptions on one stdio connection each see their own
+/// notifications: "clients MUST use this field to correlate notifications
+/// with their originating subscription". The id used to be discarded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_subscriptions_each_see_their_own() {
+    use turbomcp::client::SubscriptionEvent;
+    let running = run_modern().await;
+    let mut tools = running
+        .client
+        .listen({
+            let mut f = neutral::SubscriptionFilter::new();
+            f.tools_list_changed = true;
+            f
+        })
+        .await
+        .unwrap();
+    let mut watched = running
+        .client
+        .listen(neutral::SubscriptionFilter::new().with_resource("demo://watched"))
+        .await
+        .unwrap();
+    assert_ne!(tools.id(), watched.id());
+
+    running.notifier.tools_list_changed();
+    running.notifier.resource_updated("demo://watched").await;
+
+    assert_eq!(
+        next(&mut tools).await,
+        Some(SubscriptionEvent::ToolsListChanged)
+    );
+    assert_eq!(
+        next(&mut watched).await,
+        Some(SubscriptionEvent::ResourceUpdated {
+            uri: "demo://watched".into()
+        })
+    );
+    // Neither saw the other's.
+    for sub in [&mut tools, &mut watched] {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), sub.next())
+                .await
+                .is_err(),
+            "{:?} saw a notification that was not its own",
+            sub.id()
+        );
+    }
+}
+
+/// A server shutting down closes its subscriptions gracefully, and the
+/// handle says so; the response that says it used to be dropped as unknown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_graceful_close_ends_the_subscription_as_closed() {
+    use turbomcp::client::SubscriptionEnd;
+    let running = run_modern().await;
+    let mut sub = running
+        .client
+        .listen(neutral::SubscriptionFilter::all_list_changed())
+        .await
+        .unwrap();
+    running.shutdown.cancel();
+    assert_eq!(next(&mut sub).await, None);
+    assert_eq!(sub.end(), Some(SubscriptionEnd::Closed));
+}
+
+/// A connection that drops without the server closing the subscription is
+/// "an unexpected disconnect, which the client MAY treat as a trigger to
+/// reconnect": the handle tells the two apart.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dropped_connection_ends_the_subscription_as_lost() {
+    use turbomcp::client::SubscriptionEnd;
+    let running = run_modern().await;
+    let mut sub = running
+        .client
+        .listen(neutral::SubscriptionFilter::all_list_changed())
+        .await
+        .unwrap();
+    running.server.abort();
+    assert_eq!(next(&mut sub).await, None);
+    assert_eq!(sub.end(), Some(SubscriptionEnd::Lost));
 }

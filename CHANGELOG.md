@@ -315,6 +315,17 @@ Earlier in this cycle:
 - **Breaking:** the prelude no longer exports the raw `serve_stdio`, which
   served a bare dispatcher to `2026-07-28` clients only. Use
   `builder.serve(stdio())` (`stdio` is in the prelude).
+- **Breaking:** `Client::listen` returns a `Subscription`: its id (the listen
+  request's, which every notification on it carries), the filter the server
+  `accepted()`, its notifications as typed `SubscriptionEvent`s (`next()`, or
+  as a `Stream`), and how it `end()`ed: `Closed` by the server, `Lost` with
+  the connection (the cue to re-listen), or `Cancelled`. Dropping it, or
+  `cancel()`, tells the server. `listen` used to return the acknowledged
+  filter as JSON and discard the id, so several subscriptions on one stdio
+  connection could not be told apart (a MUST), none could be ended short of
+  closing the client, and the server's graceful close was dropped as a
+  response to an unknown request. Subscription notifications still reach the
+  `NotificationHandler` too.
 - **Breaking:** per-call options on the client. `Client::call_tool_with`,
   `read_resource_with` and `get_prompt_with` take a `CallOptions`: a
   timeout, `reset_timeout_on_progress` and a `max_total_timeout` ceiling (the

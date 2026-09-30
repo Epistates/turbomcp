@@ -24,6 +24,7 @@ mod handler;
 mod options;
 mod progress;
 mod stdio;
+mod subscription;
 
 pub use client::{Client, ClientBuilder, ConnectMode};
 pub use connection::{Connection, DEFAULT_REQUEST_TIMEOUT};
@@ -34,6 +35,7 @@ pub use handler::{
 pub use options::CallOptions;
 pub use progress::ProgressCallback;
 pub use stdio::connect_child;
+pub use subscription::{Subscription, SubscriptionEnd, SubscriptionEvent};
 
 /// Re-exported so implementers of [`ElicitationHandler`] can write
 /// `#[async_trait]` without taking a direct dependency on the crate.

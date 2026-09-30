@@ -118,3 +118,26 @@ async fn auto_over_http_resolves_to_modern() {
     exercise(&client).await;
     shutdown.cancel();
 }
+
+/// Over Streamable HTTP each subscription is its own POST stream; a server
+/// shutting down closes it with a response on that stream, which the handle
+/// reports as a graceful close.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subscription_over_http_ends_gracefully_at_shutdown() {
+    let (url, shutdown) = spawn_server().await;
+    let client = ClientBuilder::new("http-listener", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .connect(turbomcp::client::HttpClientTransport::new(&url).unwrap())
+        .await
+        .expect("connect");
+    let mut sub = client
+        .listen(neutral::SubscriptionFilter::all_list_changed())
+        .await
+        .expect("listen");
+    shutdown.cancel();
+    let ended = tokio::time::timeout(Duration::from_secs(10), sub.next())
+        .await
+        .expect("the subscription ends");
+    assert!(ended.is_none());
+    assert_eq!(sub.end(), Some(turbomcp::client::SubscriptionEnd::Closed));
+}

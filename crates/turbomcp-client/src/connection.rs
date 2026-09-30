@@ -50,6 +50,7 @@ use crate::cache::ResponseCache;
 use crate::error::{ClientError, ClientResult};
 use crate::handler::{ClientHandlers, dispatch_server_request};
 use crate::progress::ProgressRoutes;
+use crate::subscription::SubscriptionRoutes;
 
 /// Default per-request timeout — a request with no answer in this window fails
 /// with [`ClientError::Timeout`] rather than hanging forever.
@@ -88,6 +89,8 @@ struct Inner {
     carries_headers: bool,
     /// Where each call's `notifications/progress` goes (shared with the actor).
     progress: Arc<ProgressRoutes>,
+    /// Live `subscriptions/listen` streams (shared with the actor).
+    subscriptions: Arc<SubscriptionRoutes>,
     /// How many server→client requests this client is answering right now.
     /// A request's timeout stops while any are: the client, not the server,
     /// is the one taking its time.
@@ -179,6 +182,7 @@ impl Connection {
         let negotiated = Arc::new(Mutex::new(ProtocolVersion::LATEST));
         let carries_headers = transport.carries_headers();
         let progress = Arc::new(ProgressRoutes::default());
+        let subscriptions = Arc::new(SubscriptionRoutes::default());
         let (inbound_tx, inbound) = watch::channel(0);
         tokio::spawn(actor(
             transport,
@@ -190,6 +194,7 @@ impl Connection {
                 cache,
                 negotiated: Arc::clone(&negotiated),
                 progress: Arc::clone(&progress),
+                subscriptions: Arc::clone(&subscriptions),
                 inbound: inbound_tx,
             },
             (shutdown.clone(), done.clone()),
@@ -206,6 +211,7 @@ impl Connection {
                 admission: tokio::sync::Semaphore::new(1024),
                 carries_headers,
                 progress,
+                subscriptions,
                 inbound,
             }),
         }
@@ -270,6 +276,17 @@ impl Connection {
         &self.inner.progress
     }
 
+    /// Live subscription routes.
+    pub(crate) fn subscriptions(&self) -> &Arc<SubscriptionRoutes> {
+        &self.inner.subscriptions
+    }
+
+    /// A fresh request id, for a caller that has to know it before the
+    /// request goes out (a subscription, whose id this is).
+    pub(crate) fn mint_id(&self) -> RequestId {
+        RequestId::Number(self.inner.next_id.fetch_add(1, Ordering::Relaxed))
+    }
+
     /// [`request_with`](Self::request_with), waiting as `wait` says.
     ///
     /// The clock stops while this client is answering a server→client request
@@ -283,13 +300,26 @@ impl Connection {
         facts: Extensions,
         wait: Wait,
     ) -> ClientResult<Value> {
+        self.request_as(self.mint_id(), method, params, facts, wait)
+            .await
+    }
+
+    /// [`request_waiting`](Self::request_waiting) under an id from
+    /// [`mint_id`](Self::mint_id).
+    pub(crate) async fn request_as(
+        &self,
+        id: RequestId,
+        method: impl Into<String>,
+        params: Option<Value>,
+        facts: Extensions,
+        wait: Wait,
+    ) -> ClientResult<Value> {
         let timeout = wait.timeout.unwrap_or(self.inner.request_timeout);
         let mut deadline = tokio::time::Instant::now() + timeout;
         let _admission = tokio::time::timeout_at(deadline, self.inner.admission.acquire())
             .await
             .map_err(|_| ClientError::Timeout)?
             .map_err(|_| ClientError::Closed)?;
-        let id = RequestId::Number(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
         let (reply_tx, reply_rx) = oneshot::channel();
         self.inner
             .pending
@@ -417,7 +447,7 @@ impl Connection {
     /// This runs from a `Drop`, which cannot await, so the fast path is
     /// `try_send` preserves ordering with the request. If its queue is full,
     /// cancel the connection instead of spawning an unbounded detached waiter.
-    fn cancel_on_wire(&self, id: &RequestId, reason: &str) {
+    pub(crate) fn cancel_on_wire(&self, id: &RequestId, reason: &str) {
         let params = serde_json::json!({ "requestId": id, "reason": reason });
         let msg = JsonRpcMessage::Notification(turbomcp_core::JsonRpcNotification::new(
             notification::CANCELLED,
@@ -508,6 +538,8 @@ struct SessionState {
     negotiated: Arc<Mutex<ProtocolVersion>>,
     /// Per-call progress routes.
     progress: Arc<ProgressRoutes>,
+    /// Live subscriptions.
+    subscriptions: Arc<SubscriptionRoutes>,
     /// Published count of server→client requests in their handlers.
     inbound: watch::Sender<usize>,
 }
@@ -628,6 +660,7 @@ async fn actor<T>(
     // connection is already going away, so a failure here has no one to tell.
     dispatch.requests.abort_all();
     while dispatch.requests.join_next().await.is_some() {}
+    state.subscriptions.lose_all();
     if let Some(notifier) = dispatch.notifier.take() {
         notifier.abort();
     }
@@ -712,11 +745,12 @@ fn route_inbound(
         cache,
         negotiated,
         progress,
+        subscriptions,
         inbound: _,
     } = state;
     match msg {
         JsonRpcMessage::Response(resp) => {
-            complete_pending(resp, pending, failure);
+            complete_pending(resp, pending, subscriptions, failure);
             None
         }
         // Progress for a call that asked for it goes to that call, in order.
@@ -769,6 +803,9 @@ fn route_inbound(
                         .map(ToOwned::to_owned)
                 })
                 .flatten();
+            // A subscription's notifications go to its handle, and on to the
+            // notification observer below like everything else.
+            subscriptions.deliver(&n);
             match &dispatch.notes {
                 None => {
                     tracing::trace!(method = %n.method, "client received notification (no handler)");
@@ -939,6 +976,7 @@ fn invalid_from_server(bad: &InvalidFrame, pending: &Arc<Pending>) -> Option<Jso
 fn complete_pending(
     resp: JsonRpcResponse,
     pending: &Arc<Pending>,
+    subscriptions: &SubscriptionRoutes,
     failure: Option<turbomcp_service::TransportFailure>,
 ) {
     let Some(id) = &resp.id else {
@@ -949,7 +987,11 @@ fn complete_pending(
     };
     let waiter = pending.lock().expect("pending mutex poisoned").remove(id);
     let Some(waiter) = waiter else {
-        tracing::debug!(id = ?resp.id, "response for unknown/duplicate request id (dropped)");
+        // A listen request completes at its acknowledgement; a response to it
+        // afterwards is the server closing the subscription gracefully.
+        if !subscriptions.close(id) {
+            tracing::debug!(id = ?resp.id, "response for unknown/duplicate request id (dropped)");
+        }
         return;
     };
     let outcome = match (failure, resp.error) {
