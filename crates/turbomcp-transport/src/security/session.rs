@@ -100,7 +100,7 @@ impl SecureSessionInfo {
 
     /// Generate a cryptographically secure session ID
     fn generate_secure_id() -> String {
-        // UUID v4 is already cryptographically secure via rand::thread_rng()
+        // UUID v4 draws its 122 random bits from the OS random source.
         format!("mcp_session_{}", uuid::Uuid::new_v4())
     }
 

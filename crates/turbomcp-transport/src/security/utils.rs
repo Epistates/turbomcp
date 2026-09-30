@@ -331,13 +331,30 @@ pub fn is_localhost_origin(origin: &str) -> bool {
 
 /// Generate a cryptographically secure random string for tokens/keys
 ///
-/// Uses rand::rng() which provides a cryptographically secure PRNG (StdRng/ChaCha12)
-/// that is periodically reseeded from the OS's secure random source (OsRng).
-/// This provides the best balance of security and performance for token generation.
+/// Characters are drawn uniformly from `[A-Za-z0-9]` using the operating
+/// system's secure random source.
+///
+/// # Panics
+///
+/// If the operating system's random source is unavailable.
 pub fn generate_secure_token(length: usize) -> String {
-    use rand::distr::{Alphanumeric, SampleString};
+    const ALPHANUMERIC: &[u8; 62] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-    Alphanumeric.sample_string(&mut rand::rng(), length)
+    let mut token = String::with_capacity(length);
+    let mut random = [0u8; 64];
+    while token.len() < length {
+        getrandom::fill(&mut random).expect("the OS random source is available");
+        // 248 = 4 * 62: bytes at or above it are discarded so `% 62` stays
+        // uniform.
+        for &byte in random.iter().filter(|&&byte| byte < 248) {
+            if token.len() == length {
+                break;
+            }
+            token.push(char::from(ALPHANUMERIC[usize::from(byte % 62)]));
+        }
+    }
+    token
 }
 
 /// Common message size limits

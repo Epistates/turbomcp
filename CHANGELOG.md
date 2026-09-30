@@ -150,6 +150,11 @@ defined a feature, the feature stays and enables nothing.
   sends no `Accept-Encoding`, so servers answer uncompressed. The server's
   `tower-http` built brotli and gzip encoders for a compression layer nothing
   installed.
+- **No `rand` in a default build.** Retry jitter in `turbomcp-protocol` uses
+  `fastrand`, as the other crates' jitter already did, and
+  `turbomcp-transport`'s `generate_secure_token` reads the OS random source
+  through `getrandom` (already in the build via `uuid`) instead of `rand`'s
+  thread-local generator.
 
 ### Internal
 

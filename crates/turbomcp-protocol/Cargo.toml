@@ -60,7 +60,7 @@ crossbeam = { workspace = true }
 dashmap = { workspace = true }
 
 # Random number generation for jitter
-rand = { workspace = true }
+fastrand = { workspace = true }
 
 # Memory-mapped files (optional, requires unsafe feature)
 memmap2 = { version = "0.9.11", optional = true }

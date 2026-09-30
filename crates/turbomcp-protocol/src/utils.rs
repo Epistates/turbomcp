@@ -153,7 +153,7 @@ impl RetryConfig {
         let delay = Duration::from_millis(delay_ms as u64).min(self.max_delay);
 
         if self.jitter {
-            let jitter_factor = (rand::random::<f64>() - 0.5).mul_add(0.1, 1.0); // ±5% jitter
+            let jitter_factor = (fastrand::f64() - 0.5).mul_add(0.1, 1.0); // ±5% jitter
             let jittered_delay = delay.mul_f64(jitter_factor);
             jittered_delay.min(self.max_delay)
         } else {
