@@ -236,7 +236,7 @@ pub async fn load_aws_secrets() -> Result<Secrets, Box<dyn std::error::Error>> {
 The Streamable HTTP transport handles shutdown itself: it listens for Ctrl+C
 and, on Unix, SIGTERM. On the signal it stops accepting connections, ends
 listening GET streams, and waits for the requests in flight;
-`with_graceful_shutdown` sets the longest it waits for them (before 3.5.1 the
+`with_graceful_shutdown` sets the longest it waits for them (before 3.6.0 the
 duration was spent before shutdown began):
 
 ```rust

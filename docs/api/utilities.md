@@ -8,7 +8,7 @@ Reference for TurboMCP's error type and the small utility helpers in
 `McpError` / `McpResult` are the error types used across the stack and are
 re-exported by `turbomcp`. The retry, circuit-breaker, and timeout helpers
 live in `turbomcp_protocol::utils`, which the `turbomcp` crate does not
-re-export: add `turbomcp-protocol = "3.5.1"` to use them.
+re-export: add `turbomcp-protocol = "3.6.0"` to use them.
 
 These helpers are for your own code. The client's transport-level resilience
 (`ClientBuilder::build_resilient`) uses the separate types in

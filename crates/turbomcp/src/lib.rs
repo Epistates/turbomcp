@@ -95,10 +95,10 @@
 //!
 //! ```toml
 //! # Minimal (STDIO only, recommended for CLI tools)
-//! turbomcp = { version = "3.5.1", default-features = false, features = ["minimal"] }
+//! turbomcp = { version = "3.6.0", default-features = false, features = ["minimal"] }
 //!
 //! # Full (all transports)
-//! turbomcp = { version = "3.5.1", features = ["full"] }
+//! turbomcp = { version = "3.6.0", features = ["full"] }
 //! ```
 //!
 //! Available features:

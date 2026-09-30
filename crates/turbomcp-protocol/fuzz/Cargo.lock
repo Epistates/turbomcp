@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-core"
-version = "3.5.1"
+version = "3.6.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-protocol"
-version = "3.5.1"
+version = "3.6.0"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-types"
-version = "3.5.1"
+version = "3.6.0"
 dependencies = [
  "serde",
  "serde_json",

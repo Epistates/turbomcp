@@ -9,7 +9,7 @@ assembled from explicit tool/resource/prompt lists and handler traits.
 
 ```toml
 [dependencies]
-turbomcp-grpc = "3.5.1"
+turbomcp-grpc = "3.6.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tonic = "0.14"
 serde_json = "1"

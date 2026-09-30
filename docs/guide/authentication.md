@@ -30,9 +30,9 @@ level.
 ### 1. Enable Features
 
 ```toml
-turbomcp = { version = "3.5.1", features = ["http", "auth"] }
+turbomcp = { version = "3.6.0", features = ["http", "auth"] }
 # HttpAuthorization is exported by turbomcp-server
-turbomcp-server = { version = "3.5.1", features = ["http"] }
+turbomcp-server = { version = "3.6.0", features = ["http"] }
 ```
 
 ### 2. Configure Authorization
@@ -317,7 +317,7 @@ validating the `DPoP` proof in your own `BearerTokenValidator` or in front of
 the server.
 
 ```toml
-turbomcp = { version = "3.5.1", features = ["auth", "dpop"] }
+turbomcp = { version = "3.6.0", features = ["auth", "dpop"] }
 ```
 
 ## Security Best Practices

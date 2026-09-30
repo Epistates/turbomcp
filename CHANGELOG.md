@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-09-30
+
+`Client::connect_tcp` failed against every server in 3.5.0: the TCP client
+registered its connection in a task that hadn't run yet when `initialize` went
+out (#60). Nothing ran a real client against a real server over TCP, so nothing
+caught it. A new end-to-end test now does, over TCP, Unix, HTTP and WebSocket.
+
+A diligence pass before this release found more. Four bugs came in with 3.5.0
+itself: the authorization fetchers stopped applying their configured timeout
+and user agent, the client sent `tasks/cancel` to servers that never offered
+it, a request could run twice when its session expired mid-stream, and stdio
+reported a message size limit it no longer enforced. Six were older, among them
+TCP and Unix transports that dropped messages under load while reporting
+success, a Prometheus exporter that never listened, WASM prompts with arguments
+that didn't compile, and an HTTP graceful shutdown that ran backwards. Three
+security gaps are closed: `JwksClient` was open to DNS rebinding, an SSRF
+policy that allowed redirects followed them anywhere, and a child process
+could exhaust its parent's memory.
+
+The dependency tree is also smaller. Dependencies no code used are gone, one
+of each pair of SIMD JSON libraries, TLS providers and WebSocket stacks was
+dropped, `ring` is no longer compiled at all, and a default build compiles 175
+crates instead of 199; see *Dependencies*.
+
+Two changes can break a build, both small and both listed under *Changed*:
+`turbomcp-dpop` drops its `From<ring::error::Unspecified>` impl, and
+`turbomcp-server`'s `websocket` feature stops enabling the WebSocket client.
+Otherwise no public API changed and no feature was removed.
+
 ### Added
 
 - **`turbomcp_transport_traits::codec`** (feature `codec`): `BoundedLines`, the
@@ -26,42 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, so a server-only WebSocket build no longer compiles a client. Enable
   `turbomcp-transport/websocket` yourself if you relied on it; the `turbomcp`
   crate's `websocket` feature still enables both.
-
-### Security
-
-- **`SsrfPolicy { allow_redirects: true, .. }` followed redirects anywhere.**
-  The client from `SsrfValidator::create_pinned_client` checked only the first
-  URL, then followed up to `max_redirects` hops to any host, including private
-  and cloud-metadata addresses the policy refuses. Each hop is now validated
-  against the same policy, its host resolved and every address checked, before
-  it is followed. Redirects are off by default, and the JWKS client never
-  follows them.
-
-## [3.5.1] - 2026-09-30
-
-`Client::connect_tcp` failed against every server in 3.5.0: the TCP client
-registered its connection in a task that hadn't run yet when `initialize` went
-out (#60). Nothing ran a real client against a real server over TCP, so nothing
-caught it. A new end-to-end test now does, over TCP, Unix, HTTP and WebSocket.
-
-A diligence pass before this release found more. Four bugs came in with 3.5.0
-itself: the authorization fetchers stopped applying their configured timeout
-and user agent, the client sent `tasks/cancel` to servers that never offered
-it, a request could run twice when its session expired mid-stream, and stdio
-reported a message size limit it no longer enforced. Six were older, among them
-TCP and Unix transports that dropped messages under load while reporting
-success, a Prometheus exporter that never listened, WASM prompts with arguments
-that didn't compile, and an HTTP graceful shutdown that ran backwards. Two
-security gaps are closed: `JwksClient` was open to DNS rebinding, and a child
-process could exhaust its parent's memory.
-
-The dependency tree is also smaller. Dependencies no code used are gone, one
-of each pair of SIMD JSON libraries, TLS providers and WebSocket stacks was
-dropped, and a default build compiles 175 crates instead of 199; see
-*Dependencies*.
-
-No public API changed and no feature was removed; `cargo semver-checks` finds
-nothing to flag against 3.5.0.
 
 ### Fixed
 
@@ -149,6 +142,13 @@ nothing to flag against 3.5.0.
   `max_message_size` bytes; an oversized response is still answered with an
   error for its id, found in the first 4 KiB of the line. A line that isn't
   UTF-8 is now skipped instead of ending the reader.
+- **`SsrfPolicy { allow_redirects: true, .. }` followed redirects anywhere.**
+  The client from `SsrfValidator::create_pinned_client` checked only the first
+  URL, then followed up to `max_redirects` hops to any host, including private
+  and cloud-metadata addresses the policy refuses. Each hop is now validated
+  against the same policy, its host resolved and every address checked, before
+  it is followed. Redirects are off by default, and the JWKS client never
+  follows them.
 
 ### Documentation
 
@@ -161,7 +161,7 @@ nothing to flag against 3.5.0.
 
 A default `turbomcp` build now compiles 175 crates instead of 199, a `full`
 build 295 instead of 319, a default `turbomcp-client` build 164 instead of 235,
-and the whole workspace 543 instead of 608. Crates present at more than one
+and the whole workspace 542 instead of 608. Crates present at more than one
 version went from 43 to 36; what remains comes from upstream crates (`oauth2`
 still on the older RustCrypto and `rand` generations, `reqwest` 0.13 on
 `tower-http` 0.6, `dashmap` on an older `hashbrown`). No feature was removed:
@@ -179,11 +179,11 @@ and enables nothing.
   `simd` feature built both `simd-json` and `sonic-rs`. The `SimdJson`
   serialization format now parses with `sonic-rs`, which the rest of the SIMD
   paths already used; `simd-json` is gone.
-- **One TLS crypto provider instead of two in `turbomcp-grpc`.** Its default
-  `tls` feature built tonic's rustls on `ring`, while `reqwest` and
-  `jsonwebtoken` build on `aws-lc-rs`, so both were compiled. It now uses
-  `tonic/tls-aws-lc`. `ring` remains only with `turbomcp-dpop`, whose public
-  `From<ring::error::Unspecified>` impl can't be removed in a patch release.
+- **One crypto provider instead of two.** `turbomcp-grpc`'s default `tls`
+  feature built tonic's rustls on `ring`, while `reqwest` and `jsonwebtoken`
+  build on `aws-lc-rs`, so both were compiled. It now uses `tonic/tls-aws-lc`,
+  and with `turbomcp-dpop`'s `ring` dependency gone (see *Changed*), no build
+  compiles `ring`.
 - **No response decompression.** The HTTP client's `reqwest` built brotli and
   gzip decoders for responses MCP servers rarely compress; without them it
   sends no `Accept-Encoding`, so servers answer uncompressed. The server's

@@ -12,7 +12,7 @@ TurboMCP 3.0 introduces a **Zero Boilerplate** architecture using procedural mac
 
 ```toml
 [dependencies]
-turbomcp = "3.5.1"
+turbomcp = "3.6.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

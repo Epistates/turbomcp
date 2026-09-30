@@ -133,7 +133,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "3.5.1"
+turbomcp = "3.6.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -1032,15 +1032,15 @@ When using `default-features = false`, you must explicitly enable at least one t
 ```toml
 # Minimal STDIO-only server
 [dependencies]
-turbomcp = { version = "3.5.1", default-features = false, features = ["stdio"] }
+turbomcp = { version = "3.6.0", default-features = false, features = ["stdio"] }
 
 # HTTP-only server
 [dependencies]
-turbomcp = { version = "3.5.1", default-features = false, features = ["http"] }
+turbomcp = { version = "3.6.0", default-features = false, features = ["http"] }
 
 # Multiple transports without default features
 [dependencies]
-turbomcp = { version = "3.5.1", default-features = false, features = ["stdio", "http", "websocket"] }
+turbomcp = { version = "3.6.0", default-features = false, features = ["stdio", "http", "websocket"] }
 ```
 
 Without at least one transport feature enabled, the server will not be able to communicate using the MCP protocol.
