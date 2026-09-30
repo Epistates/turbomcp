@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   histogram upkeep never ran. The listener now runs on the current Tokio
   runtime, or on a thread of its own outside one. The exporter answers on any
   path, so `prometheus_path` is informational; its docs now say so.
+- **`turbomcp-transport-streamable` answered an expired or terminated session
+  with 410.** The Streamable HTTP spec requires 404, which is the status a
+  client starts a new session on; this crate's own HTTP client treated a 410
+  as a failed connection. `StreamableError::SessionExpired` and
+  `SessionTerminated` now convert to 404, like `SessionNotFound`.
 
 ### Security
 

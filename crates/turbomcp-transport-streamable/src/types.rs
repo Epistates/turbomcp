@@ -440,9 +440,12 @@ impl StreamableResponse {
 impl From<StreamableError> for StreamableResponse {
     fn from(err: StreamableError) -> Self {
         match err {
-            StreamableError::SessionNotFound(_) => Self::not_found(err.to_string()),
-            StreamableError::SessionExpired(_) => Self::error(410, err.to_string()), // Gone
-            StreamableError::SessionTerminated(_) => Self::error(410, err.to_string()),
+            // transports.mdx: a server that has terminated a session "MUST
+            // respond to requests containing that session ID with HTTP 404",
+            // which is what tells a client to start a new session.
+            StreamableError::SessionNotFound(_)
+            | StreamableError::SessionExpired(_)
+            | StreamableError::SessionTerminated(_) => Self::not_found(err.to_string()),
             StreamableError::InvalidMethod(_) => Self::error(405, err.to_string()),
             StreamableError::InvalidOrigin(_) | StreamableError::MissingOrigin => {
                 Self::forbidden(err.to_string())
@@ -526,9 +529,16 @@ mod tests {
 
     #[test]
     fn test_error_to_response() {
-        let err = StreamableError::SessionNotFound("abc".into());
-        let resp: StreamableResponse = err.into();
-        assert_eq!(resp.status(), 404);
+        // An expired or terminated session is a 404 too, not 410: 404 is the
+        // status a client starts a new session on.
+        for err in [
+            StreamableError::SessionNotFound("abc".into()),
+            StreamableError::SessionExpired("abc".into()),
+            StreamableError::SessionTerminated("abc".into()),
+        ] {
+            let resp: StreamableResponse = err.into();
+            assert_eq!(resp.status(), 404);
+        }
 
         let err = StreamableError::BodyTooLarge {
             size: 2000,
