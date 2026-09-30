@@ -285,15 +285,6 @@ impl From<jsonwebtoken::errors::Error> for DpopError {
     }
 }
 
-// Error conversion for ring cryptographic library
-impl From<ring::error::Unspecified> for DpopError {
-    fn from(_: ring::error::Unspecified) -> Self {
-        Self::CryptographicError {
-            reason: "Ring cryptographic operation failed".to_string(),
-        }
-    }
-}
-
 // Error conversion for r2d2 session pool (only used by PKCS#11)
 #[cfg(feature = "hsm-pkcs11")]
 impl From<r2d2::Error> for DpopError {

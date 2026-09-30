@@ -5526,7 +5526,6 @@ dependencies = [
  "parking_lot",
  "r2d2",
  "redis",
- "ring",
  "secrecy",
  "serde",
  "serde_json",

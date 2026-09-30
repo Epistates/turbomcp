@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`turbomcp-dpop` no longer depends on `ring`**, so no build compiles it:
+  every other crypto path already used `aws-lc-rs`. The crate never called
+  `ring`; the dependency existed for `impl From<ring::error::Unspecified> for
+  DpopError`, which is removed. Code that converted a `ring` error into a
+  `DpopError` with `?` has to map it explicitly.
+- **`turbomcp-server`'s `websocket` feature no longer enables the WebSocket
+  client transport** (`turbomcp-transport/websocket`). The server never used
+  it, so a server-only WebSocket build no longer compiles a client. Enable
+  `turbomcp-transport/websocket` yourself if you relied on it; the `turbomcp`
+  crate's `websocket` feature still enables both.
+
 ## [3.5.1] - 2026-09-30
 
 `Client::connect_tcp` failed against every server in 3.5.0: the TCP client

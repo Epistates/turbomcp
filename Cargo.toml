@@ -139,7 +139,6 @@ config = "0.15"
 clap = { version = "4.6.6", features = ["derive", "env", "color"] }
 
 # Security and authentication
-ring = "0.17.14"
 subtle = "2.6"  # Constant-time comparison for secret values
 base64 = "0.23.1"
 percent-encoding = "2.3.2"  # URL percent encoding/decoding (RFC 3986)
