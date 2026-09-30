@@ -458,24 +458,16 @@ async fn handle_tcp_connection_framed(
                                 let transport_msg =
                                     TransportMessage::new(message_id, Bytes::from(line));
 
-                                // Use try_send with backpressure handling
-                                match incoming_sender.try_send(transport_msg) {
-                                    Ok(()) => {}
-                                    Err(mpsc::error::TrySendError::Full(_)) => {
-                                        warn!(
-                                            "Message channel full, applying backpressure to connection {} (ID: {})",
-                                            addr, conn_id
-                                        );
-                                        // Apply backpressure by dropping this message
-                                        continue;
-                                    }
-                                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                                        warn!(
-                                            "Message receiver dropped, closing connection to {} (ID: {})",
-                                            addr, conn_id
-                                        );
-                                        break;
-                                    }
+                                // Waiting for room is the backpressure: the peer's
+                                // writes stall in the socket until the receiver
+                                // catches up. Dropping the message instead lost
+                                // a request or a response outright.
+                                if incoming_sender.send(transport_msg).await.is_err() {
+                                    warn!(
+                                        "Message receiver dropped, closing connection to {} (ID: {})",
+                                        addr, conn_id
+                                    );
+                                    break;
                                 }
                             }
                             Err(e) => {
@@ -630,44 +622,50 @@ impl Transport for TcpTransport {
             // no per-client routing, so a server reply will fan out to *every*
             // connected peer. Multi-tenant deployments should not use the TCP
             // transport's server mode until per-connection send is added.
-            let connections = self.connections.lock();
-            if connections.is_empty() {
-                return Err(TransportError::ConnectionFailed(
-                    "No active TCP connections".into(),
-                ));
-            }
-            if connections.len() > 1 {
-                warn!(
-                    connection_count = connections.len(),
-                    "TCP transport: send() broadcasts to all {} connections; use only \
-                     in client mode or single-peer test fixtures (no per-client routing yet)",
-                    connections.len()
-                );
-            }
+            let targets: Vec<(String, mpsc::Sender<String>)> = {
+                let connections = self.connections.lock();
+                if connections.is_empty() {
+                    return Err(TransportError::ConnectionFailed(
+                        "No active TCP connections".into(),
+                    ));
+                }
+                if connections.len() > 1 {
+                    warn!(
+                        connection_count = connections.len(),
+                        "TCP transport: send() broadcasts to all {} connections; use only \
+                         in client mode or single-peer test fixtures (no per-client routing yet)",
+                        connections.len()
+                    );
+                }
+                connections
+                    .iter()
+                    .map(|(conn_id, sender)| (conn_id.clone(), sender.clone()))
+                    .collect()
+            };
 
+            // Waits while a connection's queue is full: that is the peer not
+            // keeping up, and the caller should wait with it. Returning `Ok`
+            // and dropping the message left the request waiting for a
+            // response that could never come.
             let mut failed_connections = Vec::new();
-            for (conn_id, sender) in connections.iter() {
-                // Use try_send with backpressure handling
-                match sender.try_send(json_str.to_string()) {
-                    Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        warn!("Connection {} channel full, applying backpressure", conn_id);
-                        // Don't mark as failed, just apply backpressure
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        warn!("Failed to send message to TCP connection {}", conn_id);
-                        failed_connections.push(conn_id.clone());
-                    }
+            for (conn_id, sender) in &targets {
+                if sender.send(json_str.to_string()).await.is_err() {
+                    warn!("Failed to send message to TCP connection {}", conn_id);
+                    failed_connections.push(conn_id.clone());
                 }
             }
 
             // Clean up failed connections
-            drop(connections);
             if !failed_connections.is_empty() {
                 let mut connections = self.connections.lock();
-                for conn_id in failed_connections {
-                    connections.remove(&conn_id);
+                for conn_id in &failed_connections {
+                    connections.remove(conn_id);
                 }
+            }
+            if failed_connections.len() == targets.len() {
+                return Err(TransportError::ConnectionFailed(
+                    "TCP connection closed".into(),
+                ));
             }
 
             Ok(())
@@ -954,6 +952,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(line.trim_end(), ping);
+    }
+
+    /// A peer that falls behind slows the sender down; it doesn't lose
+    /// messages. `send` used to return `Ok` and drop the message once the
+    /// connection's queue was full.
+    #[tokio::test]
+    async fn sending_faster_than_the_peer_reads_loses_nothing() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        const MESSAGES: usize = 300;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let transport = Arc::new(
+            TcpTransportBuilder::new()
+                .bind_addr("127.0.0.1:0".parse().unwrap())
+                .remote_addr(listener.local_addr().unwrap())
+                .build(),
+        );
+        transport.connect().await.unwrap();
+        let (peer, _) = listener.accept().await.unwrap();
+
+        let message = format!(
+            r#"{{"jsonrpc":"2.0","method":"n","params":{{"pad":"{}"}}}}"#,
+            "x".repeat(16 * 1024)
+        );
+        let sender = Arc::clone(&transport);
+        let sending = tokio::spawn(async move {
+            for id in 0..MESSAGES {
+                sender
+                    .send(TransportMessage::new(
+                        MessageId::from(id as i64),
+                        Bytes::from(message.clone()),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        });
+
+        // Far more than the queue and the socket buffers hold, unread.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let mut lines = BufReader::new(peer).lines();
+        let mut received = 0;
+        while received < MESSAGES {
+            let line = tokio::time::timeout(std::time::Duration::from_secs(5), lines.next_line())
+                .await
+                .expect("every message arrives")
+                .unwrap()
+                .unwrap();
+            assert!(line.starts_with(r#"{"jsonrpc""#));
+            received += 1;
+        }
+        sending.await.unwrap();
     }
 
     /// A client can send the moment `connect` returns. The connection used to

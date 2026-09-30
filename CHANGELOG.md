@@ -62,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client starts a new session on; this crate's own HTTP client treated a 410
   as a failed connection. `StreamableError::SessionExpired` and
   `SessionTerminated` now convert to 404, like `SessionNotFound`.
+- **The TCP and Unix transports dropped messages when a peer fell behind.**
+  `send` queued each message without waiting and, once a connection's queue
+  of 100 was full, logged a warning, dropped the message and returned `Ok`.
+  The request it carried then waited for a response that could never come.
+  The readers did the same with incoming messages. Both now wait for room, so
+  a slow peer slows the sender down instead, and a `send` that reaches no
+  connection returns an error.
 
 ### Security
 

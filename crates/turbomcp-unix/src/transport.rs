@@ -459,20 +459,13 @@ async fn handle_unix_connection_framed_with_signal(
                         // Create transport message with JSON bytes
                         let transport_msg = TransportMessage::new(message_id, Bytes::from(line));
 
-                        // Use try_send with backpressure handling
-                        match incoming_sender.try_send(transport_msg) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                warn!(
-                                    "Message channel full, applying backpressure to Unix socket connection"
-                                );
-                                // Apply backpressure by dropping this message
-                                continue;
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                warn!("Message receiver dropped, closing Unix socket connection");
-                                break;
-                            }
+                        // Waiting for room is the backpressure: the peer's
+                        // writes stall in the socket until the receiver catches
+                        // up. Dropping the message instead lost a request or a
+                        // response outright.
+                        if incoming_sender.send(transport_msg).await.is_err() {
+                            warn!("Message receiver dropped, closing Unix socket connection");
+                            break;
                         }
                     }
                     Err(e) => {
@@ -622,51 +615,54 @@ impl Transport for UnixTransport {
                     ))
                 })?
                 .to_string();
-            let connections = self.connections.lock();
-            debug!(
-                "Unix transport send: {} connections registered",
-                connections.len()
-            );
-            for key in connections.keys() {
-                debug!("  Connection key: {}", key);
-            }
-            if connections.is_empty() {
-                return Err(TransportError::ConnectionFailed(
-                    "No active Unix socket connections".into(),
-                ));
-            }
-            if connections.len() > 1 {
-                warn!(
-                    connection_count = connections.len(),
-                    "Unix transport: send() broadcasts to all {} connections; use only \
-                     in client mode or single-peer test fixtures (no per-client routing yet)",
+            let targets: Vec<(String, mpsc::Sender<String>)> = {
+                let connections = self.connections.lock();
+                debug!(
+                    "Unix transport send: {} connections registered",
                     connections.len()
                 );
-            }
+                if connections.is_empty() {
+                    return Err(TransportError::ConnectionFailed(
+                        "No active Unix socket connections".into(),
+                    ));
+                }
+                if connections.len() > 1 {
+                    warn!(
+                        connection_count = connections.len(),
+                        "Unix transport: send() broadcasts to all {} connections; use only \
+                         in client mode or single-peer test fixtures (no per-client routing yet)",
+                        connections.len()
+                    );
+                }
+                connections
+                    .iter()
+                    .map(|(key, sender)| (key.clone(), sender.clone()))
+                    .collect()
+            };
 
+            // Waits while a connection's queue is full: that is the peer not
+            // keeping up, and the caller should wait with it. Returning `Ok`
+            // and dropping the message left the request waiting for a
+            // response that could never come.
             let mut failed_connections = Vec::new();
-            for (key, sender) in connections.iter() {
-                // Use try_send with backpressure handling
-                match sender.try_send(json_str.clone()) {
-                    Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        warn!("Connection {} channel full, applying backpressure", key);
-                        // Don't mark as failed, just apply backpressure
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        warn!("Failed to send message to Unix socket connection {}", key);
-                        failed_connections.push(key.clone());
-                    }
+            for (key, sender) in &targets {
+                if sender.send(json_str.clone()).await.is_err() {
+                    warn!("Failed to send message to Unix socket connection {}", key);
+                    failed_connections.push(key.clone());
                 }
             }
 
             // Clean up failed connections
-            drop(connections);
             if !failed_connections.is_empty() {
                 let mut connections = self.connections.lock();
-                for key in failed_connections {
-                    connections.remove(&key);
+                for key in &failed_connections {
+                    connections.remove(key);
                 }
+            }
+            if failed_connections.len() == targets.len() {
+                return Err(TransportError::ConnectionFailed(
+                    "Unix socket connection closed".into(),
+                ));
             }
 
             Ok(())
@@ -881,6 +877,60 @@ mod tests {
 
         assert_eq!(transport.state().await, TransportState::Disconnected);
         assert_eq!(transport.transport_type(), TransportType::Unix);
+    }
+
+    /// A peer that falls behind slows the sender down; it doesn't lose
+    /// messages. `send` used to return `Ok` and drop the message once the
+    /// connection's queue was full.
+    #[tokio::test]
+    async fn sending_faster_than_the_peer_reads_loses_nothing() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        const MESSAGES: usize = 300;
+        // Short on purpose: macOS caps a socket path at 104 bytes.
+        let socket =
+            std::env::temp_dir().join(format!("tmcp-{}.sock", &Uuid::new_v4().to_string()[..8]));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let transport = Arc::new(
+            UnixTransportBuilder::new_client()
+                .socket_path(&socket)
+                .build(),
+        );
+        transport.connect().await.unwrap();
+        let (peer, _) = listener.accept().await.unwrap();
+
+        let message = format!(
+            r#"{{"jsonrpc":"2.0","method":"n","params":{{"pad":"{}"}}}}"#,
+            "x".repeat(16 * 1024)
+        );
+        let sender = Arc::clone(&transport);
+        let sending = tokio::spawn(async move {
+            for id in 0..MESSAGES {
+                sender
+                    .send(TransportMessage::new(
+                        MessageId::from(id as i64),
+                        Bytes::from(message.clone()),
+                    ))
+                    .await
+                    .unwrap();
+            }
+        });
+
+        // Far more than the queue and the socket buffers hold, unread.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let mut lines = BufReader::new(peer).lines();
+        let mut received = 0;
+        while received < MESSAGES {
+            let line = tokio::time::timeout(std::time::Duration::from_secs(5), lines.next_line())
+                .await
+                .expect("every message arrives")
+                .unwrap()
+                .unwrap();
+            assert!(line.starts_with(r#"{"jsonrpc""#));
+            received += 1;
+        }
+        sending.await.unwrap();
+        let _ = std::fs::remove_file(&socket);
     }
 
     /// An oversized line is skipped; the connection and the messages after it
