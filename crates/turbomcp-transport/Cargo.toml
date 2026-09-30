@@ -64,7 +64,7 @@ wiremock = { version = "0.6", optional = true }
 # `nix` rather than a raw `libc::kill`: this crate is `deny(unsafe_code)`, and
 # the typed wrapper is exactly what that denial is for.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", default-features = false, features = ["signal"] }
+nix = { version = "0.31", default-features = false, features = ["signal"] }
 
 [dev-dependencies]
 axum = { workspace = true }

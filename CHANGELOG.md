@@ -155,6 +155,9 @@ defined a feature, the feature stays and enables nothing.
   `turbomcp-transport`'s `generate_secure_token` reads the OS random source
   through `getrandom` (already in the build via `uuid`) instead of `rand`'s
   thread-local generator.
+- **Latest majors of internal dependencies.** OpenTelemetry 0.33 with
+  `tracing-opentelemetry` 0.34 in `turbomcp-telemetry`, and `nix` 0.31 in
+  `turbomcp-transport`. None of their types appear in a public signature.
 
 ### Internal
 
@@ -165,7 +168,7 @@ defined a feature, the feature stays and enables nothing.
   server over TCP, Unix, HTTP and WebSocket; nothing did before, which is how
   the TCP client bug above shipped.
 - **`Cargo.lock` refreshed** to the latest compatible versions, among them
-  jsonwebtoken 11.1, http 1.5 and rand 0.10.3. `worker` stays on 0.8.5, since
+  jsonwebtoken 11.1, http 1.5 and rand 0.10.3. `worker` stays on 0.8.6, since
   0.8.7 needs Rust 1.91 and the MSRV is 1.89. The lockfile only affects this
   repository's builds and the `--locked` installs of `turbomcp-cli` and
   `turbomcp-proxy`.
