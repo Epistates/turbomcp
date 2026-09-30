@@ -1,6 +1,6 @@
 //! Unix domain socket transport implementation for MCP
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -12,8 +12,9 @@ use std::sync::atomic::Ordering;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinSet;
-use tokio_util::codec::{Decoder, Encoder, Framed, LinesCodec, LinesCodecError};
+use tokio_util::codec::Framed;
 use tracing::{debug, error, info, warn};
+use turbomcp_transport_traits::codec::{BoundedLines, Line};
 use uuid::Uuid;
 
 use turbomcp_protocol::MessageId;
@@ -27,61 +28,6 @@ use turbomcp_transport_traits::{
 /// Matches the server's `DEFAULT_MAX_MESSAGE_SIZE`: a client that accepted
 /// less than its server may send would drop legal responses.
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
-
-/// One newline-delimited frame from the peer.
-#[derive(Debug)]
-enum Line {
-    /// A complete line within the size limit.
-    Message(String),
-    /// A line past the size limit, already discarded up to its newline.
-    Oversized,
-}
-
-/// `LinesCodec` that reports an oversized line as a frame, not an error.
-///
-/// `LinesCodec::new_with_max_length` discards a line past the limit and
-/// resynchronises at the next newline, but says so with an error, and
-/// `Framed` treats every decoder error as the end of the stream. Surfacing it
-/// as a frame is what lets one oversized message be skipped instead of
-/// costing the connection.
-#[derive(Debug)]
-struct BoundedLines(LinesCodec);
-
-impl BoundedLines {
-    fn new(max_length: usize) -> Self {
-        Self(LinesCodec::new_with_max_length(max_length))
-    }
-
-    fn lift(
-        decoded: Result<Option<String>, LinesCodecError>,
-    ) -> Result<Option<Line>, LinesCodecError> {
-        match decoded {
-            Err(LinesCodecError::MaxLineLengthExceeded) => Ok(Some(Line::Oversized)),
-            other => other.map(|line| line.map(Line::Message)),
-        }
-    }
-}
-
-impl Decoder for BoundedLines {
-    type Item = Line;
-    type Error = LinesCodecError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
-        Self::lift(self.0.decode(src))
-    }
-
-    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
-        Self::lift(self.0.decode_eof(src))
-    }
-}
-
-impl Encoder<String> for BoundedLines {
-    type Error = LinesCodecError;
-
-    fn encode(&mut self, line: String, dst: &mut BytesMut) -> Result<(), LinesCodecError> {
-        self.0.encode(line, dst)
-    }
-}
 
 /// Unix domain socket transport implementation with integrated security
 pub struct UnixTransport {

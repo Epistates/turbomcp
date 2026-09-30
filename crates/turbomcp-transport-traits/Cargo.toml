@@ -16,6 +16,8 @@ rust-version = "1.89.0"
 # Core dependencies
 bytes = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
+# Line framing for the stream transports (feature `codec`)
+tokio-util = { workspace = true, optional = true }
 
 # Serialization
 serde = { workspace = true }
@@ -31,3 +33,6 @@ turbomcp-protocol = { workspace = true }
 
 [features]
 default = []
+# `codec::BoundedLines`, the size-limited line framing the stdio, TCP and Unix
+# transports share.
+codec = ["dep:tokio-util"]

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`turbomcp_transport_traits::codec`** (feature `codec`): `BoundedLines`, the
+  size-limited newline framing that skips an oversized line instead of ending
+  the stream, and its `Line` frame type. The stdio, TCP and Unix transports
+  each carried an identical private copy; they now share this one.
+
 ### Changed
 
 - **`turbomcp-dpop` no longer depends on `ring`**, so no build compiles it:

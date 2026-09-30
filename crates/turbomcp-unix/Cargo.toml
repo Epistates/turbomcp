@@ -14,7 +14,7 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Core dependencies
-turbomcp-transport-traits = { workspace = true }
+turbomcp-transport-traits = { workspace = true, features = ["codec"] }
 turbomcp-protocol = { workspace = true }
 
 # Async runtime

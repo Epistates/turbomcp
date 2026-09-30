@@ -14,7 +14,7 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Transport traits
-turbomcp-transport-traits = { workspace = true }
+turbomcp-transport-traits = { workspace = true, features = ["codec"] }
 
 # Protocol types (for MessageId, MAX_MESSAGE_SIZE)
 turbomcp-protocol = { workspace = true }

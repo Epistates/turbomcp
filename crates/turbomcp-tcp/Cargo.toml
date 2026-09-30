@@ -15,7 +15,7 @@ readme = "README.md"
 
 [dependencies]
 # Core dependencies
-turbomcp-transport-traits = { workspace = true }
+turbomcp-transport-traits = { workspace = true, features = ["codec"] }
 turbomcp-protocol = { workspace = true }
 
 # Async runtime

@@ -19,14 +19,15 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::StreamExt;
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use tokio::process::Child;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
-use tokio_util::codec::{Decoder, FramedRead, FramedWrite, LinesCodec, LinesCodecError};
+use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use tracing::{debug, error, trace, warn};
 use turbomcp_protocol::MessageId;
+use turbomcp_transport_traits::codec::{BoundedLines, Line};
 use turbomcp_transport_traits::{
     AtomicMetrics, LimitsConfig, Transport, TransportCapabilities, TransportConfig, TransportError,
     TransportEventEmitter, TransportFactory, TransportMessage, TransportMessageMetadata,
@@ -41,53 +42,6 @@ type BoxedAsyncBufRead = BufReader<BoxedAsyncRead>;
 type BoxedAsyncWrite = Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>;
 type StdinReader = FramedRead<BoxedAsyncBufRead, BoundedLines>;
 type StdoutWriter = FramedWrite<BoxedAsyncWrite, LinesCodec>;
-
-/// One newline-delimited frame from the peer.
-#[derive(Debug)]
-enum Line {
-    /// A complete line within the size limit.
-    Message(String),
-    /// A line past the size limit, already discarded up to its newline.
-    Oversized,
-}
-
-/// `LinesCodec` that reports an oversized line as a frame, not an error.
-///
-/// `LinesCodec::new_with_max_length` already discards a line past the limit
-/// and resynchronises at the next newline, but it says so with an error, and
-/// `FramedRead` treats every decoder error as the end of the stream. Before
-/// this, one oversized message stopped the reader for good and every later
-/// response went unread.
-#[derive(Debug)]
-struct BoundedLines(LinesCodec);
-
-impl BoundedLines {
-    fn new(max_length: usize) -> Self {
-        Self(LinesCodec::new_with_max_length(max_length))
-    }
-
-    fn lift(
-        decoded: Result<Option<String>, LinesCodecError>,
-    ) -> Result<Option<Line>, LinesCodecError> {
-        match decoded {
-            Err(LinesCodecError::MaxLineLengthExceeded) => Ok(Some(Line::Oversized)),
-            other => other.map(|line| line.map(Line::Message)),
-        }
-    }
-}
-
-impl Decoder for BoundedLines {
-    type Item = Line;
-    type Error = LinesCodecError;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
-        Self::lift(self.0.decode(src))
-    }
-
-    fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Line>, LinesCodecError> {
-        Self::lift(self.0.decode_eof(src))
-    }
-}
 
 /// Source of stdio streams for the transport
 enum StreamSource {

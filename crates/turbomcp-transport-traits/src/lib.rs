@@ -40,6 +40,9 @@
 // Note: missing_errors_doc is now a workspace-level warning for enterprise quality
 
 mod bidirectional;
+#[cfg(feature = "codec")]
+#[cfg_attr(docsrs, doc(cfg(feature = "codec")))]
+pub mod codec;
 mod config;
 mod error;
 mod events;
