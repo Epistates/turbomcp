@@ -145,6 +145,11 @@ defined a feature, the feature stays and enables nothing.
   `jsonwebtoken` build on `aws-lc-rs`, so both were compiled. It now uses
   `tonic/tls-aws-lc`. `ring` remains only with `turbomcp-dpop`, whose public
   `From<ring::error::Unspecified>` impl can't be removed in a patch release.
+- **No response decompression.** The HTTP client's `reqwest` built brotli and
+  gzip decoders for responses MCP servers rarely compress; without them it
+  sends no `Accept-Encoding`, so servers answer uncompressed. The server's
+  `tower-http` built brotli and gzip encoders for a compression layer nothing
+  installed.
 
 ### Internal
 
