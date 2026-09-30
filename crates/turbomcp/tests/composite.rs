@@ -187,7 +187,7 @@ async fn a_name_collision_across_mounts_is_impossible() {
     listed.sort();
     assert_eq!(
         listed,
-        ["health.ping", "news.forecast", "weather.forecast"],
+        ["health__ping", "news__forecast", "weather__forecast"],
         "both `forecast` tools must survive, each under its mount"
     );
 
@@ -196,7 +196,7 @@ async fn a_name_collision_across_mounts_is_impossible() {
         JsonRpcRequest::new(
             3,
             request::TOOLS_CALL,
-            Some(json!({ "name": "weather.forecast", "arguments": { "city": "Oslo" } })),
+            Some(json!({ "name": "weather__forecast", "arguments": { "city": "Oslo" } })),
         ),
     )
     .await;
@@ -207,7 +207,7 @@ async fn a_name_collision_across_mounts_is_impossible() {
         JsonRpcRequest::new(
             4,
             request::TOOLS_CALL,
-            Some(json!({ "name": "news.forecast", "arguments": {} })),
+            Some(json!({ "name": "news__forecast", "arguments": {} })),
         ),
     )
     .await;
@@ -226,14 +226,14 @@ async fn prompts_are_namespaced_and_routed() {
     .await;
     let mut listed = names(&prompts, "prompts");
     listed.sort();
-    assert_eq!(listed, ["news.explain", "weather.explain"]);
+    assert_eq!(listed, ["news__explain", "weather__explain"]);
 
     let got = result(
         &mut svc,
         JsonRpcRequest::new(
             3,
             request::PROMPTS_GET,
-            Some(json!({ "name": "weather.explain", "arguments": { "city": "Oslo" } })),
+            Some(json!({ "name": "weather__explain", "arguments": { "city": "Oslo" } })),
         ),
     )
     .await;
@@ -335,7 +335,8 @@ async fn capabilities_come_from_what_the_mounts_actually_have() {
     }
 }
 
-/// A tool name with no mount prefix, or one naming an unmounted prefix, answers
+/// A tool name with no mount prefix, one naming an unmounted prefix, or one
+/// joined with a separator this composite doesn't use, answers
 /// the same way a `#[server]` impl answers an unknown tool: the spec's `-32602`
 /// protocol error.
 ///
@@ -345,7 +346,7 @@ async fn capabilities_come_from_what_the_mounts_actually_have() {
 #[tokio::test]
 async fn an_unroutable_tool_name_is_a_protocol_error() {
     let mut svc = connect(gateway()).await;
-    for name in ["forecast", "sports.forecast"] {
+    for name in ["forecast", "sports__forecast", "weather.forecast"] {
         let err = error(
             &mut svc,
             JsonRpcRequest::new(
@@ -374,7 +375,7 @@ async fn a_mounted_components_metadata_is_preserved() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|t| t["name"] == json!("weather.forecast"))
+        .find(|t| t["name"] == json!("weather__forecast"))
         .expect("no weather.forecast");
     assert_eq!(forecast["description"], json!("Tomorrow's forecast"));
     assert_eq!(forecast["_meta"]["io.turbomcp/tags"], json!(["public"]));
@@ -574,7 +575,7 @@ async fn paging_visits_every_mounts_every_page() {
     assert!(cursor.is_none(), "pagination never terminated");
     assert_eq!(
         seen,
-        ["a.t0", "a.t1", "a.t2", "b.t0", "b.t1", "c.t0"],
+        ["a__t0", "a__t1", "a__t2", "b__t0", "b__t1", "c__t0"],
         "every mount's every page, in mount order, each exactly once"
     );
 }
@@ -595,7 +596,7 @@ async fn a_mounts_cursor_never_reaches_another_mount() {
     .await;
 
     let first = list_page(&mut svc, 1, None).await;
-    assert_eq!(names(&first, "tools"), ["a.t0"]);
+    assert_eq!(names(&first, "tools"), ["a__t0"]);
     let cursor = first["nextCursor"].as_str().expect("more pages").to_owned();
 
     // A success, not `a` rejecting a cursor it didn't mint — and it *resumes*
@@ -603,7 +604,7 @@ async fn a_mounts_cursor_never_reaches_another_mount() {
     // because `a` is exhausted by then and a page runs on until some mount
     // reports more.
     let second = list_page(&mut svc, 2, Some(&cursor)).await;
-    assert_eq!(names(&second, "tools"), ["a.t1", "b.t0"]);
+    assert_eq!(names(&second, "tools"), ["a__t1", "b__t0"]);
 }
 
 /// A cursor the composite did not mint is a client error. Silently starting over
@@ -641,7 +642,7 @@ async fn a_composite_of_single_page_mounts_advertises_no_cursor() {
 
     assert_eq!(
         names(&page, "tools"),
-        ["weather.forecast", "news.forecast", "health.ping"]
+        ["weather__forecast", "news__forecast", "health__ping"]
     );
     assert!(
         page.get("nextCursor").is_none_or(Value::is_null),
@@ -771,7 +772,7 @@ async fn a_flat_core_and_a_prefixed_plugin_coexist() {
         JsonRpcRequest::new(2, request::TOOLS_LIST, Some(json!({}))),
     )
     .await;
-    assert_eq!(names(&tools, "tools"), ["read_note", "weather.forecast"]);
+    assert_eq!(names(&tools, "tools"), ["read_note", "weather__forecast"]);
 
     // Both routes work side by side: an exact name and a prefixed one.
     let flat = result(
@@ -790,7 +791,7 @@ async fn a_flat_core_and_a_prefixed_plugin_coexist() {
         JsonRpcRequest::new(
             4,
             request::TOOLS_CALL,
-            Some(json!({ "name": "weather.forecast", "arguments": { "city": "Oslo" } })),
+            Some(json!({ "name": "weather__forecast", "arguments": { "city": "Oslo" } })),
         ),
     )
     .await;
@@ -863,26 +864,26 @@ async fn preflight_reports_a_collision_before_any_request() {
         .expect("no collision");
 }
 
-/// A flat mount's dotted tool name is not shadowed by a mount prefix.
+/// A flat mount's tool whose name contains the separator is not shadowed by a
+/// mount prefix.
 ///
-/// v4 endorses `.` as an in-name namespace (`#[tool(name = "git.status")]`),
-/// and routing split on the first `.`: `git.status` went to the mount prefixed
-/// `git`, which had never heard of `status`. The tool was listed and
+/// Routing split on the first separator: `git__status` went to the mount
+/// prefixed `git`, which had never heard of `status`. The tool was listed and
 /// uncallable. The flat mount's exact name wins, because that is the name
 /// `tools/list` advertised.
 #[tokio::test]
-async fn a_flat_dotted_tool_name_is_not_shadowed_by_a_mount_prefix() {
+async fn a_flat_tool_name_containing_the_separator_is_not_shadowed_by_a_mount_prefix() {
     #[derive(Clone)]
     struct Dotted;
     #[server(name = "dotted", version = "1.0.0")]
     impl Dotted {
-        #[tool(name = "git.status", description = "Working tree status")]
+        #[tool(name = "git__status", description = "Working tree status")]
         async fn git_status(&self) -> String {
             "clean".into()
         }
     }
 
-    // `Health` mounts at `git` and serves only `ping`, so `git.status` splits
+    // `Health` mounts at `git` and serves only `ping`, so `git__status` splits
     // to a name that mount does not have.
     let mut svc = connect(
         Composite::new(Implementation::new("gw", "1.0.0"))
@@ -899,7 +900,7 @@ async fn a_flat_dotted_tool_name_is_not_shadowed_by_a_mount_prefix() {
     )
     .await;
     assert!(
-        names(&listed, "tools").contains(&"git.status".to_owned()),
+        names(&listed, "tools").contains(&"git__status".to_owned()),
         "listed: {listed}"
     );
 
@@ -908,7 +909,7 @@ async fn a_flat_dotted_tool_name_is_not_shadowed_by_a_mount_prefix() {
         JsonRpcRequest::new(
             3,
             request::TOOLS_CALL,
-            Some(json!({ "name": "git.status", "arguments": {} })),
+            Some(json!({ "name": "git__status", "arguments": {} })),
         ),
     )
     .await;
@@ -920,7 +921,7 @@ async fn a_flat_dotted_tool_name_is_not_shadowed_by_a_mount_prefix() {
         JsonRpcRequest::new(
             4,
             request::TOOLS_CALL,
-            Some(json!({ "name": "git.ping", "arguments": {} })),
+            Some(json!({ "name": "git__ping", "arguments": {} })),
         ),
     )
     .await;

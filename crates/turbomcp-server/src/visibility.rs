@@ -97,7 +97,7 @@ pub struct VisibleComponent<'a> {
     pub kind: ComponentKind,
     /// How the component is addressed: a tool or prompt *name*, or a resource
     /// URI / URI template. Under composition a name is already the mounted,
-    /// prefixed one (`weather.forecast`) — which is what the caller sends.
+    /// prefixed one (`weather__forecast`) — which is what the caller sends.
     pub id: &'a str,
     /// The component's `_meta`, holding whatever the markers wrote:
     /// [`crate::tags`] and declared scopes among them.

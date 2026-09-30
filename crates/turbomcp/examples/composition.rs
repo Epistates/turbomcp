@@ -11,7 +11,7 @@
 //!   it is the right choice for a server's own components. The cost is that two
 //!   flat mounts exposing one name is possible — so it is *detected*, and the
 //!   list fails naming both servers rather than silently dropping one.
-//! - **`mount` prefixes** (`weather.forecast`, `news.headlines`), which makes a
+//! - **`mount` prefixes** (`weather__forecast`, `news__headlines`), which makes a
 //!   collision impossible. The right choice for optional or third-party servers,
 //!   where seeing which vertical a tool came from is a feature.
 //! - **Resource URIs are left alone either way.** A URI is already a namespace
@@ -52,7 +52,7 @@ impl Weather {
 // ---- sub-server two ----------------------------------------------------------
 
 /// Declares a `forecast` tool too. Under composition both survive, as
-/// `weather.forecast` and `news.forecast`.
+/// `weather__forecast` and `news__forecast`.
 #[derive(Clone)]
 struct News;
 
@@ -90,7 +90,7 @@ impl Health {
 async fn main() -> McpResult<()> {
     // Logs MUST go to stderr — stdout carries the MCP protocol framing.
     let gateway = Composite::new(Implementation::new("gateway", "1.0.0"))
-        .instructions("Weather lives under `weather.*`, headlines under `news.*`.")
+        .instructions("Weather lives under `weather__*`, headlines under `news__*`.")
         .mount("weather", Weather.into_server())?
         .mount("news", News.into_server())?
         // The core keeps its own names: this one serves `ping`, not `health.ping`.

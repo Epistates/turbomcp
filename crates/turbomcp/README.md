@@ -49,7 +49,7 @@ zero-boilerplate surface and strict spec compliance as a feature.
   server is an ordinary `#[server]` impl that knows nothing about being mounted.
   `mount_flat` keeps a server's names exactly as they are — so a large server can
   be split into focused ones without breaking any client — while `mount` puts one
-  under a prefix (`weather.forecast`) where namespacing is what you want. Mix
+  under a prefix (`weather__forecast`) where namespacing is what you want. Mix
   both; resource URIs are untouched either way, and capabilities are still
   derived from what the mounts actually have.
 - **Middleware is `tower`.** The dispatcher *is* a `tower::Service<McpRequest>`,

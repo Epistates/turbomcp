@@ -321,6 +321,14 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** a `Composite` joins a mount's prefix and a component's name
+  with `__` (`weather__forecast`), not `.`. The spec's charset allows `.`,
+  but the Anthropic and OpenAI tool APIs accept only `[a-zA-Z0-9_-]{1,64}`,
+  so a host that handed a composite's catalogue to a model got a `400`
+  (Docker's MCP gateway left `:` for `__` for the same reason).
+  `Composite::separator` picks another; a prefix may not contain the
+  separator or end with part of it. A prefixed name over 64 characters is
+  logged as a warning.
 - **Breaking:** `HttpConfig::enable_cors` is gone: CORS follows the Origin
   policy (`allow_origin`, `allow_any_origin`).
 - **Breaking:** `SessionStreams::register` takes the stream's close token,

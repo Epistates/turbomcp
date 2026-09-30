@@ -21,7 +21,7 @@
 //!
 //! # Two kinds of mount
 //!
-//! [`mount`](Composite::mount) namespaces: `weather.forecast`. Use it for
+//! [`mount`](Composite::mount) namespaces: `weather__forecast`. Use it for
 //! optional or third-party servers, where a caller seeing which vertical a tool
 //! came from is a feature, and where a clash with something else in the process
 //! is a real risk.
@@ -44,13 +44,16 @@
 //!
 //! # What gets namespaced, and what doesn't
 //!
-//! **A prefixed mount's tools and prompts are prefixed** — `weather.forecast`,
-//! `news.headlines`.
+//! **A prefixed mount's tools and prompts are prefixed** — `weather__forecast`,
+//! `news__headlines`.
 //! Their names are flat, short, and chosen without knowing what else the process
-//! will serve, so collisions are likely; prefixing makes them impossible. `.` is
-//! the separator because the spec's name charset allows it and it already reads
-//! as a namespace (`#[tool(name = "search.web")]`). A mount prefix may therefore
-//! not itself contain `.`, which keeps the split back to `(mount, name)`
+//! will serve, so collisions are likely; prefixing makes them impossible. The
+//! separator is [`Composite::DEFAULT_SEPARATOR`] (`__`), configurable with
+//! [`separator`](Composite::separator). Not `.`: the spec's name charset allows
+//! it, but the Anthropic and OpenAI tool APIs accept only
+//! `[a-zA-Z0-9_-]{1,64}`, so a dotted name breaks the moment a host hands the
+//! catalogue to a model. A mount prefix may not contain the separator (or end
+//! with part of it), which keeps the split back to `(mount, name)`
 //! unambiguous.
 //!
 //! **Resource URIs are left alone.** A URI is already a namespace — scheme plus
@@ -106,8 +109,9 @@ use crate::context::{
 use crate::router::MethodRouter;
 use crate::traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
 
-/// The separator between a mount's prefix and a component's own name.
-const SEP: char = '.';
+/// The name length the Anthropic and OpenAI tool APIs accept, under the spec's
+/// own limit. A composed name over it is served, with a warning.
+const MODEL_API_TOOL_NAME: usize = 64;
 
 /// The separator inside a composite pagination cursor,
 /// `{prefix}:{the mount's own cursor}`.
@@ -318,6 +322,7 @@ impl Mount {
 /// does and does not bring with it.
 pub struct Composite {
     info: Implementation,
+    separator: String,
     instructions: Option<String>,
     versions: &'static [ProtocolVersion],
     mounts: Vec<Mount>,
@@ -327,6 +332,7 @@ impl std::fmt::Debug for Composite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Composite")
             .field("info", &self.info)
+            .field("separator", &self.separator)
             .field("versions", &self.versions)
             .field("mounts", &Mounts(&self.mounts))
             .finish()
@@ -350,15 +356,52 @@ impl std::fmt::Debug for Mounts<'_> {
 }
 
 impl Composite {
+    /// The default separator between a mount's prefix and a component's own
+    /// name.
+    ///
+    /// The spec's tool-name charset allows `.`, but the Anthropic and OpenAI
+    /// APIs accept only `^[a-zA-Z0-9_-]{1,64}$`, so a host passing a dotted
+    /// name straight through to a model API gets a `400`. `__` is what other
+    /// aggregators settled on (Docker's MCP gateway moved to it from `:` for
+    /// this reason; Envoy AI Gateway and MetaMCP use it too).
+    pub const DEFAULT_SEPARATOR: &str = "__";
+
     /// Start an empty composite identified by `info`.
     #[must_use]
     pub fn new(info: Implementation) -> Self {
         Self {
             info,
+            separator: Self::DEFAULT_SEPARATOR.to_owned(),
             instructions: None,
             versions: ProtocolVersion::SUPPORTED,
             mounts: Vec::new(),
         }
+    }
+
+    /// Join a prefixed mount's prefix and a component's name with `separator`
+    /// instead of [`Composite::DEFAULT_SEPARATOR`] (`__`): `weather__forecast`.
+    ///
+    /// # Errors
+    /// `separator` is empty or has a character outside the spec's tool-name
+    /// set (`[A-Za-z0-9_.-]`), or a prefix already mounted would make the
+    /// split ambiguous with it.
+    pub fn separator(mut self, separator: impl Into<String>) -> McpResult<Self> {
+        let separator = separator.into();
+        if separator.is_empty()
+            || !separator
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        {
+            return Err(McpError::invalid_params(format!(
+                "the separator `{separator}` must be non-empty and use only tool-name \
+                 characters: ASCII letters, digits, `_`, `-`, `.`"
+            )));
+        }
+        for prefix in self.mounts.iter().filter_map(|m| m.prefix.as_deref()) {
+            validate_prefix(prefix, &separator)?;
+        }
+        self.separator = separator;
+        Ok(self)
     }
 
     /// Guidance returned to clients in discovery, describing the composed
@@ -380,14 +423,15 @@ impl Composite {
     }
 
     /// Mount `server` under `prefix`: its tools and prompts join this
-    /// composite's as `{prefix}.{name}`, its resources and templates join under
-    /// their own URIs.
+    /// composite's as `{prefix}{separator}{name}` (`weather__forecast` by
+    /// default), its resources and templates join under their own URIs.
     ///
     /// # Errors
-    /// - `prefix` is empty, contains `.` (which would make the split back to
-    ///   `(mount, name)` ambiguous), or contains a character outside the spec's
-    ///   tool-name set (`[A-Za-z0-9_-]`) — the composed name has to remain a
-    ///   legal tool name.
+    /// - `prefix` is empty, contains a character outside `[A-Za-z0-9_-]` (the
+    ///   composed name has to remain a legal tool name everywhere), or would
+    ///   make the split back to `(mount, name)` ambiguous: it contains the
+    ///   separator, or ends so that the separator appears early (`a_` with
+    ///   `__`).
     /// - `prefix` is already mounted.
     /// - `server` accepts fewer protocol revisions than this composite —
     ///   handlers are version-neutral, so a sub-server's pin cannot be honored
@@ -399,7 +443,7 @@ impl Composite {
         S: McpServerCore,
     {
         let prefix = prefix.as_ref();
-        validate_prefix(prefix)?;
+        validate_prefix(prefix, &self.separator)?;
         if self
             .mounts
             .iter()
@@ -513,11 +557,11 @@ impl Composite {
     }
 }
 
-/// A mount prefix has to survive being concatenated into a tool name, so it is
-/// held to the same character set minus the separator itself.
-fn validate_prefix(prefix: &str) -> McpResult<()> {
+/// A mount prefix has to survive being concatenated into a tool name, and
+/// split back out of one at the first `separator`.
+fn validate_prefix(prefix: &str, separator: &str) -> McpResult<()> {
     if prefix.is_empty() {
-        // An empty prefix would yield `.read_note`, which is neither flat nor
+        // An empty prefix would yield `__read_note`, which is neither flat nor
         // namespaced — so it names the method that actually means "flat".
         return Err(McpError::invalid_params(
             "a mount prefix may not be empty — use `mount_flat` to mount a server whose \
@@ -528,14 +572,18 @@ fn validate_prefix(prefix: &str) -> McpResult<()> {
         .chars()
         .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-')))
     {
-        let why = if bad == SEP {
-            "`.` separates the prefix from the component name, so a prefix containing one \
-             would make the split ambiguous"
-        } else {
-            "a composed name must stay a legal tool name: ASCII letters, digits, `_`, `-`"
-        };
         return Err(McpError::invalid_params(format!(
-            "the mount prefix `{prefix}` contains `{bad}` — {why}"
+            "the mount prefix `{prefix}` contains `{bad}` — a composed name must stay a \
+             legal tool name: ASCII letters, digits, `_`, `-`"
+        )));
+    }
+    // Names split at the first separator, so it has to fall right after the
+    // prefix: not inside it, and not straddling its end (`a_` + `__`).
+    if format!("{prefix}{separator}").find(separator) != Some(prefix.len()) {
+        return Err(McpError::invalid_params(format!(
+            "the mount prefix `{prefix}` would make `{prefix}{separator}name` split \
+             ambiguously at `{separator}` — choose a prefix that neither contains the \
+             separator nor ends with part of it"
         )));
     }
     Ok(())
@@ -672,7 +720,7 @@ impl CompositeServer {
             Kind::Tool,
             "tools",
             |mount, tool| match &mount.prefix {
-                Some(prefix) => qualify(prefix, &tool.name),
+                Some(prefix) => qualify(prefix, &self.inner.separator, &tool.name),
                 None => tool.name.clone(),
             }
         );
@@ -700,7 +748,7 @@ impl CompositeServer {
             Kind::Prompt,
             "prompts",
             |mount, prompt| match &mount.prefix {
-                Some(prefix) => qualify(prefix, &prompt.name),
+                Some(prefix) => qualify(prefix, &self.inner.separator, &prompt.name),
                 None => prompt.name.clone(),
             }
         );
@@ -711,7 +759,7 @@ impl CompositeServer {
     /// itself by. `None` when no mounted prefix claims it — which includes every
     /// name belonging to a flat mount.
     fn route(&self, qualified: &str) -> Option<(&Mount, String)> {
-        let (prefix, name) = qualified.split_once(SEP)?;
+        let (prefix, name) = qualified.split_once(self.inner.separator.as_str())?;
         let mount = self
             .inner
             .mounts
@@ -731,7 +779,7 @@ impl CompositeServer {
     /// mount knows it by.
     ///
     /// **A flat mount exposing the name exactly wins over splitting it at the
-    /// first `.`.** `#[tool(name = "git.status")]` is endorsed v4 usage, and
+    /// first separator.** `#[tool(name = "git__status")]` is legal, and
     /// the split sent it to a mount prefixed `git` that had never heard of
     /// `status`, so a tool `tools/list` advertised could not be called. Two
     /// mounts claiming one caller-visible name is already a listing error
@@ -836,11 +884,11 @@ impl Names for neutral::ListPromptsResult {
     }
 }
 
-/// `{prefix}.{name}`.
-fn qualify(prefix: &str, name: &str) -> String {
-    let mut out = String::with_capacity(prefix.len() + 1 + name.len());
+/// `{prefix}{separator}{name}`.
+fn qualify(prefix: &str, separator: &str, name: &str) -> String {
+    let mut out = String::with_capacity(prefix.len() + separator.len() + name.len());
     out.push_str(prefix);
-    out.push(SEP);
+    out.push_str(separator);
     out.push_str(name);
     out
 }
@@ -953,7 +1001,14 @@ impl WithTools for CompositeServer {
             neutral::ListToolsResult,
             |mount, tool| {
                 if let Some(prefix) = &mount.prefix {
-                    tool.name = qualify(prefix, &tool.name);
+                    tool.name = qualify(prefix, &self.inner.separator, &tool.name);
+                    if tool.name.len() > MODEL_API_TOOL_NAME {
+                        tracing::warn!(
+                            tool = %tool.name,
+                            "a mounted tool's name is over {MODEL_API_TOOL_NAME} characters; \
+                             the Anthropic and OpenAI APIs reject it (use a shorter prefix)"
+                        );
+                    }
                 }
                 // The spec bounds a tool name at 128 characters and clients
                 // reject or mangle what exceeds it. The macro checks a name it
@@ -1177,7 +1232,7 @@ impl WithPrompts for CompositeServer {
             neutral::ListPromptsResult,
             |mount, prompt| {
                 if let Some(prefix) = &mount.prefix {
-                    prompt.name = qualify(prefix, &prompt.name);
+                    prompt.name = qualify(prefix, &self.inner.separator, &prompt.name);
                 }
                 claim(&mut seen, &prompt.name, mount, Kind::Prompt)?;
             }
@@ -1377,6 +1432,39 @@ mod tests {
                 .mount(good, Bare.into_server())
                 .unwrap_or_else(|e| panic!("`{good}` should be accepted: {e}"));
         }
+    }
+
+    /// Names split at the first separator, so a prefix can't contain it or
+    /// end with part of it: `a_` + `__` + `x` is `a___x`, which splits to
+    /// `a` and `_x`.
+    #[test]
+    fn a_prefix_that_would_split_early_is_refused() {
+        for bad in ["we__ather", "weather_", "a_"] {
+            let err = composite()
+                .mount(bad, Bare.into_server())
+                .expect_err("`{bad}` should be rejected");
+            assert!(err.to_string().contains("ambiguous"), "{bad}: {err}");
+        }
+        composite()
+            .mount("_weather", Bare.into_server())
+            .expect("a leading underscore splits fine");
+    }
+
+    #[test]
+    fn the_separator_is_configurable_and_checked() {
+        let dotted = composite().separator(".").unwrap();
+        dotted
+            .mount("weather", Bare.into_server())
+            .expect("a prefix without the separator");
+        assert!(composite().separator("").is_err());
+        assert!(composite().separator("/").is_err());
+        // Changing it re-checks what is already mounted.
+        let err = composite()
+            .mount("we-ather", Bare.into_server())
+            .unwrap()
+            .separator("-")
+            .expect_err("`we-ather` contains the new separator");
+        assert!(err.to_string().contains("ambiguous"), "{err}");
     }
 
     #[test]

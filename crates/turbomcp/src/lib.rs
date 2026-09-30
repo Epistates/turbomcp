@@ -181,7 +181,7 @@ pub use tower;
 // ---- server -----------------------------------------------------------------
 
 /// Server composition: mount several servers under prefixes and serve them as
-/// one. Tools and prompts are namespaced `{prefix}.{name}`; resource URIs are
+/// one. Tools and prompts are namespaced `{prefix}__{name}`; resource URIs are
 /// left alone (a URI is already a namespace, and rewriting one makes it a lie).
 ///
 /// ```no_run
@@ -195,7 +195,7 @@ pub use tower;
 /// # #[server(name = "news", version = "1.0.0")]
 /// # impl News { #[tool] async fn headlines(&self) -> String { "…".into() } }
 /// # async fn run() -> McpResult<()> {
-/// // Serves `weather.forecast` and `news.headlines`.
+/// // Serves `weather__forecast` and `news__headlines`.
 /// let gateway = Composite::new(Implementation::new("gateway", "1.0.0"))
 ///     .mount("weather", Weather.into_server())?
 ///     .mount("news", News.into_server())?

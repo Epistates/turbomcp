@@ -239,14 +239,16 @@ Namespacing differs in one place, deliberately:
 
 | | v3 | v4 |
 |---|---|---|
-| Tools | `{prefix}_{name}` | `{prefix}.{name}` |
-| Prompts | `{prefix}_{name}` | `{prefix}.{name}` |
+| Tools | `{prefix}_{name}` | `{prefix}__{name}` |
+| Prompts | `{prefix}_{name}` | `{prefix}__{name}` |
 | Resources | `{prefix}://{uri}` | **unchanged** |
 
-- **`.` rather than `_`.** `_` is common *inside* tool names, so
-  `weather_get_forecast` is ambiguous about where the prefix ends. `.` is in the
-  spec's name charset and already reads as a namespace. A mount prefix may
-  therefore not contain `.`, which is checked at `mount`.
+- **`__` rather than `_`.** `_` is common *inside* tool names, so
+  `weather_get_forecast` is ambiguous about where the prefix ends; the split is
+  at the first `__`, and a mount prefix may not contain `__` or end with `_`
+  (checked at `mount`). Not `.`, which the spec allows: the Anthropic and
+  OpenAI tool APIs accept only `[a-zA-Z0-9_-]{1,64}`. `Composite::separator`
+  picks another.
 - **Resource URIs are no longer rewritten.** v3's rule produced
   `weather://config://app` for a resource at `config://app` — and more
   fundamentally, a URI is a global identifier a client may hand elsewhere, so
