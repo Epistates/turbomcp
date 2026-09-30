@@ -126,6 +126,15 @@ impl<St: Send + Sync> FromRequestParts<St> for PeerIp {
     }
 }
 
+/// Who a request is, for per-caller limits: its authenticated subject, else
+/// its client IP, else nobody in particular ([`RateKey::Global`]).
+pub(super) fn client_key(subject: Option<&str>, peer_ip: Option<IpAddr>) -> RateKey {
+    match subject {
+        Some(sub) => RateKey::Subject(sub.to_owned()),
+        None => peer_ip.map_or(RateKey::Global, RateKey::Ip),
+    }
+}
+
 /// Enforce the rate limit when configured. Charges the request against an
 /// identity-derived [`RateKey`] — per authenticated `subject`, else per source
 /// IP, else a single global bucket — and returns `Some(429)` if over budget.
@@ -135,11 +144,7 @@ pub(super) fn enforce_rate_limit<S>(
     peer_ip: Option<IpAddr>,
 ) -> Option<Response> {
     let limiter = state.rate_limiter.as_ref()?;
-    let key = match subject {
-        Some(sub) => RateKey::Subject(sub.to_owned()),
-        None => peer_ip.map_or(RateKey::Global, RateKey::Ip),
-    };
-    match limiter.check(&key) {
+    match limiter.check(&client_key(subject, peer_ip)) {
         Ok(()) => None,
         Err(retry_after) => Some(too_many_requests(retry_after)),
     }

@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
-use turbomcp_core::{ConnectionId, JsonRpcMessage};
+use turbomcp_core::{CancellationToken, ConnectionId, JsonRpcMessage};
 
 /// A handle to one connection's (or one response stream's) ordered outbound
 /// queue. Cheap to clone; never keeps the connection open.
@@ -127,10 +127,16 @@ impl Peer {
 ///
 /// One stream per session also enforces the spec's "MUST NOT broadcast the
 /// same message across multiple streams": a newer `GET` replaces the older
-/// registration. Clones share the registry.
+/// registration, and the older stream is told to end. Clones share the
+/// registry.
 #[derive(Clone, Default)]
 pub struct SessionStreams {
-    streams: Arc<Mutex<HashMap<String, Peer>>>,
+    streams: Arc<Mutex<HashMap<String, Registered>>>,
+}
+
+struct Registered {
+    peer: Peer,
+    close: CancellationToken,
 }
 
 impl core::fmt::Debug for SessionStreams {
@@ -148,13 +154,30 @@ impl SessionStreams {
         Self::default()
     }
 
-    /// Make `peer` the stream for `session` until the guard drops, replacing
-    /// any earlier one.
+    /// Make `peer` the stream for `session` until the guard drops. `close` is
+    /// the stream's own end signal: it fires when a newer `GET` replaces this
+    /// one or the session is [closed](Self::close), and the transport ends
+    /// the stream on it. Any earlier stream's `close` fires now.
+    ///
+    /// Ending the replaced stream matters because the registry is not what
+    /// keeps a stream open: its response body is. A superseded stream the
+    /// registry forgot kept its connection (and its keep-alives) for as long
+    /// as the client held it.
     #[must_use = "dropping the guard immediately unregisters the stream"]
-    pub fn register(&self, session: impl Into<String>, peer: Peer) -> StreamGuard {
+    pub fn register(
+        &self,
+        session: impl Into<String>,
+        peer: Peer,
+        close: CancellationToken,
+    ) -> StreamGuard {
         let session = session.into();
         let id = peer.id().clone();
-        self.lock().insert(session.clone(), peer);
+        if let Some(old) = self
+            .lock()
+            .insert(session.clone(), Registered { peer, close })
+        {
+            old.close.cancel();
+        }
         StreamGuard {
             streams: self.clone(),
             session,
@@ -165,10 +188,23 @@ impl SessionStreams {
     /// The session's current stream, if one is open.
     #[must_use]
     pub fn get(&self, session: &str) -> Option<Peer> {
-        self.lock().get(session).filter(|p| p.is_open()).cloned()
+        self.lock()
+            .get(session)
+            .map(|r| &r.peer)
+            .filter(|p| p.is_open())
+            .cloned()
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Peer>> {
+    /// End `session`'s stream, if it has one: the session is over (the client
+    /// deleted it, or it expired), and a stream left open would hold its
+    /// connection with nothing ever to deliver.
+    pub fn close(&self, session: &str) {
+        if let Some(old) = self.lock().remove(session) {
+            old.close.cancel();
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Registered>> {
         self.streams
             .lock()
             .expect("session stream registry poisoned")
@@ -191,7 +227,7 @@ impl Drop for StreamGuard {
         let mut streams = self.streams.lock();
         if streams
             .get(&self.session)
-            .is_some_and(|p| p.id() == &self.id)
+            .is_some_and(|r| r.peer.id() == &self.id)
         {
             streams.remove(&self.session);
         }
@@ -239,8 +275,17 @@ mod tests {
         let streams = SessionStreams::new();
         let (first_tx, _first_rx) = mpsc::channel(1);
         let (second_tx, mut second_rx) = mpsc::channel(1);
-        let first = streams.register("s-1", Peer::new("get-1", &first_tx));
-        let _second = streams.register("s-1", Peer::new("get-2", &second_tx));
+        let first_close = CancellationToken::new();
+        let first = streams.register("s-1", Peer::new("get-1", &first_tx), first_close.clone());
+        let _second = streams.register(
+            "s-1",
+            Peer::new("get-2", &second_tx),
+            CancellationToken::new(),
+        );
+        assert!(
+            first_close.is_cancelled(),
+            "the replaced stream is told to end"
+        );
         drop(first);
 
         let current = streams.get("s-1").expect("the reconnected stream");
@@ -253,8 +298,21 @@ mod tests {
     fn a_closed_stream_is_not_returned() {
         let streams = SessionStreams::new();
         let (tx, _rx) = mpsc::channel(1);
-        let _guard = streams.register("s-2", Peer::new("get", &tx));
+        let _guard = streams.register("s-2", Peer::new("get", &tx), CancellationToken::new());
         drop(tx);
         assert!(streams.get("s-2").is_none());
+    }
+
+    /// A session that ends takes its stream with it.
+    #[test]
+    fn closing_a_session_ends_its_stream() {
+        let streams = SessionStreams::new();
+        let (tx, _rx) = mpsc::channel(1);
+        let close = CancellationToken::new();
+        let _guard = streams.register("s-3", Peer::new("get", &tx), close.clone());
+        streams.close("s-3");
+        assert!(close.is_cancelled());
+        assert!(streams.get("s-3").is_none());
+        streams.close("s-3");
     }
 }

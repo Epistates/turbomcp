@@ -13,18 +13,22 @@ use turbomcp_core::codec::{Codec, DefaultCodec};
 use turbomcp_core::{ConnectionId, JsonRpcMessage, McpRequest, RequestId};
 use turbomcp_service::{CancellationToken, Peer, ProtocolError, StreamGuard};
 
+use super::streams::StreamSlot;
+
 /// Buffered events per SSE stream; a consumer this far behind backpressures
 /// publishers (the registry awaits `send`).
 pub(super) const SSE_CHANNEL_CAPACITY: usize = 256;
 
 /// What keeps one response stream's queue open: the only strong sender (every
-/// [`Peer`] holds it weakly) and, for a session `GET` stream, its registry
-/// entry. It travels inside the stream state, so a client disconnect (axum
-/// drops the body) closes the queue, and anything still holding the stream's
-/// `Peer` sees it closed.
+/// [`Peer`] holds it weakly), for a session `GET` stream its registry entry,
+/// and for a long-lived stream its [`StreamSlot`]. It travels inside the
+/// stream state, so a client disconnect (axum drops the body) closes the
+/// queue and returns the slot, and anything still holding the stream's `Peer`
+/// sees it closed.
 pub(super) struct Outlet {
     pub(super) _tx: tokio::sync::mpsc::Sender<JsonRpcMessage>,
     pub(super) _guard: Option<StreamGuard>,
+    pub(super) _slot: Option<StreamSlot>,
 }
 
 impl Outlet {
@@ -42,6 +46,7 @@ impl Outlet {
             Self {
                 _tx: tx,
                 _guard: None,
+                _slot: None,
             },
             rx,
         )
@@ -176,28 +181,29 @@ pub(super) fn sse_event(codec: &DefaultCodec, msg: &JsonRpcMessage) -> Event {
 /// listen, legacy GET): every channel message becomes one `data:` event;
 /// keep-alive comments flow in between; the writer registration travels inside
 /// the stream state so dropping the response body unregisters it.
+///
+/// The stream ends on a JSON-RPC response (a listen's graceful close) or when
+/// `close` fires: at shutdown for both kinds, and for a `GET` stream also when
+/// a newer one replaces it or its session ends. The subscriptions spec ends a
+/// subscription by closing its stream, and "the server MAY close the SSE
+/// stream at any time" on the legacy wire; a `GET` stream left open at
+/// shutdown held the drain for its full timeout, since only the client could
+/// end it.
 pub(super) fn sse_response(
     codec: DefaultCodec,
     rx: tokio::sync::mpsc::Receiver<JsonRpcMessage>,
     registration: Outlet,
     keepalive: Duration,
-    shutdown: Option<CancellationToken>,
+    close: CancellationToken,
 ) -> Response {
     let stream = futures::stream::unfold(
-        (Some((rx, registration)), codec, shutdown),
-        |(live, codec, shutdown)| async move {
+        (Some((rx, registration)), codec, close),
+        |(live, codec, close)| async move {
             let (mut rx, registration) = live?;
-            // A listen stream carries the shutdown token: the subscriptions
-            // spec ends a subscription by closing the stream (no closing
-            // response), so graceful teardown ends it here. Other streams
-            // (per-POST, legacy GET) end on their final response instead.
-            let msg = match &shutdown {
-                Some(token) => tokio::select! {
-                    () = token.cancelled() => None,
-                    m = rx.recv() => m,
-                }?,
-                None => rx.recv().await?,
-            };
+            let msg = tokio::select! {
+                () = close.cancelled() => None,
+                m = rx.recv() => m,
+            }?;
             let event = sse_event(&codec, &msg);
             // A JSON-RPC *response* ends the stream — the per-POST stream
             // contract ("the final response ends the stream").
@@ -206,7 +212,7 @@ pub(super) fn sse_response(
             } else {
                 Some((rx, registration))
             };
-            Some((Ok::<_, Infallible>(event), (next, codec, shutdown)))
+            Some((Ok::<_, Infallible>(event), (next, codec, close)))
         },
     );
 

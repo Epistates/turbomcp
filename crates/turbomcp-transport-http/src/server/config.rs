@@ -45,6 +45,8 @@ pub(super) const RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-re
 #[derive(Clone)]
 pub struct HttpConfig {
     pub(super) max_concurrent_requests: usize,
+    pub(super) max_streams: usize,
+    pub(super) max_streams_per_client: usize,
     pub(super) request_timeout: Duration,
     pub(super) shutdown_timeout: Duration,
     pub(super) path: String,
@@ -68,6 +70,9 @@ impl core::fmt::Debug for HttpConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut f = f.debug_struct("HttpConfig");
         f.field("path", &self.path)
+            .field("max_concurrent_requests", &self.max_concurrent_requests)
+            .field("max_streams", &self.max_streams)
+            .field("max_streams_per_client", &self.max_streams_per_client)
             .field("max_body_bytes", &self.max_body_bytes)
             .field("origins", &self.origins)
             .field("hosts", &self.hosts)
@@ -89,6 +94,8 @@ impl Default for HttpConfig {
     fn default() -> Self {
         Self {
             max_concurrent_requests: 1024,
+            max_streams: 1024,
+            max_streams_per_client: 64,
             request_timeout: Duration::from_secs(60),
             shutdown_timeout: Duration::from_secs(30),
             path: "/mcp".to_owned(),
@@ -125,10 +132,37 @@ impl HttpConfig {
         self
     }
 
-    /// Bound admitted requests, including authentication and live SSE bodies.
+    /// Bound requests in flight (default 1024): from admission until the
+    /// response has been sent, including a tool call whose response streams.
+    /// Over it, a request gets `503` + `Retry-After`.
+    ///
+    /// Long-lived streams (a legacy `GET` stream, a `subscriptions/listen`
+    /// stream) don't count here once open: they have
+    /// [their own budget](Self::max_streams).
     #[must_use]
     pub fn max_concurrent_requests(mut self, limit: usize) -> Self {
         self.max_concurrent_requests = limit.max(1);
+        self
+    }
+
+    /// Bound open long-lived streams, legacy `GET` and `subscriptions/listen`
+    /// together (default 1024). Over it, a new stream gets `503` +
+    /// `Retry-After`.
+    #[must_use]
+    pub fn max_streams(mut self, limit: usize) -> Self {
+        self.max_streams = limit.max(1);
+        self
+    }
+
+    /// Bound the long-lived streams one caller may hold open (default 64):
+    /// per authenticated subject, or per client IP for anonymous callers
+    /// (see [`with_trusted_proxies`](Self::with_trusted_proxies)). Over it, a
+    /// new stream gets `429`. Without this, one client could hold every
+    /// stream the endpoint allows. A caller with neither an identity nor a
+    /// peer address is held to [`max_streams`](Self::max_streams) only.
+    #[must_use]
+    pub fn max_streams_per_client(mut self, limit: usize) -> Self {
+        self.max_streams_per_client = limit.max(1);
         self
     }
     /// Deadline to authenticate, read the request, and produce response headers.

@@ -108,11 +108,20 @@ callbacks to 128, HTTP POSTs to 1,024, and HTTP JSON bodies/SSE events to 1 MiB.
 Request admission uses the same deadline as response waiting. HTTP pumps and
 standalone streams are owned by the transport and cancelled on drop/close.
 
-`HttpConfig` defaults to 1,024 concurrent HTTP requests, including response
-stream lifetimes, a 60-second deadline to response headers, and a 30-second
-shutdown deadline. Admission precedes authentication. Excess requests receive
-429. Configure these budgets for your deployment; long-lived SSE connections
-consume slots. The stream lifetime is not limited by the header deadline.
+`HttpConfig` defaults to 1,024 concurrent HTTP requests (`max_concurrent_requests`),
+a 60-second deadline to response headers, and a 30-second shutdown deadline.
+Admission precedes authentication. A request counts from admission until its
+response has been sent, including a tool call whose response streams; past the
+limit it receives `503` + `Retry-After`.
+
+Long-lived streams (a legacy session's `GET` stream, a `subscriptions/listen`
+stream) have their own budget and give their request slot back once open:
+1,024 in all (`max_streams`, `503` past it) and 64 per caller
+(`max_streams_per_client`, keyed by authenticated subject or else client IP;
+`429` past it). A session has one `GET` stream at a time: a reconnecting `GET`
+ends the previous one, and a session that is deleted or expires ends its
+stream. Every long-lived stream ends at shutdown, so an open client connection
+does not hold the drain for the full shutdown deadline.
 
 ## Evidence and release decisions
 

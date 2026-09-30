@@ -19,20 +19,48 @@ pub(super) fn challenge_response(status: u16, www_authenticate: &str) -> Respons
 
 /// `429 Too Many Requests` with a `Retry-After` header (seconds, rounded up).
 pub(super) fn too_many_requests(retry_after: Duration) -> Response {
+    retry_later(
+        StatusCode::TOO_MANY_REQUESTS,
+        retry_after,
+        "rate limit exceeded",
+    )
+}
+
+/// `429` for a caller already holding as many open streams as one caller may.
+pub(super) fn too_many_streams() -> Response {
+    retry_later(
+        StatusCode::TOO_MANY_REQUESTS,
+        Duration::from_secs(1),
+        "too many open streams for this client",
+    )
+}
+
+/// `503 Service Unavailable` + `Retry-After`: the endpoint as a whole is
+/// full. A `429` would tell the caller it had used up its own quota, which
+/// it may not have.
+pub(super) fn service_unavailable(message: &str) -> Response {
+    retry_later(
+        StatusCode::SERVICE_UNAVAILABLE,
+        Duration::from_secs(1),
+        message,
+    )
+}
+
+fn retry_later(status: StatusCode, retry_after: Duration, message: &str) -> Response {
     // Round up to whole seconds; a sub-second wait still asks for at least 1s.
     let secs = retry_after.as_secs() + u64::from(retry_after.subsec_nanos() > 0);
     let secs = secs.max(1);
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": null,
-        "error": { "code": turbomcp_core::codes::SERVER_ERROR, "message": "rate limit exceeded" },
-    });
-    (
-        StatusCode::TOO_MANY_REQUESTS,
-        [(header::RETRY_AFTER, secs.to_string())],
-        Json(body),
-    )
-        .into_response()
+    let mut response = transport_error(
+        status,
+        None,
+        turbomcp_core::codes::SERVER_ERROR,
+        message.to_owned(),
+        None,
+    );
+    if let Ok(value) = HeaderValue::from_str(&secs.to_string()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
 }
 
 /// A transport-level JSON-RPC error response, carrying the request's own id.

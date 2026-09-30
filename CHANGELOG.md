@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Long-lived HTTP streams can no longer exhaust the endpoint. A legacy `GET`
+  stream or a `subscriptions/listen` stream held a request slot for as long as
+  the client kept it, so one anonymous client that opened 1,024 idle streams
+  got every later request from anyone refused. A reconnecting `GET` also left
+  the stream it replaced open, and a deleted session's stream stayed open too.
+  Streams now draw on their own budget (`HttpConfig::max_streams`, default
+  1,024, `503` past it) and one caller may hold 64
+  (`HttpConfig::max_streams_per_client`, by subject or client IP, `429` past
+  it). A session keeps one `GET` stream: a newer one ends the older, and a
+  session that is deleted or expires ends its stream.
 - WebSocket connections pass the HTTP endpoint's guards before the upgrade.
   A bad token was answered with close code `1008` after the `101`, with no
   challenge and no protected-resource metadata, so a client could not
@@ -92,6 +102,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Graceful HTTP shutdown no longer waits out the full `shutdown_timeout`
+  while a legacy client holds a `GET` stream. Only the client could end one,
+  so any connected 2025-11-25 client held every deploy for 30 seconds and then
+  had everything, finishing requests included, cut. The stream now ends when
+  shutdown begins.
 Protocol and wire fidelity:
 
 - The generator dropped facts the schema states. `const` discriminators
@@ -253,6 +268,10 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `SessionStreams::register` takes the stream's close token,
+  fired when a newer stream replaces it or `SessionStreams::close` ends the
+  session. An HTTP endpoint over its request limit answers `503` +
+  `Retry-After` rather than `429`, which now means only the caller's own quota.
 - **Breaking:** the service seam is `Service<McpRequest>`: the message plus
   the typed facts its transport attached (`ConnectionId`, `SessionId`,
   `Identity`, `ObservedHeaders`, and a `Peer` for reaching the client), in a

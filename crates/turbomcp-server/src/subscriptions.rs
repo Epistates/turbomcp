@@ -222,7 +222,16 @@ impl SubscriptionRegistry {
     /// receiving `*_list_changed`/`resources/updated`. Returns whether a route
     /// existed.
     pub(crate) fn legacy_remove(&self, session: &str) -> bool {
-        self.lock_legacy().remove(session).is_some()
+        let Some(route) = self.lock_legacy().remove(session) else {
+            return false;
+        };
+        // The session is over, so its `GET` stream has nothing more to
+        // carry; left open, it held its connection and a stream slot until
+        // the client happened to hang up.
+        if let Some(streams) = route.streams {
+            streams.close(session);
+        }
+        true
     }
 
     // ---- publishing ------------------------------------------------------------

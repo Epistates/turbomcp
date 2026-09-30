@@ -4,6 +4,7 @@ mod config;
 mod guards;
 mod reject;
 mod sse;
+mod streams;
 mod validate;
 #[cfg(feature = "websocket")]
 mod websocket;
@@ -23,7 +24,7 @@ use crate::headers;
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Extension, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -40,14 +41,17 @@ use turbomcp_service::{
 };
 
 use config::{HostPolicy, OriginPolicy, RESOURCE_METADATA_PATH};
-use guards::{PeerIp, accepts, check_host, check_origin, enforce_auth, enforce_rate_limit};
+use guards::{
+    PeerIp, accepts, check_host, check_origin, client_key, enforce_auth, enforce_rate_limit,
+};
 use reject::{
     envelope_rejection, invalid_frame_response, not_acceptable_rejection, protocol_error_response,
-    session_required_rejection, too_many_requests, version_header_rejection,
+    service_unavailable, session_required_rejection, too_many_requests, version_header_rejection,
 };
 use sse::{
     Outlet, PostStream, SSE_CHANNEL_CAPACITY, drain, finished_sse, sse_response, streaming_post_sse,
 };
+use streams::{Admission, StreamBudget};
 use validate::{declared_version, message_has_version, request_id, validate_request_headers};
 
 /// Errors from running the HTTP transport.
@@ -90,9 +94,11 @@ struct HttpState<S> {
     /// The revisions this endpoint serves, for the `MCP-Protocol-Version`
     /// check and the `supported` list its rejection carries.
     supported_versions: Arc<[ProtocolVersion]>,
-    /// The configured shutdown token; dedicated `subscriptions/listen` SSE
-    /// streams end when it fires (the RC's server-side subscription close).
+    /// The configured shutdown token; long-lived streams end when it fires
+    /// (for listen streams, the RC's server-side subscription close).
     shutdown: CancellationToken,
+    /// What open long-lived streams may hold.
+    stream_budget: StreamBudget,
 }
 
 impl<S> HttpState<S> {
@@ -156,6 +162,7 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         streams: SessionStreams::new(),
         supported_versions: supported_versions.into(),
         shutdown: config.shutdown.clone(),
+        stream_budget: StreamBudget::new(config.max_streams, config.max_streams_per_client),
     };
     let mut app = Router::new()
         .route(
@@ -212,26 +219,30 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
 }
 
 /// The admission pool: a permit per in-flight request, held until its body
-/// has been streamed out.
+/// has been streamed out, unless the handler hands it back because the
+/// response is a long-lived stream with a slot of its own (see
+/// [`Admission`]).
 async fn admit(
     admission: Arc<tokio::sync::Semaphore>,
     request_timeout: Duration,
-    request: axum::extract::Request,
+    mut request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
     let Ok(permit) = admission.try_acquire_owned() else {
-        return too_many_requests(Duration::from_secs(1));
+        return service_unavailable("too many requests in flight on this endpoint");
     };
+    let slot = Admission::new(permit);
+    request.extensions_mut().insert(slot.clone());
     let response = match tokio::time::timeout(request_timeout, next.run(request)).await {
         Ok(response) => response,
         Err(_) => return StatusCode::GATEWAY_TIMEOUT.into_response(),
     };
     let (parts, body) = response.into_parts();
     let stream = futures::stream::unfold(
-        (body.into_data_stream(), permit),
-        |(mut stream, permit)| async move {
+        (body.into_data_stream(), slot),
+        |(mut stream, slot)| async move {
             use futures::StreamExt as _;
-            stream.next().await.map(|chunk| (chunk, (stream, permit)))
+            stream.next().await.map(|chunk| (chunk, (stream, slot)))
         },
     );
     Response::from_parts(parts, axum::body::Body::from_stream(stream))
@@ -357,6 +368,7 @@ async fn serve_listener<H: ServerHandle>(
 
 async fn mcp_post<S>(
     State(state): State<HttpState<S>>,
+    Extension(admission): Extension<Admission>,
     peer: PeerIp,
     headers: HeaderMap,
     body: Bytes,
@@ -389,6 +401,7 @@ where
         Err(rejection) => return *rejection,
     };
     let subject = authenticated.as_ref().and_then(|a| a.subject.clone());
+    let client_ip = peer.client_ip(&state.trusted_proxies);
 
     let mut msg = match turbomcp_core::codec::decode_message(&state.codec, &body) {
         Ok(msg) => msg,
@@ -406,11 +419,7 @@ where
     // Rate limit (if configured) per identity: authenticated → per-subject,
     // anonymous → per source IP. Over budget → 429 + Retry-After, before any
     // dispatch.
-    if let Some(rejection) = enforce_rate_limit(
-        &state,
-        subject.as_deref(),
-        peer.client_ip(&state.trusted_proxies),
-    ) {
+    if let Some(rejection) = enforce_rate_limit(&state, subject.as_deref(), client_ip) {
         return rejection;
     }
 
@@ -561,7 +570,8 @@ where
         extensions: ext,
     };
     if is_listen {
-        return listen_sse(&state, request).await;
+        let client = client_key(subject.as_deref(), client_ip);
+        return listen_sse(&state, request, client, &admission).await;
     }
 
     // Every other *request* takes the lazy-upgrade path: plain JSON unless the
@@ -642,12 +652,24 @@ fn apply_stateless_error_status(resp: &mut Response, reply: &JsonRpcMessage, ena
 /// disconnect (axum drops the body) unregisters it; the registry prunes the
 /// subscription at its next publish (transports spec §Cancellation: closing
 /// the stream is the cancellation signal).
-async fn listen_sse<S>(state: &HttpState<S>, mut request: McpRequest) -> Response
+async fn listen_sse<S>(
+    state: &HttpState<S>,
+    mut request: McpRequest,
+    client: RateKey,
+    admission: &Admission,
+) -> Response
 where
     S: McpService + Clone + Sync,
     S::Future: Send + 'static,
 {
-    let (outlet, rx) = Outlet::open("http-sse", &mut request);
+    // The slot is taken before the listen is dispatched, so a refused stream
+    // never subscribes.
+    let slot = match state.stream_budget.admit(client) {
+        Ok(slot) => slot,
+        Err(rejection) => return *rejection,
+    };
+    let (mut outlet, rx) = Outlet::open("http-sse", &mut request);
+    outlet._slot = Some(slot);
 
     let id = request_id(&request.message);
     let mut svc = state.service.clone();
@@ -663,12 +685,13 @@ where
         Err(e) => return protocol_error_response(&e, id),
     }
 
+    admission.release();
     sse_response(
         state.codec,
         rx,
         outlet,
         state.sse_keepalive,
-        Some(state.shutdown.clone()),
+        state.shutdown.clone(),
     )
 }
 
@@ -778,7 +801,12 @@ where
 ///
 /// The draft never GETs — it subscribes via `subscriptions/listen` over POST —
 /// so a session-less GET answers `405`, which the spec permits.
-async fn mcp_get<S>(State(state): State<HttpState<S>>, peer: PeerIp, headers: HeaderMap) -> Response
+async fn mcp_get<S>(
+    State(state): State<HttpState<S>>,
+    Extension(admission): Extension<Admission>,
+    peer: PeerIp,
+    headers: HeaderMap,
+) -> Response
 where
     S: McpService + Clone + Sync,
     S::Future: Send + 'static,
@@ -802,11 +830,8 @@ where
         Ok(authenticated) => authenticated.and_then(|a| a.subject),
         Err(rejection) => return *rejection,
     };
-    if let Some(rejection) = enforce_rate_limit(
-        &state,
-        subject.as_deref(),
-        peer.client_ip(&state.trusted_proxies),
-    ) {
+    let client_ip = peer.client_ip(&state.trusted_proxies);
+    if let Some(rejection) = enforce_rate_limit(&state, subject.as_deref(), client_ip) {
         return rejection;
     }
     let Some(sid) = headers
@@ -833,16 +858,26 @@ where
     {
         return (StatusCode::NOT_FOUND, "session not found").into_response();
     }
+    let slot = match state
+        .stream_budget
+        .admit(client_key(subject.as_deref(), client_ip))
+    {
+        Ok(slot) => slot,
+        Err(rejection) => return *rejection,
+    };
     let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
     // One stream per session: a newer GET replaces this one in the registry
-    // the dispatcher publishes through.
+    // the dispatcher publishes through, and ends it.
     let peer = Peer::new(format!("http-get-{}", uuid::Uuid::new_v4()), &tx);
-    let guard = state.streams.register(sid, peer);
+    let close = state.shutdown.child_token();
+    let guard = state.streams.register(sid, peer, close.clone());
     let outlet = Outlet {
         _tx: tx,
         _guard: Some(guard),
+        _slot: Some(slot),
     };
-    sse_response(state.codec, rx, outlet, state.sse_keepalive, None)
+    admission.release();
+    sse_response(state.codec, rx, outlet, state.sse_keepalive, close)
 }
 
 /// Client-initiated session termination (`2025-11-25` spec §Session
@@ -901,6 +936,7 @@ where
             .into_response();
     };
     if terminator.terminate(sid, subject.as_deref()).await {
+        state.streams.close(sid);
         StatusCode::NO_CONTENT.into_response()
     } else {
         // Unknown/already-terminated session: the spec maps this to 404 so the
