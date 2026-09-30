@@ -234,9 +234,10 @@ pub async fn load_aws_secrets() -> Result<Secrets, Box<dyn std::error::Error>> {
 ### Signal Handling
 
 The Streamable HTTP transport handles shutdown itself: it listens for Ctrl+C
-and, on Unix, SIGTERM, then shuts axum down gracefully. `with_graceful_shutdown`
-sets how long to wait after the signal (capped at 60 seconds) before axum stops
-accepting connections and finishes the requests in flight:
+and, on Unix, SIGTERM. On the signal it stops accepting connections, ends
+listening GET streams, and waits for the requests in flight;
+`with_graceful_shutdown` sets the longest it waits for them (before 3.5.1 the
+duration was spent before shutdown began):
 
 ```rust
 use std::time::Duration;

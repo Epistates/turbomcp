@@ -14,12 +14,12 @@
 //!
 //! **Quick Start:**
 //! ```toml
-//! turbomcp-protocol = "3.5.0"
+//! turbomcp-protocol = "3.5.1"
 //! ```
 //!
 //! Only the experimental Tasks API (SEP-1686) requires a feature flag:
 //! ```toml
-//! turbomcp-protocol = { version = "3.5.0", features = ["experimental-tasks"] }
+//! turbomcp-protocol = { version = "3.5.1", features = ["experimental-tasks"] }
 //! ```
 //!
 //! ## What's Inside
@@ -89,13 +89,13 @@
 //! **Typical Usage:**
 //! ```toml
 //! [dependencies]
-//! turbomcp-protocol = "3.5.0"  # All core features included
+//! turbomcp-protocol = "3.5.1"  # All core features included
 //! ```
 //!
 //! **With Tasks convenience APIs:**
 //! ```toml
 //! [dependencies]
-//! turbomcp-protocol = { version = "3.5.0", features = ["experimental-tasks"] }
+//! turbomcp-protocol = { version = "3.5.1", features = ["experimental-tasks"] }
 //! ```
 //!
 //! ### Runtime Version Negotiation

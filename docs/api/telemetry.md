@@ -16,7 +16,7 @@ Telemetry features include:
 
 ```toml
 [dependencies]
-turbomcp-telemetry = { version = "3.5.0", features = ["full"] }
+turbomcp-telemetry = { version = "3.5.1", features = ["full"] }
 ```
 
 Through the `turbomcp` crate, the `telemetry` feature enables this crate with
@@ -467,15 +467,14 @@ let config = TelemetryConfig::builder()
     .build();
 ```
 
-!!! warning "3.5.0: no HTTP listener"
-    `prometheus_port` installs the Prometheus recorder but does not start an
-    HTTP listener on the port, so nothing serves `/metrics`. Until that is
-    fixed, render the metrics from your own endpoint, or install
-    `metrics_exporter_prometheus::PrometheusBuilder` yourself instead of
-    setting `prometheus_port`.
+!!! note "3.5.0 and earlier: no HTTP listener"
+    Before 3.5.1, `prometheus_port` installed the Prometheus recorder without
+    starting an HTTP listener, so nothing served the metrics. On those
+    versions, install `metrics_exporter_prometheus::PrometheusBuilder`
+    yourself instead of setting `prometheus_port`.
 
-The listener, once serving, binds `127.0.0.1` unless `prometheus_bind_addr`
-says otherwise.
+The listener binds `127.0.0.1` unless `prometheus_bind_addr` says otherwise,
+and answers a scrape on any path; `prometheus_path` doesn't restrict it.
 
 ### Prometheus Scrape Config
 

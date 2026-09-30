@@ -5864,7 +5864,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "axum",
  "chrono",
@@ -5895,7 +5895,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-auth"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "base64 0.23.1",
  "blake3",
@@ -5936,7 +5936,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-cli"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -5965,7 +5965,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-client"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -5989,7 +5989,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-core"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -6007,7 +6007,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-demo"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "chrono",
  "tokio",
@@ -6016,7 +6016,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-dpop"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "asn1",
  "base64 0.23.1",
@@ -6052,7 +6052,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-grpc"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "async-stream",
  "bytes",
@@ -6084,7 +6084,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-http"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "axum",
  "bytes",
@@ -6104,7 +6104,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-macros"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "axum",
  "proc-macro-crate",
@@ -6122,7 +6122,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-openapi"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "ipnetwork",
  "openapiv3",
@@ -6144,7 +6144,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-protocol"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -6190,7 +6190,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-proxy"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "axum",
  "bytes",
@@ -6235,7 +6235,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-server"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -6268,7 +6268,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-stdio"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "bytes",
  "criterion",
@@ -6287,7 +6287,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-tcp"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "bytes",
  "futures",
@@ -6304,7 +6304,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-telemetry"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "futures-util",
  "http",
@@ -6325,7 +6325,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "ahash",
  "anyhow",
@@ -6377,7 +6377,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-streamable"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "getrandom 0.4.3",
  "pretty_assertions",
@@ -6387,7 +6387,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-traits"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "bytes",
  "serde",
@@ -6400,7 +6400,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-types"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6408,7 +6408,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-unix"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "bytes",
  "futures",
@@ -6427,7 +6427,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-wasm"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "base64 0.23.1",
  "console_error_panic_hook",
@@ -6462,7 +6462,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-wasm-macros"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6473,7 +6473,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-websocket"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "backon",
  "bytes",
@@ -6494,7 +6494,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-wire"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "rmp-serde",
  "serde",

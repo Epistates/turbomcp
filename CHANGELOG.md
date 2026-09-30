@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-09-30
+
+`Client::connect_tcp` failed against every server in 3.5.0: the TCP client
+registered its connection in a task that hadn't run yet when `initialize` went
+out (#60). Nothing ran a real client against a real server over TCP, so nothing
+caught it. A new end-to-end test now does, over TCP, Unix, HTTP and WebSocket.
+
+A diligence pass before this release found more. Four bugs came in with 3.5.0
+itself: the authorization fetchers stopped applying their configured timeout
+and user agent, the client sent `tasks/cancel` to servers that never offered
+it, a request could run twice when its session expired mid-stream, and stdio
+reported a message size limit it no longer enforced. Six were older, among them
+TCP and Unix transports that dropped messages under load while reporting
+success, a Prometheus exporter that never listened, WASM prompts with arguments
+that didn't compile, and an HTTP graceful shutdown that ran backwards. Two
+security gaps are closed: `JwksClient` was open to DNS rebinding, and a child
+process could exhaust its parent's memory.
+
+No public API changed; `cargo semver-checks` finds nothing to flag against
+3.5.0.
+
 ### Fixed
 
 - **A TCP client couldn't send until its connection task had run.**
@@ -78,22 +99,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requests. Without a duration it waits for them however long they take, as
   before.
 
-### Documentation
-
-- **`ClientBuilder::with_max_retries` and `with_retry_delay` only affect
-  `build_resilient`.** `build` and `build_sync` never retry, and the
-  `ClientBuilder` example set both and then called `build`. The methods and the
-  `ConnectionConfig` fields now say so, and the example calls `build_resilient`.
-
-### Internal
-
-- **Removed the workspace-root `tests/` directory.** The root manifest is a
-  virtual workspace, so no cargo target ever compiled those 17 files; they were
-  written against v2-era APIs that no longer exist. Every crate's own tests are
-  unaffected. A new `transport_e2e` test runs a real client against a real
-  server over TCP, Unix, HTTP and WebSocket; nothing did before, which is how
-  the TCP client bug above shipped.
-
 ### Security
 
 - **`JwksClient` with an SSRF validator could be steered by DNS rebinding.**
@@ -109,6 +114,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `max_message_size` bytes; an oversized response is still answered with an
   error for its id, found in the first 4 KiB of the line. A line that isn't
   UTF-8 is now skipped instead of ending the reader.
+
+### Documentation
+
+- **`ClientBuilder::with_max_retries` and `with_retry_delay` only affect
+  `build_resilient`.** `build` and `build_sync` never retry, and the
+  `ClientBuilder` example set both and then called `build`. The methods and the
+  `ConnectionConfig` fields now say so, and the example calls `build_resilient`.
+
+### Internal
+
+- **Removed the workspace-root `tests/` directory.** The root manifest is a
+  virtual workspace, so no cargo target ever compiled those 17 files; they were
+  written against v2-era APIs that no longer exist. Every crate's own tests are
+  unaffected. A new `transport_e2e` test runs a real client against a real
+  server over TCP, Unix, HTTP and WebSocket; nothing did before, which is how
+  the TCP client bug above shipped.
+- **`Cargo.lock` refreshed** to the latest compatible versions, among them
+  jsonwebtoken 11.1, http 1.5 and rand 0.10.3. `worker` stays on 0.8.5, since
+  0.8.7 needs Rust 1.91 and the MSRV is 1.89. The lockfile only affects this
+  repository's builds and the `--locked` installs of `turbomcp-cli` and
+  `turbomcp-proxy`.
 
 ## [3.5.0] - 2026-09-25
 

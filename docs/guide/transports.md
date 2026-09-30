@@ -20,7 +20,7 @@ not a `turbomcp` feature. See the [gRPC API Reference](../api/grpc.md).
 
 ```toml
 [dependencies]
-turbomcp = { version = "3.5.0", features = ["full"] } # every transport + telemetry
+turbomcp = { version = "3.5.1", features = ["full"] } # every transport + telemetry
 ```
 
 ## Basic Usage
@@ -474,7 +474,7 @@ feature, so the server gets it without extra configuration. For explicit codec
 control in your own code, use `turbomcp-wire`:
 
 ```toml
-turbomcp-wire = { version = "3.5.0", features = ["simd"] }
+turbomcp-wire = { version = "3.5.1", features = ["simd"] }
 ```
 
 ## Next Steps

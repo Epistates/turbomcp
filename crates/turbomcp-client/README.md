@@ -768,7 +768,7 @@ cargo run -p turbomcp --example unix_client --features unix,full-client
 Enable features in `Cargo.toml`:
 ```toml
 [dependencies]
-turbomcp-client = { version = "3.5.0", features = ["tcp", "websocket"] }
+turbomcp-client = { version = "3.5.1", features = ["tcp", "websocket"] }
 ```
 
 ## Architecture

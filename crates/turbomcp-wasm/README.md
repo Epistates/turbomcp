@@ -72,7 +72,7 @@ npm install turbomcp-wasm
 
 ```toml
 [dependencies]
-turbomcp-wasm = { version = "3.5.0", default-features = false, features = ["wasm-server"] }
+turbomcp-wasm = { version = "3.5.1", default-features = false, features = ["wasm-server"] }
 worker = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 schemars = "1.2"

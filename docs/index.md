@@ -250,7 +250,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "3.5.0"
+turbomcp = "3.5.1"
 tokio = { version = "1", features = ["full"] }
 ```
 

@@ -18,9 +18,9 @@ re-exports the crate as `turbomcp::telemetry`:
 
 ```toml
 [dependencies]
-turbomcp = { version = "3.5.0", features = ["telemetry"] }
+turbomcp = { version = "3.5.1", features = ["telemetry"] }
 # Or use the crate directly, choosing features
-turbomcp-telemetry = { version = "3.5.0", features = ["opentelemetry", "prometheus", "tower"] }
+turbomcp-telemetry = { version = "3.5.1", features = ["opentelemetry", "prometheus", "tower"] }
 ```
 
 ## Quick Start (v3)
