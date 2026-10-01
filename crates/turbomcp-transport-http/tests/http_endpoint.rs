@@ -412,3 +412,27 @@ async fn a_panicking_tool_answers_with_an_internal_error() {
     let v = body_json(resp).await;
     assert_eq!(v["result"]["tools"][0]["name"], "boom");
 }
+
+/// The health check answers without auth or Origin, and reports draining
+/// once shutdown begins so a load balancer stops routing here first.
+#[tokio::test]
+async fn the_health_check_reports_ok_then_draining() {
+    let shutdown = turbomcp_service::CancellationToken::new();
+    let app = app(HttpConfig::new()
+        .with_health_check("/healthz")
+        .with_shutdown(shutdown.clone()));
+    let get = || {
+        Request::builder()
+            .method("GET")
+            .uri("/healthz")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let ok = app.clone().oneshot(get()).await.unwrap();
+    assert_eq!(ok.status(), StatusCode::OK);
+    assert_eq!(body_json(ok).await["status"], "ok");
+    shutdown.cancel();
+    let draining = app.oneshot(get()).await.unwrap();
+    assert_eq!(draining.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body_json(draining).await["status"], "draining");
+}

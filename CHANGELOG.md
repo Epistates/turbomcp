@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `HttpConfig::with_health_check(path)`: an unauthenticated `GET` answering
+  `200` while serving and `503` once shutdown begins, so a load balancer
+  drains a replica before its connections close.
+- `docs/DEPLOYMENT.md` documents running replicas: `2026-07-28` behind
+  round-robin (with a shared `with_state_key`, `Mcp-Name` routing for task
+  polls, and per-replica change notifications); `2025-06-18`/`2025-11-25`
+  with a shared `SessionBackend` plus consistent hashing on
+  `Mcp-Session-Id`, with nginx and Envoy snippets and what a lost replica
+  costs.
 - `notifications/roots/list_changed`, via `Client::notify_roots_changed`. The
   one list-changed notification that travels client→server existed nowhere but
   the generated wire types: no method constant, nothing that sent it. A client

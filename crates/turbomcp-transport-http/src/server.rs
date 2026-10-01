@@ -202,6 +202,9 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
             );
         }
     }
+    if let Some(path) = &config.health_path {
+        app = app.route(path, axum::routing::get(health::<H::Service>));
+    }
     #[cfg_attr(not(feature = "websocket"), allow(unused_mut))]
     let mut app = app.with_state(state.clone());
     #[cfg(feature = "websocket")]
@@ -1000,6 +1003,24 @@ where
         // client knows it's gone.
         Ok(false) => session_not_found(None),
         Err(e) => protocol_error_response(&e, None),
+    }
+}
+
+/// The health check ([`HttpConfig::with_health_check`]): `200` while serving,
+/// `503` once shutdown has begun.
+async fn health<S>(State(state): State<HttpState<S>>) -> Response
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    if state.shutdown.is_cancelled() {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "draining" })),
+        )
+            .into_response()
+    } else {
+        Json(json!({ "status": "ok" })).into_response()
     }
 }
 

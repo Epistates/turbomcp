@@ -103,6 +103,7 @@ pub struct HttpConfig {
     pub(super) session_terminator: Option<Arc<dyn SessionTerminator>>,
     pub(super) trusted_proxies: Vec<IpNet>,
     pub(super) supported_versions: Option<Vec<ProtocolVersion>>,
+    pub(super) health_path: Option<String>,
     #[cfg(feature = "websocket")]
     pub(super) websocket: Option<WebSocketConfig>,
 }
@@ -124,7 +125,8 @@ impl core::fmt::Debug for HttpConfig {
             .field("ip_rate_limiter", &self.ip_rate_limiter.is_some())
             .field("session_terminator", &self.session_terminator.is_some())
             .field("trusted_proxies", &self.trusted_proxies)
-            .field("supported_versions", &self.supported_versions);
+            .field("supported_versions", &self.supported_versions)
+            .field("health_path", &self.health_path);
         #[cfg(feature = "websocket")]
         f.field("websocket", &self.websocket);
         f.finish()
@@ -152,6 +154,7 @@ impl Default for HttpConfig {
             session_terminator: None,
             trusted_proxies: Vec::new(),
             supported_versions: None,
+            health_path: None,
             #[cfg(feature = "websocket")]
             websocket: None,
         }
@@ -386,6 +389,19 @@ impl HttpConfig {
         N: Into<IpNet>,
     {
         self.trusted_proxies = proxies.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Serve a health check at `path` (e.g. `/healthz`): `GET` answers `200`
+    /// `{"status":"ok"}` while the endpoint serves and `503`
+    /// `{"status":"draining"}` once shutdown begins, so a load balancer stops
+    /// sending new traffic before connections are closed. It needs no
+    /// authentication and passes the Origin and Host checks untouched (a load
+    /// balancer sends neither), but it is still subject to the request
+    /// limit, so an endpoint too busy to admit it reads as unhealthy.
+    #[must_use]
+    pub fn with_health_check(mut self, path: impl Into<String>) -> Self {
+        self.health_path = Some(path.into());
         self
     }
 

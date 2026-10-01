@@ -132,6 +132,71 @@ ends the previous one, and a session that is deleted or expires ends its
 stream. Every long-lived stream ends at shutdown, so an open client connection
 does not hold the drain for the full shutdown deadline.
 
+## Running more than one replica
+
+What a replica fleet needs depends on the wire a client speaks.
+
+**`2026-07-28` is stateless.** Each request carries everything the server
+needs, so round-robin load balancing works, with three things to set up:
+
+- **MRTR state key.** A tool that asks the client something answers with an
+  `InputRequiredResult` whose `requestState` the client sends back on the
+  retry, possibly to another replica. That state is signed with a per-process
+  random key unless every replica shares one: `ServerBuilder::with_state_key`.
+- **Tasks extension.** A task lives in the process that created it. The client
+  sends `Mcp-Name: <taskId>` on `tasks/get`, `tasks/update` and
+  `tasks/cancel` so a load balancer can route polls to that replica (hash on
+  the header), or implement a shared store behind the task seam.
+- **Change notifications.** A `subscriptions/listen` stream is held by one
+  replica, and `ServerNotifier` reaches the streams in its own process. Publish
+  a change on every replica (each watching the same source of truth); there is
+  no cross-replica notification bus yet.
+
+**`2025-06-18` and `2025-11-25` need sticky sessions.** Elicitation and
+sampling answers, cancellation, progress, the session's `GET` stream and its
+resource subscriptions are bound to the process handling the session, so every
+request of a session has to reach the same replica. The working recipe:
+
+1. A shared `SessionBackend` (`ServerBuilder::with_session_backend`).
+   `initialize` arrives without a session id, so it lands anywhere, and the
+   replica the session later hashes to has to find the session that a
+   different replica minted.
+2. Consistent hashing on the `Mcp-Session-Id` header, so every later request
+   of the session (POSTs, the `GET` stream, `DELETE`) reaches one replica.
+
+nginx:
+
+```nginx
+upstream mcp {
+    hash $http_mcp_session_id consistent;
+    server 10.0.0.11:8080;
+    server 10.0.0.12:8080;
+}
+```
+
+Envoy (route action):
+
+```yaml
+hash_policy:
+  - header:
+      header_name: mcp-session-id
+```
+
+When a replica goes away, its sessions' requests hash elsewhere and find the
+session in the shared store, but its in-memory routes are gone: in-flight
+calls fail and resource subscriptions must be renewed. Clients reconnect their
+`GET` stream on their own.
+
+A session-store outage answers `503` + `Retry-After` (clients retry), not
+`404` (which would send every client to re-`initialize` at once). The bundled
+store refuses new sessions with `503` when full rather than evicting live
+ones; idle sessions expire after an hour.
+
+**Health.** `HttpConfig::with_health_check("/healthz")` answers `200` while
+serving and `503` once shutdown begins, so a load balancer stops routing to a
+draining replica. Long-lived streams end at shutdown and clients reconnect to
+another replica.
+
 ## Evidence and release decisions
 
 Use the locked workspace tests, Clippy, MSRV check, pinned conformance inventories,
