@@ -71,6 +71,19 @@ pub(super) fn session_not_found(id: Option<&RequestId>) -> Response {
     )
 }
 
+/// `404` for a `Last-Event-ID` naming nothing this endpoint can replay: an
+/// unknown or expired stream, or one whose events after that id are gone.
+/// Serving the live remainder instead would leave a silent gap.
+pub(super) fn unknown_event_rejection(id: &str) -> Response {
+    transport_error(
+        StatusCode::NOT_FOUND,
+        None,
+        turbomcp_core::codes::SERVER_ERROR,
+        format!("cannot resume from event `{id}`: unknown, expired, or no longer complete"),
+        None,
+    )
+}
+
 /// `501` for authenticated sessions with no ownership backend to tie a
 /// session to its principal.
 pub(super) fn sessions_need_an_owner() -> Response {

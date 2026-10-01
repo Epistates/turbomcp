@@ -12,6 +12,7 @@ use turbomcp_service::{CancellationToken, HttpAuthenticator, RateLimiter, Sessio
 
 #[cfg(feature = "websocket")]
 use super::WebSocketConfig;
+use super::resume::EventStore;
 use crate::headers;
 
 /// Default keep-alive comment interval — short enough to outlive common
@@ -106,6 +107,7 @@ pub struct HttpConfig {
     pub(super) supported_versions: Option<Vec<ProtocolVersion>>,
     pub(super) health_path: Option<String>,
     pub(super) calls: TaskTracker,
+    pub(super) event_store: Option<Arc<dyn EventStore>>,
     #[cfg(feature = "websocket")]
     pub(super) websocket: Option<WebSocketConfig>,
 }
@@ -128,7 +130,8 @@ impl core::fmt::Debug for HttpConfig {
             .field("session_terminator", &self.session_terminator.is_some())
             .field("trusted_proxies", &self.trusted_proxies)
             .field("supported_versions", &self.supported_versions)
-            .field("health_path", &self.health_path);
+            .field("health_path", &self.health_path)
+            .field("event_store", &self.event_store.is_some());
         #[cfg(feature = "websocket")]
         f.field("websocket", &self.websocket);
         f.finish()
@@ -158,6 +161,7 @@ impl Default for HttpConfig {
             supported_versions: None,
             health_path: None,
             calls: TaskTracker::new(),
+            event_store: None,
             #[cfg(feature = "websocket")]
             websocket: None,
         }
@@ -405,6 +409,22 @@ impl HttpConfig {
     #[must_use]
     pub fn with_health_check(mut self, path: impl Into<String>) -> Self {
         self.health_path = Some(path.into());
+        self
+    }
+
+    /// Make response streams on a session (`2025-06-18` / `2025-11-25`)
+    /// resumable, keeping their events in `store`
+    /// ([`InMemoryEventStore`](crate::InMemoryEventStore) is the bundled one).
+    ///
+    /// Such a stream is primed with an event id and every event carries one;
+    /// a client that loses the connection sends `GET` with `Last-Event-ID`
+    /// and is caught up on what it missed, then follows the rest live. A call
+    /// on a session already runs on after its client disconnects; this is
+    /// what lets its response still reach the client. Off by default, and
+    /// then no event ids are sent: an id is a promise of replay.
+    #[must_use]
+    pub fn with_event_store(mut self, store: Arc<dyn EventStore>) -> Self {
+        self.event_store = Some(store);
         self
     }
 

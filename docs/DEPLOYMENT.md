@@ -187,6 +187,17 @@ session in the shared store, but its in-memory routes are gone: in-flight
 calls fail and resource subscriptions must be renewed. Clients reconnect their
 `GET` stream on their own.
 
+On these wires a client disconnect doesn't cancel a call (the revisions say
+it SHOULD NOT): the call runs on until `notifications/cancelled`, its
+session ending, or shutdown. To get its response to a client that lost the
+connection, configure an event store
+(`HttpConfig::with_event_store(Arc::new(InMemoryEventStore::new()))`): response
+streams are then primed with event ids, and the client's `GET` with
+`Last-Event-ID` replays what it missed and follows the rest live. The bundled
+store keeps 1,024 events per stream and finished streams for five minutes. A
+store shared across replicas still needs the sticky routing above, since the
+call itself runs in one process.
+
 A session-store outage answers `503` + `Retry-After` (clients retry), not
 `404` (which would send every client to re-`initialize` at once). The bundled
 store refuses new sessions with `503` when full rather than evicting live

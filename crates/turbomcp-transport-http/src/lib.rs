@@ -119,7 +119,10 @@ mod server;
 pub use server::WebSocketConfig;
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
-pub use server::{Http, HttpConfig, HttpError, router, serve_http};
+pub use server::{
+    EventFuture, EventStore, EventStoreError, Http, HttpConfig, HttpError, InMemoryEventStore,
+    StoredEvent, router, serve_http,
+};
 
 #[cfg(feature = "client")]
 mod client;

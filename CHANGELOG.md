@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Resumable response streams on the session wires (`2025-06-18` /
+  `2025-11-25` §Resumability and Redelivery):
+  `HttpConfig::with_event_store` with the bundled `InMemoryEventStore`, or
+  your own `EventStore`. A session's response stream is primed with an
+  event id and every event carries one; `GET` with `Last-Event-ID` replays
+  what the client missed and follows the call live to its response. An id
+  the store can't serve without a gap is refused with `404`. Off by
+  default, and then no ids are sent.
 - `HttpConfig::with_health_check(path)`: an unauthenticated `GET` answering
   `200` while serving and `503` once shutdown begins, so a load balancer
   drains a replica before its connections close.

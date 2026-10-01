@@ -289,7 +289,10 @@ pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, std
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod http {
     pub use turbomcp_service::SessionTerminator;
-    pub use turbomcp_transport_http::{Http, HttpConfig, HttpError, router, serve_http};
+    pub use turbomcp_transport_http::{
+        EventFuture, EventStore, EventStoreError, Http, HttpConfig, HttpError, InMemoryEventStore,
+        StoredEvent, router, serve_http,
+    };
 
     #[cfg(feature = "websocket")]
     #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]

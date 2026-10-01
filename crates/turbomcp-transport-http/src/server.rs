@@ -3,6 +3,7 @@
 mod config;
 mod guards;
 mod reject;
+mod resume;
 mod sse;
 mod streams;
 mod validate;
@@ -10,6 +11,7 @@ mod validate;
 mod websocket;
 
 pub use config::HttpConfig;
+pub use resume::{EventFuture, EventStore, EventStoreError, InMemoryEventStore, StoredEvent};
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketConfig;
 
@@ -48,7 +50,7 @@ use guards::{
 use reject::{
     deadline_passed, envelope_rejection, invalid_frame_response, method_not_allowed,
     not_acceptable_rejection, protocol_error_response, service_unavailable, session_not_found,
-    session_required_rejection, sessions_need_an_owner, too_many_requests,
+    session_required_rejection, sessions_need_an_owner, too_many_requests, unknown_event_rejection,
     version_header_rejection,
 };
 use sse::{AbortOnDrop, Outlet, SSE_CHANNEL_CAPACITY, request_stream, sse_response};
@@ -104,6 +106,10 @@ struct HttpState<S> {
     /// Every request's call, each on a task of its own; graceful shutdown
     /// waits for them.
     calls: TaskTracker,
+    /// Where resumable streams' events are kept, when configured.
+    event_store: Option<Arc<dyn resume::EventStore>>,
+    /// The resumable streams whose calls are still running.
+    resumable: resume::ResumableStreams,
 }
 
 impl<S> HttpState<S> {
@@ -178,6 +184,8 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         shutdown: config.shutdown.clone(),
         stream_budget: StreamBudget::new(config.max_streams, config.max_streams_per_client),
         calls: config.calls.clone(),
+        event_store: config.event_store.clone(),
+        resumable: resume::ResumableStreams::default(),
     };
     let mut app = Router::new()
         .route(
@@ -797,7 +805,14 @@ where
         unreachable!("request_post is only called for requests");
     };
     let request_id = req.id.clone();
-    let detach = !stateless_request && request.extensions.get::<SessionId>().is_some();
+    let session = (!stateless_request)
+        .then(|| request.extensions.get::<SessionId>())
+        .flatten()
+        .map(|s| s.as_str().to_owned());
+    let detach = session.is_some();
+    if let (Some(session), Some(store)) = (session, state.event_store.clone()) {
+        return resumable_post(state, store, session, request, admission).await;
+    }
     // No event `id` on this stream, because this endpoint does not replay.
     //
     // Attaching one is a MAY, and it belongs entirely to §Resumability and
@@ -869,6 +884,119 @@ where
     }
 }
 
+/// [`request_post`] on a session with an event store: the call's task numbers
+/// and records each message (see [`resume`]) and the response is a primed,
+/// resumable stream, unless the call answers first with nothing on the way,
+/// in which case it is plain JSON as usual.
+async fn resumable_post<S>(
+    state: &HttpState<S>,
+    store: Arc<dyn resume::EventStore>,
+    session: String,
+    mut request: McpRequest,
+    admission: &Admission,
+) -> Response
+where
+    S: McpService + Clone + Sync,
+    S::Future: Send + 'static,
+{
+    let JsonRpcMessage::Request(req) = &request.message else {
+        unreachable!("request_post is only called for requests");
+    };
+    let request_id = req.id.clone();
+    let (outlet, mut call_rx) = Outlet::open("http-post", &mut request);
+    let mut svc = state.service.clone();
+    if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
+        return protocol_error_response(&e, Some(request_id));
+    }
+    let call = catch_handler_panic(Some(request_id.clone()), svc.call(request));
+    let slot = admission.take();
+    let (attached, mut events) = tokio::sync::mpsc::channel(SSE_CHANNEL_CAPACITY);
+    let recorder = state.resumable.open(store, &session, attached);
+    let stream = recorder.id().to_owned();
+    let (outcome_tx, outcome) = tokio::sync::oneshot::channel();
+    let id = request_id.clone();
+    state.calls.spawn(async move {
+        let _slot = slot;
+        let run = async {
+            let outcome = call.await;
+            drop(outlet);
+            outcome
+        };
+        let forward = async {
+            while let Some(msg) = call_rx.recv().await {
+                recorder.emit(msg).await;
+            }
+        };
+        let (result, ()) = tokio::join!(run, forward);
+        let last: Option<JsonRpcMessage> = match &result {
+            Ok(reply) => reply.clone(),
+            Err(e) => Some(turbomcp_core::JsonRpcResponse::error(id, e.to_jsonrpc_error()).into()),
+        };
+        if let Some(last) = last {
+            recorder.emit(last).await;
+        }
+        let _ = outcome_tx.send(result);
+        recorder.finish().await;
+    });
+
+    tokio::select! {
+        biased;
+        first = events.recv() => match first {
+            None => StatusCode::ACCEPTED.into_response(),
+            // Answered with nothing on the way: plain JSON, with the status
+            // the outcome calls for.
+            Some((_, JsonRpcMessage::Response(_))) => match outcome.await {
+                Ok(Ok(Some(reply))) => {
+                    let mut resp = encode_json_response(&state.codec, &reply);
+                    apply_stateless_error_status(&mut resp, &reply, false);
+                    resp
+                }
+                Ok(Err(e)) => protocol_error_response(&e, Some(request_id)),
+                Ok(Ok(None)) | Err(_) => StatusCode::ACCEPTED.into_response(),
+            },
+            Some(first) => resume::resumable_stream(
+                state.codec,
+                stream,
+                true,
+                vec![first],
+                Some(events),
+                state.sse_keepalive,
+            ),
+        },
+        () = tokio::time::sleep(state.sse_upgrade_after) => resume::resumable_stream(
+            state.codec,
+            stream,
+            true,
+            Vec::new(),
+            Some(events),
+            state.sse_keepalive,
+        ),
+    }
+}
+
+/// `GET` with `Last-Event-ID` on a session with an event store: replay the
+/// named stream after that event, then follow it live while its call runs.
+async fn resume_stream<S>(state: &HttpState<S>, session: &str, last_event_id: &str) -> Response {
+    let Some(store) = state.event_store.as_deref() else {
+        unreachable!("only called with an event store");
+    };
+    let Some((stream, after)) = resume::parse_event_id(last_event_id) else {
+        return unknown_event_rejection(last_event_id);
+    };
+    match state.resumable.resume(store, session, stream, after).await {
+        Ok(Some((events, live))) => resume::resumable_stream(
+            state.codec,
+            stream.to_owned(),
+            false,
+            events.into_iter().map(|e| (e.seq, e.message)).collect(),
+            live,
+            state.sse_keepalive,
+        ),
+        Ok(None) => unknown_event_rejection(last_event_id),
+        Err(e) => protocol_error_response(&ProtocolError::Unavailable(e.to_string()), None),
+    }
+}
+
 /// The legacy (`2025-11-25`) server→client SSE stream: `GET` with an
 /// `Mcp-Session-Id` opens the session's notification stream (transports spec
 /// §Listening for Messages). The stream is registered as the session's in this
@@ -935,6 +1063,16 @@ where
             Ok(false) => return session_not_found(None),
             Err(e) => return protocol_error_response(&e, None),
         }
+    }
+    // "Resumption is always via HTTP GET with `Last-Event-ID`." Without an
+    // event store nothing carries an id, so the header can't name anything
+    // and the request is the session's standalone stream as usual.
+    if state.event_store.is_some()
+        && let Some(last) = headers
+            .get(&headers::LAST_EVENT_ID)
+            .and_then(|v| v.to_str().ok())
+    {
+        return resume_stream(&state, sid, last).await;
     }
     let slot = match state
         .stream_budget
@@ -1012,6 +1150,11 @@ where
     match terminator.terminate(sid, subject.as_deref()).await {
         Ok(true) => {
             state.streams.close(sid);
+            if let Some(store) = &state.event_store
+                && let Err(e) = store.forget_session(sid).await
+            {
+                tracing::warn!(error = %e, "could not drop a deleted session's events");
+            }
             StatusCode::NO_CONTENT.into_response()
         }
         // Unknown/already-terminated session: the spec maps this to 404 so the
