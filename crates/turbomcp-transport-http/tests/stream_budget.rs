@@ -257,12 +257,13 @@ async fn shutdown_ends_get_streams() {
 /// A session swept for idleness takes its `GET` stream with it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_expired_session_ends_its_get_stream() {
-    let dispatcher = dispatcher().with_session_idle_timeout(Duration::from_millis(50));
+    // Wide margins: the GET has to land before the session idles out.
+    let dispatcher = dispatcher().with_session_idle_timeout(Duration::from_millis(400));
     let app = router(dispatcher, HttpConfig::new());
     let sid = initialize(&app).await;
     let stream = app.clone().oneshot(get(&sid)).await.unwrap();
     assert_eq!(stream.status(), StatusCode::OK);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(900)).await;
     // Sessions are swept where new ones are minted.
     initialize(&app).await;
     ends(stream.into_body()).await;

@@ -498,7 +498,8 @@ async fn a_passed_request_deadline_answers_a_json_rpc_error() {
 
 // ---- what a disconnect does to the call, per wire -----------------------------
 
-/// Works for 300 ms and records whether it got to the end.
+/// Works for a second and records whether it got to the end. Long enough that
+/// a slow runner still cancels it in time; the waits below outlast it.
 #[derive(Clone, Default)]
 struct Recorded {
     finished: Arc<AtomicBool>,
@@ -527,7 +528,7 @@ impl WithTools for Recorded {
         _ctx: &CallToolContext,
         _params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
         self.finished.store(true, Ordering::SeqCst);
         Ok(neutral::CallToolResult::text("done"))
     }
@@ -580,7 +581,7 @@ async fn a_session_call_survives_its_client_disconnecting() {
     let resp = app.clone().oneshot(legacy_call(&sid)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     drop(resp); // the client goes away mid-call
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(
         server.finished.load(Ordering::SeqCst),
         "the call ran to its end"
@@ -596,7 +597,7 @@ async fn a_stateless_call_stops_when_its_client_disconnects() {
     let resp = app.clone().oneshot(call_request(5)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     drop(resp);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
     assert!(
         !server.finished.load(Ordering::SeqCst),
         "the call was cancelled"
@@ -623,7 +624,7 @@ async fn deleting_a_session_cancels_its_running_calls() {
         app.clone().oneshot(delete).await.unwrap().status(),
         StatusCode::NO_CONTENT
     );
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
     assert!(
         !server.finished.load(Ordering::SeqCst),
         "the call was cancelled"

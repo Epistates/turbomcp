@@ -370,11 +370,13 @@ mod tests {
 
     #[test]
     fn idle_sessions_expire_and_are_reported_once() {
+        // Margins wide enough for a slow CI runner: the fresh session must
+        // not expire before it is checked, the old ones must.
         let store =
-            SessionStore::with_capacity(8).with_idle_timeout(Some(Duration::from_millis(30)));
+            SessionStore::with_capacity(8).with_idle_timeout(Some(Duration::from_millis(500)));
         store.insert("a", state()).unwrap();
         store.insert("b", state()).unwrap();
-        std::thread::sleep(Duration::from_millis(60));
+        std::thread::sleep(Duration::from_millis(800));
         store.insert("c", state()).unwrap();
         assert!(store.get("a").is_none(), "idle past the timeout → gone");
         let mut swept = store.sweep_expired();
@@ -386,11 +388,12 @@ mod tests {
 
     #[test]
     fn use_keeps_a_session_alive() {
-        let store =
-            SessionStore::with_capacity(8).with_idle_timeout(Some(Duration::from_millis(80)));
+        // Each gap is well inside the timeout, and together they are well
+        // past it: only the reads can have kept it alive.
+        let store = SessionStore::with_capacity(8).with_idle_timeout(Some(Duration::from_secs(1)));
         store.insert("a", state()).unwrap();
-        for _ in 0..4 {
-            std::thread::sleep(Duration::from_millis(30));
+        for _ in 0..5 {
+            std::thread::sleep(Duration::from_millis(300));
             assert!(store.get("a").is_some());
         }
     }
