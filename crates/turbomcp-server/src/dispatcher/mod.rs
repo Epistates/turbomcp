@@ -44,7 +44,7 @@ use crate::extension::{Extension, ExtensionRequest};
 use crate::inflight::InFlightRegistry;
 use crate::mrtr::{PendingRequests, StateSigner};
 use crate::router::MethodRouter;
-use crate::session::{SessionBackend, SessionStore};
+use crate::session::{SessionBackend, SessionError, SessionStore};
 use crate::subscriptions::{ServerNotifier, SubscriptionRegistry};
 use crate::tasks::{TaskBackend, TaskStore};
 use crate::traits::McpServerCore;
@@ -243,7 +243,14 @@ impl Shared {
     /// natural, cheap point to bound stale-session growth without a background
     /// task. A store with no idle timeout sweeps nothing.
     async fn sweep_idle_sessions(&self) {
-        for id in self.sessions.sweep_expired().await {
+        let expired = match self.sessions.sweep_expired().await {
+            Ok(expired) => expired,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not sweep expired sessions");
+                return;
+            }
+        };
+        for id in expired {
             self.subs.legacy_remove(&id);
             if let Some(tasks) = &self.tasks {
                 tasks.end_session(&id).await;
@@ -253,16 +260,17 @@ impl Shared {
 
     /// Terminate one session: drop its state and its legacy subscription
     /// routes. Returns whether the session existed. Backs explicit `DELETE`
-    /// session termination.
-    async fn terminate_session(&self, id: &str) -> bool {
-        let existed = self.sessions.remove(id).await;
+    /// session termination. A store that fails to delete it leaves its routes
+    /// in place, since the session may well still exist.
+    async fn terminate_session(&self, id: &str) -> Result<bool, SessionError> {
+        let existed = self.sessions.remove(id).await?;
         self.subs.legacy_remove(id);
         // Nothing can ask about the session's tasks any more, so they are
         // cancelled and released rather than holding capacity until their TTL.
         if let Some(tasks) = &self.tasks {
             tasks.end_session(id).await;
         }
-        existed
+        Ok(existed)
     }
 }
 
@@ -288,11 +296,12 @@ impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
         owner: Option<&'a str>,
     ) -> turbomcp_service::TerminateFuture<'a> {
         Box::pin(async move {
-            self.shared
+            Ok(self
+                .shared
                 .sessions
                 .get(session_id)
-                .await
-                .is_some_and(|state| state.owner.as_deref() == owner)
+                .await?
+                .is_some_and(|state| state.owner.as_deref() == owner))
         })
     }
     fn terminate<'a>(
@@ -301,21 +310,25 @@ impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
         owner: Option<&'a str>,
     ) -> turbomcp_service::TerminateFuture<'a> {
         Box::pin(async move {
-            if !self.owns(session_id, owner).await {
-                return false;
+            if !self.owns(session_id, owner).await? {
+                return Ok(false);
             }
-            self.shared.terminate_session(session_id).await
+            Ok(self.shared.terminate_session(session_id).await?)
         })
     }
     fn negotiated_version<'a>(
         &'a self,
         session_id: &'a str,
     ) -> turbomcp_service::SessionVersionFuture<'a> {
+        // Best effort: a store that can't answer leaves the header as the
+        // signal, and the request's own session lookup reports the outage.
         Box::pin(async move {
             self.shared
                 .sessions
                 .get(session_id)
                 .await
+                .ok()
+                .flatten()
                 .map(|state| state.version.clone())
         })
     }
@@ -337,7 +350,9 @@ impl SessionEnd {
     pub(crate) fn end(self, id: String) {
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                self.shared.terminate_session(&id).await;
+                if let Err(e) = self.shared.terminate_session(&id).await {
+                    tracing::warn!(error = %e, "could not end a closed connection's session");
+                }
             });
         }
     }
@@ -545,9 +560,9 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         self
     }
 
-    /// Evict a legacy session not seen within `timeout` (and tear down its
-    /// subscription routes). Without this, sessions are bounded only by the
-    /// store's LRU capacity. Call at build time, before serving.
+    /// Expire a legacy session not used within `timeout` (and tear down its
+    /// subscription routes and `GET` stream), instead of the bundled store's
+    /// default of an hour. Call at build time, before serving.
     #[must_use]
     pub fn with_session_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.shared.sessions = Arc::new(
@@ -559,7 +574,9 @@ impl<S: McpServerCore> VersionDispatcher<S> {
 
     /// Store legacy session state in `backend` instead of the bundled
     /// in-memory [`SessionStore`] — the seam for external session storage
-    /// (e.g. Redis), so multiple instances can serve the same session.
+    /// (e.g. Redis): sessions outlive a restart, and whichever replica a
+    /// session is routed to can find it (the legacy wire still needs sticky
+    /// routing; see [`SessionBackend`]).
     /// Replaces any prior store configuration
     /// ([`with_session_idle_timeout`](Self::with_session_idle_timeout) applies
     /// only to the bundled store).
@@ -892,7 +909,7 @@ async fn handle_request<S: McpServerCore>(
                 &req,
                 ext,
             )
-            .await;
+            .await?;
             // A successfully initialized session gets a delivery route, so
             // list_changed notifications can reach it from the start.
             if matches!(&reply, JsonRpcMessage::Response(r) if r.error.is_none())
@@ -1120,7 +1137,7 @@ async fn handle_request<S: McpServerCore>(
                     };
                     // `legacy_context` proved the session id is present.
                     let sid = session_id(ext).unwrap_or_default();
-                    sessions.set_log_level(sid, level).await;
+                    sessions.set_log_level(sid, level).await?;
                     Ok(JsonRpcResponse::success(id, serde_json::json!({})).into())
                 }
                 VersionRoute::Modern => Ok(error_response(id, &McpError::method_not_found(method))),

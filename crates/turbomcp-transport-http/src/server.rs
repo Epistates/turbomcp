@@ -546,10 +546,12 @@ where
         ext.insert(SessionId::new(sid.as_str()));
         minted_session = Some(sid);
     } else if let Some(sid) = session_header {
-        if let Some(terminator) = &state.session_terminator
-            && !terminator.owns(&sid, subject.as_deref()).await
-        {
-            return session_not_found(request_id(&msg).as_ref());
+        if let Some(terminator) = &state.session_terminator {
+            match terminator.owns(&sid, subject.as_deref()).await {
+                Ok(true) => {}
+                Ok(false) => return session_not_found(request_id(&msg).as_ref()),
+                Err(e) => return protocol_error_response(&e, request_id(&msg)),
+            }
         }
         if !message_has_version(&msg) {
             // What this session actually negotiated, in preference order:
@@ -909,10 +911,12 @@ where
     if state.authenticator.is_some() && state.session_terminator.is_none() {
         return sessions_need_an_owner();
     }
-    if let Some(terminator) = &state.session_terminator
-        && !terminator.owns(sid, subject.as_deref()).await
-    {
-        return session_not_found(None);
+    if let Some(terminator) = &state.session_terminator {
+        match terminator.owns(sid, subject.as_deref()).await {
+            Ok(true) => {}
+            Ok(false) => return session_not_found(None),
+            Err(e) => return protocol_error_response(&e, None),
+        }
     }
     let slot = match state
         .stream_budget
@@ -987,13 +991,15 @@ where
     else {
         return session_required_rejection(None);
     };
-    if terminator.terminate(sid, subject.as_deref()).await {
-        state.streams.close(sid);
-        StatusCode::NO_CONTENT.into_response()
-    } else {
+    match terminator.terminate(sid, subject.as_deref()).await {
+        Ok(true) => {
+            state.streams.close(sid);
+            StatusCode::NO_CONTENT.into_response()
+        }
         // Unknown/already-terminated session: the spec maps this to 404 so the
         // client knows it's gone.
-        session_not_found(None)
+        Ok(false) => session_not_found(None),
+        Err(e) => protocol_error_response(&e, None),
     }
 }
 

@@ -160,7 +160,7 @@ struct CountingTerminator(AtomicUsize);
 
 impl SessionTerminator for CountingTerminator {
     fn owns<'a>(&'a self, _sid: &'a str, _owner: Option<&'a str>) -> TerminateFuture<'a> {
-        Box::pin(async { true })
+        Box::pin(async { Ok(true) })
     }
 
     fn terminate<'a>(
@@ -169,7 +169,7 @@ impl SessionTerminator for CountingTerminator {
         _owner: Option<&'a str>,
     ) -> TerminateFuture<'a> {
         self.0.fetch_add(1, SeqCst);
-        Box::pin(async { true })
+        Box::pin(async { Ok(true) })
     }
 }
 

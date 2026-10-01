@@ -223,3 +223,39 @@ async fn a_refused_origin_answers_a_json_rpc_body() {
     assert!(v["error"]["code"].is_i64());
     assert!(v["id"].is_null());
 }
+
+/// A full session table refuses a newcomer with `503` + `Retry-After`, and
+/// the session it already holds keeps working. It used to evict the least
+/// recently used session instead, so an anonymous `initialize` flood pushed
+/// out every real one.
+#[tokio::test]
+async fn a_full_session_table_refuses_initialize_and_keeps_its_sessions() {
+    let dispatcher = VersionDispatcher::new(Plain, MethodRouter::new().with_tools())
+        .with_session_backend(Arc::new(turbomcp_server::SessionStore::with_capacity(1)));
+    let terminator = dispatcher.session_terminator();
+    let app = router(
+        dispatcher,
+        HttpConfig::new().with_session_terminator(Arc::new(terminator)),
+    );
+    let sid = legacy_session(&app).await;
+
+    let init = json!({
+        "jsonrpc": "2.0", "id": 0, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "flood", "version": "1" },
+        }
+    });
+    let refused = app.clone().oneshot(post(init, &[])).await.unwrap();
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(refused.headers().contains_key(header::RETRY_AFTER));
+    assert!(refused.headers().get("mcp-session-id").is_none());
+
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} });
+    let resp = app
+        .oneshot(post(list, &[("mcp-session-id", &sid)]))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}

@@ -16,7 +16,7 @@ use turbomcp_core::{
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, IntoServerBuilder, ListToolsContext, McpServerCore, MethodRouter,
-    SessionBackend, SessionState, SessionStore, WithTools,
+    SessionBackend, SessionError, SessionState, SessionStore, WithTools,
 };
 use turbomcp_service::{CancellationToken, Pipe, ServeConfig, Transport};
 
@@ -186,21 +186,21 @@ async fn a_connections_session_ends_with_the_connection() {
 
     #[async_trait]
     impl SessionBackend for Counting {
-        async fn insert(&self, id: &str, state: SessionState) {
+        async fn insert(&self, id: &str, state: SessionState) -> Result<(), SessionError> {
             self.inserts.fetch_add(1, Ordering::SeqCst);
-            SessionBackend::insert(&self.inner, id, state).await;
+            SessionBackend::insert(&self.inner, id, state).await
         }
-        async fn get(&self, id: &str) -> Option<SessionState> {
+        async fn get(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
             SessionBackend::get(&self.inner, id).await
         }
-        async fn set_log_level(&self, id: &str, level: LogLevel) -> bool {
+        async fn set_log_level(&self, id: &str, level: LogLevel) -> Result<bool, SessionError> {
             SessionBackend::set_log_level(&self.inner, id, level).await
         }
-        async fn remove(&self, id: &str) -> bool {
+        async fn remove(&self, id: &str) -> Result<bool, SessionError> {
             self.removes.fetch_add(1, Ordering::SeqCst);
             SessionBackend::remove(&self.inner, id).await
         }
-        async fn sweep_expired(&self) -> Vec<String> {
+        async fn sweep_expired(&self) -> Result<Vec<String>, SessionError> {
             SessionBackend::sweep_expired(&self.inner).await
         }
     }

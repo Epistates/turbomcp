@@ -12,9 +12,14 @@ use std::pin::Pin;
 
 use turbomcp_core::ProtocolVersion;
 
-/// Boxed future returned by [`SessionTerminator::terminate`] (keeps the trait
-/// dyn-compatible).
-pub type TerminateFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+use crate::ProtocolError;
+
+/// Boxed future returned by [`SessionTerminator::terminate`] and
+/// [`owns`](SessionTerminator::owns) (keeps the trait dyn-compatible). `Err` is
+/// the session store failing, which the transport answers `503`, not as the
+/// session being gone.
+pub type TerminateFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<bool, ProtocolError>> + Send + 'a>>;
 
 /// Boxed future returned by [`SessionTerminator::negotiated_version`].
 pub type SessionVersionFuture<'a> =

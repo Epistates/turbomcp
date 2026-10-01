@@ -3,8 +3,9 @@
 //! proving external session/task storage (e.g. Redis) can slot in without
 //! touching the dispatcher.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -16,43 +17,69 @@ use turbomcp_core::{
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, LegacySessionAdapter, ListToolsContext, McpServerCore, ServerBuilder,
-    SessionBackend, SessionState, SessionStore, TaskBackend, TaskError, TaskOutcome, TaskSnapshot,
+    SessionBackend, SessionError, SessionState, TaskBackend, TaskError, TaskOutcome, TaskSnapshot,
     TaskStore, VersionDispatcher, WithTools,
 };
 
-/// A [`SessionBackend`] that wraps the bundled store and counts traffic —
-/// standing in for an external (Redis-like) backend.
+/// A [`SessionBackend`] that keeps sessions as bytes, the way a Redis or SQL
+/// backend does, so it has to rebuild [`SessionState`] on every read. It
+/// counts traffic, and can be switched off to stand in for an outage.
 #[derive(Default)]
-struct CountingSessions {
-    inner: SessionStore,
+struct ByteSessions {
+    rows: Mutex<HashMap<String, Vec<u8>>>,
+    down: AtomicBool,
     inserts: AtomicUsize,
     gets: AtomicUsize,
     removes: AtomicUsize,
 }
 
+impl ByteSessions {
+    fn up(&self) -> Result<(), SessionError> {
+        if self.down.load(Ordering::SeqCst) {
+            Err(SessionError::Unavailable("connection refused".into()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[async_trait]
-impl SessionBackend for CountingSessions {
-    async fn insert(&self, id: &str, state: SessionState) {
+impl SessionBackend for ByteSessions {
+    async fn insert(&self, id: &str, state: SessionState) -> Result<(), SessionError> {
+        self.up()?;
         self.inserts.fetch_add(1, Ordering::SeqCst);
-        SessionBackend::insert(&self.inner, id, state).await;
+        let bytes = serde_json::to_vec(&state).expect("session state serializes");
+        self.rows.lock().unwrap().insert(id.to_owned(), bytes);
+        Ok(())
     }
 
-    async fn get(&self, id: &str) -> Option<SessionState> {
+    async fn get(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
+        self.up()?;
         self.gets.fetch_add(1, Ordering::SeqCst);
-        SessionBackend::get(&self.inner, id).await
+        Ok(self.rows.lock().unwrap().get(id).map(|bytes| {
+            Arc::new(serde_json::from_slice(bytes).expect("session state deserializes"))
+        }))
     }
 
-    async fn set_log_level(&self, id: &str, level: LogLevel) -> bool {
-        SessionBackend::set_log_level(&self.inner, id, level).await
+    async fn set_log_level(&self, id: &str, level: LogLevel) -> Result<bool, SessionError> {
+        self.up()?;
+        let mut rows = self.rows.lock().unwrap();
+        let Some(bytes) = rows.get_mut(id) else {
+            return Ok(false);
+        };
+        let state: SessionState = serde_json::from_slice(bytes).unwrap();
+        *bytes = serde_json::to_vec(&state.with_log_level(Some(level))).unwrap();
+        Ok(true)
     }
 
-    async fn remove(&self, id: &str) -> bool {
+    async fn remove(&self, id: &str) -> Result<bool, SessionError> {
+        self.up()?;
         self.removes.fetch_add(1, Ordering::SeqCst);
-        SessionBackend::remove(&self.inner, id).await
+        Ok(self.rows.lock().unwrap().remove(id).is_some())
     }
 
-    async fn sweep_expired(&self) -> Vec<String> {
-        SessionBackend::sweep_expired(&self.inner).await
+    async fn sweep_expired(&self) -> Result<Vec<String>, SessionError> {
+        Ok(Vec::new())
     }
 }
 
@@ -176,7 +203,7 @@ async fn initialize(svc: &mut Svc) -> Value {
 
 #[tokio::test]
 async fn custom_session_backend_carries_the_legacy_path() {
-    let sessions = Arc::new(CountingSessions::default());
+    let sessions = Arc::new(ByteSessions::default());
     let mut svc = LegacySessionAdapter::new(
         ServerBuilder::new(Echo)
             .with_tools()
@@ -242,7 +269,7 @@ async fn custom_task_backend_carries_core_tasks() {
 
 #[tokio::test]
 async fn session_termination_goes_through_the_custom_backend() {
-    let sessions = Arc::new(CountingSessions::default());
+    let sessions = Arc::new(ByteSessions::default());
     let dispatcher = ServerBuilder::new(Echo)
         .with_tools()
         .with_session_backend(Arc::clone(&sessions) as Arc<dyn SessionBackend>)
@@ -254,7 +281,7 @@ async fn session_termination_goes_through_the_custom_backend() {
     // The adapter minted one session; terminate it through the seam the HTTP
     // DELETE handler uses.
     use turbomcp_service::SessionTerminator;
-    assert!(!terminator.terminate("no-such-session", None).await);
+    assert!(!terminator.terminate("no-such-session", None).await.unwrap());
     assert_eq!(
         sessions.removes.load(Ordering::SeqCst),
         0,
@@ -298,12 +325,72 @@ async fn sessions_bind_issuer_and_subject_and_keep_anonymous_separate() {
     }
     let owner = alice.principal_key().unwrap();
     let other = identity("issuer-b").principal_key().unwrap();
-    assert!(terminator.owns("owned", Some(&owner)).await);
-    assert!(!terminator.owns("owned", Some(&other)).await);
-    assert!(!terminator.owns("owned", None).await);
-    assert!(!terminator.owns("anonymous", Some(&owner)).await);
-    assert!(terminator.owns("anonymous", None).await);
-    assert!(!terminator.terminate("owned", Some(&other)).await);
-    assert!(terminator.owns("owned", Some(&owner)).await);
-    assert!(terminator.terminate("owned", Some(&owner)).await);
+    assert!(terminator.owns("owned", Some(&owner)).await.unwrap());
+    assert!(!terminator.owns("owned", Some(&other)).await.unwrap());
+    assert!(!terminator.owns("owned", None).await.unwrap());
+    assert!(!terminator.owns("anonymous", Some(&owner)).await.unwrap());
+    assert!(terminator.owns("anonymous", None).await.unwrap());
+    assert!(!terminator.terminate("owned", Some(&other)).await.unwrap());
+    assert!(terminator.owns("owned", Some(&owner)).await.unwrap());
+    assert!(terminator.terminate("owned", Some(&owner)).await.unwrap());
+}
+
+/// A store outage is the store failing, not the session being gone: the
+/// request fails as `Unavailable` (`503` over HTTP), not `UnknownSession`
+/// (`404`), which would send every client to re-`initialize` at once. And a
+/// handshake whose session can't be stored fails rather than handing out an
+/// id every later request would find unknown.
+#[tokio::test]
+async fn a_session_store_outage_is_unavailable_not_unknown() {
+    let sessions = Arc::new(ByteSessions::default());
+    let mut svc = LegacySessionAdapter::new(
+        ServerBuilder::new(Echo)
+            .with_tools()
+            .with_session_backend(Arc::clone(&sessions) as Arc<dyn SessionBackend>)
+            .build(),
+    );
+    let _ = initialize(&mut svc).await;
+    sessions.down.store(true, Ordering::SeqCst);
+
+    let call: JsonRpcMessage =
+        JsonRpcRequest::new(1, "tools/call", Some(json!({ "name": "echo" }))).into();
+    let err = svc
+        .ready()
+        .await
+        .unwrap()
+        .call(McpRequest::new(call))
+        .await
+        .expect_err("the store is down");
+    assert!(
+        matches!(err, turbomcp_service::ProtocolError::Unavailable(_)),
+        "{err:?}"
+    );
+
+    let mut fresh = LegacySessionAdapter::new(
+        ServerBuilder::new(Echo)
+            .with_tools()
+            .with_session_backend(Arc::clone(&sessions) as Arc<dyn SessionBackend>)
+            .build(),
+    );
+    let init: JsonRpcMessage = JsonRpcRequest::new(
+        0,
+        "initialize",
+        Some(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "t", "version": "1" },
+        })),
+    )
+    .into();
+    let err = fresh
+        .ready()
+        .await
+        .unwrap()
+        .call(McpRequest::new(init))
+        .await
+        .expect_err("the session couldn't be stored");
+    assert!(
+        matches!(err, turbomcp_service::ProtocolError::Unavailable(_)),
+        "{err:?}"
+    );
 }

@@ -42,17 +42,17 @@ pub(super) async fn legacy_context(
         };
         return Ok(Err(JsonRpcResponse::error(req.id.clone(), err).into()));
     };
-    let Some(state) = sessions.get(sid).await else {
+    let Some(state) = sessions.get(sid).await? else {
         return Err(ProtocolError::UnknownSession(sid.to_owned()));
     };
     let identity = ext.get::<Identity>().cloned().unwrap_or_default();
     if state.owner != identity.principal_key() {
         return Err(ProtocolError::UnknownSession(sid.to_owned()));
     }
-    let mut ctx = RequestContext::new(state.version)
-        .with_client_info(state.client_info)
+    let mut ctx = RequestContext::new(state.version.clone())
+        .with_client_info(state.client_info.clone())
         .with_identity(identity);
-    ctx.client_capabilities = Some(state.client_capabilities);
+    ctx.client_capabilities = Some(state.client_capabilities.clone());
     ctx.log_level = state.log_level;
     ctx.extensions = ext.clone();
     if let Some(m) = req

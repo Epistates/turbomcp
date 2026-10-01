@@ -30,6 +30,13 @@ pub enum ProtocolError {
     /// The server is draining and will not accept new work.
     #[error("server is shutting down")]
     ServerShuttingDown,
+    /// Something the server depends on is down or full (a session backend
+    /// outage, the session table at capacity). Temporary: the HTTP transport
+    /// answers `503` + `Retry-After`. Not [`UnknownSession`](Self::UnknownSession),
+    /// whose `404` sends every client to re-`initialize` at once, against a
+    /// store that is already struggling.
+    #[error("service unavailable: {0}")]
+    Unavailable(String),
     /// An unexpected internal failure (`-32603`).
     #[error("internal error: {0}")]
     Internal(String),
@@ -43,7 +50,9 @@ impl ProtocolError {
             Self::Parse(_) => turbomcp_core::codes::PARSE_ERROR,
             Self::UnknownSession(_) => turbomcp_core::codes::NO_ACTIVE_SESSION,
             // `-32000` is the implementation-defined floor.
-            Self::Transport(_) | Self::ServerShuttingDown => turbomcp_core::codes::SERVER_ERROR,
+            Self::Transport(_) | Self::ServerShuttingDown | Self::Unavailable(_) => {
+                turbomcp_core::codes::SERVER_ERROR
+            }
             Self::Internal(_) => turbomcp_core::codes::INTERNAL_ERROR,
         }
     }

@@ -123,10 +123,12 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
-    /// Evict a legacy (`2025-11-25`) session not seen within `timeout`, tearing
-    /// down its subscription routes (see
-    /// [`VersionDispatcher::with_session_idle_timeout`]). Without it, sessions
-    /// are bounded only by the store's LRU capacity.
+    /// Expire a legacy (`2025-11-25`) session not used within `timeout`
+    /// (default [`SessionStore::DEFAULT_IDLE_TIMEOUT`], an hour), tearing down
+    /// its subscription routes and `GET` stream (see
+    /// [`VersionDispatcher::with_session_idle_timeout`]).
+    ///
+    /// [`SessionStore::DEFAULT_IDLE_TIMEOUT`]: crate::SessionStore::DEFAULT_IDLE_TIMEOUT
     #[must_use]
     pub fn session_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.session_idle_timeout = Some(timeout);
@@ -155,8 +157,10 @@ impl<S: McpServerCore> ServerBuilder<S> {
 
     /// Store legacy (`2025-11-25`) session state in a custom
     /// [`SessionBackend`] instead of the bundled in-memory store — the seam
-    /// for external session storage (e.g. Redis), so multiple instances can
-    /// serve the same session. When set,
+    /// for external session storage (e.g. Redis), so sessions outlive a
+    /// restart and any replica a session is routed to can find it. The
+    /// legacy wire still needs sticky routing on `Mcp-Session-Id` (see
+    /// [`SessionBackend`]). When set,
     /// [`session_idle_timeout`](Self::session_idle_timeout) is ignored
     /// (eviction policy belongs to the backend). See
     /// [`VersionDispatcher::with_session_backend`].

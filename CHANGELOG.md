@@ -53,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- An anonymous `initialize` flood can no longer push live sessions out. The
+  session table evicted the least recently used session to make room, so
+  4,096 `initialize` POSTs (seconds of work, unauthenticated by default)
+  evicted every real client, and each of their re-`initialize`s evicted
+  more. A full table now refuses a new session with `503` + `Retry-After`;
+  idle sessions expire after an hour (`SessionStore::DEFAULT_IDLE_TIMEOUT`)
+  and make room on their own. Capacity is 16,384 by default.
 - Under a visibility policy, `resources/read` of a URI no listed resource
   or template matches is refused, as a hidden one is. It went to the
   handler, and for resources the policy is the only gate: a handler that
@@ -329,6 +336,23 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** the session seam can be implemented outside the crate and
+  can fail.
+  - `SessionState` serializes and has `SessionState::new` plus
+    `with_owner`/`with_log_level`; a Redis-style backend couldn't build
+    one in `get` before.
+  - `SessionBackend` methods return `Result<_, SessionError>`, and `get`
+    hands back `Arc<SessionState>` (it was deep-cloned three times per
+    legacy HTTP request). An outage is `SessionError::Unavailable`,
+    answered `503` (new `ProtocolError::Unavailable`); reporting it as "no
+    such session" sent every client to re-`initialize` at once.
+  - `SessionTerminator::owns`/`terminate` return `Result<bool,
+    ProtocolError>` for the same reason.
+  - `SessionStore` is built on `moka` (lock-free reads; every legacy request
+    took the table's write lock), sessions that expire are torn down
+    (routes, `GET` stream, tasks), and the docs no longer promise that a
+    shared store alone lets replicas share a `2025-11-25` session: that
+    wire also needs sticky routing.
 - **Breaking:** dependencies are current and a build carries one copy of
   each where we choose. A stdio-only build compiles 128 crates (was 177),
   an HTTP server 158 (was 211).

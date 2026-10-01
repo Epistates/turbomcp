@@ -16,6 +16,8 @@ use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
 use turbomcp_protocol::v2026_07_28::types as v0728;
 
+use turbomcp_service::ProtocolError;
+
 use crate::extension::Extension;
 use crate::router::MethodRouter;
 use crate::session::{SessionBackend, SessionState};
@@ -35,25 +37,32 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     tasks_enabled: bool,
     req: &JsonRpcRequest,
     ext: &Extensions,
-) -> JsonRpcMessage {
+) -> Result<JsonRpcMessage, ProtocolError> {
     let id = req.id.clone();
     let Some(params) = req.params.as_ref() else {
-        return error_response(id, &McpError::invalid_params("initialize requires params"));
+        return Ok(error_response(
+            id,
+            &McpError::invalid_params("initialize requires params"),
+        ));
     };
     let params: legacy::InitializeRequestParams = match serde_json::from_value(params.clone()) {
         Ok(p) => p,
         Err(e) => {
-            return error_response(
+            return Ok(error_response(
                 id,
                 &McpError::invalid_params(format!("invalid initialize params: {e}")),
-            );
+            ));
         }
     };
 
     // A server serving only stateless revisions has no legal `initialize`
     // answer; refuse naming what it does serve rather than inventing one.
     let Some(negotiated) = negotiate_initialize_version(&params.protocol_version, supported) else {
-        return super::unsupported_version(id, Some(params.protocol_version.clone()), supported);
+        return Ok(super::unsupported_version(
+            id,
+            Some(params.protocol_version.clone()),
+            supported,
+        ));
     };
 
     if let Some(sid) = session_id(ext) {
@@ -66,18 +75,20 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
             .and_then(|p| p.get("capabilities"))
             .cloned()
             .unwrap_or(Value::Null);
+        // A store that can't take the session (down, or full) fails the
+        // handshake with `503`: answering success would hand the client a
+        // session id that every later request finds unknown.
         sessions
             .insert(
                 sid,
-                SessionState {
-                    owner: ext.get::<Identity>().and_then(Identity::principal_key),
-                    version: negotiated.clone(),
-                    client_info: from_legacy_impl(params.client_info),
+                SessionState::new(
+                    negotiated.clone(),
+                    from_legacy_impl(params.client_info),
                     client_capabilities,
-                    log_level: None,
-                },
+                )
+                .with_owner(ext.get::<Identity>().and_then(Identity::principal_key)),
             )
-            .await;
+            .await?;
     }
 
     let result = legacy::InitializeResult {
@@ -95,10 +106,10 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     } else {
         serde_json::to_value(&result)
     };
-    match serialized {
+    Ok(match serialized {
         Ok(value) => JsonRpcResponse::success(id, value).into(),
         Err(e) => error_response(id, &McpError::internal(format!("serialize result: {e}"))),
-    }
+    })
 }
 
 /// Pick the version to answer `initialize` with.

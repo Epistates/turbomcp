@@ -256,9 +256,9 @@ pub(super) fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>
         // Spec §Session Management: an expired/unknown session answers 404 so
         // the client starts over with a fresh initialize.
         ProtocolError::UnknownSession(_) => StatusCode::NOT_FOUND,
-        ProtocolError::Transport(_) | ProtocolError::ServerShuttingDown => {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
+        ProtocolError::Transport(_)
+        | ProtocolError::ServerShuttingDown
+        | ProtocolError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let error = err.to_jsonrpc_error();
@@ -266,5 +266,11 @@ pub(super) fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>
         Some(id) => JsonRpcResponse::error(id, error),
         None => JsonRpcResponse::error_without_id(error),
     };
-    (status, Json(body)).into_response()
+    let mut response = (status, Json(body)).into_response();
+    if matches!(err, ProtocolError::Unavailable(_)) {
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+    }
+    response
 }

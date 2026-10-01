@@ -63,7 +63,7 @@ pub use response::{
 };
 pub use router::MethodRouter;
 pub use runtime::Server;
-pub use session::{SessionBackend, SessionState, SessionStore};
+pub use session::{SessionBackend, SessionError, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
 pub use tasks::{TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStatus, TaskStore};
 pub use traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
