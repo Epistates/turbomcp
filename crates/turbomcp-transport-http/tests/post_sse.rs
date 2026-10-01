@@ -495,3 +495,137 @@ async fn a_passed_request_deadline_answers_a_json_rpc_error() {
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(v["error"]["code"].is_i64());
 }
+
+// ---- what a disconnect does to the call, per wire -----------------------------
+
+/// Works for 300 ms and records whether it got to the end.
+#[derive(Clone, Default)]
+struct Recorded {
+    finished: Arc<AtomicBool>,
+}
+
+impl McpServerCore for Recorded {
+    fn server_info(&self) -> Implementation {
+        Implementation::new("recorded", "0.1.0")
+    }
+}
+
+impl WithTools for Recorded {
+    async fn list_tools(
+        &self,
+        _ctx: &ListToolsContext,
+        _params: neutral::ListParams,
+    ) -> McpResult<neutral::ListToolsResult> {
+        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            "echo",
+            serde_json::json!({"type":"object"}),
+        )]))
+    }
+
+    async fn call_tool(
+        &self,
+        _ctx: &CallToolContext,
+        _params: neutral::CallToolParams,
+    ) -> McpResult<neutral::CallToolResult> {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        self.finished.store(true, Ordering::SeqCst);
+        Ok(neutral::CallToolResult::text("done"))
+    }
+}
+
+fn recorded_app(server: Recorded) -> axum::Router {
+    let dispatcher = VersionDispatcher::new(server, MethodRouter::new().with_tools());
+    let terminator = dispatcher.session_terminator();
+    router(
+        dispatcher,
+        HttpConfig::new()
+            .sse_upgrade_after(Duration::from_millis(20))
+            .with_session_terminator(Arc::new(terminator)),
+    )
+}
+
+async fn open_session(app: &axum::Router) -> String {
+    let resp = app.clone().oneshot(legacy_initialize()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    resp.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn legacy_call(session: &str) -> Request<Body> {
+    let body = json!({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": { "name": "echo", "arguments": {} }
+    });
+    Request::builder()
+        .method("POST")
+        .header("accept", "application/json, text/event-stream")
+        .uri("/mcp")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("mcp-session-id", session)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// "Disconnection SHOULD NOT be interpreted as the client cancelling its
+/// request" (2025-11-25). A dropped connection used to abort the tool halfway,
+/// side effects and all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_call_survives_its_client_disconnecting() {
+    let server = Recorded::default();
+    let app = recorded_app(server.clone());
+    let sid = open_session(&app).await;
+    let resp = app.clone().oneshot(legacy_call(&sid)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    drop(resp); // the client goes away mid-call
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        server.finished.load(Ordering::SeqCst),
+        "the call ran to its end"
+    );
+}
+
+/// 2026-07-28 reverses it: "the server MUST treat a client disconnect as
+/// cancellation of that request".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stateless_call_stops_when_its_client_disconnects() {
+    let server = Recorded::default();
+    let app = recorded_app(server.clone());
+    let resp = app.clone().oneshot(call_request(5)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    drop(resp);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        !server.finished.load(Ordering::SeqCst),
+        "the call was cancelled"
+    );
+}
+
+/// A session that ends takes its running calls with it: nobody is left to
+/// answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deleting_a_session_cancels_its_running_calls() {
+    let server = Recorded::default();
+    let app = recorded_app(server.clone());
+    let sid = open_session(&app).await;
+    let resp = app.clone().oneshot(legacy_call(&sid)).await.unwrap();
+    drop(resp);
+    let delete = Request::builder()
+        .method("DELETE")
+        .uri("/mcp")
+        .header("mcp-session-id", &sid)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(delete).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        !server.finished.load(Ordering::SeqCst),
+        "the call was cancelled"
+    );
+}

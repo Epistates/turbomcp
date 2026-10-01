@@ -59,6 +59,22 @@ impl InFlightRegistry {
         }
     }
 
+    /// Fire every token registered under `scope`: its session ended, and a
+    /// call of a session that no longer exists has nobody to answer. On HTTP
+    /// such a call may outlive its response (a disconnect doesn't cancel on
+    /// the session wires), so this is what ends it.
+    pub(crate) fn cancel_scope(&self, scope: &str) -> usize {
+        let map = self.map.lock().expect("inflight lock poisoned");
+        let mut fired = 0;
+        for ((owner, _), token) in map.iter() {
+            if owner == scope {
+                token.cancel();
+                fired += 1;
+            }
+        }
+        fired
+    }
+
     /// Fire the token for `(connection, id)` if it is still in flight.
     /// Unknown ids are ignored per spec ("fire and forget").
     pub(crate) fn cancel(&self, connection: &str, id: &RequestId) -> bool {

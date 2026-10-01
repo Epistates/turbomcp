@@ -42,8 +42,12 @@
 //!   request yields a long-lived `200 text/event-stream` instead: the
 //!   acknowledged notification first, then the opted-in change notifications.
 //!   Every SSE response carries keep-alive comments (default 15s) and
-//!   `X-Accel-Buffering: no` so proxies don't buffer. Closing a stream is the
-//!   cancellation signal for the work it carries.
+//!   `X-Accel-Buffering: no` so proxies don't buffer. On `2026-07-28`,
+//!   closing a request's stream cancels its call; on a `2025-06-18` /
+//!   `2025-11-25` session it doesn't ("Disconnection SHOULD NOT be
+//!   interpreted as the client cancelling its request"): the call runs to its
+//!   end unless `notifications/cancelled`, the session's end or shutdown stops
+//!   it.
 //! - **`GET {path}`** — with an `Mcp-Session-Id` header: the legacy
 //!   (`2025-11-25`) server→client SSE stream for that session (list_changed,
 //!   resources/updated). Without one, or on an endpoint that serves only

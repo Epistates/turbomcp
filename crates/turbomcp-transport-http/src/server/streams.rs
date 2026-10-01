@@ -33,6 +33,12 @@ impl Admission {
     pub(super) fn release(&self) {
         self.0.lock().expect("admission slot poisoned").take();
     }
+
+    /// Take the request slot to hold elsewhere: a call that runs on a task of
+    /// its own keeps it until the call ends, not until the response does.
+    pub(super) fn take(&self) -> Option<OwnedSemaphorePermit> {
+        self.0.lock().expect("admission slot poisoned").take()
+    }
 }
 
 /// How many streams each caller has open.

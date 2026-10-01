@@ -132,6 +132,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On a `2025-06-18`/`2025-11-25` HTTP session, a client disconnect no longer
+  cancels the call. Those revisions say it SHOULD NOT; a Wi-Fi handoff or a
+  proxy's idle cut aborted a side-effecting tool halfway. The call now runs
+  on its own task (still holding its request slot) and is stopped by
+  `notifications/cancelled`, by its session being deleted or expiring, or by
+  shutdown, which waits for such calls within `shutdown_timeout`. On
+  `2026-07-28` a disconnect still cancels, as that revision requires.
 - A `subscriptions/listen` subscription no longer misses a notification
   published just after its acknowledgement. The server queued the ack and
   only then recorded the subscription, so an event in between (for example

@@ -1,9 +1,6 @@
 //! The SSE response plumbing: per-request streams, listen and `GET` streams.
 
-use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
 use axum::http::{HeaderName, HeaderValue};
@@ -53,74 +50,49 @@ impl Outlet {
     }
 }
 
-/// State for an upgraded per-request SSE response: keep streaming channel
-/// messages while driving the in-flight call; when the call completes, append
-/// its final response and end the stream.
-pub(super) enum PostStream<F> {
-    /// The request is still in flight.
-    Run {
-        rx: tokio::sync::mpsc::Receiver<JsonRpcMessage>,
-        call: Pin<Box<F>>,
-        id: RequestId,
-        registration: Outlet,
-    },
-    /// The call finished; flush the remaining events and close.
-    Tail(VecDeque<JsonRpcMessage>),
+/// Aborts a spawned call when dropped. The response stream of a call on the
+/// stateless wire carries one, so a client disconnect stops the call.
+pub(super) struct AbortOnDrop(pub(super) tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
-/// The upgraded per-request SSE response (see [`request_post`]). The final
-/// response (or a JSON-RPC error built from a [`ProtocolError`]) is the last
-/// event; dropping the response body drops the call future.
-pub(super) fn streaming_post_sse<F>(
+/// A call's outcome, as its task reports it.
+pub(super) type Outcome = Result<Option<JsonRpcMessage>, ProtocolError>;
+
+/// The upgraded per-request SSE response (see `request_post`): `first` (if
+/// any), then every message the call sends, then its outcome (the final
+/// response, or a JSON-RPC error for a protocol failure; nothing if it was
+/// cancelled), which ends the stream.
+pub(super) fn request_stream(
     codec: DefaultCodec,
     first: Option<JsonRpcMessage>,
-    run: PostStream<F>,
+    rx: tokio::sync::mpsc::Receiver<JsonRpcMessage>,
+    outcome: tokio::sync::oneshot::Receiver<Outcome>,
+    id: RequestId,
     keepalive: Duration,
-) -> Response
-where
-    F: Future<Output = Result<Option<JsonRpcMessage>, ProtocolError>> + Send + 'static,
-{
+    abort: Option<AbortOnDrop>,
+) -> Response {
     let head = futures::stream::iter(first.map(|m| Ok::<_, Infallible>(sse_event(&codec, &m))));
-    let tail = futures::stream::unfold(run, move |state| async move {
-        match state {
-            PostStream::Run {
-                mut rx,
-                mut call,
-                id,
-                registration,
-            } => {
-                tokio::select! {
-                    result = call.as_mut() => {
-                        let mut events = drain(&mut rx);
-                        drop(registration);
-                        match result {
-                            Ok(Some(reply)) => events.push_back(reply),
-                            Ok(None) => {}
-                            Err(e) => events.push_back(e.into_response(id).into()),
-                        }
-                        let msg = events.pop_front()?;
-                        Some((
-                            Ok::<_, Infallible>(sse_event(&codec, &msg)),
-                            PostStream::Tail(events),
-                        ))
-                    }
-                    msg = rx.recv() => {
-                        let msg = msg.expect("sender held by registration");
-                        Some((
-                            Ok::<_, Infallible>(sse_event(&codec, &msg)),
-                            PostStream::Run { rx, call, id, registration },
-                        ))
-                    }
-                }
-            }
-            PostStream::Tail(mut events) => {
-                let msg = events.pop_front()?;
-                Some((
-                    Ok::<_, Infallible>(sse_event(&codec, &msg)),
-                    PostStream::Tail(events),
-                ))
-            }
+    let tail = futures::stream::unfold(Some((rx, outcome, id, abort)), move |live| async move {
+        let (mut rx, outcome, id, abort) = live?;
+        if let Some(msg) = rx.recv().await {
+            return Some((
+                Ok::<_, Infallible>(sse_event(&codec, &msg)),
+                Some((rx, outcome, id, abort)),
+            ));
         }
+        // The channel closed: the call is over.
+        let last = match outcome.await {
+            Ok(Ok(Some(reply))) => reply,
+            Ok(Err(e)) => e.into_response(id).into(),
+            Ok(Ok(None)) | Err(_) => return None,
+        };
+        drop(abort);
+        Some((Ok(sse_event(&codec, &last)), None))
     });
     let stream = futures::StreamExt::chain(head, tail);
     let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(keepalive).text("keep-alive"));
@@ -132,37 +104,6 @@ where
         sse,
     )
         .into_response()
-}
-
-/// A short, complete SSE response for a request that finished before the
-/// upgrade decision but raced messages into its channel: the messages, the
-/// final response, end of stream.
-pub(super) fn finished_sse(codec: DefaultCodec, events: VecDeque<JsonRpcMessage>) -> Response {
-    let stream = futures::stream::iter(
-        events
-            .into_iter()
-            .map(move |msg| sse_event(&codec, &msg))
-            .map(Ok::<_, Infallible>),
-    );
-    (
-        [(
-            HeaderName::from_static("x-accel-buffering"),
-            HeaderValue::from_static("no"),
-        )],
-        Sse::new(stream),
-    )
-        .into_response()
-}
-
-/// Empty the channel without awaiting (post-completion stragglers).
-pub(super) fn drain(
-    rx: &mut tokio::sync::mpsc::Receiver<JsonRpcMessage>,
-) -> VecDeque<JsonRpcMessage> {
-    let mut events = VecDeque::new();
-    while let Ok(msg) = rx.try_recv() {
-        events.push_back(msg);
-    }
-    events
 }
 
 /// Encode one message as one `data:` event; an encode failure becomes a

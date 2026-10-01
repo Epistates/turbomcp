@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use axum::http::{HeaderValue, Method, header};
 use ipnet::IpNet;
+use tokio_util::task::TaskTracker;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use turbomcp_core::ProtocolVersion;
 use turbomcp_service::{CancellationToken, HttpAuthenticator, RateLimiter, SessionTerminator};
@@ -104,6 +105,7 @@ pub struct HttpConfig {
     pub(super) trusted_proxies: Vec<IpNet>,
     pub(super) supported_versions: Option<Vec<ProtocolVersion>>,
     pub(super) health_path: Option<String>,
+    pub(super) calls: TaskTracker,
     #[cfg(feature = "websocket")]
     pub(super) websocket: Option<WebSocketConfig>,
 }
@@ -155,6 +157,7 @@ impl Default for HttpConfig {
             trusted_proxies: Vec::new(),
             supported_versions: None,
             health_path: None,
+            calls: TaskTracker::new(),
             #[cfg(feature = "websocket")]
             websocket: None,
         }

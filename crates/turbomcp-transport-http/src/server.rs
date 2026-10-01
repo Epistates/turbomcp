@@ -30,6 +30,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::serve::ListenerExt as _;
 use serde_json::json;
+use tokio_util::task::TaskTracker;
 use turbomcp_core::codec::{Codec, DefaultCodec};
 use turbomcp_core::{
     Extensions, JsonRpcMessage, McpRequest, ObservedHeaders, ProtocolVersion, SessionId, meta,
@@ -50,9 +51,7 @@ use reject::{
     session_required_rejection, sessions_need_an_owner, too_many_requests,
     version_header_rejection,
 };
-use sse::{
-    Outlet, PostStream, SSE_CHANNEL_CAPACITY, drain, finished_sse, sse_response, streaming_post_sse,
-};
+use sse::{AbortOnDrop, Outlet, SSE_CHANNEL_CAPACITY, request_stream, sse_response};
 use streams::{Admission, StreamBudget};
 use validate::{declared_version, message_has_version, request_id, validate_request_headers};
 
@@ -102,6 +101,9 @@ struct HttpState<S> {
     shutdown: CancellationToken,
     /// What open long-lived streams may hold.
     stream_budget: StreamBudget,
+    /// Every request's call, each on a task of its own; graceful shutdown
+    /// waits for them.
+    calls: TaskTracker,
 }
 
 impl<S> HttpState<S> {
@@ -175,6 +177,7 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         supported_versions: supported_versions.into(),
         shutdown: config.shutdown.clone(),
         stream_budget: StreamBudget::new(config.max_streams, config.max_streams_per_client),
+        calls: config.calls.clone(),
     };
     let mut app = Router::new()
         .route(
@@ -356,6 +359,7 @@ async fn serve_listener<H: ServerHandle>(
         close_then_shut_down(&server, config.shutdown.clone(), shutdown_timeout);
     config.shutdown = shutdown.clone();
     let signal = shutdown.clone();
+    let calls = config.calls.clone();
     #[cfg(feature = "websocket")]
     let websocket = config.websocket.clone();
     let app = router(server, config);
@@ -385,6 +389,18 @@ async fn serve_listener<H: ServerHandle>(
             if let Ok(result) = tokio::time::timeout(shutdown_timeout, &mut serving).await { result?; }
         }
         () = &mut closing => unreachable!("the close task never completes"),
+    }
+    // A call whose client went away (a session's call outlives its
+    // response) is not one of axum's connections; wait for those too.
+    calls.close();
+    if tokio::time::timeout(shutdown_timeout, calls.wait())
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            running = calls.len(),
+            "requests still running at the end of the shutdown deadline"
+        );
     }
     // Upgraded sockets outlive the HTTP server's own drain: axum hands them
     // off and stops tracking them.
@@ -619,7 +635,7 @@ where
     // the inline path below — its response must carry the minted session
     // header, and the handshake never streams.
     if !is_initialize && is_request {
-        return request_post(&state, request, stateless_request).await;
+        return request_post(&state, request, stateless_request, &admission).await;
     }
 
     let mut svc = state.service.clone();
@@ -753,12 +769,25 @@ where
 /// `text/event-stream` at the first mid-flight message or when
 /// `sse_upgrade_after` passes, whichever is first, carrying the
 /// request-related messages followed by the final response, which terminates
-/// the stream. A client disconnect drops the in-flight call — HTTP's
-/// cancellation signal.
+/// the stream.
+///
+/// The call runs on a task of its own, which owns the channel and the
+/// request's admission slot. What a client disconnect does to it depends on
+/// the wire:
+///
+/// - `2026-07-28`: "the server MUST treat a client disconnect as cancellation
+///   of that request", so the response holds an abort handle and dropping it
+///   (axum drops the body) stops the call.
+/// - `2025-06-18` / `2025-11-25`: "Disconnection SHOULD NOT be interpreted as
+///   the client cancelling its request." A network blip or a proxy's idle cut
+///   used to abort a side-effecting tool halfway; the call now runs to its
+///   end, and is stopped by `notifications/cancelled`, by its session ending,
+///   or by shutdown.
 async fn request_post<S>(
     state: &HttpState<S>,
     mut request: McpRequest,
     stateless_request: bool,
+    admission: &Admission,
 ) -> Response
 where
     S: McpService + Clone + Sync,
@@ -768,6 +797,7 @@ where
         unreachable!("request_post is only called for requests");
     };
     let request_id = req.id.clone();
+    let detach = !stateless_request && request.extensions.get::<SessionId>().is_some();
     // No event `id` on this stream, because this endpoint does not replay.
     //
     // Attaching one is a MAY, and it belongs entirely to §Resumability and
@@ -777,79 +807,64 @@ where
     // disconnect into a silent gap the client believed it had recovered from.
     // A stream with no ids is plainly not resumable, which the spec allows and
     // a client can see.
-    let (registration, mut rx) = Outlet::open("http-post", &mut request);
+    let (outlet, mut rx) = Outlet::open("http-post", &mut request);
 
     let mut svc = state.service.clone();
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
         return protocol_error_response(&e, Some(request_id));
     }
-    // Wrapped at construction, not at each await: this future is polled from
-    // here *and* from the upgraded SSE stream below, and a handler panic must
-    // answer on whichever path is live.
-    let mut call = Box::pin(catch_handler_panic(
-        Some(request_id.clone()),
-        svc.call(request),
-    ));
+    let call = catch_handler_panic(Some(request_id.clone()), svc.call(request));
+    // The request slot goes with the call, so a call that outlives its
+    // response still counts against `max_concurrent_requests`.
+    let slot = admission.take();
+    // The call's outcome travels apart from its mid-flight messages, so a
+    // protocol error keeps its HTTP status (404 for an unknown session, 503
+    // for a store outage). The channel closes exactly when the task ends (the
+    // outlet holds its only strong sender), after the outcome is sent: drain
+    // the channel, then read the outcome, and nothing is out of order.
+    let (outcome_tx, outcome) = tokio::sync::oneshot::channel();
+    let task = state.calls.spawn(async move {
+        let _slot = slot;
+        let _ = outcome_tx.send(call.await);
+        drop(outlet);
+    });
+    let abort = (!detach).then(|| AbortOnDrop(task.abort_handle()));
 
     tokio::select! {
         biased;
-        result = call.as_mut() => {
-            // Completed without upgrading — but messages may have raced into
-            // the channel just before completion; don't lose them.
-            let mut events = drain(&mut rx);
-            drop(registration);
-            match result {
-                Ok(Some(reply)) if events.is_empty() => {
+        first = rx.recv() => match first {
+            Some(first) => request_stream(
+                state.codec,
+                Some(first),
+                rx,
+                outcome,
+                request_id,
+                state.sse_keepalive,
+                abort,
+            ),
+            // The call ended without emitting anything first.
+            None => match outcome.await {
+                Ok(Ok(Some(reply))) => {
                     let mut resp = encode_json_response(&state.codec, &reply);
                     apply_stateless_error_status(&mut resp, &reply, stateless_request);
                     resp
                 }
-                Ok(Some(reply)) => {
-                    events.push_back(reply);
-                    finished_sse(state.codec, events)
-                }
-                // A request always gets a response from the dispatcher; these
-                // arms are defensive.
-                Ok(None) if events.is_empty() => StatusCode::ACCEPTED.into_response(),
-                Ok(None) => finished_sse(state.codec, events),
-                Err(e) => protocol_error_response(&e, Some(request_id.clone())),
-            }
-        }
-        first = rx.recv() => {
-            let Some(first) = first else {
-                // Unreachable while `registration` holds the sender.
-                return protocol_error_response(
-                    &ProtocolError::Internal(
-                        "per-request channel closed while registered".to_owned(),
-                    ),
-                    Some(request_id.clone()),
-                );
-            };
-            streaming_post_sse(
-                state.codec,
-                Some(first),
-                PostStream::Run {
-                    rx,
-                    call,
-                    id: request_id,
-                    registration,
-                },
-                state.sse_keepalive,
-            )
-        }
+                // Cancelled before it answered: nothing to say.
+                Ok(Ok(None)) | Err(_) => StatusCode::ACCEPTED.into_response(),
+                Ok(Err(e)) => protocol_error_response(&e, Some(request_id)),
+            },
+        },
         // Still working: send the headers now and let keep-alives hold the
         // connection, rather than keep them back until the deadline (ours,
         // or a proxy's) cuts the call off.
-        () = tokio::time::sleep(state.sse_upgrade_after) => streaming_post_sse(
+        () = tokio::time::sleep(state.sse_upgrade_after) => request_stream(
             state.codec,
             None,
-            PostStream::Run {
-                rx,
-                call,
-                id: request_id,
-                registration,
-            },
+            rx,
+            outcome,
+            request_id,
             state.sse_keepalive,
+            abort,
         ),
     }
 }

@@ -251,6 +251,7 @@ impl Shared {
             }
         };
         for id in expired {
+            self.inflight.cancel_scope(&id);
             self.subs.legacy_remove(&id);
             if let Some(tasks) = &self.tasks {
                 tasks.end_session(&id).await;
@@ -264,6 +265,7 @@ impl Shared {
     /// in place, since the session may well still exist.
     async fn terminate_session(&self, id: &str) -> Result<bool, SessionError> {
         let existed = self.sessions.remove(id).await?;
+        self.inflight.cancel_scope(id);
         self.subs.legacy_remove(id);
         // Nothing can ask about the session's tasks any more, so they are
         // cancelled and released rather than holding capacity until their TTL.
