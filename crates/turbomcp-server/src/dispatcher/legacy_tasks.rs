@@ -113,7 +113,8 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let poll_interval_ms = store.poll_interval_ms();
     let store = Arc::clone(store);
     let task_id = snap.task_id.clone();
-    tokio::spawn(async move {
+    let span = tracing::info_span!("mcp.task", "mcp.task.id" = %task_id);
+    let work = async move {
         tokio::select! {
             () = token.cancelled() => {
                 // `tasks/cancel` (or expiry purge) already transitioned the
@@ -154,7 +155,11 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
                 store.complete(&task_id, outcome).await;
             }
         }
-    });
+    };
+    // The work runs in a span of its own, parented to the call that
+    // created it: the call's span ends as soon as the task is created,
+    // and the work used to run outside any span at all.
+    tokio::spawn(tracing::Instrument::instrument(work, span));
 
     ok_value(
         id,

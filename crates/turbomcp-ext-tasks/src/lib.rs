@@ -433,7 +433,8 @@ impl Extension for TasksExtension {
         let store = Arc::clone(&self.store);
         let subs = Arc::clone(&self.subs);
         let task_id = task.task_id.clone();
-        tokio::spawn(async move {
+        let span = tracing::info_span!("mcp.task", "mcp.task.id" = %task_id);
+        let work = async move {
             // A panic would otherwise unwind this task with the record still
             // `working` — possibly forever, with an unlimited TTL. Every other
             // path answers a panicking handler `-32603`; so does this.
@@ -453,7 +454,11 @@ impl Extension for TasksExtension {
             // Push the terminal status to any `subscriptions/listen` subscribers
             // (spec-optional; pollers see it via `tasks/get` regardless).
             subs::push_status(&subs, &store, &task_id).await;
-        });
+        };
+        // The work runs in a span of its own, parented to the call that
+        // created it: the call's span ends as soon as the task is created,
+        // and the work used to run outside any span at all.
+        tokio::spawn(tracing::Instrument::instrument(work, span));
 
         let value = serde_json::to_value(CreateTaskResult::new(task)).ok()?;
         Some(ok(request.id, value))

@@ -148,6 +148,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Trace propagation over `_meta` uses the configured OpenTelemetry
+  propagator (`global::set_text_map_propagator`), so B3, Jaeger and X-Ray
+  deployments are understood; it falls back to the W3C pair (trace context
+  and baggage, `telemetry::w3c_propagator`) when none is set. `init_otlp`
+  installed only trace context, which nothing read.
+- A task's work runs in a `mcp.task` span parented to the call that created
+  it. The call's span ended when the task was created, and the work, often
+  minutes of it, ran outside any span.
 - A stdio server whose shutdown token fires exits promptly, without
   waiting for the client to write another line. `tokio::io::stdin()` reads
   on the blocking pool with a read that can't be cancelled, and dropping the

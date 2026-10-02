@@ -56,7 +56,7 @@ mod semconv;
 
 pub use layer::{TraceContextLayer, TraceContextService};
 pub use metrics::{Metrics, MetricsLayer};
-pub use propagation::{extract as extract_context, inject as inject_context};
+pub use propagation::{extract as extract_context, inject as inject_context, w3c_propagator};
 pub use semconv::RedactionKey;
 
 #[cfg(feature = "otlp")]

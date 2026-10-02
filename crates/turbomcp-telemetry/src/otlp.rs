@@ -13,7 +13,6 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::{MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
-use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -75,8 +74,8 @@ impl Drop for TelemetryGuard {
 /// subscriber wired to it.
 ///
 /// Registers a global tracer provider, a global meter provider (so
-/// [`MetricsLayer`](crate::MetricsLayer)'s instruments export), a W3C
-/// trace-context propagator, and a global subscriber (env-filter + fmt + the
+/// [`MetricsLayer`](crate::MetricsLayer)'s instruments export), the W3C
+/// propagators (trace context and baggage), and a global subscriber (env-filter + fmt + the
 /// OpenTelemetry layer). Returns the [`TelemetryGuard`] to hold for the process
 /// lifetime.
 ///
@@ -117,7 +116,7 @@ pub fn init_otlp(config: OtlpConfig) -> Result<TelemetryGuard, TelemetryError> {
 
     let tracer = provider.tracer("turbomcp");
     global::set_tracer_provider(provider.clone());
-    global::set_text_map_propagator(TraceContextPropagator::new());
+    global::set_text_map_propagator(crate::propagation::w3c_propagator());
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
