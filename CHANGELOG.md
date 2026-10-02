@@ -140,6 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A stdio server whose shutdown token fires exits promptly, without
+  waiting for the client to write another line. `tokio::io::stdin()` reads
+  on the blocking pool with a read that can't be cancelled, and dropping the
+  runtime waits for it, so `serve` returned and then `main` hung until the
+  client wrote again or killed the process. Stdin is now read on a thread
+  of its own (`io::StdinReader`). The new `graceful_shutdown` example serves
+  stdio until Ctrl-C.
 - A burst of control messages no longer ends a stdio or WebSocket
   connection. Notifications and responses share a budget of 64 in flight,
   and the reader hung up when it was spent: a client that cancelled 80

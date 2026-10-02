@@ -23,6 +23,8 @@ thiserror = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time", "io-std", "io-util"] }
+# `StreamReader`, the stdin reader thread's channel as an `AsyncRead`.
+tokio-util = { workspace = true, features = ["io"] }
 
 [features]
 # `GovernorRateLimiter`, the in-process rate limiter the HTTP transport's

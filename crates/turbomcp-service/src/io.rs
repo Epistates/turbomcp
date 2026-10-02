@@ -8,11 +8,11 @@
 //! specialize it to stdin/stdout; [`serve_stdio`] pairs it with a service (the
 //! dispatcher).
 
-use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, Stdin, Stdout,
-};
+use futures::stream::BoxStream;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, Stdout};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_util::io::StreamReader;
 use turbomcp_core::codec::{Bytes, Codec, CodecError, DefaultCodec, decode_message};
 use turbomcp_core::{InvalidFrame, JsonRpcMessage};
 
@@ -345,16 +345,84 @@ where
 }
 
 /// Newline-delimited JSON over the process's stdin/stdout.
-pub type StdioTransport<C = DefaultCodec> = LineTransport<BufReader<Stdin>, Stdout, C>;
+pub type StdioTransport<C = DefaultCodec> = LineTransport<BufReader<StdinReader>, Stdout, C>;
 
 /// A [`StdioTransport`] over the process's stdin/stdout with the [`DefaultCodec`].
 #[must_use]
 pub fn stdio() -> StdioTransport {
     LineTransport::new(
-        BufReader::new(tokio::io::stdin()),
+        BufReader::new(StdinReader::new()),
         tokio::io::stdout(),
         DefaultCodec::default(),
     )
+}
+
+/// The process's stdin, read on a thread of its own.
+///
+/// `tokio::io::stdin()` reads on the runtime's blocking pool with an ordinary
+/// read that can't be cancelled, and dropping a runtime "will block
+/// indefinitely for spawned blocking tasks". A server whose shutdown token
+/// fired returned from `serve` and then hung at the end of `main` until the
+/// client wrote another line or closed the pipe, so the client had to kill
+/// it. A plain thread holds nothing the runtime waits for: it stays blocked in
+/// its read and ends with the process.
+pub struct StdinReader(StreamReader<BoxStream<'static, std::io::Result<Bytes>>, Bytes>);
+
+impl core::fmt::Debug for StdinReader {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StdinReader").finish_non_exhaustive()
+    }
+}
+
+impl StdinReader {
+    /// Start reading the process's stdin.
+    ///
+    /// # Panics
+    /// If the OS refuses to start a thread.
+    #[must_use]
+    pub fn new() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(4);
+        std::thread::Builder::new()
+            .name("turbomcp-stdin".into())
+            .spawn(move || {
+                use std::io::Read as _;
+                let mut stdin = std::io::stdin().lock();
+                let mut buf = vec![0u8; 8192];
+                loop {
+                    let chunk = match stdin.read(&mut buf) {
+                        Ok(0) => break, // EOF: dropping `tx` ends the stream
+                        Ok(n) => Ok(Bytes::copy_from_slice(&buf[..n])),
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(e) => Err(e),
+                    };
+                    let failed = chunk.is_err();
+                    if tx.blocking_send(chunk).is_err() || failed {
+                        break;
+                    }
+                }
+            })
+            .expect("start the stdin reader thread");
+        let chunks = futures::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|chunk| (chunk, rx))
+        });
+        Self(StreamReader::new(Box::pin(chunks)))
+    }
+}
+
+impl Default for StdinReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl tokio::io::AsyncRead for StdinReader {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
+    }
 }
 
 /// Serve `service` over stdin/stdout until the peer closes stdin, exactly as
