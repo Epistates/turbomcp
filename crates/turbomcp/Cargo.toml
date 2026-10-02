@@ -31,7 +31,7 @@ telemetry = ["dep:turbomcp-telemetry"]
 websocket = ["http", "turbomcp-transport-http/websocket"]
 # The MCP client (ClientBuilder, ConnectMode probe, typed neutral API). The
 # other half of the protocol; opt-in for server-only users.
-client = ["dep:turbomcp-client", "turbomcp-transport-http?/client", "turbomcp-telemetry?/client"]
+client = ["dep:turbomcp-client", "dep:tokio", "turbomcp-transport-http?/client", "turbomcp-telemetry?/client"]
 # The draft Tasks extension (io.modelcontextprotocol/tasks, SEP-2663):
 # resultType:"task" augmentation, tasks/get|update|cancel, notifications/tasks.
 ext-tasks = ["dep:turbomcp-ext-tasks"]
@@ -53,6 +53,10 @@ turbomcp-macros = { workspace = true }
 # Re-exported as `turbomcp::tower`: `McpService` *is* a `tower::Service`, so
 # users writing RPC middleware need the same tower, not a second copy.
 tower = { workspace = true }
+
+# `testing::connect` spawns the in-memory server (`client`); every client
+# already runs on tokio.
+tokio = { workspace = true, optional = true, features = ["rt"] }
 
 # Re-exported for `#[server]`-generated code (schema derivation + (de)serialization).
 schemars = { workspace = true }

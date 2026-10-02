@@ -31,6 +31,7 @@ mod error;
 mod host;
 pub mod io;
 pub mod mcp_headers;
+pub mod memory;
 mod middleware;
 mod network;
 mod panic;

@@ -254,6 +254,94 @@ pub use schemars;
 /// stateless `2026-07-28` clients.
 pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, stdio};
 
+/// An in-memory connection: the two ends of one transport in one process,
+/// each frame encoded and decoded as on a real wire.
+pub use turbomcp_service::memory;
+
+/// Testing a server through the real client, in memory.
+///
+/// [`connect`](testing::connect) serves a server on one end of an
+/// [in-memory pair](memory::pair) and connects a client to the other: the
+/// whole stack, handshake and version negotiation included, with no
+/// process, socket or duplex boilerplate.
+///
+/// ```no_run
+/// use turbomcp::prelude::*;
+/// use turbomcp::client::ClientBuilder;
+///
+/// #[derive(Clone)]
+/// struct Adder;
+///
+/// #[server(name = "adder", version = "1.0.0")]
+/// impl Adder {
+///     #[tool]
+///     async fn add(&self, a: i64, b: i64) -> i64 { a + b }
+/// }
+///
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = turbomcp::testing::connect(Adder.into_server(), ClientBuilder::new("t", "1")).await?;
+/// let tools = client.list_tools(None).await?;
+/// assert_eq!(tools.tools[0].name, "add");
+/// # Ok(()) }
+/// ```
+#[cfg(feature = "client")]
+#[cfg_attr(docsrs, doc(cfg(feature = "client")))]
+pub mod testing {
+    use turbomcp_service::{Serve as _, ServerHandle};
+
+    pub use turbomcp_service::memory::{MemoryTransport, pair};
+
+    /// A server [`connect`] can run: a [`ServerBuilder`](crate::ServerBuilder)
+    /// (`MyServer.into_server()`), or a [`Server`](crate::Server) with its
+    /// middleware (`….layer(…)`).
+    pub trait TestServer {
+        /// What the transport serves.
+        type Handle: ServerHandle;
+        /// Finish building it.
+        fn into_handle(self) -> Self::Handle;
+    }
+
+    impl<S> TestServer for crate::ServerBuilder<S>
+    where
+        S: crate::McpServerCore + Clone + Send + Sync + 'static,
+    {
+        type Handle = crate::Server<S>;
+        fn into_handle(self) -> Self::Handle {
+            crate::Server::new(self.build())
+        }
+    }
+
+    impl<S, L> TestServer for crate::Server<S, L>
+    where
+        Self: ServerHandle,
+    {
+        type Handle = Self;
+        fn into_handle(self) -> Self {
+            self
+        }
+    }
+
+    /// Serve `server` in memory and connect `client` to it. The server runs
+    /// on a task of its own until the client's end closes.
+    ///
+    /// # Errors
+    /// The client's handshake failing.
+    pub async fn connect(
+        server: impl TestServer,
+        client: crate::client::ClientBuilder,
+    ) -> crate::client::ClientResult<crate::client::Client> {
+        let (server_end, client_end) = pair();
+        let handle = server.into_handle();
+        // The server's outcome is the client's to observe: a server that
+        // fails closes its end, which the client sees as the connection
+        // ending.
+        tokio::spawn(async move {
+            let _ = server_end.serve(handle).await;
+        });
+        client.connect(client_end).await
+    }
+}
+
 /// Streamable HTTP transport (axum 0.8). Enable with the `http` feature.
 ///
 /// Serve a builder on [`Http`](http::Http), with or without middleware; the

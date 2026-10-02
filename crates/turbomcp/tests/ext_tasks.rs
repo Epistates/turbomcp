@@ -10,15 +10,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
-use tokio::io::{BufReader, split};
 use turbomcp::client::{
     CallOptions, Client, ClientBuilder, ConnectMode, Detached, ElicitationHandler, TaskStatus,
     async_trait,
 };
 use turbomcp::ext_tasks::{EXTENSION_ID, TasksExtension};
 use turbomcp::prelude::*;
-use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
-use turbomcp_service::io::LineTransport;
 
 #[derive(Clone)]
 struct Workshop;
@@ -96,29 +93,19 @@ impl ElicitationHandler for Confirm {
 /// A client (declaring both the tasks extension and elicitation) connected to a
 /// Workshop server that runs `generate_report` as a task.
 async fn connect() -> Client {
-    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-
-    let (s_rd, s_wr) = split(server_io);
-    let transport = LineTransport::new(BufReader::new(s_rd), s_wr, SerdeJsonCodec);
-    let dispatcher = Workshop
-        .into_server()
-        .with_extension(Arc::new(
+    turbomcp::testing::connect(
+        Workshop.into_server().with_extension(Arc::new(
             TasksExtension::new()
                 .task_tools(["generate_report", "guarded_report"])
                 .poll_interval_ms(Some(10)),
-        ))
-        .build();
-    tokio::spawn(serve(transport, LegacySessionAdapter::new(dispatcher)));
-
-    let (c_rd, c_wr) = split(client_io);
-    let client_transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
-    ClientBuilder::new("workshop-client", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
-        .with_extension(EXTENSION_ID, json!({}))
-        .with_elicitation(Confirm)
-        .connect(client_transport)
-        .await
-        .expect("handshake")
+        )),
+        ClientBuilder::new("workshop-client", "1.0.0")
+            .with_connect_mode(ConnectMode::Modern)
+            .with_extension(EXTENSION_ID, json!({}))
+            .with_elicitation(Confirm),
+    )
+    .await
+    .expect("handshake")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

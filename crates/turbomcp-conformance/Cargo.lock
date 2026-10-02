@@ -2817,6 +2817,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tokio",
  "tower",
  "turbomcp-auth",
  "turbomcp-client",

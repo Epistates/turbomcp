@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- An in-memory transport and a test harness. `turbomcp::memory::pair()`
+  returns the two ends of one connection, each frame encoded and decoded as
+  on a real wire (a bad frame is answered and the connection carries on,
+  like stdio). `turbomcp::testing::connect(server, client_builder)` serves a
+  `ServerBuilder` or a layered `Server` on one end and connects the real
+  client to the other: the whole stack in a test, with no duplex or codec
+  boilerplate.
 - A cross-replica notification bus. `ServerBuilder::with_notification_bus`
   installs a `NotificationBus`: `ServerNotifier` publishes each change
   (`Change`, serde) to it, and every replica delivers what it carries to the
