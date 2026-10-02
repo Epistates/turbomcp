@@ -54,7 +54,7 @@ impl std::fmt::Debug for OAuthSession {
 
 #[async_trait::async_trait]
 impl crate::BearerSource for OAuthSession {
-    async fn bearer(&self) -> Option<String> {
+    async fn bearer(&self) -> Option<zeroize::Zeroizing<String>> {
         let mut state = self.state.lock().await;
         let current = state.as_mut()?;
         if current.refresh_failed {
@@ -76,7 +76,7 @@ impl crate::BearerSource for OAuthSession {
                 }
             }
         }
-        Some(current.tokens.access_token.to_string())
+        Some(current.tokens.access_token.clone())
     }
 
     async fn on_challenge(

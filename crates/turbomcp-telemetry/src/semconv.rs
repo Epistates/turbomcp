@@ -211,9 +211,17 @@ impl Outcome {
 /// [`RedactionKey::per_process`] (the default) is random per process: values
 /// correlate within one process and not across restarts or replicas. Share a
 /// [`RedactionKey::new`] across a fleet to correlate across it, and keep it
-/// secret like any key.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// secret like any key. It is wiped from memory when dropped, and neither
+/// `Copy` nor comparable, so it doesn't spread into copies or leak through
+/// timing.
+#[derive(Clone)]
 pub struct RedactionKey([u8; 32]);
+
+impl Drop for RedactionKey {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
 
 impl core::fmt::Debug for RedactionKey {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -236,11 +244,14 @@ impl RedactionKey {
     #[must_use]
     pub fn per_process() -> Self {
         static KEY: OnceLock<RedactionKey> = OnceLock::new();
-        *KEY.get_or_init(|| {
-            let mut key = [0u8; 32];
-            getrandom::fill(&mut key).expect("the OS random source is unavailable");
-            Self(key)
+        KEY.get_or_init(|| {
+            let mut bytes = [0u8; 32];
+            getrandom::fill(&mut bytes).expect("the OS random source is unavailable");
+            let key = Self(bytes);
+            zeroize::Zeroize::zeroize(&mut bytes);
+            key
         })
+        .clone()
     }
 
     /// `{prefix}:` and the first 64 bits of `HMAC-SHA256(key, value)`, in hex.
@@ -338,6 +349,9 @@ mod tests {
         assert!(!alice.contains("alice"));
         assert_eq!(alice, a.redact("sub", "alice@example.com"));
         assert_ne!(alice, b.redact("sub", "alice@example.com"));
-        assert_eq!(RedactionKey::per_process(), RedactionKey::per_process());
+        assert_eq!(
+            RedactionKey::per_process().redact("sub", "alice"),
+            RedactionKey::per_process().redact("sub", "alice"),
+        );
     }
 }

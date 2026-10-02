@@ -343,7 +343,8 @@ pub mod client {
     #[cfg(feature = "http")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
     pub use turbomcp_transport_http::{
-        BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, connect_http,
+        BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, Zeroizing,
+        connect_http,
     };
 
     #[cfg(feature = "websocket")]

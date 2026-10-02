@@ -128,7 +128,10 @@ async fn simultaneous_challenges_authorize_once_and_stale_rejections_reuse_token
     .unwrap();
     assert_eq!(f.consent.calls.load(Ordering::SeqCst), 1);
     assert_eq!(f.grants.load(Ordering::SeqCst), 1);
-    assert_eq!(f.session.bearer().await.as_deref(), Some("access-one"));
+    assert_eq!(
+        f.session.bearer().await.as_deref().map(String::as_str),
+        Some("access-one")
+    );
     assert!(
         f.session
             .on_challenge(401, None, Some("obsolete"))
@@ -161,7 +164,10 @@ async fn simultaneous_expiring_token_reads_perform_one_refresh() {
         let b = barrier.clone();
         jobs.spawn(async move {
             b.wait().await;
-            assert_eq!(s.bearer().await.as_deref(), Some("access-two"));
+            assert_eq!(
+                s.bearer().await.as_deref().map(String::as_str),
+                Some("access-two")
+            );
         });
     }
     tokio::time::timeout(Duration::from_secs(5), async {

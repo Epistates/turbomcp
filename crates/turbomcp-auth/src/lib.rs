@@ -68,6 +68,9 @@ pub use introspection::{ClientAuth, IntrospectionValidator};
     feature = "introspection"
 ))]
 pub use network::NetworkPolicy;
+/// The wrapper secrets travel in (tokens, client secrets, the PKCE verifier):
+/// wiped from memory when dropped.
+pub use zeroize::Zeroizing;
 mod error;
 mod jwks;
 mod metadata;

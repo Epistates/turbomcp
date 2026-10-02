@@ -66,8 +66,8 @@ struct StepUp {
 
 #[async_trait]
 impl BearerSource for StepUp {
-    async fn bearer(&self) -> Option<String> {
-        Some(self.token.lock().unwrap().clone())
+    async fn bearer(&self) -> Option<turbomcp::client::Zeroizing<String>> {
+        Some(self.token.lock().unwrap().clone().into())
     }
 
     async fn on_challenge(

@@ -49,6 +49,7 @@ use turbomcp_protocol::methods::{notification, request};
 use turbomcp_service::{
     HttpFailure, ParamHeaders, Transport, TransportFailure, WireVersion, mcp_headers,
 };
+pub use zeroize::Zeroizing;
 
 use turbomcp_client::{Client, ClientBuilder, ClientError, ClientResult};
 
@@ -141,7 +142,7 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
     if let Some(source) = &shared.bearer
         && let Some(token) = source.bearer().await
     {
-        req = req.bearer_auth(token);
+        req = req.bearer_auth(token.as_str());
     }
     let resp = req
         .send()
@@ -182,7 +183,7 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
     if let Some(source) = &shared.bearer
         && let Some(token) = source.bearer().await
     {
-        req = req.bearer_auth(token);
+        req = req.bearer_auth(token.as_str());
     }
     let resp = req
         .send()
@@ -216,10 +217,14 @@ const STREAM_READY_TIMEOUT: Duration = Duration::from_secs(5);
 /// needs: access tokens are short-lived by design, and a token refreshed out of
 /// band has to take effect on the next request without rebuilding the transport
 /// and re-running the handshake.
+///
+/// The token travels as [`Zeroizing`], wiped once the request has used it.
+/// (The HTTP stack's own copy, in a header it marks sensitive, is beyond its
+/// reach.)
 #[async_trait::async_trait]
 pub trait BearerSource: Send + Sync + 'static {
     /// The token to present, or `None` to send this request unauthenticated.
-    async fn bearer(&self) -> Option<String>;
+    async fn bearer(&self) -> Option<Zeroizing<String>>;
 
     /// Handle an HTTP authorization rejection. Return true to retry with the
     /// updated credential. At most three challenge retries occur per POST.
@@ -236,16 +241,16 @@ pub trait BearerSource: Send + Sync + 'static {
 
 /// A token that never changes.
 #[async_trait::async_trait]
-impl BearerSource for String {
-    async fn bearer(&self) -> Option<String> {
+impl BearerSource for Zeroizing<String> {
+    async fn bearer(&self) -> Option<Zeroizing<String>> {
         Some(self.clone())
     }
 }
 
 /// A token that can be replaced in place — the shape a refresh loop wants.
 #[async_trait::async_trait]
-impl BearerSource for Mutex<Option<String>> {
-    async fn bearer(&self) -> Option<String> {
+impl BearerSource for Mutex<Option<Zeroizing<String>>> {
+    async fn bearer(&self) -> Option<Zeroizing<String>> {
         self.lock().expect("bearer mutex poisoned").clone()
     }
 }
@@ -340,7 +345,7 @@ impl Shared {
     async fn authorize(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.bearer {
             Some(source) => match source.bearer().await {
-                Some(token) => req.bearer_auth(token),
+                Some(token) => req.bearer_auth(token.as_str()),
                 None => req,
             },
             None => req,
@@ -516,7 +521,7 @@ impl HttpClientTransport {
     /// expire — use [`with_bearer_source`](Self::with_bearer_source) instead.
     #[must_use]
     pub fn with_bearer(self, token: impl Into<String>) -> Self {
-        self.with_bearer_source(Arc::new(token.into()))
+        self.with_bearer_source(Arc::new(Zeroizing::new(token.into())))
     }
 
     /// Take the `Authorization` credential from `source`, which is consulted
@@ -858,7 +863,7 @@ async fn pump(
         };
         let mut attempt = req.try_clone().ok_or("HTTP request cannot be retried")?;
         if let Some(token) = &token {
-            attempt = attempt.bearer_auth(token);
+            attempt = attempt.bearer_auth(token.as_str());
         }
         let sent_session = shared.session.lock().expect("session mutex").clone();
         if let Some(sid) = &sent_session {
@@ -919,7 +924,7 @@ async fn pump(
                 .on_challenge(
                     status.as_u16(),
                     www_authenticate.as_deref(),
-                    token.as_deref(),
+                    token.as_deref().map(String::as_str),
                 )
                 .await
             {

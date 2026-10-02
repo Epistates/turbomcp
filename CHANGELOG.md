@@ -142,10 +142,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth secrets are wiped from memory when dropped: `TokenSet`'s access and
   refresh tokens, `ClientCredentials::client_secret`, the PKCE verifier,
   and `ClientAuth`'s credentials are `zeroize::Zeroizing<String>` (already
-  linked through rustls). The MRTR state keys were already wiped by the
-  AEAD. Not covered: the copies handed to the `oauth2` crate and to
-  `BearerSource::bearer`, and the telemetry `RedactionKey` (it is `Copy`,
-  and a leaked one only correlates hashes).
+  linked through rustls), as is the token `BearerSource::bearer` hands each
+  request. The telemetry `RedactionKey` is wiped on drop too, and is no
+  longer `Copy` or comparable. The MRTR state keys were already wiped by the
+  AEAD. Beyond reach: the copies inside the `oauth2` crate's request and
+  response types and in the HTTP stack's (sensitive-marked) headers.
+  `turbomcp_auth::Zeroizing` and `turbomcp::client::Zeroizing` re-export the
+  wrapper.
 - MRTR `requestState` is sealed with XChaCha20-Poly1305 instead of signed,
   so a client (or anything logging its retries) can no longer read what a
   handler stored or the principal the state is bound to. Each state names
@@ -499,6 +502,11 @@ Earlier in this cycle:
   `ClientCredentials::client_secret` are `Zeroizing<String>`. They deref to
   `String` and serialize as before; compare with `.as_str()`, and build one
   from a `String` with `.into()`.
+- **Breaking:** `BearerSource::bearer` returns `Option<Zeroizing<String>>`,
+  and the provided impls are for `Zeroizing<String>` and
+  `Mutex<Option<Zeroizing<String>>>` (were `String` and
+  `Mutex<Option<String>>`). `RedactionKey` and `SpanPolicy` are `Clone`, no
+  longer `Copy`, and `RedactionKey` is no longer `PartialEq`.
 - **Breaking:** `McpError::InsufficientScope(Vec<String>)` is new (JSON-RPC
   `-32000` with `data: { requiredScopes }`, HTTP 403), and
   `#[tool(scopes(…))]`'s generated `call_tool` returns it rather than a

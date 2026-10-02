@@ -84,7 +84,7 @@ impl<S> Layer<S> for TraceContextLayer {
     fn layer(&self, inner: S) -> Self::Service {
         TraceContextService {
             inner,
-            policy: self.policy,
+            policy: self.policy.clone(),
             extra_methods: std::sync::Arc::clone(&self.extra_methods),
         }
     }

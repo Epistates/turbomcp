@@ -3836,6 +3836,7 @@ dependencies = [
  "turbomcp-protocol",
  "turbomcp-server",
  "turbomcp-service",
+ "zeroize",
 ]
 
 [[package]]
@@ -3869,6 +3870,7 @@ dependencies = [
  "turbomcp-server",
  "turbomcp-service",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

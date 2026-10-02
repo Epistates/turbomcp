@@ -24,6 +24,7 @@ client = [
     "dep:turbomcp-protocol",
     "dep:tokio-util",
     "dep:async-trait",
+    "dep:zeroize",
     "tokio/time",
     "tokio/macros",
     # Dialing out (`wss://` too), when `websocket` is on.
@@ -60,6 +61,7 @@ reqwest = { workspace = true, optional = true }
 eventsource-stream = { workspace = true, optional = true }
 tokio-util = { workspace = true, features = ["rt"], optional = true }
 async-trait = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 # websocket
 tokio-tungstenite = { workspace = true, optional = true }
 futures = { workspace = true }

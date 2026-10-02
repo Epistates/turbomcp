@@ -129,7 +129,7 @@ mod client;
 #[cfg(feature = "client")]
 #[cfg_attr(docsrs, doc(cfg(feature = "client")))]
 pub use client::{
-    BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, connect_http,
+    BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, Zeroizing, connect_http,
 };
 #[cfg(all(feature = "client", feature = "websocket"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "client", feature = "websocket"))))]

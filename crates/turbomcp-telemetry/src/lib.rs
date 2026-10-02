@@ -76,7 +76,7 @@ pub use otlp::{OtlpConfig, TelemetryGuard, init_otlp};
 /// How [`TraceContextLayer`] records the caller's identity on a span.
 ///
 /// The default is fully redacted (keyed-hash subject, claim keys only).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct SpanPolicy {
     /// Record the subject as a keyed hash rather than the raw value (default

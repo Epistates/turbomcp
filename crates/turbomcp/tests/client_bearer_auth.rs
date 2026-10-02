@@ -161,7 +161,7 @@ async fn a_refreshed_token_applies_without_reconnecting() {
         let _ = axum::serve(listener, app).await;
     });
 
-    let rotating = Arc::new(Mutex::new(Some("first".to_string())));
+    let rotating = Arc::new(Mutex::new(Some("first".to_string().into())));
     let transport = turbomcp::client::HttpClientTransport::new(format!("http://{addr}/mcp"))
         .expect("build transport")
         .with_bearer_source(Arc::clone(&rotating) as Arc<dyn BearerSource>);
@@ -173,7 +173,7 @@ async fn a_refreshed_token_applies_without_reconnecting() {
         .expect("handshake");
 
     let _ = client.list_tools(None).await;
-    *rotating.lock().unwrap() = Some("second".to_string());
+    *rotating.lock().unwrap() = Some("second".to_string().into());
     let _ = client.list_tools(None).await;
 
     let posts: Vec<Option<String>> = seen

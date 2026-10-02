@@ -30,6 +30,7 @@ thiserror = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 getrandom = { workspace = true }
+zeroize = { workspace = true }
 
 # The OTLP export pipeline (gRPC via tonic) + a turnkey subscriber installer.
 # Off by default: the TraceContextLayer + W3C propagation + redaction work with
