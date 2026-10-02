@@ -234,12 +234,15 @@ async fn without_a_cache_every_request_asks() {
 #[tokio::test]
 async fn a_cached_answer_ends_with_the_token() {
     let (url, endpoint) = serve().await;
-    endpoint.answer("short", active(json!({ "exp": now() + 1 })));
+    // `exp` has one-second resolution, so a margin of one second was a
+    // margin of zero to one: under coverage instrumentation the first call
+    // sometimes landed after it. Three leave room for a slow runner.
+    endpoint.answer("short", active(json!({ "exp": now() + 3 })));
     let v = validator(&url)
         .leeway(0)
         .cache_ttl(Duration::from_secs(600));
-    v.validate("short").await.expect("valid for a second");
-    tokio::time::sleep(Duration::from_millis(2100)).await;
+    v.validate("short").await.expect("valid for a few seconds");
+    tokio::time::sleep(Duration::from_millis(4100)).await;
     // Expired now: the cache doesn't answer, and the endpoint's (stale)
     // answer is refused on its `exp`.
     assert!(matches!(

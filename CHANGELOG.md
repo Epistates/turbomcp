@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- The client half of an extension. `ClientBuilder::with_client_extension`
+  registers a `ClientExtension`: declared like `with_extension`, and taught
+  what the extension sends back. A `2026-07-28` result whose `resultType` it
+  claims goes to its `settle` (driving whatever the extension defines) to
+  become the final result, where an unclaimed one is still refused, and its
+  notifications reach its `on_notification` instead of the general handler.
+  Colliding registrations panic at build. The facade now exports the server
+  half's types too (`Extension`, `ExtensionRequest`, `CallAugmentRequest`,
+  `CallRunner`, `SubscribeOutcome`), which only `turbomcp-server` had.
 - Typed interceptors. `ServerBuilder::intercept(…)` runs every operation
   (`tools/call`, `prompts/get`, `resources/read`, the four lists,
   `completion/complete`) through an `Interceptor`: middleware over the

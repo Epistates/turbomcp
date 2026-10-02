@@ -158,6 +158,8 @@ pub struct ClientHandlers {
     pub(crate) sampling: Option<Arc<dyn SamplingHandler>>,
     pub(crate) roots: Option<Arc<dyn RootsHandler>>,
     pub(crate) notifications: Option<Arc<dyn NotificationHandler>>,
+    /// Client extensions: the `resultType`s and notifications they claim.
+    pub(crate) extensions: Vec<Arc<dyn crate::ClientExtension>>,
     /// URL-mode elicitation ids this client has actually been sent and has not
     /// yet seen completed.
     ///
@@ -178,6 +180,10 @@ impl core::fmt::Debug for ClientHandlers {
             .field("sampling", &self.sampling.is_some())
             .field("roots", &self.roots.is_some())
             .field("notifications", &self.notifications.is_some())
+            .field(
+                "extensions",
+                &self.extensions.iter().map(|e| e.id()).collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -191,6 +197,26 @@ impl ClientHandlers {
             && self.sampling.is_none()
             && self.roots.is_none()
             && self.notifications.is_none()
+    }
+
+    /// The extension claiming `result_type`, if one does.
+    pub(crate) fn claiming_result(
+        &self,
+        result_type: &str,
+    ) -> Option<&Arc<dyn crate::ClientExtension>> {
+        self.extensions
+            .iter()
+            .find(|e| e.result_types().contains(&result_type))
+    }
+
+    /// The extension claiming notification `method`, if one does.
+    pub(crate) fn claiming_notification(
+        &self,
+        method: &str,
+    ) -> Option<&Arc<dyn crate::ClientExtension>> {
+        self.extensions
+            .iter()
+            .find(|e| e.notifications().contains(&method))
     }
 
     /// Note the `elicitationId` of an inbound URL-mode `elicitation/create`,

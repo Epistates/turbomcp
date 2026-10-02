@@ -20,6 +20,7 @@ mod cache;
 mod client;
 mod connection;
 mod error;
+mod extension;
 mod handler;
 mod observe;
 mod options;
@@ -31,6 +32,7 @@ mod task;
 pub use client::{Client, ClientBuilder, ConnectMode};
 pub use connection::{Connection, DEFAULT_REQUEST_TIMEOUT};
 pub use error::{ClientError, ClientResult};
+pub use extension::ClientExtension;
 pub use handler::{
     ClientHandlers, ElicitationHandler, NotificationHandler, RootsHandler, SamplingHandler,
 };

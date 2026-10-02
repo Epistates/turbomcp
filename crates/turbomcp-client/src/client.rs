@@ -199,6 +199,27 @@ impl ClientBuilder {
         self
     }
 
+    /// Register the client half of an extension: declared like
+    /// [`with_extension`](Self::with_extension), and taught the `resultType`s
+    /// and notifications it claims. See [`ClientExtension`](crate::ClientExtension).
+    ///
+    /// # Panics
+    /// When it collides with one already registered (its id, a claimed
+    /// `resultType` or notification), or claims a core `resultType` or the
+    /// built-in Tasks' `task`.
+    #[must_use]
+    pub fn with_client_extension(mut self, extension: Arc<dyn crate::ClientExtension>) -> Self {
+        assert!(
+            !extension.result_types().contains(&RESULT_TYPE_TASK),
+            "client extension `{}` claims resultType `task`, which the built-in Tasks support handles",
+            extension.id()
+        );
+        crate::extension::check_registration(&self.handler.extensions, extension.as_ref());
+        self = self.with_extension(extension.id().to_owned(), extension.settings());
+        self.handler.extensions.push(extension);
+        self
+    }
+
     /// Declare participation in an extension (`2026-07-28` `extensions`
     /// capability); older wires have no such field and drop it.
     #[must_use]
@@ -2044,7 +2065,7 @@ impl Client {
                 .versioned_request_waiting(method, params, facts.clone(), per.wait())
                 .await?;
             if !self.result_is_input_required(&result)? {
-                return Ok(result);
+                return self.settle_claimed(method, result).await;
             }
 
             // Each retry is the original request plus what *this* round
@@ -2109,6 +2130,20 @@ impl Client {
         )))
     }
 
+    /// Hand a result whose `resultType` a client extension claims to that
+    /// extension to settle; any other result is final as it is.
+    async fn settle_claimed(&self, method: &str, result: Value) -> ClientResult<Value> {
+        let claimed = result
+            .get("resultType")
+            .and_then(Value::as_str)
+            .and_then(|kind| self.handler.claiming_result(kind))
+            .cloned();
+        match claimed {
+            Some(extension) => extension.settle(self, method, result).await,
+            None => Ok(result),
+        }
+    }
+
     /// Classify a 2026-07-28 result by its `resultType`.
     ///
     /// "A `resultType` of any value unrecognized by the client MUST be
@@ -2124,6 +2159,7 @@ impl Client {
             None | Some(neutral::result_type::COMPLETE) => Ok(false),
             Some(neutral::result_type::INPUT_REQUIRED) => Ok(true),
             Some(RESULT_TYPE_TASK) if self.declares_extension(TASKS_EXTENSION) => Ok(false),
+            Some(other) if self.handler.claiming_result(other).is_some() => Ok(false),
             Some(other) => Err(ClientError::Protocol(format!(
                 "server answered with an unrecognized resultType `{other}`"
             ))),

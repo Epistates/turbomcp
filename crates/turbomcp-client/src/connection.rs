@@ -745,7 +745,9 @@ struct Dispatch {
 
 impl Dispatch {
     fn new(handler: &ClientHandlers, http: bool) -> Self {
-        let (notes, notifier) = if handler.elicitation.is_some() || handler.notifications.is_some()
+        let (notes, notifier) = if handler.elicitation.is_some()
+            || handler.notifications.is_some()
+            || !handler.extensions.is_empty()
         {
             let (tx, rx) = mpsc::channel(NOTIFICATION_QUEUE);
             let task = tokio::spawn(deliver_notifications(rx, handler.clone()));
@@ -774,7 +776,10 @@ async fn deliver_notifications(
         if let (Some(h), Some(id)) = (&handler.elicitation, completed_elicitation) {
             h.on_elicitation_complete(id).await;
         }
-        if let Some(h) = &handler.notifications {
+        // An extension's own notifications are its alone.
+        if let Some(extension) = handler.claiming_notification(&n.method) {
+            extension.on_notification(&n.method, n.params).await;
+        } else if let Some(h) = &handler.notifications {
             h.on_notification(n.method, n.params).await;
         }
     }

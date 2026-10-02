@@ -214,6 +214,13 @@ pub use turbomcp_server::bus;
 /// [`ServerBuilder::intercept`].
 pub use turbomcp_server::intercept;
 
+/// The server half of an extension (SEP-2133): its own methods, call
+/// augmentation and subscriptions. Register with
+/// [`ServerBuilder::with_extension`].
+pub use turbomcp_server::{
+    CallAugmentRequest, CallRunner, Extension, ExtensionRequest, SubscribeOutcome,
+};
+
 pub use turbomcp_server::{
     Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, ExpiredSession,
     GetPromptContext, Image, InputWaiter, IntoCallToolResult, IntoGetPromptResult,
