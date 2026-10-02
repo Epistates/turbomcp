@@ -94,6 +94,17 @@ validators and key sources. `JwtValidator::add_issuer` deliberately trusts every
 key in that validator for every added issuer; use it only for shared key trust.
 JWKS refreshes coalesce and failed refreshes establish a cooldown.
 
+Opaque access tokens are validated by RFC 7662 introspection:
+`IntrospectionValidator` (`turbomcp-auth` feature `introspection`) posts the
+token to the authorization server's introspection endpoint, authenticated
+as the resource server (`ClientAuth::basic`, `post` or `bearer`), and
+accepts it only if it is `active`, names this resource in `aud`, and is
+inside `exp`/`nbf`; `require_issuer` checks `iss` too. Answers are cached
+under a SHA-256 of the token for `cache_ttl` (60 s by default, never past
+the token's `exp`), so a token revoked at the authorization server is
+honoured for up to that long; `cache_ttl(Duration::ZERO)` asks every time.
+An endpoint that fails or can't be reached rejects the token.
+
 Per-tool scopes drive step-up ("Runtime Insufficient Scope Errors"). A
 `#[tool(scopes(…))]` called by a token that lacks them, or any `tools/call`
 handler returning `McpError::insufficient_scope(…)`, is answered `403` with

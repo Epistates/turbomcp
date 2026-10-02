@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opaque access tokens: `IntrospectionValidator` (`turbomcp-auth` feature
+  `introspection`) validates a bearer token by RFC 7662 introspection,
+  authenticated as the resource server (`ClientAuth::{basic, post,
+  bearer}`). It accepts only an `active` answer naming this resource in
+  `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
+  caches answers under a SHA-256 of the token for a minute by default, never
+  past `exp`; and fails closed.
 - Per-tool step-up authorization. A `#[tool(scopes(…))]` called with a token
   that lacks them, or any `tools/call` handler returning the new
   `McpError::insufficient_scope(…)`, is answered over HTTP with the spec's

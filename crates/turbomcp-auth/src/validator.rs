@@ -147,7 +147,7 @@ fn principal_from_claims(claims: Map<String, Value>) -> Result<AuthPrincipal, Au
 }
 
 /// Scopes from `scope` (space-delimited string) or `scp` (array of strings).
-fn extract_scopes(claims: &Map<String, Value>) -> Vec<String> {
+pub(crate) fn extract_scopes(claims: &Map<String, Value>) -> Vec<String> {
     if let Some(scope) = claims.get("scope").and_then(Value::as_str) {
         return scope.split_whitespace().map(str::to_owned).collect();
     }

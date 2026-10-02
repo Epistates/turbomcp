@@ -2,7 +2,9 @@
 //!
 //! An MCP HTTP server is an OAuth 2.1 resource server: it validates the bearer
 //! tokens clients present and tells clients where to get them. This crate
-//! provides that validation, plus the RFC 9728 metadata document and the
+//! provides that validation (JWTs with [`JwtValidator`]; opaque tokens by
+//! RFC 7662 introspection with `IntrospectionValidator`, feature
+//! `introspection`), plus the RFC 9728 metadata document and the
 //! `WWW-Authenticate` challenges. The **client half** — discovery,
 //! registration, the PKCE authorization-code flow, refresh, and the
 //! issuer-keyed credential store — lives in [`client`] behind the
@@ -41,10 +43,30 @@
 #[cfg(feature = "oauth-client")]
 #[cfg_attr(docsrs, doc(cfg(feature = "oauth-client")))]
 pub mod client;
-#[cfg(any(feature = "http-jwks", feature = "oauth-client"))]
-#[cfg_attr(docsrs, doc(cfg(any(feature = "http-jwks", feature = "oauth-client"))))]
+#[cfg(feature = "introspection")]
+#[cfg_attr(docsrs, doc(cfg(feature = "introspection")))]
+pub mod introspection;
+#[cfg(any(
+    feature = "http-jwks",
+    feature = "oauth-client",
+    feature = "introspection"
+))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(any(
+        feature = "http-jwks",
+        feature = "oauth-client",
+        feature = "introspection"
+    )))
+)]
 pub mod network;
-#[cfg(any(feature = "http-jwks", feature = "oauth-client"))]
+#[cfg(feature = "introspection")]
+pub use introspection::{ClientAuth, IntrospectionValidator};
+#[cfg(any(
+    feature = "http-jwks",
+    feature = "oauth-client",
+    feature = "introspection"
+))]
 pub use network::NetworkPolicy;
 mod error;
 mod jwks;
