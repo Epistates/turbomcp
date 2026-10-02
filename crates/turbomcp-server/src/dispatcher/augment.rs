@@ -119,7 +119,8 @@ fn build_call_runner<S: McpServerCore>(
     // client's per-request declared capabilities travel with the handle.
     let slot = TaskSlot::default();
     let task = TaskHandle::bound(slot.clone());
-    let handle = ClientHandle::task_mediated(ctx.client_capabilities.clone(), slot.clone());
+    let handle =
+        ClientHandle::task_mediated(ctx.client_capabilities.clone(), slot.clone(), VERSION);
     let fut = router.dispatch_call_tool(
         server.clone(),
         CallToolContext::new(call_ctx)

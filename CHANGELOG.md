@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- Mid-task client input on `2025-11-25`. A tool running as a core task can
+  elicit and sample while it executes: the task reads `input_required`, the
+  server sends the request (with `io.modelcontextprotocol/related-task`) on
+  the client's `tasks/result` stream, else the creating call's connection,
+  else the session's `GET` stream, and the client's answer resumes the
+  handler (tasks.mdx §Input Required Status). Its `ctx.client` used to be
+  unavailable. The client echoes `related-task` on its answer, as the spec
+  requires of every message related to a task; `meta::keys::RELATED_TASK`
+  names the key.
 - Per-tool step-up authorization. A `#[tool(scopes(…))]` called with a token
   that lacks them, or any `tools/call` handler returning the new
   `McpError::insufficient_scope(…)`, is answered over HTTP with the spec's

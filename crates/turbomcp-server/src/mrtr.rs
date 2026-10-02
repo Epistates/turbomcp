@@ -296,7 +296,9 @@ pub(crate) struct PendingRequests {
 }
 
 impl PendingRequests {
-    fn register(
+    /// Await the response to server→client request `id`; the guard forgets
+    /// it when dropped.
+    pub(crate) fn register(
         self: &Arc<Self>,
         id: RequestId,
     ) -> (oneshot::Receiver<JsonRpcResponse>, PendingGuard) {
@@ -330,7 +332,7 @@ impl PendingRequests {
     }
 }
 
-struct PendingGuard {
+pub(crate) struct PendingGuard {
     pending: Arc<PendingRequests>,
     id: RequestId,
 }
@@ -354,12 +356,13 @@ enum HandleMode {
     /// Legacy path: inline bidirectional requests over the session's
     /// server→client channel.
     Bidi { pending: Arc<PendingRequests> },
-    /// Taskified call (SEP-2663 in-execution input): requests are published
-    /// to the task (`input_required` + `inputRequests`) through its
-    /// [`TaskLink`](crate::TaskLink) and the handler awaits the client's
-    /// `tasks/update` answer. The slot is late-bound — filled only if the
-    /// call actually becomes a task; a call that ran synchronously never gets
-    /// one and fails as unavailable.
+    /// Taskified call: requests are published to the task (`input_required`
+    /// with the request outstanding) through its [`TaskLink`](crate::TaskLink)
+    /// and the handler awaits the answer — the client's `tasks/update` on
+    /// `2026-07-28` (SEP-2663 in-execution input), its response to the
+    /// request the server relays on `2025-11-25`. The slot is late-bound —
+    /// filled only if the call actually becomes a task; a call that ran
+    /// synchronously never gets one and fails as unavailable.
     TaskMediated { slot: crate::task_handle::TaskSlot },
     /// No client-interaction channel on this path (reason in the error).
     Unavailable(&'static str),
@@ -479,19 +482,22 @@ impl ClientHandle {
         }
     }
 
-    /// A task-mediated handle for a `tools/call` offered for augmentation
-    /// (SEP-2663 in-execution input). `slot` is shared with the
-    /// [`CallRunner`](crate::CallRunner) so the taskifying extension can
-    /// bind the task before spawning.
+    /// A task-mediated handle for a call that runs, or may run, as a task:
+    /// its input requests are published to the task through `slot`, which
+    /// whoever creates the task fills before the work starts. On `2026-07-28`
+    /// the client answers them with `tasks/update` (SEP-2663 in-execution
+    /// input); on `2025-11-25` the server relays them to the client itself
+    /// (tasks.mdx §Input Required Status). `version` is the wire the requests
+    /// are shaped for.
     pub(crate) fn task_mediated(
         client_capabilities: Option<Value>,
         slot: crate::task_handle::TaskSlot,
+        version: ProtocolVersion,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 mode: HandleMode::TaskMediated { slot },
-                // Task-mediated input is the 2026-07-28 Tasks extension.
-                version: ProtocolVersion::V2026_07_28,
+                version,
                 route: Route::default(),
                 client_capabilities,
                 responses: BTreeMap::new(),
@@ -2432,6 +2438,7 @@ mod tests {
         let handle = ClientHandle::task_mediated(
             Some(json!({ "elicitation": {} })),
             crate::task_handle::TaskSlot::default(),
+            ProtocolVersion::V2026_07_28,
         );
         let err = handle
             .elicit("k", neutral::ElicitParams::new("?", form_schema()))
@@ -2487,7 +2494,11 @@ mod tests {
             })
         };
 
-        let handle = ClientHandle::task_mediated(Some(json!({ "elicitation": {} })), slot);
+        let handle = ClientHandle::task_mediated(
+            Some(json!({ "elicitation": {} })),
+            slot,
+            ProtocolVersion::V2026_07_28,
+        );
         let outcome = handle
             .elicit("k", neutral::ElicitParams::new("?", form_schema()))
             .await

@@ -7,31 +7,32 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use turbomcp_core::meta::keys::RELATED_TASK;
 use turbomcp_core::{
-    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError,
-    McpResult, RequestContext, RequestId,
+    CancellationToken, Extensions, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
+    McpError, McpResult, ProtocolVersion, RequestContext, RequestId,
 };
 use turbomcp_protocol::methods;
 use turbomcp_protocol::neutral::{self, TaskSupport};
 use turbomcp_protocol::v2025_11_25::types as legacy;
+use turbomcp_service::Peer;
 use turbomcp_service::catch_panic;
 
 use crate::context::{CallToolContext, ListToolsContext};
+use crate::mrtr::ClientHandle;
 use crate::router::MethodRouter;
+use crate::subscriptions::Route;
 use crate::task_handle::{TaskHandle, TaskLink, TaskSlot};
 use crate::tasks::{
     NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus,
 };
 use crate::traits::McpServerCore;
 
+use super::task_input::TaskInputRelay;
 use super::{error_response_for, ok_value, session_id};
 
 /// Core Tasks exist only on `2025-11-25`, so this module speaks its codes.
-const VERSION: turbomcp_core::ProtocolVersion = turbomcp_core::ProtocolVersion::V2025_11_25;
-
-/// `_meta` key associating a message with its task (tasks.mdx §Related Task
-/// Metadata).
-const RELATED_TASK: &str = "io.modelcontextprotocol/related-task";
+const VERSION: ProtocolVersion = ProtocolVersion::V2025_11_25;
 
 fn error_response(id: RequestId, err: &McpError) -> JsonRpcMessage {
     error_response_for(id, &VERSION, err)
@@ -69,12 +70,14 @@ struct RawTaskMetadata {
 
 /// `tools/call` with a `task` field: validate, register the task, spawn the
 /// handler under the task's cancellation token, and answer immediately with
-/// `CreateTaskResult` (spec §Creating Tasks).
+/// `CreateTaskResult` (spec §Creating Tasks). The handler's `ctx.client`
+/// asks through the task, and `relay` carries its requests to the client
+/// (tasks.mdx §Input Required Status).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn task_augmented_call<S: McpServerCore>(
     server: S,
     router: &MethodRouter<S>,
-    store: &Arc<dyn TaskBackend>,
+    (store, relay): (&Arc<dyn TaskBackend>, &Arc<TaskInputRelay>),
     ctx: RequestContext,
     req: &JsonRpcRequest,
     id: RequestId,
@@ -118,7 +121,13 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let task = TaskHandle::bound(slot.clone());
     let progress = super::capability::progress_reporter::<super::capability::LegacyWire>(req, &ctx)
         .with_task(task.clone());
+    // The originating request's stream is done once `CreateTaskResult` goes
+    // out (on HTTP), so input requests take the relay's streams instead.
+    let route = Route::for_request(&ctx.extensions, true);
+    let client =
+        ClientHandle::task_mediated(ctx.client_capabilities.clone(), slot.clone(), VERSION);
     let call_ctx = CallToolContext::new(ctx)
+        .with_client(client)
         .with_progress(progress)
         .with_task(task);
     let Some(fut) = router.dispatch_call_tool(server, call_ctx, params) else {
@@ -138,16 +147,22 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
         Ok(s) => s,
         Err(e) => return task_error_response(id, &e),
     };
-    let _ = slot.set(TaskLink::new(
-        Arc::clone(store),
-        snap.task_id.clone(),
-        token.clone(),
-    ));
+    let tracked = relay.track(&snap.task_id, Arc::clone(store), owner(&sid), route);
+    let hook_relay = Arc::clone(relay);
+    let _ = slot.set(
+        TaskLink::new(Arc::clone(store), snap.task_id.clone(), token.clone()).on_change(
+            move |task_id| {
+                let relay = Arc::clone(&hook_relay);
+                async move { relay.deliver(&task_id).await }
+            },
+        ),
+    );
 
     let store = Arc::clone(store);
     let task_id = snap.task_id.clone();
     let span = tracing::info_span!("mcp.task", "mcp.task.id" = %task_id);
     let work = async move {
+        let _tracked = tracked;
         tokio::select! {
             () = token.cancelled() => {
                 // `tasks/cancel` (or expiry purge) already transitioned the
@@ -258,10 +273,11 @@ pub(super) fn with_task_support(
 }
 
 pub(super) async fn handle_tasks_method(
-    store: &Arc<dyn TaskBackend>,
+    (store, relay): (&Arc<dyn TaskBackend>, &Arc<TaskInputRelay>),
     sid: &str,
     method: &str,
     req: &JsonRpcRequest,
+    ext: &Extensions,
     id: RequestId,
 ) -> JsonRpcMessage {
     match method {
@@ -327,7 +343,7 @@ pub(super) async fn handle_tasks_method(
             Err(e) => error_response(id, &e),
             // Blocks until the task is terminal, then answers exactly what the
             // underlying request would have (spec §Result Retrieval).
-            Ok(tid) => match store.wait_result(&owner(sid), &tid).await {
+            Ok(tid) => match await_result((store, relay), &owner(sid), &tid, ext).await {
                 // "The `tasks/result` operation MUST include this metadata in
                 // its response, as the result structure itself does not contain
                 // the task ID."
@@ -340,6 +356,26 @@ pub(super) async fn handle_tasks_method(
         },
         _ => unreachable!("handle_tasks_method called with an unrouted method"),
     }
+}
+
+/// `tasks/result`'s wait for the outcome. Meanwhile the call's stream is
+/// where the task's input requests go: "When the requestor encounters the
+/// `input_required` status, it SHOULD preemptively call `tasks/result`".
+async fn await_result(
+    (store, relay): (&Arc<dyn TaskBackend>, &Arc<TaskInputRelay>),
+    owner: &TaskOwner,
+    task_id: &str,
+    ext: &Extensions,
+) -> Result<Result<Value, JsonRpcError>, TaskError> {
+    let stream = ext
+        .get::<Peer>()
+        .and_then(|peer| relay.result_stream(task_id, owner, peer.clone()));
+    if stream.is_some() {
+        relay.deliver(task_id).await;
+    }
+    let outcome = store.wait_result(owner, task_id).await;
+    drop(stream);
+    outcome
 }
 
 #[derive(Deserialize)]
@@ -357,7 +393,7 @@ fn parse_task_id(params: Option<&Value>) -> Result<String, McpError> {
 
 /// `value` with `_meta["io.modelcontextprotocol/related-task"]` naming `task_id`,
 /// keeping any `_meta` it already carries.
-fn with_related_task(mut value: Value, task_id: &str) -> Value {
+pub(super) fn with_related_task(mut value: Value, task_id: &str) -> Value {
     if let Some(result) = value.as_object_mut() {
         let meta = result
             .entry("_meta")

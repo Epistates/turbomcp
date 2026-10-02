@@ -198,7 +198,9 @@ needs, so round-robin load balancing works, with three things to set up:
   no cross-replica notification bus yet.
 
 **`2025-06-18` and `2025-11-25` need sticky sessions.** Elicitation and
-sampling answers, cancellation, progress, the session's `GET` stream and its
+sampling answers (a task's mid-execution ones included: they go out on the
+task's `tasks/result` stream or the session's `GET` stream, from the process
+running the task), cancellation, progress, the session's `GET` stream and its
 resource subscriptions are bound to the process handling the session, so every
 request of a session has to reach the same replica. The working recipe:
 

@@ -38,6 +38,10 @@ pub mod keys {
     /// Absent ⇒ the server MUST NOT send `notifications/message` for the
     /// request.
     pub const LOG_LEVEL: &str = "io.modelcontextprotocol/logLevel";
+    /// The task a message belongs to (`2025-11-25` Tasks): an object with a
+    /// `taskId`, on every request, notification and response related to a
+    /// task other than the `tasks/*` operations themselves.
+    pub const RELATED_TASK: &str = "io.modelcontextprotocol/related-task";
 
     /// Tags categorizing a *component* (a tool, resource, resource template, or
     /// prompt) — an array of strings in that component's own `_meta`, not a

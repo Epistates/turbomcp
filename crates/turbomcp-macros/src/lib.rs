@@ -76,7 +76,12 @@ pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// taskifies the tool for a client that declares the extension, and refuses a
 /// required tool to one that doesn't with `-32021`. Running as a task, the
 /// handler reports through `ctx.task` (status message, polling interval), and
-/// its `ctx.progress` reports become the task's status message.
+/// its `ctx.progress` reports become the task's status message. Its
+/// `ctx.client` asks the user through the task, which reads
+/// `input_required` until the answer comes: by `tasks/update` on
+/// `2026-07-28`, and on `2025-11-25` as the response to the request the
+/// server sends on the client's `tasks/result` stream (or its connection, or
+/// the session's `GET` stream).
 ///
 /// `tags` categorizes the tool for catalog policy and is *not* a security
 /// boundary — use `scopes` for that. See [`macro@prompt`] for the shared

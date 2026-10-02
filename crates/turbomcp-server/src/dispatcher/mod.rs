@@ -55,6 +55,7 @@ mod handshake;
 mod legacy_tasks;
 mod listen;
 mod params;
+mod task_input;
 
 use augment::try_augment_call;
 use capability::{DraftWire, Legacy0618Wire, LegacyWire, dispatch_capability, resource_hidden};
@@ -98,6 +99,8 @@ struct Shared {
     subs: Arc<SubscriptionRegistry>,
     sealer: Arc<StateSealer>,
     pending: Arc<PendingRequests>,
+    /// Sends `2025-11-25` tasks' input requests to their clients.
+    task_input: Arc<task_input::TaskInputRelay>,
     /// Registered draft extensions (PLAN D10), consulted for `server/discover`
     /// advertisement and modern-path method routing. One `Arc` to keep the
     /// per-request `Shared` clone cheap.
@@ -389,6 +392,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn new(server: S, router: MethodRouter<S>) -> Self {
         let supported = server.supported_versions().to_vec();
+        let pending = Arc::new(PendingRequests::default());
         Self {
             server,
             router: Arc::new(router),
@@ -399,7 +403,8 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 inflight: Arc::new(InFlightRegistry::default()),
                 subs: Arc::new(SubscriptionRegistry::default()),
                 sealer: Arc::new(StateSealer::new()),
-                pending: Arc::new(PendingRequests::default()),
+                task_input: Arc::new(task_input::TaskInputRelay::new(Arc::clone(&pending))),
+                pending,
                 extensions: Arc::new(Vec::new()),
                 strict_elicitation_keys: false,
                 cache: CachePolicies::default(),
@@ -1061,7 +1066,14 @@ async fn handle_request<S: McpServerCore>(
                         if as_task {
                             let contract = (shared.validators.clone(), tool.output_schema.clone());
                             return Ok(task_augmented_call(
-                                server, router, store, ctx, &req, id, params, contract,
+                                server,
+                                router,
+                                (store, &shared.task_input),
+                                ctx,
+                                &req,
+                                id,
+                                params,
+                                contract,
                             )
                             .await);
                         }
@@ -1201,7 +1213,15 @@ async fn handle_request<S: McpServerCore>(
                     };
                     // `legacy_context` proved the session id is present.
                     let sid = session_id(ext).unwrap_or_default().to_owned();
-                    Ok(handle_tasks_method(store, &sid, method.as_str(), &req, id).await)
+                    Ok(handle_tasks_method(
+                        (store, &shared.task_input),
+                        &sid,
+                        method.as_str(),
+                        &req,
+                        ext,
+                        id,
+                    )
+                    .await)
                 }
                 VersionRoute::Modern => Ok(error_response(id, &McpError::method_not_found(method))),
                 VersionRoute::Unsupported(requested) => {

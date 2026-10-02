@@ -900,6 +900,15 @@ fn route_inbound(
                 let handlers = handler.clone();
                 let weak_out = weak_out.clone();
                 let request_id = req.id.clone();
+                // A request a task made answers with the task named too: "All
+                // requests, notifications, and responses related to a task
+                // MUST include the `io.modelcontextprotocol/related-task` key".
+                let related_task = req
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("_meta"))
+                    .and_then(|m| m.get(turbomcp_core::meta::keys::RELATED_TASK))
+                    .cloned();
                 let task = dispatch.requests.spawn(async move {
                     let id = req.id.clone();
                     // A user handler that panics used to take the reply down
@@ -927,7 +936,21 @@ fn route_inbound(
                         })
                     });
                     let reply = match outcome {
-                        Ok(value) => JsonRpcResponse::success(id.clone(), value),
+                        Ok(mut value) => {
+                            if let (Some(task), Some(result)) =
+                                (related_task, value.as_object_mut())
+                                && let Some(meta) = result
+                                    .entry("_meta")
+                                    .or_insert_with(|| serde_json::json!({}))
+                                    .as_object_mut()
+                            {
+                                meta.insert(
+                                    turbomcp_core::meta::keys::RELATED_TASK.to_owned(),
+                                    task,
+                                );
+                            }
+                            JsonRpcResponse::success(id.clone(), value)
+                        }
                         Err(err) => JsonRpcResponse::error(id.clone(), err),
                     };
                     if let Some(tx) = weak_out.upgrade() {
