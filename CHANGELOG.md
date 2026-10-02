@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- A cross-replica notification bus. `ServerBuilder::with_notification_bus`
+  installs a `NotificationBus`: `ServerNotifier` publishes each change
+  (`Change`, serde) to it, and every replica delivers what it carries to the
+  subscriptions it holds, so a client whose stream is on another replica
+  still hears about it. A failed publish is delivered locally and logged.
+  `LocalBus` is the in-process one; implement the trait over your pub/sub.
+  The facade also exports `ExpiredSession`, `SessionError` and the session
+  observer types.
 - Server-initiated SSE polling and a resumable `GET` stream, with an event
   store. `HttpConfig::with_sse_polling(SsePolling::new(close_after, retry))`
   closes each resumable stream's connection after `close_after` with a

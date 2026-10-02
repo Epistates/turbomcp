@@ -137,8 +137,9 @@ pub use turbomcp_server::{ComponentKind, Visibility, VisibilityPolicy, VisibleCo
 
 pub use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
 pub use turbomcp_service::{
-    CancellationToken, Delivery, McpService, NetworkFacts, Peer, PeerClosed, Pipe, ProtocolError,
-    Serve, ServeConfig, ServerHandle, SessionStreams, Transport, serve, serve_with,
+    CancellationToken, Delivery, EndedSession, McpService, NetworkFacts, Peer, PeerClosed, Pipe,
+    ProtocolError, Serve, ServeConfig, ServerHandle, SessionEndReason, SessionObserver,
+    SessionStreams, Transport, serve, serve_with,
 };
 
 /// RPC middleware: [`tower::Layer`]s over the `Service<McpRequest>` seam,
@@ -205,15 +206,20 @@ pub use tower;
 /// ```
 pub use turbomcp_server::{Composite, CompositeServer};
 
+/// Carrying change notifications across replicas: see
+/// [`ServerBuilder::with_notification_bus`].
+pub use turbomcp_server::bus;
+
 pub use turbomcp_server::{
-    Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, GetPromptContext, Image,
-    InputWaiter, IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult,
-    IntoServerBuilder, Json, LegacySessionAdapter, ListPromptsContext,
-    ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, LogSender, McpServerCore,
-    MethodRouter, NewTask, ProgressReporter, ReadResourceContext, Server, ServerBuilder,
-    ServerNotifier, SessionBackend, SessionState, SessionStore, TaskBackend, TaskError, TaskHandle,
-    TaskLink, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate,
-    UriTemplateError, VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
+    Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, ExpiredSession,
+    GetPromptContext, Image, InputWaiter, IntoCallToolResult, IntoGetPromptResult,
+    IntoReadResourceResult, IntoServerBuilder, Json, LegacySessionAdapter, ListPromptsContext,
+    ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, LocalBus, LogSender,
+    McpServerCore, MethodRouter, NewTask, NotificationBus, ProgressReporter, ReadResourceContext,
+    Server, ServerBuilder, ServerNotifier, SessionBackend, SessionError, SessionState,
+    SessionStore, TaskBackend, TaskError, TaskHandle, TaskLink, TaskOutcome, TaskOwner,
+    TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate, UriTemplateError,
+    VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
 };
 
 /// Re-export of [`schemars`] for deriving `JsonSchema` on `#[tool]` argument

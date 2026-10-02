@@ -192,10 +192,15 @@ needs, so round-robin load balancing works, with three things to set up:
   `ServerBuilder::with_task_backend` (`2025-11-25` core Tasks) and
   `TasksExtension::backend`. A task's `TaskOwner` (its session, or its
   caller's principal) keeps the two apart.
-- **Change notifications.** A `subscriptions/listen` stream is held by one
-  replica, and `ServerNotifier` reaches the streams in its own process. Publish
-  a change on every replica (each watching the same source of truth); there is
-  no cross-replica notification bus yet.
+- **Change notifications.** A `subscriptions/listen` stream (or a session's
+  `GET` stream) is held by one replica, and on its own `ServerNotifier`
+  reaches the streams in its own process. Install a `NotificationBus`
+  (`ServerBuilder::with_notification_bus`) and the notifier publishes each
+  change to it instead, and every replica delivers what the bus carries to
+  the streams it holds. Implement the trait over the pub/sub you run (Redis,
+  NATS, Postgres `LISTEN`/`NOTIFY`); `Change` is serde. `LocalBus` is the
+  in-process one. Delivery is at-most-once, like the notifications
+  themselves.
 
 **`2025-06-18` and `2025-11-25` need sticky sessions.** Elicitation and
 sampling answers (a task's mid-execution ones included: they go out on the

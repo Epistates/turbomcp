@@ -118,6 +118,8 @@ struct Shared {
     roots_changed: Option<Arc<RootsChangedHandler>>,
     /// Told when each stateful session ends.
     session_observer: Option<Arc<dyn turbomcp_service::SessionObserver>>,
+    /// Carries change notifications between replicas, when installed.
+    bus: Option<crate::bus::Installed>,
     /// Replace internal errors' text with a logged reference.
     mask_internal_errors: bool,
 }
@@ -447,6 +449,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 validators: Arc::new(crate::catalog::Validators::default()),
                 roots_changed: None,
                 session_observer: None,
+                bus: None,
                 mask_internal_errors: false,
             },
         }
@@ -486,12 +489,26 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     pub fn notifier(&self) -> ServerNotifier {
         ServerNotifier::new(
             Arc::clone(&self.shared.subs),
-            [
-                self.router.has_tools(),
-                self.router.has_resources(),
-                self.router.has_prompts(),
-            ],
+            self.advertised_lists(),
+            self.shared.bus.clone(),
         )
+    }
+
+    /// Which list capabilities this server has, by `ListChangedKind` slot.
+    fn advertised_lists(&self) -> [bool; 3] {
+        [
+            self.router.has_tools(),
+            self.router.has_resources(),
+            self.router.has_prompts(),
+        ]
+    }
+
+    /// Carry change notifications between replicas over `bus`. See
+    /// [`ServerBuilder::with_notification_bus`](crate::ServerBuilder::with_notification_bus).
+    #[must_use]
+    pub fn with_notification_bus(mut self, bus: Arc<dyn crate::NotificationBus>) -> Self {
+        self.shared.bus = Some(crate::bus::Installed::new(bus));
+        self
     }
 
     /// A [`SessionTerminator`](turbomcp_service::SessionTerminator) handle for
@@ -687,6 +704,11 @@ impl<S: McpServerCore> Service<McpRequest> for VersionDispatcher<S> {
         let mask = self.shared.mask_internal_errors;
         if mask {
             ext.insert(crate::masking::MaskInternalErrors);
+        }
+        // The bus's changes reach this replica's subscriptions from the first
+        // request on (a no-op once started).
+        if let Some(bus) = &self.shared.bus {
+            bus.start(&self.shared.subs, self.advertised_lists());
         }
         let server = self.server.clone();
         let router = Arc::clone(&self.router);

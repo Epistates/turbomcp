@@ -20,6 +20,7 @@
 
 mod adapter;
 mod builder;
+pub mod bus;
 mod catalog;
 mod composite;
 mod context;
@@ -44,6 +45,7 @@ pub mod visibility;
 
 pub use adapter::LegacySessionAdapter;
 pub use builder::{IntoServerBuilder, ServerBuilder};
+pub use bus::{BusError, Change, LocalBus, NotificationBus};
 pub use composite::{Composite, CompositeServer};
 pub use context::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext,

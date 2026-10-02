@@ -62,6 +62,14 @@ impl ListChangedKind {
         }
     }
 
+    fn change(self) -> crate::bus::Change {
+        match self {
+            Self::Tools => crate::bus::Change::ToolsListChanged,
+            Self::Resources => crate::bus::Change::ResourcesListChanged,
+            Self::Prompts => crate::bus::Change::PromptsListChanged,
+        }
+    }
+
     fn wants(self, filter: &v0728::SubscriptionFilter) -> bool {
         match self {
             Self::Tools => filter.tools_list_changed == Some(true),
@@ -483,6 +491,8 @@ pub struct ServerNotifier {
     /// legacy session a notification for a capability it was told does not
     /// exist.
     advertised: [bool; 3],
+    /// Where changes go to reach every replica, when one is installed.
+    bus: Option<crate::bus::Installed>,
 }
 
 impl core::fmt::Debug for ServerNotifier {
@@ -494,19 +504,44 @@ impl core::fmt::Debug for ServerNotifier {
 }
 
 impl ServerNotifier {
-    pub(crate) fn new(subs: Arc<SubscriptionRegistry>, advertised: [bool; 3]) -> Self {
-        Self { subs, advertised }
+    pub(crate) fn new(
+        subs: Arc<SubscriptionRegistry>,
+        advertised: [bool; 3],
+        bus: Option<crate::bus::Installed>,
+    ) -> Self {
+        if let Some(bus) = &bus {
+            bus.start(&subs, advertised);
+        }
+        Self {
+            subs,
+            advertised,
+            bus,
+        }
+    }
+
+    /// Publish `change` to the bus, or, without one (or when publishing
+    /// fails), deliver it here.
+    async fn announce(&self, change: crate::bus::Change) {
+        if let Some(installed) = &self.bus {
+            installed.start(&self.subs, self.advertised);
+            match installed.bus.publish(change.clone()).await {
+                Ok(()) => return,
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "could not publish a change; delivering it on this replica only"
+                ),
+            }
+        }
+        deliver(&self.subs, self.advertised, change).await;
     }
 
     fn list_changed(&self, kind: ListChangedKind) {
-        if self.advertised[kind.slot()] {
-            self.subs.schedule_list_changed(kind);
-        } else {
-            tracing::debug!(
-                ?kind,
-                "list changed for a capability this server does not have"
-            );
+        if self.bus.is_none() {
+            deliver_list_changed(&self.subs, self.advertised, kind);
+            return;
         }
+        let notifier = self.clone();
+        tokio::spawn(async move { notifier.announce(kind.change()).await });
     }
 
     /// The tool list changed (`notifications/tools/list_changed`). A no-op on
@@ -530,7 +565,44 @@ impl ServerNotifier {
     /// `uri`'s content changed (`notifications/resources/updated`), delivered
     /// to every subscription that listed it.
     pub async fn resource_updated(&self, uri: &str) {
-        self.subs.publish_resource_updated(uri).await;
+        self.announce(crate::bus::Change::ResourceUpdated {
+            uri: uri.to_owned(),
+        })
+        .await;
+    }
+}
+
+/// Hand `change` to the subscriptions `subs` holds.
+pub(crate) async fn deliver(
+    subs: &Arc<SubscriptionRegistry>,
+    advertised: [bool; 3],
+    change: crate::bus::Change,
+) {
+    use crate::bus::Change;
+    let kind = match change {
+        Change::ToolsListChanged => ListChangedKind::Tools,
+        Change::ResourcesListChanged => ListChangedKind::Resources,
+        Change::PromptsListChanged => ListChangedKind::Prompts,
+        Change::ResourceUpdated { uri } => {
+            subs.publish_resource_updated(&uri).await;
+            return;
+        }
+    };
+    deliver_list_changed(subs, advertised, kind);
+}
+
+fn deliver_list_changed(
+    subs: &Arc<SubscriptionRegistry>,
+    advertised: [bool; 3],
+    kind: ListChangedKind,
+) {
+    if advertised[kind.slot()] {
+        subs.schedule_list_changed(kind);
+    } else {
+        tracing::debug!(
+            ?kind,
+            "list changed for a capability this server does not have"
+        );
     }
 }
 
@@ -703,7 +775,7 @@ mod tests {
         let reg = Arc::new(SubscriptionRegistry::default());
         reg.insert(&peer, &RequestId::from(1i64), filter(true, &[]));
 
-        let notifier = ServerNotifier::new(Arc::clone(&reg), [true; 3]);
+        let notifier = ServerNotifier::new(Arc::clone(&reg), [true; 3], None);
         for _ in 0..5 {
             notifier.tools_list_changed();
         }
@@ -730,7 +802,7 @@ mod tests {
         reg.insert(&stuck, &RequestId::from(1i64), filter(false, &["x"]));
         reg.insert(&live, &RequestId::from(2i64), filter(false, &["x"]));
 
-        let notifier = ServerNotifier::new(Arc::clone(&reg), [true; 3]);
+        let notifier = ServerNotifier::new(Arc::clone(&reg), [true; 3], None);
         tokio::time::timeout(Duration::from_secs(1), async {
             for _ in 0..3 {
                 notifier.resource_updated("x").await;
@@ -754,7 +826,7 @@ mod tests {
         let reg = Arc::new(SubscriptionRegistry::default());
         reg.legacy_touch("sess", &Extensions::new().with(peer.clone()));
 
-        let notifier = ServerNotifier::new(Arc::clone(&reg), [true, false, false]);
+        let notifier = ServerNotifier::new(Arc::clone(&reg), [true, false, false], None);
         notifier.resources_list_changed();
         notifier.prompts_list_changed();
         tokio::time::sleep(Duration::from_millis(COALESCE_WINDOW_MS * 3)).await;

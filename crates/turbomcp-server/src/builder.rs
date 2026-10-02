@@ -64,6 +64,7 @@ pub struct ServerBuilder<S> {
     visibility: Option<Arc<dyn crate::VisibilityPolicy>>,
     roots_changed: Option<Arc<crate::dispatcher::RootsChangedHandler>>,
     session_observer: Option<Arc<dyn turbomcp_service::SessionObserver>>,
+    notification_bus: Option<Arc<dyn crate::NotificationBus>>,
     mask_internal_errors: bool,
 }
 
@@ -88,6 +89,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             visibility: None,
             roots_changed: None,
             session_observer: None,
+            notification_bus: None,
             mask_internal_errors: false,
         }
     }
@@ -112,6 +114,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             visibility: None,
             roots_changed: None,
             session_observer: None,
+            notification_bus: None,
             mask_internal_errors: false,
         }
     }
@@ -270,6 +273,16 @@ impl<S: McpServerCore> ServerBuilder<S> {
         observer: Arc<dyn turbomcp_service::SessionObserver>,
     ) -> Self {
         self.session_observer = Some(observer);
+        self
+    }
+
+    /// Carry change notifications between replicas over `bus`: the
+    /// [`ServerNotifier`](crate::ServerNotifier) publishes each change to
+    /// it, and every replica delivers what it carries to the subscriptions
+    /// it holds. See [the `bus` module](crate::bus).
+    #[must_use]
+    pub fn with_notification_bus(mut self, bus: Arc<dyn crate::NotificationBus>) -> Self {
+        self.notification_bus = Some(bus);
         self
     }
 
@@ -442,6 +455,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             visibility,
             roots_changed,
             session_observer,
+            notification_bus,
             mask_internal_errors,
         } = self;
         if *tasks {
@@ -482,6 +496,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if session_observer.is_some() {
             return Some("observe_sessions");
+        }
+        if notification_bus.is_some() {
+            return Some("with_notification_bus");
         }
         if *mask_internal_errors {
             return Some("mask_internal_errors");
@@ -551,6 +568,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if let Some(observer) = self.session_observer {
             dispatcher = dispatcher.observe_sessions(observer);
+        }
+        if let Some(bus) = self.notification_bus {
+            dispatcher = dispatcher.with_notification_bus(bus);
         }
         if let Some(handler) = self.roots_changed {
             dispatcher = dispatcher.on_roots_changed(handler);
