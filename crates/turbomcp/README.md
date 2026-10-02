@@ -9,8 +9,9 @@ zero-boilerplate surface and strict spec compliance as a feature.
 > `3.x`. Edition 2024, MSRV 1.88. Both halves pass the official MCP conformance
 > suite with zero failures, skips, or warnings using pinned client fixture
 > corrections, and interoperate
-> with the official Rust SDK (rmcp 3.x) in both directions on both revisions,
-> verified in-repo. All three
+> with the official Rust SDK (rmcp 3.x) in-process and with the official
+> TypeScript, Python and Go SDKs over Streamable HTTP, in both directions on
+> both revisions, verified in-repo. All three
 > advertised revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) are dated and
 > frozen; `2026-07-28` is generated from the released `schema/2026-07-28/`,
 > not the RC.
@@ -73,7 +74,8 @@ zero-boilerplate surface and strict spec compliance as a feature.
 maintained in the `modelcontextprotocol` organization. It is the reasonable
 default, and this project is tested against it — cross-SDK interop tests run in
 both directions, a TurboMCP client against an rmcp server and the reverse, on
-every change.
+every change, alongside the same matrix over HTTP against the official
+TypeScript (v2), Python and Go SDKs.
 
 TurboMCP's interoperability tests pin `rmcp` 3.2. TurboMCP serves three
 revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) using separate generated

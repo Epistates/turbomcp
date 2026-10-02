@@ -10,8 +10,8 @@ zero-boilerplate surface and strict spec compliance as a feature.
 
 > **Status: `4.0.0-alpha.5` — a prerelease for community testing.** v4 is a
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
-> MSRV 1.88. It interoperates with the official Rust SDK in both directions, on
-> both revisions, and both halves are scored against the official MCP conformance
+> MSRV 1.88. It interoperates with the official Rust, TypeScript, Python and Go
+> SDKs in both directions, on both revisions, and both halves are scored against the official MCP conformance
 > suite: 231 successful server assertions and 488 distinct successful client
 > scenario/check pairs using pinned client fixture corrections, with zero failures, skips, or warnings. All three advertised revisions (`2025-06-18`, `2025-11-25`,
 > `2026-07-28`) are dated and frozen; `2026-07-28` is generated from the
@@ -50,7 +50,8 @@ zero-boilerplate surface and strict spec compliance as a feature.
 maintained in the `modelcontextprotocol` organization. It is the reasonable
 default, and this project is tested against it — cross-SDK interop tests run in
 both directions, a TurboMCP client against an rmcp server and the reverse, on
-every change.
+every change, alongside the same matrix over HTTP against the official
+TypeScript (v2), Python and Go SDKs.
 
 TurboMCP's interoperability tests pin `rmcp` 3.2. TurboMCP serves three
 revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) using separate generated
@@ -127,7 +128,9 @@ Compliance is tested, not asserted:
   failure waivers (`crates/turbomcp-conformance`).
 - **Cross-SDK interop** — a TurboMCP client drives an official-Rust-SDK
   (rmcp 3.2) server and vice-versa, in-process, on `2025-11-25` *and* the
-  stateless `2026-07-28` (`crates/turbomcp-interop`).
+  stateless `2026-07-28`; and over Streamable HTTP the same, both ways and both
+  eras, against the official TypeScript (v2.3), Python (2.3) and Go (1.8) SDKs
+  (`crates/turbomcp-interop`, `sdks/`).
 - **Workspace regression tests** (also run against the
   `no_std` foundation configs) — dual-version dispatch, transport hardening
   (Origin/auth/size caps/idle reaping), handler-panic containment, MRTR

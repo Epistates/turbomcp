@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- A four-SDK interop matrix. `crates/turbomcp-interop/tests/sdk_matrix.rs`
+  runs turbomcp against the official TypeScript (v2.3), Python (2.3) and Go
+  (1.8) SDKs over Streamable HTTP, each SDK's client against turbomcp's
+  server and turbomcp's client against each SDK's server, on `2025-11-25`
+  and `2026-07-28`, next to the existing in-process rmcp suite. The peers
+  are minimal real programs under `sdks/`, each pinned by its own lockfile;
+  CI installs their toolchains and fails on a missing one.
 - The client half of an extension. `ClientBuilder::with_client_extension`
   registers a `ClientExtension`: declared like `with_extension`, and taught
   what the extension sends back. A `2026-07-28` result whose `resultType` it

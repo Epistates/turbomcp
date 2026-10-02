@@ -511,7 +511,7 @@ jobs:
       run: cargo test --test conformance_client -- --nocapture
 
   interop:
-    name: Cross-SDK interop (rmcp)
+    name: Cross-SDK interop (rmcp, TypeScript, Python, Go)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -552,8 +552,33 @@ jobs:
       working-directory: crates/turbomcp-interop
       run: cargo clippy --all-targets -- -D warnings
 
+    # The peer SDKs of the HTTP matrix (`tests/sdk_matrix.rs`): the official
+    # TypeScript, Python and Go SDKs, each from its own lockfile.
+    - name: Install Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: crates/turbomcp-interop/sdks/ts/package-lock.json
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10
+
+    - name: Install Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.25'
+        cache-dependency-path: crates/turbomcp-interop/sdks/go/go.sum
+
+    - name: Install the TypeScript peer
+      working-directory: crates/turbomcp-interop/sdks/ts
+      run: npm ci
+
+    # A missing toolchain skips its peers locally; here it is a failure.
     - name: Run the interop suite
       working-directory: crates/turbomcp-interop
+      env:
+        TURBOMCP_INTEROP_REQUIRE: '1'
       run: cargo test -- --nocapture
 
   semver:

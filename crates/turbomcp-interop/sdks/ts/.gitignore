@@ -1,0 +1,3 @@
+node_modules/
+# The repository ignores lockfiles; this one pins the peer SDK for `npm ci`.
+!package-lock.json

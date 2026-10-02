@@ -21,7 +21,7 @@ turbomcp-core = { path = "../turbomcp-core", features = ["std"] }
 # released SDK, not a local checkout. rmcp 3.x serves both 2025-11-25 and the
 # frozen 2026-07-28, so the suite runs both revisions in both directions.
 rmcp = { version = "3.2", features = ["client", "server", "macros"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sync", "process", "time", "net"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"

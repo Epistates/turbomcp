@@ -1,0 +1,11 @@
+{
+  "name": "turbomcp-interop-ts",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript SDK peers for turbomcp's cross-SDK interop tests.",
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.3.0",
+    "@modelcontextprotocol/server": "2.3.0",
+    "@modelcontextprotocol/node": "2.1.1"
+  }
+}
