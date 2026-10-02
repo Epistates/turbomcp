@@ -17,8 +17,9 @@ use turbomcp_core::codec::DefaultCodec;
 use turbomcp_core::{CancellationToken, Implementation, JsonRpcError, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
-    CallToolContext, LegacySessionAdapter, ListToolsContext, McpServerCore, MethodRouter,
-    TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStore, VersionDispatcher, WithTools,
+    CallToolContext, InputWaiter, LegacySessionAdapter, ListToolsContext, McpServerCore,
+    MethodRouter, NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStore,
+    VersionDispatcher, WithTools,
 };
 use turbomcp_service::io::LineTransport;
 
@@ -68,46 +69,61 @@ struct FastPoll {
 impl TaskBackend for FastPoll {
     async fn create(
         &self,
-        session_id: &str,
-        requested_ttl_ms: Option<i64>,
+        owner: &TaskOwner,
+        task: NewTask,
         cancel: CancellationToken,
     ) -> Result<TaskSnapshot, TaskError> {
         self.creates.fetch_add(1, SeqCst);
         self.inner
-            .create(session_id.to_string(), requested_ttl_ms, cancel)
+            .create(owner, task.with_poll_interval_ms(Some(10)), cancel)
+            .await
     }
 
     async fn complete(&self, task_id: &str, outcome: TaskOutcome) {
-        self.inner.complete(task_id, outcome);
+        self.inner.complete(task_id, outcome).await;
     }
 
-    async fn cancel(&self, session_id: &str, task_id: &str) -> Result<TaskSnapshot, TaskError> {
-        self.inner.cancel(session_id, task_id)
-    }
-
-    async fn get(&self, session_id: &str, task_id: &str) -> Result<TaskSnapshot, TaskError> {
-        self.inner.get(session_id, task_id)
+    async fn get(&self, owner: &TaskOwner, task_id: &str) -> Result<TaskSnapshot, TaskError> {
+        self.inner.get(owner, task_id).await
     }
 
     async fn list(
         &self,
-        session_id: &str,
+        owner: &TaskOwner,
         cursor: Option<&str>,
         page_size: usize,
     ) -> Result<(Vec<TaskSnapshot>, Option<String>), TaskError> {
-        self.inner.list(session_id, cursor, page_size)
+        self.inner.list(owner, cursor, page_size).await
+    }
+
+    async fn cancel(&self, owner: &TaskOwner, task_id: &str) -> Result<TaskSnapshot, TaskError> {
+        self.inner.cancel(owner, task_id).await
     }
 
     async fn wait_result(
         &self,
-        session_id: &str,
+        owner: &TaskOwner,
         task_id: &str,
     ) -> Result<Result<Value, JsonRpcError>, TaskError> {
-        self.inner.wait_result(session_id, task_id).await
+        self.inner.wait_result(owner, task_id).await
     }
 
-    fn poll_interval_ms(&self) -> i64 {
-        10
+    async fn request_input(
+        &self,
+        task_id: &str,
+        key: &str,
+        request: Value,
+    ) -> Result<InputWaiter, TaskError> {
+        self.inner.request_input(task_id, key, request).await
+    }
+
+    async fn provide_input(
+        &self,
+        owner: &TaskOwner,
+        task_id: &str,
+        responses: &Map<String, Value>,
+    ) -> Result<bool, TaskError> {
+        self.inner.provide_input(owner, task_id, responses).await
     }
 }
 

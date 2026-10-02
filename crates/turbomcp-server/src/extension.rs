@@ -244,7 +244,7 @@ pub trait Extension: Send + Sync + 'static {
     /// notification on the subscription before" its acknowledgement, which
     /// goes out after every extension has answered (another may yet refuse
     /// the listen). [`activate`](Self::activate) is when to start.
-    fn on_subscribe(
+    async fn on_subscribe(
         &self,
         _peer: &turbomcp_service::Peer,
         _subscription_id: &turbomcp_core::RequestId,
@@ -258,13 +258,14 @@ pub trait Extension: Send + Sync + 'static {
     /// Start sending what [`on_subscribe`](Self::on_subscribe) agreed to:
     /// `accepted` is the object it returned in
     /// [`SubscribeOutcome::Subscribed`], and the acknowledgement is already
-    /// queued on `peer` ahead of anything sent from now on. Defaults to
-    /// nothing.
-    fn activate(
+    /// queued on `peer` ahead of anything sent from now on. `context` is the
+    /// listen request's, as `on_subscribe` saw it. Defaults to nothing.
+    async fn activate(
         &self,
         _peer: &turbomcp_service::Peer,
         _subscription_id: &turbomcp_core::RequestId,
         _accepted: &Value,
+        _context: &RequestContext,
     ) {
     }
 

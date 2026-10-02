@@ -65,7 +65,10 @@ pub use router::MethodRouter;
 pub use runtime::Server;
 pub use session::{SessionBackend, SessionError, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
-pub use tasks::{TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStatus, TaskStore};
+pub use tasks::{
+    InputWaiter, NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus,
+    TaskStore,
+};
 pub use traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
 pub use uri_template::{UriTemplate, UriTemplateError};
 pub use visibility::{ComponentKind, Visibility, VisibilityPolicy, VisibleComponent};

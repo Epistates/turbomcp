@@ -22,7 +22,10 @@
 //! Core Tasks for the legacy `2025-11-25` path (the different `tasks/list`/
 //! `tasks/result` shape, session-scoped) is built into `turbomcp-server` and
 //! is unaffected by this extension — the dispatcher serves whichever the
-//! negotiated version calls for.
+//! negotiated version calls for. Both keep tasks in a
+//! [`TaskBackend`], and can share one: pass the
+//! same backend to `ServerBuilder::with_task_backend` and
+//! [`TasksExtension::backend`].
 //!
 //! ## Capability negotiation (SEP-2663)
 //!
@@ -58,14 +61,14 @@ use turbomcp_core::{
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
-    CallAugmentRequest, Extension, ExtensionRequest, SubscribeOutcome, TaskInputBroker,
+    CallAugmentRequest, Extension, ExtensionRequest, NewTask, SubscribeOutcome, TaskBackend,
+    TaskError, TaskInputBroker, TaskOutcome, TaskOwner, TaskStore,
 };
 
-mod store;
+mod render;
 mod subs;
 pub mod wire;
 
-use store::{DraftTaskStore, TaskOutcome};
 use subs::TaskSubscriptions;
 use wire::{CreateTaskResult, UpdateTaskParams};
 
@@ -104,7 +107,7 @@ type TaskDecider = Arc<dyn Fn(&str, &RequestContext) -> bool + Send + Sync>;
 /// Register it with `ServerBuilder::with_extension(Arc::new(TasksExtension::new()))`.
 #[derive(Clone)]
 pub struct TasksExtension {
-    store: Arc<DraftTaskStore>,
+    store: Arc<dyn TaskBackend>,
     subs: Arc<TaskSubscriptions>,
     taskify: Option<TaskDecider>,
     ttl_ms: Option<i64>,
@@ -128,13 +131,13 @@ impl core::fmt::Debug for TasksExtension {
 impl Default for TasksExtension {
     fn default() -> Self {
         Self {
-            store: Arc::new(DraftTaskStore::default()),
+            store: Arc::new(TaskStore::default()),
             subs: Arc::new(TaskSubscriptions::default()),
             taskify: None,
             ttl_ms: Some(DEFAULT_TTL_MS),
             poll_interval_ms: Some(DEFAULT_POLL_INTERVAL_MS),
-            capacity: DraftTaskStore::DEFAULT_CAPACITY,
-            owner_limit: DraftTaskStore::DEFAULT_OWNER_LIMIT,
+            capacity: TaskStore::DEFAULT_CAPACITY,
+            owner_limit: TaskStore::DEFAULT_OWNER_LIMIT,
         }
     }
 }
@@ -203,26 +206,44 @@ impl TasksExtension {
         self
     }
 
-    /// Bound the number of tasks the registry holds (default: 1024). When it is
-    /// full the oldest finished task makes room; when every task is still
-    /// running, taskification degrades gracefully — the next eligible
-    /// `tools/call` runs synchronously instead of failing. Call before
-    /// registration.
+    /// Bound the number of tasks the bundled registry holds (default: 1024).
+    /// When it is full the oldest finished task makes room; when every task
+    /// is still running, taskification degrades gracefully — the next
+    /// eligible `tools/call` runs synchronously instead of failing. Replaces
+    /// a [`backend`](Self::backend).
     #[must_use]
     pub fn capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity;
-        self.store = Arc::new(DraftTaskStore::with_limits(self.capacity, self.owner_limit));
+        self.store = Arc::new(self.bundled_store());
         self
     }
 
-    /// Bound how many tasks one principal may have running at once (default:
-    /// 64), so a single caller cannot take every slot. Past it, that caller's
-    /// eligible calls run synchronously. Call before registration.
+    /// Bound how many tasks one principal may have running at once in the
+    /// bundled registry (default: 64), so a single caller cannot take every
+    /// slot. Past it, that caller's eligible calls run synchronously.
+    /// Replaces a [`backend`](Self::backend).
     #[must_use]
     pub fn owner_limit(mut self, limit: usize) -> Self {
         self.owner_limit = limit;
-        self.store = Arc::new(DraftTaskStore::with_limits(self.capacity, self.owner_limit));
+        self.store = Arc::new(self.bundled_store());
         self
+    }
+
+    /// Keep tasks in `backend` instead of the bundled in-memory registry: a
+    /// shared store, so any replica can answer for a task, or the same
+    /// backend `2025-11-25` core Tasks use
+    /// (`ServerBuilder::with_task_backend`), so one registry fronts both
+    /// wires. A task's work still runs on the replica that created it.
+    #[must_use]
+    pub fn backend(mut self, backend: Arc<dyn TaskBackend>) -> Self {
+        self.store = backend;
+        self
+    }
+
+    fn bundled_store(&self) -> TaskStore {
+        TaskStore::default()
+            .with_capacity(self.capacity)
+            .with_owner_limit(self.owner_limit)
     }
 
     /// Whether `name` should run as a task under `ctx`.
@@ -273,6 +294,33 @@ fn task_not_found(task_id: &str) -> JsonRpcError {
     invalid_params(format!("unknown task: {task_id}"))
 }
 
+/// `-32603` (Internal error).
+fn internal(message: impl Into<String>) -> JsonRpcError {
+    JsonRpcError {
+        code: turbomcp_core::codes::INTERNAL_ERROR,
+        message: message.into(),
+        data: None,
+    }
+}
+
+/// A backend failure on `tasks/*`: an unknown task is `-32602`, and anything
+/// else is the server's problem.
+fn task_error(task_id: &str, e: &TaskError) -> JsonRpcError {
+    match e {
+        TaskError::NotFound => task_not_found(task_id),
+        other => {
+            tracing::warn!(error = ?other, task = %task_id, "the task backend failed");
+            internal("the task store failed")
+        }
+    }
+}
+
+/// Whose tasks a caller's are: theirs by principal, or the shared anonymous
+/// bucket.
+fn owner(context: &RequestContext) -> TaskOwner {
+    TaskOwner::principal(context.identity.principal_key())
+}
+
 fn error(id: RequestId, err: JsonRpcError) -> JsonRpcMessage {
     JsonRpcResponse::error(id, err).into()
 }
@@ -294,7 +342,7 @@ fn ack(id: RequestId) -> JsonRpcMessage {
 /// Cancellation (`tasks/cancel`, TTL purge) unblocks the awaiting handler
 /// with an error so it unwinds.
 struct TaskBroker {
-    store: Arc<DraftTaskStore>,
+    store: Arc<dyn TaskBackend>,
     subs: Arc<TaskSubscriptions>,
     task_id: String,
     cancel: CancellationToken,
@@ -312,18 +360,21 @@ impl TaskInputBroker for TaskBroker {
         let cancel = self.cancel.clone();
         let key = key.to_owned();
         Box::pin(async move {
-            let rx = store.publish_input(&task_id, &key, request).map_err(|()| {
-                McpError::internal("the task is no longer live; client input is unavailable")
-            })?;
+            let answer = store
+                .request_input(&task_id, &key, request)
+                .await
+                .map_err(|_| {
+                    McpError::internal("the task is no longer live; client input is unavailable")
+                })?;
             // Announce `input_required` to any listen-stream subscribers
             // (spec-optional; pollers see it via `tasks/get` regardless).
-            subs::push_status(&subs, &store, &task_id).await;
+            subs::push_status(&subs, store.as_ref(), &task_id).await;
             tokio::select! {
                 () = cancel.cancelled() => Err(McpError::internal(
                     "the task was cancelled while awaiting client input",
                 )),
-                response = rx => response.map_err(|_| {
-                    McpError::internal("the task input channel closed before a response arrived")
+                answer = answer => answer.ok_or_else(|| {
+                    McpError::internal("the task ended before the client answered")
                 }),
             }
         })
@@ -350,7 +401,7 @@ impl Extension for TasksExtension {
         &[subs::NOTIFICATIONS_TASKS]
     }
 
-    fn on_subscribe(
+    async fn on_subscribe(
         &self,
         peer: &turbomcp_service::Peer,
         subscription_id: &turbomcp_core::RequestId,
@@ -368,21 +419,25 @@ impl Extension for TasksExtension {
         if !client_declared {
             return SubscribeOutcome::MissingCapability;
         }
-        let owner = context.identity.principal_key();
-        let ids: Vec<String> = task_ids
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_owned))
-            .filter(|id| self.store.owns(id, owner.as_deref()))
-            .collect();
+        // Only the caller's own tasks: another's answers as if it didn't
+        // exist.
+        let owner = owner(context);
+        let mut ids = Vec::new();
+        for id in task_ids.iter().filter_map(serde_json::Value::as_str) {
+            if self.store.get(&owner, id).await.is_ok() {
+                ids.push(id.to_owned());
+            }
+        }
         let _ = (peer, subscription_id);
         SubscribeOutcome::Subscribed(json!({ "taskIds": ids }))
     }
 
-    fn activate(
+    async fn activate(
         &self,
         peer: &turbomcp_service::Peer,
         subscription_id: &turbomcp_core::RequestId,
         accepted: &serde_json::Value,
+        context: &RequestContext,
     ) {
         let ids: Vec<String> = accepted
             .get("taskIds")
@@ -391,8 +446,9 @@ impl Extension for TasksExtension {
             .flatten()
             .filter_map(|v| v.as_str().map(str::to_owned))
             .collect();
-        self.subs.retain_tasks(|id| self.store.get(id).is_some());
-        self.subs.subscribe(peer, subscription_id, &ids);
+        self.subs.forget_gone(self.store.as_ref()).await;
+        self.subs
+            .subscribe(peer, subscription_id, &ids, &owner(context));
     }
 
     fn on_unsubscribe(
@@ -414,13 +470,21 @@ impl Extension for TasksExtension {
 
         let cancel = run.cancel_token();
         // SEP-2663: a task MUST be durably created before `CreateTaskResult`
-        // returns. We create synchronously here, then spawn the call.
-        let task = self.store.create_owned(
-            self.ttl_ms,
-            self.poll_interval_ms,
-            cancel.clone(),
-            context.identity.principal_key(),
-        )?; // capacity ⇒ run normally
+        // returns: create it, then spawn the call.
+        let new_task = NewTask::new(self.ttl_ms).with_poll_interval_ms(self.poll_interval_ms);
+        let task = match self
+            .store
+            .create(&owner(&context), new_task, cancel.clone())
+            .await
+        {
+            Ok(task) => task,
+            // Graceful degradation (SEP-2663): no task, so the call runs
+            // synchronously.
+            Err(e) => {
+                tracing::warn!(error = ?e, "no task could be created; running the call inline");
+                return None;
+            }
+        };
 
         // Enable mid-task client input (in-execution `input_required`): the
         // call's ClientHandle publishes through this broker; the client
@@ -440,29 +504,31 @@ impl Extension for TasksExtension {
             // A panic would otherwise unwind this task with the record still
             // `working` — possibly forever, with an unlimited TTL. Every other
             // path answers a panicking handler `-32603`; so does this.
+            // A tool-level `isError: true` is still a `completed` task here,
+            // unlike on `2025-11-25`.
             let outcome = match turbomcp_service::catch_panic(run.run()).await {
                 Ok(Ok(result)) => TaskOutcome::Completed(result),
-                Ok(Err(err)) => TaskOutcome::Failed(err),
+                Ok(Err(err)) => TaskOutcome::Error(err),
                 Err(panic) => {
                     tracing::error!(panic, task = %task_id, "task handler panicked");
-                    TaskOutcome::Failed(turbomcp_core::JsonRpcError {
+                    TaskOutcome::Error(turbomcp_core::JsonRpcError {
                         code: turbomcp_core::codes::INTERNAL_ERROR,
                         message: "handler panicked".to_owned(),
                         data: None,
                     })
                 }
             };
-            store.complete(&task_id, outcome);
+            store.complete(&task_id, outcome).await;
             // Push the terminal status to any `subscriptions/listen` subscribers
             // (spec-optional; pollers see it via `tasks/get` regardless).
-            subs::push_status(&subs, &store, &task_id).await;
+            subs::push_status(&subs, store.as_ref(), &task_id).await;
         };
         // The work runs in a span of its own, parented to the call that
         // created it: the call's span ends as soon as the task is created,
         // and the work used to run outside any span at all.
         tokio::spawn(tracing::Instrument::instrument(work, span));
 
-        let value = serde_json::to_value(CreateTaskResult::new(task)).ok()?;
+        let value = serde_json::to_value(CreateTaskResult::new(render::task(&task))).ok()?;
         Some(ok(request.id, value))
     }
 
@@ -477,38 +543,25 @@ impl Extension for TasksExtension {
             Err(e) => return error(id, e),
         };
 
-        if !self
-            .store
-            .owns(&task_id, context.identity.principal_key().as_deref())
-        {
-            return error(id, task_not_found(&task_id));
-        }
-
+        let owner = owner(&context);
         match request.method.as_str() {
-            methods::TASKS_GET => match self.store.get(&task_id) {
-                Some(detailed) => match serde_json::to_value(detailed) {
+            methods::TASKS_GET => match self.store.get(&owner, &task_id).await {
+                Ok(snapshot) => match serde_json::to_value(render::detailed(snapshot)) {
                     Ok(value) => ok(id, value),
-                    Err(e) => error(
-                        id,
-                        JsonRpcError {
-                            code: turbomcp_core::codes::INTERNAL_ERROR,
-                            message: format!("serialize task: {e}"),
-                            data: None,
-                        },
-                    ),
+                    Err(e) => error(id, internal(format!("serialize task: {e}"))),
                 },
-                None => error(id, task_not_found(&task_id)),
+                Err(e) => error(id, task_error(&task_id, &e)),
             },
             // `tasks/cancel` acks unconditionally for a known task (cooperative,
             // eventually consistent); unknown ⇒ `-32602` (SHOULD).
-            methods::TASKS_CANCEL => {
-                if self.store.cancel(&task_id) {
-                    subs::push_status(&self.subs, &self.store, &task_id).await;
+            methods::TASKS_CANCEL => match self.store.cancel(&owner, &task_id).await {
+                Ok(_) => {
+                    subs::push_status(&self.subs, self.store.as_ref(), &task_id).await;
                     ack(id)
-                } else {
-                    error(id, task_not_found(&task_id))
                 }
-            }
+                Err(TaskError::AlreadyTerminal) => ack(id),
+                Err(e) => error(id, task_error(&task_id, &e)),
+            },
             // `tasks/update` delivers `inputResponses` to the awaiting
             // handler. Responses for keys that aren't currently outstanding —
             // never issued, already answered, superseded — are ignored, and a
@@ -522,15 +575,15 @@ impl Extension for TasksExtension {
                     .and_then(|p| serde_json::from_value::<UpdateTaskParams>(p.clone()).ok())
                     .map(|p| p.input_responses)
                     .unwrap_or_default();
-                match self.store.deliver_inputs(&task_id, &responses) {
-                    Some(changed) => {
+                match self.store.provide_input(&owner, &task_id, &responses).await {
+                    Ok(changed) => {
                         if changed {
                             // Announce the flip back to `working`.
-                            subs::push_status(&self.subs, &self.store, &task_id).await;
+                            subs::push_status(&self.subs, self.store.as_ref(), &task_id).await;
                         }
                         ack(id)
                     }
-                    None => error(id, task_not_found(&task_id)),
+                    Err(e) => error(id, task_error(&task_id, &e)),
                 }
             }
             // The dispatcher only routes our declared methods here.

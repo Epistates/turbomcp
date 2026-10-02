@@ -13,7 +13,8 @@ use turbomcp_core::{
 use turbomcp_ext_tasks::{EXTENSION_ID, TasksExtension};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
-    CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
+    CallToolContext, ListToolsContext, McpServerCore, MethodRouter, TaskBackend, TaskError,
+    TaskOwner, TaskStore, VersionDispatcher, WithTools,
 };
 
 #[derive(Clone)]
@@ -313,4 +314,27 @@ async fn another_issuer_cannot_read_update_or_cancel_a_task() {
     )
     .await;
     assert!(cancelled["error"].is_null());
+}
+
+/// A backend handed to the extension is where its tasks live, under the
+/// caller's owner: the same store can front `2025-11-25` sessions too, and
+/// neither wire sees the other's tasks.
+#[tokio::test]
+async fn a_supplied_backend_holds_the_tasks() {
+    let store = Arc::new(TaskStore::default());
+    let mut svc =
+        VersionDispatcher::new(Tools, MethodRouter::new().with_tools()).with_extension(Arc::new(
+            TasksExtension::new()
+                .task_tools(["echo"])
+                .backend(Arc::clone(&store) as Arc<dyn TaskBackend>),
+        ));
+    let created = call_tool(&mut svc, 1, "echo").await;
+    let task_id = created["result"]["taskId"].as_str().expect("a task");
+    assert!(store.get(&TaskOwner::Anonymous, task_id).await.is_ok());
+    assert_eq!(
+        store
+            .get(&TaskOwner::Session("a-session".into()), task_id)
+            .await,
+        Err(TaskError::NotFound)
+    );
 }

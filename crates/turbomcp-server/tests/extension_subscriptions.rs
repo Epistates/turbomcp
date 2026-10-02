@@ -45,7 +45,7 @@ impl Extension for Eager {
     async fn dispatch(&self, _request: ExtensionRequest) -> JsonRpcMessage {
         unreachable!("no methods")
     }
-    fn on_subscribe(
+    async fn on_subscribe(
         &self,
         _peer: &Peer,
         _subscription_id: &RequestId,
@@ -59,7 +59,13 @@ impl Extension for Eager {
             SubscribeOutcome::NotApplicable
         }
     }
-    fn activate(&self, peer: &Peer, subscription_id: &RequestId, _accepted: &Value) {
+    async fn activate(
+        &self,
+        peer: &Peer,
+        subscription_id: &RequestId,
+        _accepted: &Value,
+        _context: &RequestContext,
+    ) {
         self.activated.fetch_add(1, Ordering::SeqCst);
         let note = JsonRpcNotification::new(
             "notifications/eager",
@@ -85,7 +91,7 @@ impl Extension for Refuser {
     async fn dispatch(&self, _request: ExtensionRequest) -> JsonRpcMessage {
         unreachable!("no methods")
     }
-    fn on_subscribe(
+    async fn on_subscribe(
         &self,
         _peer: &Peer,
         _subscription_id: &RequestId,

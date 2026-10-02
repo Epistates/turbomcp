@@ -138,6 +138,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // between push its notification ahead of the acknowledgement, and left it
     // registered when a later extension refused the listen.
     let mut accepted_by: Vec<(Arc<dyn crate::extension::Extension>, Value)> = Vec::new();
+    let ctx = build_context(req, ext);
     // Offer the raw `notifications` filter to each extension (it reads its own
     // fields). A non-declaring client requesting an extension's notifications
     // is `-32021` (SEP-2663); accepted filters are merged into the ack.
@@ -148,10 +149,12 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
             .and_then(|p| p.get("notifications"))
             .cloned()
             .unwrap_or(Value::Null);
-        let ctx = build_context(req, ext);
         for extension in extensions {
             let declared = context_declares_extension(&ctx, extension.id());
-            match extension.on_subscribe(&peer, &id, &raw_notifications, declared, &ctx) {
+            match extension
+                .on_subscribe(&peer, &id, &raw_notifications, declared, &ctx)
+                .await
+            {
                 SubscribeOutcome::NotApplicable => {}
                 SubscribeOutcome::MissingCapability => {
                     return Ok(Some(missing_capability_response(id, extension.id())));
@@ -187,7 +190,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         .retain(|uri| !unwatched.contains(uri));
     subs.insert_acknowledged(&peer, &id, agreed, slot, ack.into());
     for (extension, accepted) in &accepted_by {
-        extension.activate(&peer, &id, accepted);
+        extension.activate(&peer, &id, accepted, &ctx).await;
     }
     // A `notifications/cancelled` that raced this dispatch fired our in-flight
     // token before the insert could be seen — honor it now.

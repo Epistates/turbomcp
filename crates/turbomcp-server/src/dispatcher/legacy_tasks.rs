@@ -18,7 +18,9 @@ use turbomcp_service::catch_panic;
 
 use crate::context::{CallToolContext, ListToolsContext};
 use crate::router::MethodRouter;
-use crate::tasks::{TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStatus};
+use crate::tasks::{
+    NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus,
+};
 use crate::traits::McpServerCore;
 
 use super::{error_response_for, ok_value, session_id};
@@ -38,6 +40,17 @@ fn error_response(id: RequestId, err: &McpError) -> JsonRpcMessage {
 
 /// How many tasks one `tasks/list` page carries.
 const TASKS_PAGE_SIZE: usize = 50;
+
+/// The TTL a task gets when the client doesn't ask for one, in milliseconds.
+const DEFAULT_TTL_MS: i64 = 300_000; // 5 minutes
+/// The most TTL a client can ask for ("Receivers MAY override the requested
+/// `ttl` duration"), in milliseconds.
+const MAX_TTL_MS: i64 = 3_600_000; // 1 hour
+
+/// A session's tasks are its own.
+pub(super) fn owner(sid: &str) -> TaskOwner {
+    TaskOwner::Session(sid.to_owned())
+}
 
 /// Whether a `tools/call` request asks for task-augmented execution. The
 /// field's *shape* is validated in [`task_augmented_call`]; mere presence
@@ -105,12 +118,15 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
 
     let fut = async move { contract.0.output(contract.1.as_ref(), fut.await?) };
 
-    let snap = match store.create(&sid, task_meta.ttl, token.clone()).await {
+    let ttl_ms = task_meta.ttl.unwrap_or(DEFAULT_TTL_MS).min(MAX_TTL_MS);
+    let snap = match store
+        .create(&owner(&sid), NewTask::new(Some(ttl_ms)), token.clone())
+        .await
+    {
         Ok(s) => s,
         Err(e) => return task_error_response(id, &e),
     };
 
-    let poll_interval_ms = store.poll_interval_ms();
     let store = Arc::clone(store);
     let task_id = snap.task_id.clone();
     let span = tracing::info_span!("mcp.task", "mcp.task.id" = %task_id);
@@ -165,7 +181,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
         id,
         &legacy::CreateTaskResult {
             meta: Map::new(),
-            task: to_wire_task(&snap, poll_interval_ms),
+            task: to_wire_task(&snap),
         },
     )
 }
@@ -238,16 +254,13 @@ pub(super) async fn handle_tasks_method(
                 .as_ref()
                 .and_then(|p| p.get("cursor"))
                 .and_then(Value::as_str);
-            match store.list(sid, cursor, TASKS_PAGE_SIZE).await {
+            match store.list(&owner(sid), cursor, TASKS_PAGE_SIZE).await {
                 Ok((page, next_cursor)) => ok_value(
                     id,
                     &legacy::ListTasksResult {
                         meta: Map::new(),
                         next_cursor,
-                        tasks: page
-                            .iter()
-                            .map(|s| to_wire_task(s, store.poll_interval_ms()))
-                            .collect(),
+                        tasks: page.iter().map(to_wire_task).collect(),
                     },
                 ),
                 Err(e) => task_error_response(id, &e),
@@ -255,18 +268,18 @@ pub(super) async fn handle_tasks_method(
         }
         methods::request::TASKS_GET => match parse_task_id(req.params.as_ref()) {
             Err(e) => error_response(id, &e),
-            Ok(tid) => match store.get(sid, &tid).await {
+            Ok(tid) => match store.get(&owner(sid), &tid).await {
                 Ok(s) => ok_value(
                     id,
                     &legacy::GetTaskResult {
                         created_at: s.created_at.clone(),
                         last_updated_at: s.last_updated_at.clone(),
                         meta: Map::new(),
-                        poll_interval: Some(store.poll_interval_ms()),
+                        poll_interval: s.poll_interval_ms,
                         status: to_wire_status(s.status),
                         status_message: s.status_message.clone(),
                         task_id: s.task_id.clone(),
-                        ttl: Some(s.ttl_ms),
+                        ttl: s.ttl_ms,
                         extra: Map::new(),
                     },
                 ),
@@ -275,18 +288,18 @@ pub(super) async fn handle_tasks_method(
         },
         methods::request::TASKS_CANCEL => match parse_task_id(req.params.as_ref()) {
             Err(e) => error_response(id, &e),
-            Ok(tid) => match store.cancel(sid, &tid).await {
+            Ok(tid) => match store.cancel(&owner(sid), &tid).await {
                 Ok(s) => ok_value(
                     id,
                     &legacy::CancelTaskResult {
                         created_at: s.created_at.clone(),
                         last_updated_at: s.last_updated_at.clone(),
                         meta: Map::new(),
-                        poll_interval: Some(store.poll_interval_ms()),
+                        poll_interval: s.poll_interval_ms,
                         status: to_wire_status(s.status),
                         status_message: s.status_message.clone(),
                         task_id: s.task_id.clone(),
-                        ttl: Some(s.ttl_ms),
+                        ttl: s.ttl_ms,
                         extra: Map::new(),
                     },
                 ),
@@ -297,7 +310,7 @@ pub(super) async fn handle_tasks_method(
             Err(e) => error_response(id, &e),
             // Blocks until the task is terminal, then answers exactly what the
             // underlying request would have (spec §Result Retrieval).
-            Ok(tid) => match store.wait_result(sid, &tid).await {
+            Ok(tid) => match store.wait_result(&owner(sid), &tid).await {
                 // "The `tasks/result` operation MUST include this metadata in
                 // its response, as the result structure itself does not contain
                 // the task ID."
@@ -345,21 +358,22 @@ fn with_related_task(mut value: Value, task_id: &str) -> Value {
 fn to_wire_status(s: TaskStatus) -> legacy::TaskStatus {
     match s {
         TaskStatus::Working => legacy::TaskStatus::Working,
+        TaskStatus::InputRequired => legacy::TaskStatus::InputRequired,
         TaskStatus::Completed => legacy::TaskStatus::Completed,
         TaskStatus::Failed => legacy::TaskStatus::Failed,
         TaskStatus::Cancelled => legacy::TaskStatus::Cancelled,
     }
 }
 
-fn to_wire_task(s: &TaskSnapshot, poll_interval_ms: i64) -> legacy::Task {
+fn to_wire_task(s: &TaskSnapshot) -> legacy::Task {
     legacy::Task {
         created_at: s.created_at.clone(),
         last_updated_at: s.last_updated_at.clone(),
-        poll_interval: Some(poll_interval_ms),
+        poll_interval: s.poll_interval_ms,
         status: to_wire_status(s.status),
         status_message: s.status_message.clone(),
         task_id: s.task_id.clone(),
-        ttl: Some(s.ttl_ms),
+        ttl: s.ttl_ms,
     }
 }
 
@@ -379,11 +393,18 @@ fn task_error_response(id: RequestId, e: &TaskError) -> JsonRpcMessage {
             turbomcp_core::codes::INTERNAL_ERROR,
             "task capacity exhausted; retry later",
         ),
-        TaskError::SessionLimitReached => (
+        TaskError::OwnerLimitReached => (
             turbomcp_core::codes::INTERNAL_ERROR,
             "this session has as many tasks running as it may; retry when one finishes",
         ),
         TaskError::InvalidCursor => (turbomcp_core::codes::INVALID_PARAMS, "invalid cursor"),
+        TaskError::Unavailable(why) => {
+            tracing::warn!(error = %why, "the task backend failed");
+            (
+                turbomcp_core::codes::INTERNAL_ERROR,
+                "the task store is unavailable; retry later",
+            )
+        }
     };
     JsonRpcResponse::error(
         id,

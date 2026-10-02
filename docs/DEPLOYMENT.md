@@ -145,10 +145,28 @@ needs, so round-robin load balancing works, with three things to set up:
   with a per-process random key unless every replica shares one:
   `ServerBuilder::with_state_keys(current, previous)`, which also rotates keys
   without breaking states in flight.
-- **Tasks extension.** A task lives in the process that created it. The client
-  sends `Mcp-Name: <taskId>` on `tasks/get`, `tasks/update` and
-  `tasks/cancel` so a load balancer can route polls to that replica (hash on
-  the header), or implement a shared store behind the task seam.
+- **Tasks extension.** A task's *work* runs in the process that created it:
+  its handler future, its cancellation token, and a handler waiting on client
+  input all live there. Its *record* lives in a `TaskBackend`, by default an
+  in-memory `TaskStore` in the same process. Two recipes:
+  - Route each task's requests to its replica. The client sends
+    `Mcp-Name: <taskId>` on `tasks/get`, `tasks/update` and `tasks/cancel`;
+    hash on that header. Ids are random, so the hash spreads them; to route
+    by a replica prefix instead, mint ids with
+    `TaskStore::with_id_generator` (`"replica-a.<uuid>"`, say) and match on
+    the prefix. This needs nothing shared.
+  - Share the record. A `TaskBackend` over a shared store
+    (`TasksExtension::backend`) lets any replica answer `tasks/get`. The work
+    still runs where it started, so `tasks/cancel` and `tasks/update`
+    landing elsewhere have to reach that replica the backend's own way
+    (pub/sub), or be routed as above. `create` has to return only once the
+    record is durable ("A server MUST NOT return `CreateTaskResult` until
+    the task is durably created").
+
+  One backend can serve both wires: hand the same one to
+  `ServerBuilder::with_task_backend` (`2025-11-25` core Tasks) and
+  `TasksExtension::backend`. A task's `TaskOwner` (its session, or its
+  caller's principal) keeps the two apart.
 - **Change notifications.** A `subscriptions/listen` stream is held by one
   replica, and `ServerNotifier` reaches the streams in its own process. Publish
   a change on every replica (each watching the same source of truth); there is

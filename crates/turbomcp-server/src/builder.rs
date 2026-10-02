@@ -148,7 +148,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// Enable core Tasks backed by a custom [`TaskBackend`] instead of the
     /// bundled in-memory store — the seam for external task storage. See
     /// [`VersionDispatcher::with_task_backend`]. Implies
-    /// [`with_tasks`](Self::with_tasks).
+    /// [`with_tasks`](Self::with_tasks). The `2026-07-28` Tasks extension can
+    /// be handed the same backend (`TasksExtension::backend`), so one
+    /// registry fronts both wires.
     #[must_use]
     pub fn with_task_backend(mut self, backend: Arc<dyn TaskBackend>) -> Self {
         self.task_backend = Some(backend);

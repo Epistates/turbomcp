@@ -207,13 +207,13 @@ pub use turbomcp_server::{Composite, CompositeServer};
 
 pub use turbomcp_server::{
     Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, GetPromptContext, Image,
-    IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult, IntoServerBuilder, Json,
-    LegacySessionAdapter, ListPromptsContext, ListResourceTemplatesContext, ListResourcesContext,
-    ListToolsContext, LogSender, McpServerCore, MethodRouter, ProgressReporter,
-    ReadResourceContext, Server, ServerBuilder, ServerNotifier, SessionBackend, SessionState,
-    SessionStore, TaskBackend, TaskError, TaskOutcome, TaskSnapshot, TaskStatus, TaskStore,
-    UriTemplate, UriTemplateError, VersionDispatcher, WithCompletions, WithPrompts, WithResources,
-    WithTools,
+    InputWaiter, IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult,
+    IntoServerBuilder, Json, LegacySessionAdapter, ListPromptsContext,
+    ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, LogSender, McpServerCore,
+    MethodRouter, NewTask, ProgressReporter, ReadResourceContext, Server, ServerBuilder,
+    ServerNotifier, SessionBackend, SessionState, SessionStore, TaskBackend, TaskError,
+    TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus, TaskStore, UriTemplate, UriTemplateError,
+    VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
 };
 
 /// Re-export of [`schemars`] for deriving `JsonSchema` on `#[tool]` argument

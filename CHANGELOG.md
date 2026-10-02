@@ -413,6 +413,35 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** one task store fronts both wires. The Tasks extension's
+  private registry is gone; `TaskBackend` and the bundled `TaskStore` serve
+  `2025-11-25` core Tasks and the `2026-07-28` extension alike, and
+  `TasksExtension::backend` takes any backend, including the one passed to
+  `ServerBuilder::with_task_backend`.
+  - `TaskBackend` methods take a `TaskOwner` (a `2025-11-25` session, or a
+    `2026-07-28` caller's principal, or the shared anonymous owner) instead of
+    a session id, and `create` takes a `NewTask` (TTL, suggested poll
+    interval). It gains `request_input`/`provide_input` (a task waiting on
+    the client is part of its record, so a shared store can show it) and
+    loses `poll_interval_ms`: the interval is per task, in
+    `TaskSnapshot::poll_interval_ms`. `TaskSnapshot` also carries
+    `input_requests` and the `outcome`, and `ttl_ms` is an `Option` (`None`
+    is unlimited).
+  - `TaskStatus::InputRequired` is new. `TaskError::SessionLimitReached` is
+    `OwnerLimitReached`, `TaskStore::with_session_limit` is
+    `with_owner_limit`, and `TaskError::Unavailable` reports a backend that
+    failed.
+  - `TaskStore::with_id_generator` mints task ids, so a replica can encode
+    itself in them for routing; `with_poll_interval_ms` sets the interval a
+    task gets when its front-end names none. `TaskStore::DEFAULT_TTL_MS`,
+    `MAX_TTL_MS` and `POLL_INTERVAL_MS` are gone: the `2025-11-25` front-end
+    keeps its default and cap privately.
+  - On `2025-11-25`, a task still running at its TTL is now failed with a
+    status message and kept one more TTL, where it used to vanish; a blocked
+    `tasks/result` wakes for it instead of waiting on.
+  - `Extension::on_subscribe` and `Extension::activate` are async, and
+    `activate` receives the listen request's context, so an extension can
+    consult an async store when a client subscribes.
 - **Breaking:** `#[tool(task)]` also drives the `2026-07-28` Tasks
   extension. `TasksExtension::new()` with no `task_tools`/`task_policy` used
   to taskify nothing; it now taskifies the tools that declare task support,

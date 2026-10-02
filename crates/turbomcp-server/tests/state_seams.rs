@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tower::{Service, ServiceExt};
 use turbomcp_core::{
     CancellationToken, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcRequest, LogLevel,
@@ -16,9 +16,9 @@ use turbomcp_core::{
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
-    CallToolContext, LegacySessionAdapter, ListToolsContext, McpServerCore, ServerBuilder,
-    SessionBackend, SessionError, SessionState, TaskBackend, TaskError, TaskOutcome, TaskSnapshot,
-    TaskStore, VersionDispatcher, WithTools,
+    CallToolContext, InputWaiter, LegacySessionAdapter, ListToolsContext, McpServerCore, NewTask,
+    ServerBuilder, SessionBackend, SessionError, SessionState, TaskBackend, TaskError, TaskOutcome,
+    TaskOwner, TaskSnapshot, TaskStore, VersionDispatcher, WithTools,
 };
 
 /// A [`SessionBackend`] that keeps sessions as bytes, the way a Redis or SQL
@@ -85,55 +85,81 @@ impl SessionBackend for ByteSessions {
 
 /// A [`TaskBackend`] wrapping the bundled store, with a distinctive poll
 /// interval so the wire proves the custom backend answered.
-#[derive(Default)]
 struct CountingTasks {
     inner: TaskStore,
     creates: AtomicUsize,
+}
+
+impl Default for CountingTasks {
+    fn default() -> Self {
+        Self {
+            inner: TaskStore::default().with_poll_interval_ms(Some(123)),
+            creates: AtomicUsize::new(0),
+        }
+    }
 }
 
 #[async_trait]
 impl TaskBackend for CountingTasks {
     async fn create(
         &self,
-        session_id: &str,
-        requested_ttl_ms: Option<i64>,
+        owner: &TaskOwner,
+        task: NewTask,
         cancel: CancellationToken,
     ) -> Result<TaskSnapshot, TaskError> {
         self.creates.fetch_add(1, Ordering::SeqCst);
-        TaskBackend::create(&self.inner, session_id, requested_ttl_ms, cancel).await
+        self.inner.create(owner, task, cancel).await
     }
 
     async fn complete(&self, task_id: &str, outcome: TaskOutcome) {
-        TaskBackend::complete(&self.inner, task_id, outcome).await;
+        self.inner.complete(task_id, outcome).await;
     }
 
-    async fn cancel(&self, session_id: &str, task_id: &str) -> Result<TaskSnapshot, TaskError> {
-        TaskBackend::cancel(&self.inner, session_id, task_id).await
-    }
-
-    async fn get(&self, session_id: &str, task_id: &str) -> Result<TaskSnapshot, TaskError> {
-        TaskBackend::get(&self.inner, session_id, task_id).await
+    async fn get(&self, owner: &TaskOwner, task_id: &str) -> Result<TaskSnapshot, TaskError> {
+        self.inner.get(owner, task_id).await
     }
 
     async fn list(
         &self,
-        session_id: &str,
+        owner: &TaskOwner,
         cursor: Option<&str>,
         page_size: usize,
     ) -> Result<(Vec<TaskSnapshot>, Option<String>), TaskError> {
-        TaskBackend::list(&self.inner, session_id, cursor, page_size).await
+        self.inner.list(owner, cursor, page_size).await
+    }
+
+    async fn cancel(&self, owner: &TaskOwner, task_id: &str) -> Result<TaskSnapshot, TaskError> {
+        self.inner.cancel(owner, task_id).await
     }
 
     async fn wait_result(
         &self,
-        session_id: &str,
+        owner: &TaskOwner,
         task_id: &str,
     ) -> Result<Result<Value, JsonRpcError>, TaskError> {
-        TaskBackend::wait_result(&self.inner, session_id, task_id).await
+        self.inner.wait_result(owner, task_id).await
     }
 
-    fn poll_interval_ms(&self) -> i64 {
-        123
+    async fn request_input(
+        &self,
+        task_id: &str,
+        key: &str,
+        request: Value,
+    ) -> Result<InputWaiter, TaskError> {
+        self.inner.request_input(task_id, key, request).await
+    }
+
+    async fn provide_input(
+        &self,
+        owner: &TaskOwner,
+        task_id: &str,
+        responses: &Map<String, Value>,
+    ) -> Result<bool, TaskError> {
+        self.inner.provide_input(owner, task_id, responses).await
+    }
+
+    async fn end_session(&self, session_id: &str) {
+        self.inner.end_session(session_id).await;
     }
 }
 
