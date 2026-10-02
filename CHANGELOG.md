@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Resumable client tasks. `Client::call_tool_detached` keeps the task a call
+  becomes (`Detached::Task`, holding a `ToolTask`) instead of waiting on it,
+  or returns `Detached::Done` when the server answers inline;
+  `Client::resume_task(id)` picks a task up again from its id, from this
+  process or an earlier one ("Clients SHOULD persist task IDs to durable
+  storage so that polling can resume after a crash or restart"). `ToolTask`
+  has `get`, `cancel` and `wait`, which drives the task as `call_tool` does,
+  input requests included, and leaves it running if dropped.
 - A task's work reports on itself. `ctx.task` (a `TaskHandle`, inert outside
   a task) sets the task's `statusMessage` and the polling interval it
   suggests, and inside a task each `ctx.progress` report becomes its
@@ -176,6 +184,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The client's TTL backstop for a task it drives follows each poll's TTL
+  ("The value of `ttlMs` MAY change over the lifetime of a task"). It was
+  fixed at the first answer, so a task the server extended was abandoned
+  with `ClientError::Timeout`.
 - A `2025-11-25` task-augmented call had no progress reporter: its handler's
   `ctx.progress` dropped every report, although the spec keeps the request's
   progress token valid for the task's lifetime.
@@ -425,6 +437,11 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** the client reads tasks typed. `Client::task_get` returns a
+  `TaskInfo` (status, message, TTL and polling interval as `Duration`s,
+  outstanding input, result or error, on either revision's field names),
+  `task_list` a `TaskPage`, and `list_all_tasks` a `Vec<TaskInfo>`, instead
+  of raw JSON.
 - **Breaking:** the task-input seam is a `TaskLink`. `TaskInputBroker`,
   `TaskInputSlot`, `CallRunner::attach_input_broker` and `with_input_slot`
   are gone: an extension that taskifies a call binds it with
