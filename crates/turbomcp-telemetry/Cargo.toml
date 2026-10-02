@@ -47,6 +47,11 @@ client = ["dep:turbomcp-client"]
 otlp = [
     "dep:opentelemetry-otlp",
     "opentelemetry-otlp/grpc-tonic",
+    # OTLP/HTTP (protobuf): the async reqwest client the rest of the stack
+    # already links, with rustls for an https collector.
+    "opentelemetry-otlp/http-proto",
+    "opentelemetry-otlp/reqwest-client",
+    "opentelemetry-otlp/reqwest-rustls",
     "dep:tracing-subscriber",
     "dep:tokio",
 ]

@@ -29,6 +29,13 @@ fn config_defaults_to_the_collectors_own_default_endpoint() {
         OtlpConfig::new("svc").endpoint("http://otel:4317").endpoint,
         Some("http://otel:4317".to_string())
     );
+    assert_eq!(config.protocol, None, "unset defers to the environment");
+    assert_eq!(
+        OtlpConfig::new("svc")
+            .protocol(turbomcp_telemetry::OtlpProtocol::HttpProtobuf)
+            .protocol,
+        Some(turbomcp_telemetry::OtlpProtocol::HttpProtobuf)
+    );
 }
 
 /// Installs the pipeline, then proves the second attempt is a clean error.

@@ -53,8 +53,10 @@
 //!
 //! ## Export
 //!
-//! With the `otlp` feature, [`init_otlp`] builds an OTLP/gRPC exporter and
-//! installs a `tracing` subscriber that exports the layer's spans. Without it,
+//! With the `otlp` feature, [`init_otlp`] builds an OTLP exporter (gRPC, or
+//! HTTP/protobuf with [`OtlpProtocol::HttpProtobuf`] or
+//! `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`) and installs a `tracing`
+//! subscriber that exports the layer's spans and metrics. Without it,
 //! the spans flow to whatever `tracing` subscriber the host installs.
 #![forbid(unsafe_code)]
 // docs.rs builds with `--cfg docsrs` on nightly so every feature-gated item
@@ -84,7 +86,7 @@ pub use client::ClientTelemetry;
 mod otlp;
 #[cfg(feature = "otlp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "otlp")))]
-pub use otlp::{OtlpConfig, TelemetryGuard, init_otlp};
+pub use otlp::{OtlpConfig, OtlpProtocol, TelemetryGuard, init_otlp};
 
 /// How [`TraceContextLayer`] records the caller's identity on a span.
 ///

@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- OTLP over HTTP/protobuf. `OtlpConfig::protocol(OtlpProtocol::HttpProtobuf)`
+  (or `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`) exports traces and
+  metrics to an OTLP/HTTP collector, the OpenTelemetry default and what
+  most managed backends accept; the endpoint is the base URL, and the
+  signal paths are appended. gRPC stays the default. `OtlpConfig` is
+  `#[non_exhaustive]`; build it with `new` and its setters.
 - Session duration metrics. `mcp.server.session.duration` is recorded for
   each stateful session that ends, by `MetricsLayer` registered with the new
   `ServerBuilder::observe_sessions` (a `turbomcp_service::SessionObserver`,

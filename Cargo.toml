@@ -97,7 +97,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "std", "ansi"] }
 tracing-opentelemetry = "0.34.0"
 opentelemetry = "0.33"
-opentelemetry-otlp = { version = "0.33", features = ["tonic", "metrics", "logs"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
 
 # URL
