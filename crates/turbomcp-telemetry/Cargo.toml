@@ -17,6 +17,7 @@ turbomcp-core = { workspace = true }
 # The closed set of MCP method names that metric labels are drawn from.
 turbomcp-protocol = { workspace = true }
 turbomcp-service = { workspace = true }
+turbomcp-client = { workspace = true, optional = true }
 tower = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
@@ -39,6 +40,9 @@ tokio = { workspace = true, optional = true }
 
 [features]
 default = []
+# `ClientTelemetry`: client spans, `mcp.client.operation.duration`, and trace
+# context injected into each request's `_meta`.
+client = ["dep:turbomcp-client"]
 otlp = [
     "dep:opentelemetry-otlp",
     "opentelemetry-otlp/grpc-tonic",
@@ -48,7 +52,10 @@ otlp = [
 
 [dev-dependencies]
 futures = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "io-util"] }
+# A real client and server, for the end-to-end trace test.
+turbomcp-server = { workspace = true }
+turbomcp-protocol = { workspace = true }
 # The in-memory exporters, to assert what the layers actually record.
 opentelemetry_sdk = { workspace = true, features = ["metrics", "testing"] }
 tracing-subscriber = { workspace = true }

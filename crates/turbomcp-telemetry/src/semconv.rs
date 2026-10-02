@@ -54,13 +54,16 @@ pub(crate) fn protocol_version(msg: &JsonRpcMessage) -> Option<&'static str> {
         .get("_meta")?
         .get(meta::keys::PROTOCOL_VERSION)?
         .as_str()?;
-    let version = ProtocolVersion::from_wire(declared);
-    Some(
-        ProtocolVersion::SUPPORTED
-            .iter()
-            .find(|v| **v == version)
-            .map_or("other", ProtocolVersion::as_str),
-    )
+    Some(version_label(&ProtocolVersion::from_wire(declared)))
+}
+
+/// `mcp.protocol.version` for `version`: its name when supported, else
+/// `other`.
+pub(crate) fn version_label(version: &ProtocolVersion) -> &'static str {
+    ProtocolVersion::SUPPORTED
+        .iter()
+        .find(|v| *v == version)
+        .map_or("other", ProtocolVersion::as_str)
 }
 
 /// What a request is about: the convention's span-name target and the
@@ -77,14 +80,21 @@ impl Target {
         let JsonRpcMessage::Request(r) = msg else {
             return None;
         };
+        Self::from_parts(&r.method, r.params.as_ref().and_then(Value::as_object))
+    }
+
+    /// The target of a request for `method` with `params`.
+    pub(crate) fn from_parts(
+        method: &str,
+        params: Option<&serde_json::Map<String, Value>>,
+    ) -> Option<Self> {
         let field = |key: &str| {
-            r.params
-                .as_ref()
+            params
                 .and_then(|p| p.get(key))
                 .and_then(Value::as_str)
                 .map(str::to_owned)
         };
-        match r.method.as_str() {
+        match method {
             request::TOOLS_CALL => field("name").map(Self::Tool),
             request::PROMPTS_GET => field("name").map(Self::Prompt),
             request::RESOURCES_READ
@@ -138,51 +148,55 @@ impl Outcome {
     /// Classify a finished request.
     pub(crate) fn of<E>(result: &Result<Option<JsonRpcMessage>, E>) -> Self {
         match result {
-            Err(_) => Self {
-                error_type: Some(Cow::Borrowed("_OTHER")),
-                ..Self::default()
+            Err(_) => Self::other("_OTHER"),
+            Ok(Some(JsonRpcMessage::Response(r))) => match &r.error {
+                Some(error) => Self::rpc_error(error.code, &error.message),
+                None => r.result.as_ref().map(Self::result).unwrap_or_default(),
             },
-            Ok(Some(JsonRpcMessage::Response(r))) => {
-                if let Some(error) = &r.error {
-                    let failed = counts_as_failure(error.code);
-                    return Self {
-                        error_type: failed.then(|| Cow::Owned(error.code.to_string())),
-                        status_code: Some(error.code),
-                        message: failed.then(|| error.message.clone()),
-                        unknown_target: matches!(
-                            error.code,
-                            codes::METHOD_NOT_FOUND | codes::INVALID_PARAMS
-                        ),
-                    };
-                }
-                // "When `CallToolResult` returns `isError: true`, set
-                // `error.type` to `tool_error`."
-                let tool_error = r
-                    .result
-                    .as_ref()
-                    .and_then(|v| v.get("isError"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                if tool_error {
-                    Self {
-                        error_type: Some(Cow::Borrowed("tool_error")),
-                        message: Some("tool_error".to_owned()),
-                        ..Self::default()
-                    }
-                } else {
-                    Self::default()
-                }
-            }
             Ok(_) => Self::default(),
+        }
+    }
+
+    /// A JSON-RPC error response with `code`.
+    pub(crate) fn rpc_error(code: i32, message: &str) -> Self {
+        let failed = counts_as_failure(code);
+        Self {
+            error_type: failed.then(|| Cow::Owned(code.to_string())),
+            status_code: Some(code),
+            message: failed.then(|| message.to_owned()),
+            unknown_target: matches!(code, codes::METHOD_NOT_FOUND | codes::INVALID_PARAMS),
+        }
+    }
+
+    /// A successful result: "When `CallToolResult` returns `isError: true`,
+    /// set `error.type` to `tool_error`."
+    pub(crate) fn result(value: &Value) -> Self {
+        let tool_error = value
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if tool_error {
+            Self {
+                error_type: Some(Cow::Borrowed("tool_error")),
+                message: Some("tool_error".to_owned()),
+                ..Self::default()
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    /// A failure with no JSON-RPC error to name it.
+    pub(crate) fn other(error_type: &'static str) -> Self {
+        Self {
+            error_type: Some(Cow::Borrowed(error_type)),
+            ..Self::default()
         }
     }
 
     /// A request abandoned mid-flight (client disconnect, a timeout layer).
     pub(crate) fn cancelled() -> Self {
-        Self {
-            error_type: Some(Cow::Borrowed("cancelled")),
-            ..Self::default()
-        }
+        Self::other("cancelled")
     }
 }
 

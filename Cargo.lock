@@ -3739,8 +3739,10 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "turbomcp-client",
  "turbomcp-core",
  "turbomcp-protocol",
+ "turbomcp-server",
  "turbomcp-service",
 ]
 

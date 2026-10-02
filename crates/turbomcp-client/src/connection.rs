@@ -95,6 +95,8 @@ struct Inner {
     /// A request's timeout stops while any are: the client, not the server,
     /// is the one taking its time.
     inbound: watch::Receiver<usize>,
+    /// Watches every request this connection sends.
+    observer: Option<Arc<dyn crate::RequestObserver>>,
 }
 
 impl Drop for Inner {
@@ -158,7 +160,7 @@ impl Connection {
     where
         T: Transport,
     {
-        Self::connect_with_cache(transport, request_timeout, handler, None)
+        Self::connect_with_cache(transport, request_timeout, handler, None, None)
     }
 
     /// [`connect`](Self::connect), plus a [`ResponseCache`] the actor
@@ -169,6 +171,7 @@ impl Connection {
         request_timeout: Duration,
         handler: ClientHandlers,
         cache: Option<Arc<ResponseCache>>,
+        observer: Option<Arc<dyn crate::RequestObserver>>,
     ) -> Self
     where
         T: Transport,
@@ -213,6 +216,7 @@ impl Connection {
                 progress,
                 subscriptions,
                 inbound,
+                observer,
             }),
         }
     }
@@ -305,11 +309,36 @@ impl Connection {
     }
 
     /// [`request_waiting`](Self::request_waiting) under an id from
-    /// [`mint_id`](Self::mint_id).
+    /// [`mint_id`](Self::mint_id), shown to the observer if there is one.
     pub(crate) async fn request_as(
         &self,
         id: RequestId,
         method: impl Into<String>,
+        params: Option<Value>,
+        facts: Extensions,
+        wait: Wait,
+    ) -> ClientResult<Value> {
+        let method = method.into();
+        let Some(observer) = self.inner.observer.clone() else {
+            return self.request_as_inner(id, method, params, facts, wait).await;
+        };
+        let mut params = params;
+        let scope = observer.start(&crate::OutboundRequest {
+            id: &id,
+            method: &method,
+            params: params.as_ref().and_then(Value::as_object),
+            protocol_version: facts.get::<turbomcp_service::WireVersion>().map(|w| &w.0),
+        });
+        crate::observe::merge_meta(&mut params, scope.meta());
+        let result = self.request_as_inner(id, method, params, facts, wait).await;
+        scope.finish(result.as_ref());
+        result
+    }
+
+    async fn request_as_inner(
+        &self,
+        id: RequestId,
+        method: String,
         params: Option<Value>,
         facts: Extensions,
         wait: Wait,
@@ -335,7 +364,6 @@ impl Connection {
             reason: Some("the caller dropped the request"),
             notify: false,
         };
-        let method = method.into();
         let notify_on_abandon = cancellable(&method, params.as_ref());
         let msg = JsonRpcMessage::Request(JsonRpcRequest::new(id.clone(), method, params));
         match tokio::time::timeout_at(deadline, self.inner.outbound.send((msg, facts))).await {

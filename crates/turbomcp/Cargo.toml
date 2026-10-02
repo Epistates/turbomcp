@@ -31,7 +31,7 @@ telemetry = ["dep:turbomcp-telemetry"]
 websocket = ["http", "turbomcp-transport-http/websocket"]
 # The MCP client (ClientBuilder, ConnectMode probe, typed neutral API). The
 # other half of the protocol; opt-in for server-only users.
-client = ["dep:turbomcp-client", "turbomcp-transport-http?/client"]
+client = ["dep:turbomcp-client", "turbomcp-transport-http?/client", "turbomcp-telemetry?/client"]
 # The draft Tasks extension (io.modelcontextprotocol/tasks, SEP-2663):
 # resultType:"task" augmentation, tasks/get|update|cancel, notifications/tasks.
 ext-tasks = ["dep:turbomcp-ext-tasks"]

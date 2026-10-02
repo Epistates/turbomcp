@@ -322,8 +322,10 @@ pub use turbomcp_service::{GovernorRateLimiter, RateKey, RateLimiter};
 /// `{mcp.method.name} {target}`, continuing the caller's trace from `_meta`,
 /// identity and session recorded as keyed hashes), the
 /// [`MetricsLayer`](telemetry::MetricsLayer) (`mcp.server.operation.duration`
-/// plus an in-flight counter), and an optional OTLP export pipeline (traces +
-/// metrics). Enable with the `telemetry` feature.
+/// plus an in-flight counter), with `client` also
+/// [`ClientTelemetry`](telemetry::ClientTelemetry) for the client's requests
+/// (`ClientBuilder::with_observer`), and an optional OTLP export pipeline
+/// (traces + metrics). Enable with the `telemetry` feature.
 #[cfg(feature = "telemetry")]
 #[cfg_attr(docsrs, doc(cfg(feature = "telemetry")))]
 pub use turbomcp_telemetry as telemetry;

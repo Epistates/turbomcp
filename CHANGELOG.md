@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Client-side telemetry. `ClientBuilder::with_observer` takes a
+  `RequestObserver`, which sees every request the client sends (it may add
+  `_meta` entries) and how each ended. `turbomcp_telemetry::ClientTelemetry`
+  (feature `client`, on with the facade's `telemetry` + `client`) is one:
+  `CLIENT` spans and `mcp.client.operation.duration` on the MCP semantic
+  conventions, with the span's trace context injected into the request's
+  `_meta`, so a server behind `TraceContextLayer` continues the same trace.
 - Resumable response streams on the session wires (`2025-06-18` /
   `2025-11-25` §Resumability and Redelivery):
   `HttpConfig::with_event_store` with the bundled `InMemoryEventStore`, or

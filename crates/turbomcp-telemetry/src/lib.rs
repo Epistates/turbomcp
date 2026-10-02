@@ -59,6 +59,13 @@ pub use metrics::{Metrics, MetricsLayer};
 pub use propagation::{extract as extract_context, inject as inject_context, w3c_propagator};
 pub use semconv::RedactionKey;
 
+#[cfg(feature = "client")]
+#[cfg_attr(docsrs, doc(cfg(feature = "client")))]
+mod client;
+#[cfg(feature = "client")]
+#[cfg_attr(docsrs, doc(cfg(feature = "client")))]
+pub use client::ClientTelemetry;
+
 #[cfg(feature = "otlp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "otlp")))]
 mod otlp;

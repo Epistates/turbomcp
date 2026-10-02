@@ -112,6 +112,7 @@ pub struct ClientBuilder {
     handler: ClientHandlers,
     response_cache: bool,
     log_level: Option<LogLevel>,
+    observer: Option<Arc<dyn crate::RequestObserver>>,
 }
 
 impl fmt::Debug for ClientBuilder {
@@ -126,6 +127,7 @@ impl fmt::Debug for ClientBuilder {
             .field("handler", &self.handler)
             .field("response_cache", &self.response_cache)
             .field("log_level", &self.log_level)
+            .field("observer", &self.observer.is_some())
             .finish()
     }
 }
@@ -142,6 +144,7 @@ impl ClientBuilder {
             handler: ClientHandlers::default(),
             response_cache: true,
             log_level: None,
+            observer: None,
         }
     }
 
@@ -240,6 +243,16 @@ impl ClientBuilder {
         self
     }
 
+    /// Watch every request this client sends with `observer`: client-side
+    /// tracing and metrics (`turbomcp_telemetry::ClientTelemetry`), or your
+    /// own logging. It may add `_meta` entries (trace context) to each
+    /// request; see [`RequestObserver`](crate::RequestObserver).
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<dyn crate::RequestObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
     /// Ask the server for `notifications/message` at `level` and above, on
     /// whichever revision gets negotiated.
     ///
@@ -274,6 +287,7 @@ impl ClientBuilder {
             self.request_timeout,
             self.handler.clone(),
             cache.clone(),
+            self.observer.clone(),
         );
         self.handshake(conn, cache).await
     }
