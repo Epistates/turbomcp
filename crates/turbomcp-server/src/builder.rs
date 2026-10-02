@@ -58,7 +58,7 @@ pub struct ServerBuilder<S> {
     task_backend: Option<Arc<dyn TaskBackend>>,
     extensions: Vec<Arc<dyn Extension>>,
     cache: Option<CachePolicies>,
-    state_key: Option<[u8; 32]>,
+    state_key: Option<([u8; 32], Vec<[u8; 32]>)>,
     request_state_limit: Option<usize>,
     request_state_ttl: Option<std::time::Duration>,
     visibility: Option<Arc<dyn crate::VisibilityPolicy>>,
@@ -312,28 +312,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
-    /// Sign MRTR `requestState` with a key you supply, rather than the
-    /// per-process random secret used by default.
-    ///
-    /// `requestState` is the opaque, HMAC-signed blob a handler hands back with
-    /// an elicitation so the re-issued request can resume where it left off.
-    /// The default key is minted per dispatcher, which is correct for a single
-    /// process — but it means **a state minted by one replica cannot be
-    /// redeemed by another, and a restart invalidates every outstanding one**.
-    /// Set a shared key on every replica when you run more than one, or when
-    /// in-flight elicitations must survive a rolling deploy. This is the
-    /// signing-key counterpart to
-    /// [`with_session_backend`](Self::with_session_backend) /
-    /// [`with_task_backend`](Self::with_task_backend): sharing the *stores*
-    /// across replicas does not help if the *signature* is still per-process.
-    ///
-    /// The key is a MAC secret, so treat it like one: 32 bytes from a CSPRNG,
-    /// held in your secret manager, never derived from a passphrase or
-    /// hard-coded. Anyone holding it can mint states this server will accept —
-    /// though a forged state still can't cross principals or methods, since
-    /// both are bound into the signed payload. Rotating the key invalidates
-    /// outstanding states; handlers see the re-issued request fail
-    /// verification, which is the same path a tampered state takes.
+    /// Seal MRTR `requestState` with a key you supply, rather than the
+    /// per-process random secret used by default. The same as
+    /// [`with_state_keys`](Self::with_state_keys)`(key, [])`.
     ///
     /// ```
     /// # use turbomcp_server::{IntoServerBuilder, McpServerCore};
@@ -348,8 +329,43 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// let dispatcher = MyServer.into_server().with_state_key(key).build();
     /// ```
     #[must_use]
-    pub fn with_state_key(mut self, key: [u8; 32]) -> Self {
-        self.state_key = Some(key);
+    pub fn with_state_key(self, key: [u8; 32]) -> Self {
+        self.with_state_keys(key, [])
+    }
+
+    /// Seal MRTR `requestState` with `current`, and also accept states sealed
+    /// with any of `previous`: zero-downtime key rotation.
+    ///
+    /// `requestState` is the opaque blob a handler hands back with an
+    /// elicitation so the re-issued request can resume where it left off. It
+    /// is sealed (XChaCha20-Poly1305), so the client can neither read what the
+    /// handler stored nor alter it. The default key is minted per dispatcher,
+    /// which is correct for a single process, but it means **a state minted by
+    /// one replica cannot be redeemed by another, and a restart invalidates
+    /// every outstanding one**. Set shared keys on every replica when you run
+    /// more than one, or when in-flight elicitations must survive a rolling
+    /// deploy. This is the key counterpart to
+    /// [`with_session_backend`](Self::with_session_backend) /
+    /// [`with_task_backend`](Self::with_task_backend): sharing the *stores*
+    /// across replicas does not help if the *key* is still per-process.
+    ///
+    /// To rotate: deploy the new key as `previous` everywhere, then as
+    /// `current` with the old one as `previous`, then drop the old one once
+    /// its states have expired ([`request_state_ttl`](Self::request_state_ttl),
+    /// ten minutes by default). Each state names the key that sealed it, so no
+    /// state in flight fails along the way.
+    ///
+    /// The keys are secrets: 32 bytes from a CSPRNG each, held in your secret
+    /// manager, never derived from a passphrase or hard-coded. Anyone holding
+    /// one can mint states this server will accept, though a forged state
+    /// still can't cross principals or requests, since both are bound into it.
+    #[must_use]
+    pub fn with_state_keys(
+        mut self,
+        current: [u8; 32],
+        previous: impl IntoIterator<Item = [u8; 32]>,
+    ) -> Self {
+        self.state_key = Some((current, previous.into_iter().collect()));
         self
     }
 
@@ -500,8 +516,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
         if let Some(cache) = self.cache {
             dispatcher = dispatcher.with_cache_policy(cache);
         }
-        if let Some(key) = self.state_key {
-            dispatcher = dispatcher.with_state_key(key);
+        if let Some((current, previous)) = self.state_key {
+            dispatcher = dispatcher.with_state_keys(current, previous);
         }
         if let Some(bytes) = self.request_state_limit {
             dispatcher = dispatcher.request_state_limit(bytes);

@@ -42,7 +42,7 @@ use turbomcp_service::ProtocolError;
 
 use crate::extension::{Extension, ExtensionRequest};
 use crate::inflight::InFlightRegistry;
-use crate::mrtr::{PendingRequests, StateSigner};
+use crate::mrtr::{PendingRequests, StateSealer};
 use crate::router::MethodRouter;
 use crate::session::{SessionBackend, SessionError, SessionStore};
 use crate::subscriptions::{ServerNotifier, SubscriptionRegistry};
@@ -96,7 +96,7 @@ struct Shared {
     tasks: Option<Arc<dyn TaskBackend>>,
     inflight: Arc<InFlightRegistry>,
     subs: Arc<SubscriptionRegistry>,
-    signer: Arc<StateSigner>,
+    sealer: Arc<StateSealer>,
     pending: Arc<PendingRequests>,
     /// Registered draft extensions (PLAN D10), consulted for `server/discover`
     /// advertisement and modern-path method routing. One `Arc` to keep the
@@ -398,7 +398,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 tasks: None,
                 inflight: Arc::new(InFlightRegistry::default()),
                 subs: Arc::new(SubscriptionRegistry::default()),
-                signer: Arc::new(StateSigner::new()),
+                sealer: Arc::new(StateSealer::new()),
                 pending: Arc::new(PendingRequests::default()),
                 extensions: Arc::new(Vec::new()),
                 strict_elicitation_keys: false,
@@ -502,16 +502,28 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         self
     }
 
-    /// Sign MRTR `requestState` with `key` instead of a per-process random
-    /// secret. See [`ServerBuilder::with_state_key`](crate::ServerBuilder::with_state_key)
-    /// for when this is required and how to source the key.
+    /// Seal MRTR `requestState` with `key` instead of a per-process random
+    /// secret. See [`ServerBuilder::with_state_keys`](crate::ServerBuilder::with_state_keys)
+    /// for when this is required, how to source keys, and how to rotate them.
     #[must_use]
-    pub fn with_state_key(mut self, key: [u8; 32]) -> Self {
-        let current = self.shared.signer.as_ref().clone();
-        self.shared.signer = Arc::new(
-            StateSigner::from_key(key)
-                .with_limit(current.limit())
-                .with_ttl(current.ttl()),
+    pub fn with_state_key(self, key: [u8; 32]) -> Self {
+        self.with_state_keys(key, [])
+    }
+
+    /// Seal with `current` and also accept states sealed with any of
+    /// `previous`. See
+    /// [`ServerBuilder::with_state_keys`](crate::ServerBuilder::with_state_keys).
+    #[must_use]
+    pub fn with_state_keys(
+        mut self,
+        current: [u8; 32],
+        previous: impl IntoIterator<Item = [u8; 32]>,
+    ) -> Self {
+        let existing = self.shared.sealer.as_ref().clone();
+        self.shared.sealer = Arc::new(
+            StateSealer::from_keys(current, previous)
+                .with_limit(existing.limit())
+                .with_ttl(existing.ttl()),
         );
         self
     }
@@ -521,7 +533,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// round, so a flow with large sampling answers may need more.
     #[must_use]
     pub fn request_state_limit(mut self, bytes: usize) -> Self {
-        self.shared.signer = Arc::new(self.shared.signer.as_ref().clone().with_limit(bytes));
+        self.shared.sealer = Arc::new(self.shared.sealer.as_ref().clone().with_limit(bytes));
         self
     }
 
@@ -530,7 +542,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// long a captured state can be replayed.
     #[must_use]
     pub fn request_state_ttl(mut self, ttl: std::time::Duration) -> Self {
-        self.shared.signer = Arc::new(self.shared.signer.as_ref().clone().with_ttl(ttl));
+        self.shared.sealer = Arc::new(self.shared.sealer.as_ref().clone().with_ttl(ttl));
         self
     }
 
@@ -805,7 +817,7 @@ async fn handle_request<S: McpServerCore>(
     ext: &Extensions,
     cancel: CancellationToken,
 ) -> Result<JsonRpcMessage, ProtocolError> {
-    // The fields this path needs; `signer`/`pending` flow on into
+    // The fields this path needs; `sealer`/`pending` flow on into
     // `dispatch_capability` via `shared`.
     let Shared {
         sessions,

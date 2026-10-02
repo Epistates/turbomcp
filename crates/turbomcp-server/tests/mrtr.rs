@@ -657,3 +657,38 @@ async fn an_unknown_tool_from_a_handler_is_invalid_params() {
         "{out}"
     );
 }
+
+/// A retry whose arguments were re-encoded (`1` written back as `1.0`, keys
+/// reordered) is still the same request. The binding sorted keys but kept
+/// the number's spelling, so a client that parsed the arguments into typed
+/// floats and re-serialized them failed verification on every retry, looping
+/// on the same question. It is RFC 8785 canonical JSON now.
+#[tokio::test]
+async fn a_re_encoded_retry_is_still_the_same_request() {
+    let mut svc = dispatcher();
+    let first = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({
+                "name": "guarded", "arguments": { "n": 1, "a": "x" }, "_meta": meta()
+            })),
+        ),
+    )
+    .await;
+    let state = first["requestState"].as_str().expect("a continuation");
+    let second = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            2,
+            "tools/call",
+            Some(json!({
+                "name": "guarded", "arguments": { "a": "x", "n": 1.0 }, "_meta": meta(),
+                "requestState": state, "inputResponses": { "confirm": accept() },
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(second["resultType"], "complete", "{second}");
+}

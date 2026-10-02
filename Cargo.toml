@@ -115,6 +115,11 @@ subtle = "2.6"  # Constant-time comparison for secret values
 # put a second copy of the RustCrypto stack in every build that has either.
 hmac = "0.12"
 sha2 = "0.10"
+# MRTR requestState sealing. 0.10, the generation sha2/hmac share (0.11
+# moves to crypto-common 0.2; all of them move together).
+chacha20poly1305 = "0.10"
+# RFC 8785 canonical JSON, for the MRTR request binding.
+serde_json_canonicalizer = "0.3"
 # OS randomness for keys (uuid already links it).
 getrandom = "0.4"
 base64 = "0.23.1"

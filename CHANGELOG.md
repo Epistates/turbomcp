@@ -77,6 +77,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- MRTR `requestState` is sealed with XChaCha20-Poly1305 instead of signed,
+  so a client (or anything logging its retries) can no longer read what a
+  handler stored or the principal the state is bound to. Each state names
+  the key that sealed it, and `ServerBuilder::with_state_keys(current,
+  previous)` rotates keys without breaking states in flight; there was no
+  way to rotate before. States minted by an earlier version stop verifying
+  (they live ten minutes).
 - Telemetry no longer records a reversible hash of the caller's subject.
   The "PII-safe" redaction was an unkeyed 64-bit FNV hash, which anyone
   able to read the trace backend could reverse for a list of candidate
@@ -155,6 +162,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An MRTR retry whose arguments were re-encoded (`1` written back as `1.0`,
+  as a client that parses into typed floats does) no longer fails
+  verification. The request binding sorted keys but kept each number's
+  spelling, so such a client looped on the same question; it is RFC 8785
+  canonical JSON now.
 - Trace propagation over `_meta` uses the configured OpenTelemetry
   propagator (`global::set_text_map_propagator`), so B3, Jaeger and X-Ray
   deployments are understood; it falls back to the W3C pair (trace context

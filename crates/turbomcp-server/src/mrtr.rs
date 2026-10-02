@@ -10,13 +10,15 @@
 //! pre-elicit side effects idempotent (PLAN §4.5.1).
 //!
 //! `requestState` is the handler's opaque resume blob. It round-trips through
-//! the client, so it is attacker-controlled input (mrtr spec MUST): outbound
-//! state is HMAC-SHA256-signed and the protected payload binds the method name,
-//! the authenticated principal (a state minted for one subject can't be
-//! replayed by another), and an expiry; inbound state that fails any check is
-//! rejected with `-32602` before the handler runs. The signing key defaults to
-//! a per-dispatcher secret; multi-replica deployments share one via
-//! [`ServerBuilder::with_state_key`](crate::ServerBuilder::with_state_key).
+//! the client, so it is attacker-controlled input (mrtr spec MUST) and
+//! readable by the client unless protected: outbound state is sealed with
+//! XChaCha20-Poly1305, and the sealed payload binds a digest of the
+//! originating request, the authenticated principal (a state minted for one
+//! subject can't be replayed by another), and an expiry; inbound state that
+//! fails any check is rejected with `-32602` before the handler runs. The key
+//! defaults to a per-dispatcher secret; multi-replica deployments share keys,
+//! and rotate them, via
+//! [`ServerBuilder::with_state_keys`](crate::ServerBuilder::with_state_keys).
 //!
 //! On `2025-11-25` the same handle calls go out as **inline bidirectional
 //! requests**: a real `elicitation/create` (etc.) JSON-RPC request is written
@@ -31,11 +33,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use hmac::{Hmac, Mac};
+use chacha20poly1305::aead::{Aead as _, KeyInit as _, Payload};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
-use sha2::Sha256;
 use tokio::sync::oneshot;
 use turbomcp_core::{
     JsonRpcRequest, JsonRpcResponse, McpError, McpResult, ProtocolVersion, RequestId,
@@ -44,8 +46,6 @@ use turbomcp_protocol::methods::request;
 use turbomcp_protocol::neutral;
 
 use crate::subscriptions::Route;
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Default cap on the serialized `requestState` payload. Every answer collected
 /// so far rides the state into the next round, and one sampling answer alone
@@ -56,45 +56,101 @@ pub(crate) const DEFAULT_STATE_BYTES: usize = 256 * 1024;
 /// handler's job).
 pub(crate) const DEFAULT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 
-// ---- request-state signing -----------------------------------------------------
+// ---- request-state sealing -----------------------------------------------------
 
-/// Signs/verifies `requestState` blobs.
+/// The token format's version prefix.
+const STATE_VERSION: &str = "v2";
+/// Bytes of key id at the front of a sealed state.
+const KID_LEN: usize = 4;
+/// XChaCha20's nonce length: long enough to draw at random for every state.
+const NONCE_LEN: usize = 24;
+
+/// One key a sealer can open states with.
+#[derive(Clone)]
+struct StateKey {
+    /// The first bytes of a hash of the key, so a token names the key that
+    /// sealed it without revealing it.
+    kid: [u8; KID_LEN],
+    cipher: XChaCha20Poly1305,
+}
+
+impl StateKey {
+    fn new(key: [u8; 32]) -> Self {
+        use sha2::{Digest as _, Sha256};
+        let digest = Sha256::new()
+            .chain_update(b"turbomcp requestState key id")
+            .chain_update(key)
+            .finalize();
+        let mut kid = [0u8; KID_LEN];
+        kid.copy_from_slice(&digest[..KID_LEN]);
+        Self {
+            kid,
+            cipher: XChaCha20Poly1305::new(&key.into()),
+        }
+    }
+
+    /// What the AEAD binds besides the plaintext: the format and the key.
+    fn associated_data(&self) -> [u8; 2 + KID_LEN] {
+        let mut aad = [0u8; 2 + KID_LEN];
+        aad[..2].copy_from_slice(STATE_VERSION.as_bytes());
+        aad[2..].copy_from_slice(&self.kid);
+        aad
+    }
+}
+
+/// Seals and opens `requestState` blobs with XChaCha20-Poly1305.
+///
+/// A state round-trips through the client, so it is both attacker-controlled
+/// input and something the client can read. Sealing it with an AEAD keeps
+/// what a handler stored (and the principal it is bound to) confidential, and
+/// rejects anything altered. The token is `v2.` followed by base64url of
+/// `key id ‖ nonce ‖ ciphertext`.
 ///
 /// The key defaults to a per-dispatcher random secret, which is right for a
 /// single process: nothing else can mint a state it will accept, and a restart
 /// invalidates every outstanding one. A deployment running more than one
-/// replica must supply a shared key instead — see
-/// [`ServerBuilder::with_state_key`](crate::ServerBuilder::with_state_key).
+/// replica supplies shared keys instead, and rotates them without breaking
+/// states in flight: see
+/// [`ServerBuilder::with_state_keys`](crate::ServerBuilder::with_state_keys).
 #[derive(Clone)]
-pub(crate) struct StateSigner {
-    key: [u8; 32],
+pub(crate) struct StateSealer {
+    /// The key states are sealed with first, then the ones still accepted.
+    keys: Arc<[StateKey]>,
     limit: usize,
     ttl: Duration,
 }
 
-impl StateSigner {
+impl StateSealer {
     pub(crate) fn new() -> Self {
         let mut key = [0u8; 32];
         getrandom::fill(&mut key).expect("the OS random source is unavailable");
-        Self::from_key(key)
+        Self::from_keys(key, [])
     }
 
-    /// A signer over a caller-supplied key (shared across replicas).
-    pub(crate) fn from_key(key: [u8; 32]) -> Self {
+    /// A sealer that seals with `current` and also opens states sealed with
+    /// any of `previous` (keys being rotated out).
+    pub(crate) fn from_keys(
+        current: [u8; 32],
+        previous: impl IntoIterator<Item = [u8; 32]>,
+    ) -> Self {
+        let keys: Vec<StateKey> = std::iter::once(current)
+            .chain(previous)
+            .map(StateKey::new)
+            .collect();
         Self {
-            key,
+            keys: keys.into(),
             limit: DEFAULT_STATE_BYTES,
             ttl: DEFAULT_STATE_TTL,
         }
     }
 
-    /// The same signer with a different payload cap.
+    /// The same sealer with a different payload cap.
     pub(crate) fn with_limit(mut self, limit: usize) -> Self {
         self.limit = limit.max(1024);
         self
     }
 
-    /// The same signer with a different redemption window.
+    /// The same sealer with a different redemption window.
     pub(crate) fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
         self
@@ -108,17 +164,11 @@ impl StateSigner {
         self.ttl
     }
 
-    fn mac(&self) -> HmacSha256 {
-        HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length")
-    }
-
-    /// Wrap handler `data` into the opaque wire string:
-    /// `v1.<b64url(payload)>.<b64url(tag)>` where the payload binds the
-    /// originating `method`, the authenticated `subject` (principal binding —
-    /// a state minted for one principal can't be replayed by another), and an
-    /// expiry alongside the data. `subject` is `None` for an unauthenticated
-    /// request.
-    pub(crate) fn sign(
+    /// Seal handler `data` into the opaque wire string. The sealed payload
+    /// binds the originating `method` (a request binding), the authenticated
+    /// `subject` (a state minted for one principal can't be replayed by
+    /// another; `None` for an unauthenticated request), and an expiry.
+    pub(crate) fn seal(
         &self,
         method: &str,
         subject: Option<&str>,
@@ -143,22 +193,35 @@ impl StateSigner {
                 self.limit
             )));
         }
-        let mut mac = self.mac();
-        mac.update(&payload);
-        let tag = mac.finalize().into_bytes();
-        Ok(format!(
-            "v1.{}.{}",
-            URL_SAFE_NO_PAD.encode(&payload),
-            URL_SAFE_NO_PAD.encode(tag)
-        ))
+        self.seal_bytes(&payload)
     }
 
-    /// Verify an inbound `requestState` and return the embedded handler data.
+    fn seal_bytes(&self, payload: &[u8]) -> McpResult<String> {
+        let key = &self.keys[0];
+        let mut nonce = [0u8; NONCE_LEN];
+        getrandom::fill(&mut nonce).expect("the OS random source is unavailable");
+        let sealed = key
+            .cipher
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: payload,
+                    aad: &key.associated_data(),
+                },
+            )
+            .map_err(|_| McpError::internal("could not seal request state"))?;
+        let mut token = Vec::with_capacity(KID_LEN + NONCE_LEN + sealed.len());
+        token.extend_from_slice(&key.kid);
+        token.extend_from_slice(&nonce);
+        token.extend_from_slice(&sealed);
+        Ok(format!("{STATE_VERSION}.{}", URL_SAFE_NO_PAD.encode(token)))
+    }
+
+    /// Open an inbound `requestState` and return the embedded handler data.
     ///
-    /// The error is deliberately uniform — a forger learns nothing about
-    /// *which* check failed. The MAC comparison is constant-time
-    /// ([`Mac::verify_slice`]).
-    pub(crate) fn verify(
+    /// The error is deliberately uniform: a forger learns nothing about
+    /// *which* check failed.
+    pub(crate) fn open(
         &self,
         method: &str,
         subject: Option<&str>,
@@ -171,17 +234,32 @@ impl StateSigner {
         if token.len() > 2 * self.limit {
             return Err(rejected());
         }
-        let mut parts = token.splitn(3, '.');
-        let (Some("v1"), Some(payload), Some(tag)) = (parts.next(), parts.next(), parts.next())
-        else {
+        let encoded = token
+            .strip_prefix(STATE_VERSION)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .ok_or_else(rejected)?;
+        let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| rejected())?;
+        if bytes.len() < KID_LEN + NONCE_LEN {
             return Err(rejected());
-        };
-        let payload = URL_SAFE_NO_PAD.decode(payload).map_err(|_| rejected())?;
-        let tag = URL_SAFE_NO_PAD.decode(tag).map_err(|_| rejected())?;
-        let mut mac = self.mac();
-        mac.update(&payload);
-        mac.verify_slice(&tag).map_err(|_| rejected())?;
-
+        }
+        let (kid, rest) = bytes.split_at(KID_LEN);
+        let (nonce, sealed) = rest.split_at(NONCE_LEN);
+        let payload = self
+            .keys
+            .iter()
+            .filter(|key| key.kid == kid)
+            .find_map(|key| {
+                key.cipher
+                    .decrypt(
+                        XNonce::from_slice(nonce),
+                        Payload {
+                            msg: sealed,
+                            aad: &key.associated_data(),
+                        },
+                    )
+                    .ok()
+            })
+            .ok_or_else(rejected)?;
         let parsed: Value = serde_json::from_slice(&payload).map_err(|_| rejected())?;
         if parsed.get("m").and_then(Value::as_str) != Some(method) {
             return Err(rejected());
@@ -1090,31 +1168,82 @@ mod tests {
 
     #[test]
     fn sign_verify_roundtrip_binds_method_and_rejects_tampering() {
-        let signer = StateSigner::new();
-        let token = signer
-            .sign("tools/call", None, &json!({"step": 2}))
+        let sealer = StateSealer::new();
+        let token = sealer
+            .seal("tools/call", None, &json!({"step": 2}))
             .unwrap();
         assert_eq!(
-            signer.verify("tools/call", None, &token).unwrap(),
+            sealer.open("tools/call", None, &token).unwrap(),
             json!({"step": 2})
         );
         // Bound to the originating method.
-        assert!(signer.verify("prompts/get", None, &token).is_err());
-        // A flipped byte fails the MAC.
+        assert!(sealer.open("prompts/get", None, &token).is_err());
+        // A flipped byte fails authentication.
         let mut tampered = token.clone().into_bytes();
         let mid = tampered.len() / 2;
         tampered[mid] = if tampered[mid] == b'A' { b'B' } else { b'A' };
         assert!(
-            signer
-                .verify("tools/call", None, &String::from_utf8(tampered).unwrap())
+            sealer
+                .open("tools/call", None, &String::from_utf8(tampered).unwrap())
                 .is_err()
         );
-        // A different server's signer rejects it too.
+        // A different server's sealer rejects it too.
+        assert!(StateSealer::new().open("tools/call", None, &token).is_err());
+    }
+
+    /// The client can't read what a handler stored, nor the principal it is
+    /// bound to: the state is sealed, not just signed.
+    #[test]
+    fn a_sealed_state_reveals_nothing_to_the_client() {
+        let sealer = StateSealer::new();
+        let token = sealer
+            .seal(
+                "tools/call",
+                Some("alice@example.com"),
+                &json!({ "secret": "the-handler-kept-this" }),
+            )
+            .unwrap();
+        let bytes = URL_SAFE_NO_PAD
+            .decode(token.strip_prefix("v2.").unwrap())
+            .unwrap();
+        let shown = String::from_utf8_lossy(&bytes);
+        assert!(!shown.contains("the-handler-kept-this"), "{shown}");
+        assert!(!shown.contains("alice"), "{shown}");
+        // Two seals of the same state differ (a fresh nonce each time).
+        let again = sealer
+            .seal(
+                "tools/call",
+                Some("alice@example.com"),
+                &json!({ "secret": "the-handler-kept-this" }),
+            )
+            .unwrap();
+        assert_ne!(token, again);
+    }
+
+    /// Rotation: a key moved to `previous` still opens the states it sealed,
+    /// new states are sealed with the current key, and a key that was dropped
+    /// opens nothing.
+    #[test]
+    fn rotated_keys_keep_states_in_flight_working() {
+        let old = [1u8; 32];
+        let new = [2u8; 32];
+        let before = StateSealer::from_keys(old, []);
+        let in_flight = before.seal("tools/call", None, &json!(1)).unwrap();
+
+        let during = StateSealer::from_keys(new, [old]);
+        assert_eq!(
+            during.open("tools/call", None, &in_flight).unwrap(),
+            json!(1)
+        );
+        let fresh = during.seal("tools/call", None, &json!(2)).unwrap();
         assert!(
-            StateSigner::new()
-                .verify("tools/call", None, &token)
-                .is_err()
+            before.open("tools/call", None, &fresh).is_err(),
+            "sealed with the new key"
         );
+
+        let after = StateSealer::from_keys(new, []);
+        assert!(after.open("tools/call", None, &in_flight).is_err());
+        assert_eq!(after.open("tools/call", None, &fresh).unwrap(), json!(2));
     }
 
     /// The point of `ServerBuilder::with_state_key`: replicas that share a key
@@ -1125,15 +1254,15 @@ mod tests {
     #[test]
     fn a_shared_key_lets_another_replica_redeem_the_state() {
         let key = [7u8; 32];
-        let replica_a = StateSigner::from_key(key);
-        let replica_b = StateSigner::from_key(key);
+        let replica_a = StateSealer::from_keys(key, []);
+        let replica_b = StateSealer::from_keys(key, []);
 
         let token = replica_a
-            .sign("tools/call", Some("user-1"), &json!({"step": 2}))
+            .seal("tools/call", Some("user-1"), &json!({"step": 2}))
             .unwrap();
         assert_eq!(
             replica_b
-                .verify("tools/call", Some("user-1"), &token)
+                .open("tools/call", Some("user-1"), &token)
                 .unwrap(),
             json!({"step": 2}),
             "a replica sharing the key must redeem the state"
@@ -1143,45 +1272,41 @@ mod tests {
         // principal still cannot replay another's state.
         assert!(
             replica_b
-                .verify("tools/call", Some("user-2"), &token)
+                .open("tools/call", Some("user-2"), &token)
                 .is_err()
         );
         // And a replica on a *different* key (mid-rotation) rejects it.
         assert!(
-            StateSigner::from_key([8u8; 32])
-                .verify("tools/call", Some("user-1"), &token)
+            StateSealer::from_keys([8u8; 32], [])
+                .open("tools/call", Some("user-1"), &token)
                 .is_err()
         );
     }
 
     #[test]
     fn state_is_bound_to_the_minting_principal() {
-        let signer = StateSigner::new();
-        let token = signer
-            .sign("tools/call", Some("alice"), &json!({"step": 1}))
+        let sealer = StateSealer::new();
+        let token = sealer
+            .seal("tools/call", Some("alice"), &json!({"step": 1}))
             .unwrap();
         // Same principal redeems it.
-        assert!(signer.verify("tools/call", Some("alice"), &token).is_ok());
+        assert!(sealer.open("tools/call", Some("alice"), &token).is_ok());
         // A different principal — even authenticated — cannot.
-        assert!(
-            signer
-                .verify("tools/call", Some("mallory"), &token)
-                .is_err()
-        );
+        assert!(sealer.open("tools/call", Some("mallory"), &token).is_err());
         // Nor can an unauthenticated retry of an authenticated state.
-        assert!(signer.verify("tools/call", None, &token).is_err());
+        assert!(sealer.open("tools/call", None, &token).is_err());
     }
 
     #[test]
     fn oversized_state_is_the_servers_error_and_names_the_knob() {
-        let signer = StateSigner::new();
+        let sealer = StateSealer::new();
         let big = json!({ "blob": "x".repeat(DEFAULT_STATE_BYTES) });
-        let err = signer.sign("tools/call", None, &big).unwrap_err();
+        let err = sealer.seal("tools/call", None, &big).unwrap_err();
         assert!(matches!(err, McpError::Internal(_)), "{err:?}");
         assert!(err.to_string().contains("request_state_limit"), "{err}");
         // And a larger configured limit admits it.
-        let roomy = StateSigner::new().with_limit(2 * DEFAULT_STATE_BYTES);
-        assert!(roomy.sign("tools/call", None, &big).is_ok());
+        let roomy = StateSealer::new().with_limit(2 * DEFAULT_STATE_BYTES);
+        assert!(roomy.seal("tools/call", None, &big).is_ok());
     }
 
     /// An undeclared capability is `MissingRequiredCapability` (`-32021`), not
@@ -1380,18 +1505,11 @@ mod tests {
 
     // ---- requestState verification edges ------------------------------------
 
-    /// A token with a *valid* MAC over `payload`. Lets a test reach the checks
-    /// that run after the MAC (expiry, shape), which `sign` can't be made to
-    /// violate.
-    fn crafted(signer: &StateSigner, payload: &Value) -> String {
-        let bytes = serde_json::to_vec(payload).expect("serializable");
-        let mut mac = signer.mac();
-        mac.update(&bytes);
-        format!(
-            "v1.{}.{}",
-            URL_SAFE_NO_PAD.encode(&bytes),
-            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
-        )
+    /// A token sealed (with the sealer's own key) around `payload`. Lets a test
+    /// reach the checks that run after decryption (expiry, shape), which
+    /// `seal` can't be made to violate.
+    fn crafted(sealer: &StateSealer, payload: &Value) -> String {
+        crafted_bytes(sealer, &serde_json::to_vec(payload).expect("serializable"))
     }
 
     #[track_caller]
@@ -1415,44 +1533,33 @@ mod tests {
     /// huge token is discarded before it is decoded.
     #[test]
     fn malformed_state_tokens_are_rejected_uniformly() {
-        let signer = StateSigner::new();
-        let good = signer.sign("tools/call", None, &json!({ "a": 1 })).unwrap();
-        let mut parts = good.splitn(3, '.');
-        let (_v, payload, tag) = (
-            parts.next().unwrap(),
-            parts.next().unwrap().to_owned(),
-            parts.next().unwrap().to_owned(),
-        );
+        let sealer = StateSealer::new();
+        let good = sealer.seal("tools/call", None, &json!({ "a": 1 })).unwrap();
+        let body = good.strip_prefix("v2.").unwrap().to_owned();
 
         for (what, token) in [
             ("empty", String::new()),
-            ("no version prefix", format!("{payload}.{tag}")),
-            ("unknown version", format!("v2.{payload}.{tag}")),
-            ("only two segments", format!("v1.{payload}")),
-            ("payload is not base64", format!("v1.~~~~.{tag}")),
-            ("tag is not base64", format!("v1.{payload}.~~~~")),
+            ("no version prefix", body.clone()),
+            ("unknown version", format!("v9.{body}")),
+            ("the old signed format", format!("v1.{body}.{body}")),
+            ("not base64", "v2.~~~~".to_owned()),
+            ("shorter than a key id and nonce", "v2.AAAA".to_owned()),
             (
                 "over the length bound",
-                format!("v1.{}.{tag}", "A".repeat(2 * DEFAULT_STATE_BYTES)),
+                format!("v2.{}", "A".repeat(2 * DEFAULT_STATE_BYTES)),
             ),
             (
-                "valid MAC over a non-JSON payload",
-                crafted_bytes(&signer, b"not json at all"),
+                "sealed, but not JSON",
+                crafted_bytes(&sealer, b"not json at all"),
             ),
         ] {
-            assert_uniform_rejection(signer.verify("tools/call", None, &token), what);
+            assert_uniform_rejection(sealer.open("tools/call", None, &token), what);
         }
     }
 
     /// As [`crafted`], for a payload that isn't valid JSON.
-    fn crafted_bytes(signer: &StateSigner, bytes: &[u8]) -> String {
-        let mut mac = signer.mac();
-        mac.update(bytes);
-        format!(
-            "v1.{}.{}",
-            URL_SAFE_NO_PAD.encode(bytes),
-            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
-        )
+    fn crafted_bytes(sealer: &StateSealer, bytes: &[u8]) -> String {
+        sealer.seal_bytes(bytes).expect("sealable")
     }
 
     /// The TTL is the replay bound (the mrtr spec's SHOULD). It is the one
@@ -1461,17 +1568,17 @@ mod tests {
     /// simply malformed": identical construction, opposite verdict.
     #[test]
     fn an_expired_state_is_rejected_and_a_live_one_is_not() {
-        let signer = StateSigner::new();
+        let sealer = StateSealer::new();
         let payload =
             |exp: u64| json!({ "m": "tools/call", "sub": null, "exp": exp, "d": { "n": 7 } });
 
         assert_uniform_rejection(
-            signer.verify("tools/call", None, &crafted(&signer, &payload(1))),
+            sealer.open("tools/call", None, &crafted(&sealer, &payload(1))),
             "expired in 1970",
         );
         assert_eq!(
-            signer
-                .verify("tools/call", None, &crafted(&signer, &payload(u64::MAX)))
+            sealer
+                .open("tools/call", None, &crafted(&sealer, &payload(u64::MAX)))
                 .expect("an unexpired crafted token verifies"),
             json!({ "n": 7 }),
             "the control proves the rejection above was the expiry, not the shape"
@@ -1479,10 +1586,10 @@ mod tests {
         // A payload with no `exp` at all is treated as expired, not as
         // "unbounded" — the absent field must not become a forever token.
         assert_uniform_rejection(
-            signer.verify(
+            sealer.open(
                 "tools/call",
                 None,
-                &crafted(&signer, &json!({ "m": "tools/call", "sub": null, "d": {} })),
+                &crafted(&sealer, &json!({ "m": "tools/call", "sub": null, "d": {} })),
             ),
             "no exp field",
         );

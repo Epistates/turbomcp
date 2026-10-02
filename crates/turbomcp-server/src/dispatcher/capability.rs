@@ -29,7 +29,7 @@ use crate::context::{
     ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, ReadResourceContext,
 };
 use crate::logging::LogSender;
-use crate::mrtr::{ClientHandle, PendingRequests, StateSigner};
+use crate::mrtr::{ClientHandle, PendingRequests, StateSealer};
 use crate::progress::ProgressReporter;
 use crate::router::MethodRouter;
 use crate::traits::McpServerCore;
@@ -466,7 +466,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
     shared: &Shared,
     id: RequestId,
 ) -> JsonRpcMessage {
-    let signer = &shared.signer;
+    let sealer = &shared.sealer;
     let pending = &shared.pending;
     let method = req.method.as_str();
     let ctx = ctx.clone();
@@ -557,7 +557,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             let handle = match mrtr_handle::<W>(
                 req,
                 &ctx,
-                signer,
+                sealer,
                 pending,
                 shared.strict_elicitation_keys,
             ) {
@@ -581,7 +581,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                     version: &W::VERSION,
                     subject,
                     handle: &handle,
-                    signer,
+                    sealer,
                     mrtr_enabled: W::MRTR,
                 },
                 fut,
@@ -624,7 +624,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             let handle = match mrtr_handle::<W>(
                 req,
                 &ctx,
-                signer,
+                sealer,
                 pending,
                 shared.strict_elicitation_keys,
             ) {
@@ -647,7 +647,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                     version: &W::VERSION,
                     subject,
                     handle: &handle,
-                    signer,
+                    sealer,
                     mrtr_enabled: W::MRTR,
                 },
                 fut,
@@ -699,10 +699,10 @@ pub(super) async fn call_prepared_tool<S: McpServerCore, W: WireFamily>(
     params: neutral::CallToolParams,
     tool: neutral::Tool,
 ) -> JsonRpcMessage {
-    let signer = &shared.signer;
+    let sealer = &shared.sealer;
     let pending = &shared.pending;
     let ctx = ctx.clone();
-    let handle = match mrtr_handle::<W>(req, &ctx, signer, pending, shared.strict_elicitation_keys)
+    let handle = match mrtr_handle::<W>(req, &ctx, sealer, pending, shared.strict_elicitation_keys)
     {
         Ok(h) => h,
         Err(e) => return error_response_for(id, &W::VERSION, &e),
@@ -744,7 +744,7 @@ pub(super) async fn call_prepared_tool<S: McpServerCore, W: WireFamily>(
             version: &W::VERSION,
             subject,
             handle: &handle,
-            signer,
+            sealer,
             mrtr_enabled: W::MRTR,
         },
         fut,
@@ -821,18 +821,12 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     Ok((params, tool))
 }
 
+/// A digest of the request a `requestState` belongs to: "the method name and a
+/// digest of its salient parameters". The params are RFC 8785 canonical JSON,
+/// so a retry an intermediary or a client re-encoded (keys reordered, `1`
+/// written back as `1.0`, a string escaped differently) still matches; sorting
+/// keys alone left a retry carrying `1.0` failing verification forever.
 fn request_binding(req: &JsonRpcRequest) -> String {
-    fn canonical(value: &Value) -> Value {
-        match value {
-            Value::Object(map) => {
-                let ordered: BTreeMap<_, _> =
-                    map.iter().map(|(k, v)| (k.clone(), canonical(v))).collect();
-                serde_json::to_value(ordered).expect("JSON canonicalization")
-            }
-            Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
-            other => other.clone(),
-        }
-    }
     let mut params = req.params.clone().unwrap_or(Value::Null);
     if let Some(map) = params.as_object_mut() {
         for key in ["_meta", "requestState", "inputResponses"] {
@@ -840,8 +834,9 @@ fn request_binding(req: &JsonRpcRequest) -> String {
         }
     }
     use sha2::{Digest, Sha256};
-    let encoded = serde_json::to_vec(&(req.method.as_str(), canonical(&params)))
-        .expect("JSON request binding");
+    let encoded =
+        serde_json_canonicalizer::to_vec(&serde_json::json!([req.method.as_str(), params]))
+            .expect("JSON request binding");
     Sha256::digest(encoded)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -887,7 +882,7 @@ fn validate_mrtr_envelope(req: &JsonRpcRequest) -> McpResult<()> {
 fn mrtr_handle<W: WireFamily>(
     req: &JsonRpcRequest,
     ctx: &RequestContext,
-    signer: &StateSigner,
+    sealer: &StateSealer,
     pending: &Arc<PendingRequests>,
     strict_keys: bool,
 ) -> Result<ClientHandle, McpError> {
@@ -913,7 +908,7 @@ fn mrtr_handle<W: WireFamily>(
         .map_err(|e| McpError::invalid_params(format!("invalid MRTR fields: {e}")))?
         .unwrap_or_default();
     let state_in = match &fields.request_state {
-        Some(token) => Some(signer.verify(
+        Some(token) => Some(sealer.open(
             &request_binding(req),
             ctx.identity.principal_key().as_deref(),
             token,
@@ -940,7 +935,7 @@ pub(super) struct MrtrTurn<'a> {
     pub(super) subject: Option<String>,
     /// The handler's client channel: what it recorded, what it stashed.
     pub(super) handle: &'a ClientHandle,
-    pub(super) signer: &'a StateSigner,
+    pub(super) sealer: &'a StateSealer,
     /// Whether this wire answers `InputRequiredResult` at all (legacy uses
     /// inline bidi, so a sentinel there is a leak, not a turn).
     pub(super) mrtr_enabled: bool,
@@ -963,7 +958,7 @@ where
         version,
         subject,
         handle,
-        signer,
+        sealer,
         mrtr_enabled,
     } = turn;
     let Some(f) = fut else {
@@ -993,7 +988,7 @@ where
             );
         }
         if let Some(data) = state_out {
-            match signer.sign(method, subject.as_deref(), &data) {
+            match sealer.seal(method, subject.as_deref(), &data) {
                 Ok(token) => {
                     result.insert("requestState".to_owned(), serde_json::json!(token));
                 }

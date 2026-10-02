@@ -141,8 +141,10 @@ needs, so round-robin load balancing works, with three things to set up:
 
 - **MRTR state key.** A tool that asks the client something answers with an
   `InputRequiredResult` whose `requestState` the client sends back on the
-  retry, possibly to another replica. That state is signed with a per-process
-  random key unless every replica shares one: `ServerBuilder::with_state_key`.
+  retry, possibly to another replica. That state is sealed (XChaCha20-Poly1305)
+  with a per-process random key unless every replica shares one:
+  `ServerBuilder::with_state_keys(current, previous)`, which also rotates keys
+  without breaking states in flight.
 - **Tasks extension.** A task lives in the process that created it. The client
   sends `Mcp-Name: <taskId>` on `tasks/get`, `tasks/update` and
   `tasks/cancel` so a load balancer can route polls to that replica (hash on
