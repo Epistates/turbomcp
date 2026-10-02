@@ -376,7 +376,7 @@ async fn run_auth(url: &str, context: &ScenarioContext) -> Result<(), String> {
             credentials: match context.client_secret.as_deref() {
                 Some(secret) => ClientCredentials {
                     client_id: id.to_string(),
-                    client_secret: Some(secret.to_string()),
+                    client_secret: Some(secret.to_string().into()),
                 },
                 None => ClientCredentials::public(id),
             },
