@@ -70,6 +70,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Telemetry no longer records a reversible hash of the caller's subject.
+  The "PII-safe" redaction was an unkeyed 64-bit FNV hash, which anyone
+  able to read the trace backend could reverse for a list of candidate
+  emails in microseconds. Subjects are now an HMAC-SHA256 under a
+  `RedactionKey` (random per process unless you share one with
+  `SpanPolicy::with_redaction_key`), and `mcp.session.id`, a
+  bearer-equivalent secret, is recorded the same way. `turbomcp_core::
+  RedactedSubject` is removed; `SpanPolicy` is `#[non_exhaustive]`.
 - An anonymous `initialize` flood can no longer push live sessions out. The
   session table evicted the least recently used session to make room, so
   4,096 `initialize` POSTs (seconds of work, unauthenticated by default)
@@ -373,6 +381,23 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** telemetry follows the OpenTelemetry MCP semantic
+  conventions, so dashboards built for them work unmodified.
+  - Spans are named `{mcp.method.name} {target}` (`tools/call add`) with
+    `mcp.method.name`, `mcp.protocol.version`, `jsonrpc.request.id`,
+    `gen_ai.tool.name`/`gen_ai.prompt.name`/`mcp.resource.uri`,
+    `gen_ai.operation.name = execute_tool`, and on completion
+    `rpc.response.status_code`, `error.type` and an `ERROR` status whose
+    description is the JSON-RPC error message. `-32700`, `-32600`,
+    `-32601`, `-32602` and `-32002` are not errors; an `isError` tool
+    result is `error.type = tool_error`. A span parented from `_meta` links
+    the span that was current when the request arrived.
+  - Metrics: `mcp.server.operation.duration` replaces
+    `mcp.server.requests` and `mcp.server.request.duration`, and the
+    in-flight counter is `turbomcp.server.active_operations`. Labels use the
+    conventions' names (`mcp.method.name`, `mcp.protocol.version`,
+    `error.type`, ...) instead of `mcp.method`, `mcp.protocol_version` and
+    `outcome`.
 - **Breaking:** the session seam can be implemented outside the crate and
   can fail.
   - `SessionState` serializes and has `SessionState::new` plus

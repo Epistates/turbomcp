@@ -1,6 +1,6 @@
-//! [`MetricsLayer`] — a [`tower::Layer`] recording OpenTelemetry metrics for
-//! each MCP request: a request counter, a duration histogram, and an
-//! in-flight up-down counter.
+//! [`MetricsLayer`] — a [`tower::Layer`] recording the MCP semantic
+//! conventions' `mcp.server.operation.duration` histogram for each request,
+//! plus an in-flight counter.
 //!
 //! Like [`TraceContextLayer`](crate::TraceContextLayer) it is transport-
 //! agnostic (it sees `JsonRpcMessage`) and composes around a dispatcher as
@@ -9,38 +9,34 @@
 //! the same OTLP pipeline (`otlp` feature, or any host-installed provider)
 //! exports them.
 //!
-//! ## Label cardinality is bounded and PII-safe
+//! ## Attributes, and why their cardinality is bounded
 //!
-//! Every metric is labeled by `mcp.method`, the negotiated
-//! `mcp.protocol_version`, and an `outcome` of `ok`/`error`/`cancelled`. The
-//! method comes off the wire, so it is checked against the spec's method
-//! names (plus any registered with [`MetricsLayer::with_methods`]) and
-//! anything else is recorded as `_OTHER`, the way HTTP semantic conventions
-//! bucket unknown methods: one series per made-up name would let any caller
-//! blow up the backend's cardinality with cheap `-32601`s. The version label
-//! is likewise one of the supported revisions or `other`. Identity is
-//! deliberately **not** a metric label (it would be unbounded and would leak
-//! PII); identity lives on spans, redacted.
+//! Each measurement carries `mcp.method.name`, `mcp.protocol.version`,
+//! `gen_ai.operation.name = execute_tool` on tool calls, the call's
+//! `gen_ai.tool.name` / `gen_ai.prompt.name`, and, when they apply,
+//! `error.type` and `rpc.response.status_code`. The method comes off the wire,
+//! so it is one of the spec's names (or one registered with
+//! [`MetricsLayer::with_methods`]) or `_OTHER`; the version is a supported
+//! revision or `other`. A tool or prompt name is recorded only when the server
+//! knew it (the call didn't fail with `-32601`/`-32602`), so it is bounded by
+//! the server's own catalogue rather than by what callers invent. Resource
+//! URIs (opt-in in the conventions) and identity are never labels: unbounded,
+//! and identity is PII.
 
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
-use opentelemetry::metrics::{Counter, Histogram, UpDownCounter};
+use opentelemetry::metrics::{Histogram, UpDownCounter};
 use opentelemetry::{KeyValue, global};
 use pin_project_lite::pin_project;
 use tower::{Layer, Service};
-use turbomcp_core::{JsonRpcMessage, McpRequest, ProtocolVersion, meta};
-use turbomcp_protocol::methods::request;
+use turbomcp_core::{JsonRpcMessage, McpRequest};
 
-/// The label for a method outside the known set.
-const OTHER_METHOD: &str = "_OTHER";
+use crate::semconv::{self, Outcome, Target};
 
-/// Bucket boundaries for the duration histogram, in seconds. The SDK's
-/// defaults are millisecond-scale (`0, 5, 10, 25, …`), so every request under
-/// five seconds landed in one bucket and percentiles were unrecoverable.
-/// These are the ones the OpenTelemetry MCP conventions specify for
-/// operation duration.
+/// Bucket boundaries for the duration histogram, in seconds: the ones the
+/// MCP conventions specify. The SDK's defaults are millisecond-scale.
 const DURATION_BOUNDARIES: [f64; 14] = [
     0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0,
 ];
@@ -49,7 +45,6 @@ const DURATION_BOUNDARIES: [f64; 14] = [
 /// `Arc`-backed).
 #[derive(Clone)]
 struct Instruments {
-    requests: Counter<u64>,
     duration: Histogram<f64>,
     in_flight: UpDownCounter<i64>,
 }
@@ -58,19 +53,20 @@ impl Instruments {
     fn new() -> Self {
         let meter = global::meter("turbomcp");
         Self {
-            requests: meter
-                .u64_counter("mcp.server.requests")
-                .with_description("Total MCP requests handled.")
-                .build(),
             duration: meter
-                .f64_histogram("mcp.server.request.duration")
-                .with_description("MCP request handling duration.")
+                .f64_histogram("mcp.server.operation.duration")
+                .with_description(
+                    "Duration of an MCP request or notification as observed by the receiver, \
+                     from receipt until the result or acknowledgement is sent.",
+                )
                 .with_unit("s")
                 .with_boundaries(DURATION_BOUNDARIES.to_vec())
                 .build(),
+            // The conventions define no in-flight instrument, hence the vendor
+            // prefix.
             in_flight: meter
-                .i64_up_down_counter("mcp.server.active_requests")
-                .with_description("In-flight MCP requests.")
+                .i64_up_down_counter("turbomcp.server.active_operations")
+                .with_description("MCP requests in flight.")
                 .build(),
         }
     }
@@ -142,22 +138,18 @@ pub struct Metrics<S> {
     extra_methods: Arc<[String]>,
 }
 
-/// The `mcp.method` label for `method`: its own name when it is one this
-/// layer knows, `_OTHER` otherwise.
-fn method_label(method: &str, extra: &[String]) -> opentelemetry::Value {
-    if let Some(known) = request::ALL.iter().find(|m| **m == method) {
-        return (*known).into();
-    }
-    if let Some(known) = extra.iter().find(|m| *m == method) {
-        return known.clone().into();
-    }
-    OTHER_METHOD.into()
-}
-
 impl<S> core::fmt::Debug for Metrics<S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Metrics").finish_non_exhaustive()
     }
+}
+
+/// What a measurement is labelled with before the outcome is known.
+struct Pending {
+    /// `mcp.method.name` and `mcp.protocol.version`: also the in-flight
+    /// counter's labels.
+    base: Vec<KeyValue>,
+    target: Option<Target>,
 }
 
 impl<S, E> Service<McpRequest> for Metrics<S>
@@ -173,72 +165,90 @@ where
     }
 
     fn call(&mut self, req: McpRequest) -> Self::Future {
-        // Notifications and responses are not measured as "requests"; only true
-        // requests carry a method worth a metric label.
-        let base_labels = match &req.message {
+        // Only requests are measured: they are the operations with a result.
+        let pending = match &req.message {
             JsonRpcMessage::Request(r) => {
-                let mut labels = vec![KeyValue::new(
-                    "mcp.method",
-                    method_label(&r.method, &self.extra_methods),
+                let mut base = vec![KeyValue::new(
+                    semconv::MCP_METHOD_NAME,
+                    semconv::method_label(&r.method, &self.extra_methods).into_owned(),
                 )];
-                labels.push(KeyValue::new(
-                    "mcp.protocol_version",
-                    protocol_version_label(&req.message),
-                ));
-                Some(labels)
+                if let Some(version) = semconv::protocol_version(&req.message) {
+                    base.push(KeyValue::new(semconv::MCP_PROTOCOL_VERSION, version));
+                }
+                Some(Pending {
+                    base,
+                    target: Target::of(&req.message),
+                })
             }
             _ => None,
         };
-        if let Some(labels) = &base_labels {
-            self.instruments.in_flight.add(1, labels);
+        if let Some(pending) = &pending {
+            self.instruments.in_flight.add(1, &pending.base);
         }
         MetricsFuture {
             inner: self.inner.call(req),
             instruments: Arc::clone(&self.instruments),
-            labels: base_labels,
+            pending,
             start: Instant::now(),
         }
     }
 }
 
 pin_project! {
-    /// Times the inner future and records the request metrics exactly once:
-    /// on completion (outcome `ok`/`error`), or — if the future is dropped
-    /// mid-flight (client disconnect, timeout layer) — on drop (outcome
-    /// `cancelled`). Either way the in-flight counter is decremented, so the
-    /// gauge cannot drift under cancellation.
+    /// Times the inner future and records the measurement exactly once: on
+    /// completion, or, if the future is dropped mid-flight (client
+    /// disconnect, timeout layer), on drop as `error.type = cancelled`.
+    /// Either way the in-flight counter is decremented, so it cannot drift
+    /// under cancellation.
     pub struct MetricsFuture<F> {
         #[pin]
         inner: F,
         instruments: Arc<Instruments>,
         // `None` for non-request messages (unmeasured), and taken once recorded.
-        labels: Option<Vec<KeyValue>>,
+        pending: Option<Pending>,
         start: Instant,
     }
 
     impl<F> PinnedDrop for MetricsFuture<F> {
         fn drop(this: Pin<&mut Self>) {
             let this = this.project();
-            // Labels still present ⇒ the future never completed: the request
-            // was abandoned mid-flight.
-            if let Some(base) = this.labels.take() {
-                record(this.instruments, base, "cancelled", *this.start);
+            if let Some(pending) = this.pending.take() {
+                record(this.instruments, pending, &Outcome::cancelled(), *this.start);
             }
         }
     }
 }
 
-/// Record one finished (or abandoned) request: count + duration with the
-/// `outcome` label, and the in-flight decrement with the base labels it was
-/// incremented with.
-fn record(instruments: &Instruments, base: Vec<KeyValue>, outcome: &'static str, start: Instant) {
+/// Record one finished (or abandoned) request.
+fn record(instruments: &Instruments, pending: Pending, outcome: &Outcome, start: Instant) {
     let elapsed = start.elapsed().as_secs_f64();
-    let mut labels = base;
-    labels.push(KeyValue::new("outcome", outcome));
-    instruments.requests.add(1, &labels);
+    instruments.in_flight.add(-1, &pending.base);
+    let mut labels = pending.base;
+    match &pending.target {
+        Some(Target::Tool(name)) => {
+            labels.push(KeyValue::new(
+                semconv::GEN_AI_OPERATION_NAME,
+                "execute_tool",
+            ));
+            if !outcome.unknown_target {
+                labels.push(KeyValue::new(semconv::GEN_AI_TOOL_NAME, name.clone()));
+            }
+        }
+        Some(Target::Prompt(name)) if !outcome.unknown_target => {
+            labels.push(KeyValue::new(semconv::GEN_AI_PROMPT_NAME, name.clone()));
+        }
+        _ => {}
+    }
+    if let Some(error_type) = &outcome.error_type {
+        labels.push(KeyValue::new(semconv::ERROR_TYPE, error_type.to_string()));
+    }
+    if let Some(code) = outcome.status_code {
+        labels.push(KeyValue::new(
+            semconv::RPC_RESPONSE_STATUS_CODE,
+            code.to_string(),
+        ));
+    }
     instruments.duration.record(elapsed, &labels);
-    let in_flight_labels = &labels[..labels.len() - 1];
-    instruments.in_flight.add(-1, in_flight_labels);
 }
 
 impl<F, E> Future for MetricsFuture<F>
@@ -250,46 +260,16 @@ where
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         let result = std::task::ready!(this.inner.poll(cx));
-
-        if let Some(base) = this.labels.take() {
-            let outcome = match &result {
-                // A transport-level error, or a JSON-RPC error response, both
-                // count as `error`; a successful/absent response is `ok`.
-                Err(_) => "error",
-                Ok(Some(JsonRpcMessage::Response(r))) if r.error.is_some() => "error",
-                Ok(_) => "ok",
-            };
-            record(this.instruments, base, outcome, *this.start);
+        if let Some(pending) = this.pending.take() {
+            record(
+                this.instruments,
+                pending,
+                &Outcome::of(&result),
+                *this.start,
+            );
         }
         Poll::Ready(result)
     }
-}
-
-/// The negotiated protocol version label from a request's `_meta`
-/// (`unknown` when absent — e.g. `initialize`, whose version is in the body).
-fn protocol_version_label(req: &JsonRpcMessage) -> &'static str {
-    let JsonRpcMessage::Request(r) = req else {
-        return "unknown";
-    };
-    // Every supported revision by name (`2025-06-18` used to be `other`),
-    // and never the raw string: the client chose it.
-    match turbomcp_protocol_version(r.params.as_ref()) {
-        Some(version) => ProtocolVersion::SUPPORTED
-            .iter()
-            .find(|v| **v == version)
-            .map_or("other", ProtocolVersion::as_str),
-        None => "unknown",
-    }
-}
-
-/// Read `_meta.io.modelcontextprotocol/protocolVersion` without depending on
-/// `turbomcp-protocol` (telemetry sits below it): the key is stable core meta.
-fn turbomcp_protocol_version(params: Option<&serde_json::Value>) -> Option<ProtocolVersion> {
-    let version = params?
-        .get("_meta")?
-        .get(meta::keys::PROTOCOL_VERSION)?
-        .as_str()?;
-    Some(ProtocolVersion::from_wire(version))
 }
 
 #[cfg(test)]
@@ -300,7 +280,7 @@ mod tests {
 
     use serde_json::json;
     use tower::ServiceExt;
-    use turbomcp_core::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+    use turbomcp_core::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, ProtocolVersion};
 
     #[derive(Clone)]
     struct Inner {
@@ -367,10 +347,11 @@ mod tests {
     /// series count is whatever a caller wants it to be.
     #[test]
     fn unknown_methods_share_one_label() {
-        assert_eq!(method_label("tools/call", &[]).as_str(), "tools/call");
-        assert_eq!(method_label("x/made-up-1", &[]).as_str(), "_OTHER");
+        use crate::semconv::method_label;
+        assert_eq!(method_label("tools/call", &[]), "tools/call");
+        assert_eq!(method_label("x/made-up-1", &[]), "_OTHER");
         let extra = vec!["acme/export".to_owned()];
-        assert_eq!(method_label("acme/export", &extra).as_str(), "acme/export");
+        assert_eq!(method_label("acme/export", &extra), "acme/export");
     }
 
     #[test]
@@ -382,7 +363,7 @@ mod tests {
                 Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": version.as_str() } })),
             )
             .into();
-            assert_eq!(protocol_version_label(&req), version.as_str());
+            assert_eq!(semconv::protocol_version(&req), Some(version.as_str()));
         }
         let odd: JsonRpcMessage = JsonRpcRequest::new(
             1,
@@ -390,7 +371,7 @@ mod tests {
             Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "1999-01-01" } })),
         )
         .into();
-        assert_eq!(protocol_version_label(&odd), "other");
+        assert_eq!(semconv::protocol_version(&odd), Some("other"));
     }
 
     #[test]
@@ -401,10 +382,10 @@ mod tests {
             Some(json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } })),
         )
         .into();
-        assert_eq!(protocol_version_label(&draft), "2026-07-28");
+        assert_eq!(semconv::protocol_version(&draft), Some("2026-07-28"));
 
         let bare: JsonRpcMessage = JsonRpcRequest::new(1, "ping", None).into();
-        assert_eq!(protocol_version_label(&bare), "unknown");
+        assert_eq!(semconv::protocol_version(&bare), None);
     }
 
     /// An inner service whose future never resolves — the stand-in for a
@@ -467,6 +448,32 @@ mod tests {
         total
     }
 
+    /// Total count of every `name` histogram data point whose attributes
+    /// include all of `want`.
+    fn histogram_count_with(
+        finished: &[opentelemetry_sdk::metrics::data::ResourceMetrics],
+        name: &str,
+        want: &[(&str, &str)],
+    ) -> u64 {
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+        let Some(snapshot) = finished.last() else {
+            return 0;
+        };
+        snapshot
+            .scope_metrics()
+            .flat_map(|scope| scope.metrics())
+            .filter(|m| m.name() == name)
+            .map(|m| match m.data() {
+                AggregatedMetrics::F64(MetricData::Histogram(h)) => h
+                    .data_points()
+                    .filter(|dp| attrs_match(dp.attributes(), want))
+                    .map(|dp| dp.count())
+                    .sum(),
+                _ => 0,
+            })
+            .sum()
+    }
+
     fn attrs_match<'a>(attrs: impl Iterator<Item = &'a KeyValue>, want: &[(&str, &str)]) -> bool {
         let attrs: Vec<&KeyValue> = attrs.collect();
         want.iter().all(|(k, v)| {
@@ -501,10 +508,13 @@ mod tests {
         let finished = exporter.get_finished_metrics().unwrap();
 
         assert_eq!(
-            sum_with(
+            histogram_count_with(
                 &finished,
-                "mcp.server.requests",
-                &[("mcp.method", "drop-probe"), ("outcome", "cancelled")],
+                "mcp.server.operation.duration",
+                &[
+                    ("mcp.method.name", "drop-probe"),
+                    ("error.type", "cancelled")
+                ],
             ),
             1,
             "an abandoned request counts once, as cancelled"
@@ -512,8 +522,8 @@ mod tests {
         assert_eq!(
             sum_with(
                 &finished,
-                "mcp.server.active_requests",
-                &[("mcp.method", "drop-probe")],
+                "turbomcp.server.active_operations",
+                &[("mcp.method.name", "drop-probe")],
             ),
             0,
             "the in-flight gauge returns to zero — no drift under cancellation"
@@ -526,7 +536,7 @@ mod tests {
         let bounds: Vec<f64> = snapshot
             .scope_metrics()
             .flat_map(|scope| scope.metrics())
-            .filter(|m| m.name() == "mcp.server.request.duration")
+            .filter(|m| m.name() == "mcp.server.operation.duration")
             .find_map(|m| match m.data() {
                 AggregatedMetrics::F64(MetricData::Histogram(h)) => {
                     h.data_points().next().map(|dp| dp.bounds().collect())

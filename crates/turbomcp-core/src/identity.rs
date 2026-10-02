@@ -101,9 +101,8 @@ impl Identity {
     }
 
     /// Look up a claim *value* by key (for programmatic access such as scope
-    /// checks). This does not affect the redaction-safe logging view — `Debug`,
-    /// [`claim_keys`](Self::claim_keys), and [`RedactedSubject`] still never
-    /// print claim values.
+    /// checks). This does not affect the redaction-safe logging view: `Debug`
+    /// and [`claim_keys`](Self::claim_keys) still never print claim values.
     #[must_use]
     pub fn claim(&self, key: &str) -> Option<&Value> {
         match self {
@@ -163,40 +162,6 @@ impl fmt::Debug for Identity {
     }
 }
 
-/// A wrapper that hashes the subject for use in spans/logs where even the
-/// subject is sensitive (round-3 SC-9 default). The framework's tracing layer
-/// uses this rather than the raw subject.
-#[derive(Clone, Copy)]
-pub struct RedactedSubject<'a>(pub &'a Identity);
-
-impl fmt::Debug for RedactedSubject<'_> {
-    /// Delegates to [`Display`](fmt::Display) rather than exposing the inner
-    /// [`Identity`]. Deriving here would print the raw subject and defeat the
-    /// entire point of the wrapper.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "RedactedSubject({self})")
-    }
-}
-
-impl fmt::Display for RedactedSubject<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0.subject() {
-            None => f.write_str("anonymous"),
-            // FNV-1a over the subject: stable, non-reversible-enough for log
-            // correlation without exposing the raw value. Not a security
-            // primitive — just keeps PII out of telemetry by default.
-            Some(sub) => {
-                let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-                for b in sub.as_bytes() {
-                    hash ^= u64::from(*b);
-                    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-                }
-                write!(f, "sub:{hash:016x}")
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,36 +180,6 @@ mod tests {
         assert!(dbg.contains("user-1"));
         assert!(dbg.contains("email")); // key shown
         assert!(!dbg.contains("secret@example.com")); // value hidden
-    }
-
-    /// `RedactedSubject` exists to keep the subject out of telemetry, so its
-    /// `Debug` has to redact too. A `#[derive(Debug)]` here would print the
-    /// wrapped `Identity` — subject and all — and quietly undo the wrapper.
-    #[test]
-    fn redacted_subject_debug_redacts_like_its_display() {
-        let id = Identity::Bearer {
-            sub: "user-1".into(),
-            claims: Claims::new(),
-        };
-        let wrapped = RedactedSubject(&id);
-        let shown = format!("{wrapped:?}");
-        assert!(
-            !shown.contains("user-1"),
-            "the raw subject must not appear: {shown}"
-        );
-        assert!(
-            shown.contains(&format!("{wrapped}")),
-            "delegates to Display"
-        );
-    }
-
-    #[test]
-    fn anonymous_redacted_subject_says_so() {
-        let id = Identity::Anonymous;
-        assert_eq!(
-            format!("{:?}", RedactedSubject(&id)),
-            "RedactedSubject(anonymous)"
-        );
     }
 
     #[test]
@@ -323,21 +258,5 @@ mod tests {
             claims,
         };
         assert_eq!(id.granted_scopes(), ["ok"]);
-    }
-
-    #[test]
-    fn redacted_subject_is_stable_and_opaque() {
-        let id = Identity::Bearer {
-            sub: "alice".into(),
-            claims: Claims::new(),
-        };
-        let a = format!("{}", RedactedSubject(&id));
-        let b = format!("{}", RedactedSubject(&id));
-        assert_eq!(a, b);
-        assert!(!a.contains("alice"));
-        assert_eq!(
-            format!("{}", RedactedSubject(&Identity::Anonymous)),
-            "anonymous"
-        );
     }
 }

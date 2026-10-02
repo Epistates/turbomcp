@@ -317,11 +317,13 @@ pub use turbomcp_service::{AuthDecision, AuthFuture, HttpAuthenticator};
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub use turbomcp_service::{GovernorRateLimiter, RateKey, RateLimiter};
 
-/// OpenTelemetry observability: the [`TraceContextLayer`](telemetry::TraceContextLayer)
-/// (W3C trace continuation over `_meta` + PII-safe identity spans), the
-/// [`MetricsLayer`](telemetry::MetricsLayer) (request count / duration /
-/// in-flight, labeled by method + version + outcome), and an optional OTLP
-/// export pipeline (traces + metrics). Enable with the `telemetry` feature.
+/// OpenTelemetry observability on the MCP semantic conventions: the
+/// [`TraceContextLayer`](telemetry::TraceContextLayer) (server spans named
+/// `{mcp.method.name} {target}`, continuing the caller's trace from `_meta`,
+/// identity and session recorded as keyed hashes), the
+/// [`MetricsLayer`](telemetry::MetricsLayer) (`mcp.server.operation.duration`
+/// plus an in-flight counter), and an optional OTLP export pipeline (traces +
+/// metrics). Enable with the `telemetry` feature.
 #[cfg(feature = "telemetry")]
 #[cfg_attr(docsrs, doc(cfg(feature = "telemetry")))]
 pub use turbomcp_telemetry as telemetry;

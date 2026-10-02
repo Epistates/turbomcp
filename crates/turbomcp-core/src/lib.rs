@@ -42,7 +42,7 @@ pub use cancellation::CancellationToken;
 pub use context::{Extensions, Implementation, LogLevel, RequestContext, TraceContext};
 pub use envelope::{ConnectionId, McpRequest, ObservedHeaders, SessionId};
 pub use error::{McpError, McpResult, codes};
-pub use identity::{Claims, Identity, IdentityClaims, RedactedSubject};
+pub use identity::{Claims, Identity, IdentityClaims};
 pub use jsonrpc::{
     InvalidFrame, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, RequestId,

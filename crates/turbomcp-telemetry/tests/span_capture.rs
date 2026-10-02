@@ -186,7 +186,7 @@ async fn spans_continue_the_callers_trace() {
     let spans = exporter.get_finished_spans().unwrap();
     let span = spans
         .iter()
-        .find(|s| s.name == "tools/call")
+        .find(|s| s.name.starts_with("tools/call"))
         .expect("the request span exported");
     assert_eq!(
         span.span_context.trace_id().to_string(),

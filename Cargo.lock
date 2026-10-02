@@ -3725,11 +3725,14 @@ name = "turbomcp-telemetry"
 version = "4.0.0-alpha.5"
 dependencies = [
  "futures",
+ "getrandom 0.4.3",
+ "hmac",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "pin-project-lite",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tokio",
  "tower",
