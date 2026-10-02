@@ -1033,7 +1033,7 @@ fn log_sender<W: WireFamily>(ctx: &RequestContext, logging_enabled: bool) -> Log
 /// else is treated as absent, with a warning), inert otherwise. Notifications
 /// route to the request's own stream; the legacy family may fall back to the
 /// session `GET` stream, the draft never does.
-fn progress_reporter<W: WireFamily>(
+pub(super) fn progress_reporter<W: WireFamily>(
     req: &JsonRpcRequest,
     ctx: &RequestContext,
 ) -> ProgressReporter {

@@ -10,6 +10,12 @@
 //! never obligated to ask).
 //!
 //! The wire shape is identical on both protocol versions.
+//!
+//! A call running as a task reports into the task too: each report becomes
+//! its `statusMessage`. On `2026-07-28` that is all it does, since
+//! "`notifications/progress` ... are not supported on tasks"; on
+//! `2025-11-25` "the `progressToken` provided in the initial request remains
+//! valid throughout the task lifetime", so notifications keep going too.
 
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -17,6 +23,7 @@ use turbomcp_core::JsonRpcNotification;
 use turbomcp_protocol::methods;
 
 use crate::subscriptions::Route;
+use crate::task_handle::TaskHandle;
 
 /// Reports progress for one in-flight request. Cheap to clone; all clones
 /// share the monotonicity guard.
@@ -39,14 +46,23 @@ pub struct ProgressReporter {
 
 #[derive(Debug)]
 struct Inner {
+    /// Where notifications go, when the client asked for them.
+    notify: Option<Notify>,
+    /// The task the call runs as, if it becomes one: reports become its
+    /// status message.
+    task: TaskHandle,
+    /// Last reported value (spec: MUST increase with each notification).
+    last: Mutex<Option<f64>>,
+}
+
+#[derive(Clone, Debug)]
+struct Notify {
     /// The client's opaque token (string or integer), echoed verbatim.
     token: Value,
     /// Where reports go: the request's own stream, then (legacy only) the
     /// session's `GET` stream. The draft forbids delivering request-scoped
     /// messages anywhere but the request's own stream.
     route: Route,
-    /// Last reported value (spec: MUST increase with each notification).
-    last: Mutex<Option<f64>>,
 }
 
 impl ProgressReporter {
@@ -60,23 +76,47 @@ impl ProgressReporter {
     /// A live reporter delivering along `route`.
     #[must_use]
     pub(crate) fn new(token: Value, route: Route) -> Self {
+        Self::build(Some(Notify { token, route }), TaskHandle::disabled())
+    }
+
+    /// A reporter for a call that may run as `task`, and notifies no one
+    /// (`2026-07-28`: tasks get no progress notifications).
+    #[must_use]
+    pub(crate) fn for_task(task: TaskHandle) -> Self {
+        Self::build(None, task)
+    }
+
+    /// This reporter, reporting into `task` as well once the call runs as
+    /// one (`2025-11-25`, where the notifications keep going).
+    #[must_use]
+    pub(crate) fn with_task(self, task: TaskHandle) -> Self {
+        let notify = self.inner.and_then(|inner| inner.notify.clone());
+        Self::build(notify, task)
+    }
+
+    fn build(notify: Option<Notify>, task: TaskHandle) -> Self {
         Self {
             inner: Some(Arc::new(Inner {
-                token,
-                route,
+                notify,
+                task,
                 last: Mutex::new(None),
             })),
         }
     }
 
-    /// Whether the client asked for progress on this request. Handlers MAY
-    /// skip expensive bookkeeping when it didn't.
+    /// Whether anyone hears these reports: the client asked for progress on
+    /// this request, or the call runs as a task, whose status message they
+    /// become. Handlers MAY skip expensive bookkeeping when not.
     #[must_use]
     pub fn is_requested(&self) -> bool {
-        self.inner.is_some()
+        self.inner
+            .as_ref()
+            .is_some_and(|inner| inner.notify.is_some() || inner.task.is_task())
     }
 
-    /// Send one `notifications/progress` for this request.
+    /// Send one `notifications/progress` for this request, and, when the call
+    /// runs as a task, make it the task's status message: `message`, or
+    /// `progress/total` without one.
     ///
     /// `progress` must be strictly greater than the previous report (spec
     /// MUST); violations are dropped with a warning rather than sent. A
@@ -84,6 +124,9 @@ impl ProgressReporter {
     /// best-effort by design, so the call is infallible.
     pub async fn report(&self, progress: f64, total: Option<f64>, message: Option<&str>) {
         let Some(inner) = &self.inner else { return };
+        if inner.notify.is_none() && !inner.task.is_task() {
+            return;
+        }
         // JSON has no NaN or infinity: serde writes `null`, which the schema
         // rejects, and a NaN would also poison the guard below (every
         // comparison with it is false, so later reports could go down).
@@ -112,12 +155,22 @@ impl ProgressReporter {
             *last = Some(progress);
         }
 
-        let Some(writer) = inner.route.peer() else {
+        if inner.task.is_task() {
+            let status = match (message, total) {
+                (Some(message), _) => message.to_owned(),
+                (None, Some(total)) => format!("{progress}/{total}"),
+                (None, None) => progress.to_string(),
+            };
+            inner.task.set_status_message(status).await;
+        }
+
+        let Some(notify) = &inner.notify else { return };
+        let Some(writer) = notify.route.peer() else {
             tracing::debug!("no stream for progress notification; dropped");
             return;
         };
         let mut params = json!({
-            "progressToken": inner.token,
+            "progressToken": notify.token,
             "progress": progress,
         });
         if let Some(obj) = params.as_object_mut() {

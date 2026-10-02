@@ -45,16 +45,23 @@ impl WithTools for Gated {
         Ok(neutral::ListToolsResult::new(vec![
             neutral::Tool::new("fails", json!({"type":"object"})),
             neutral::Tool::new("gated", json!({"type": "object", "properties": {}})),
+            neutral::Tool::new("reports", json!({"type": "object"})),
         ]))
     }
 
     async fn call_tool(
         &self,
-        _ctx: &CallToolContext,
+        ctx: &CallToolContext,
         params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
         if params.name == "fails" {
             return Err(turbomcp_core::McpError::internal("tool exploded"));
+        }
+        if params.name == "reports" {
+            ctx.progress.report(1.0, Some(4.0), Some("indexing")).await;
+            ctx.task
+                .set_poll_interval(std::time::Duration::from_millis(250))
+                .await;
         }
         let _permit = self.gate.acquire().await.expect("gate open");
         Ok(neutral::CallToolResult::text("gate passed"))
@@ -568,4 +575,51 @@ async fn a_panicking_task_handler_fails_the_task() {
     let (task, result) = run_task(&mut svc, "panics").await;
     assert_eq!(task["status"], "failed");
     assert_eq!(result.error.expect("the panic's error").code, -32603);
+}
+
+/// A task's work reports on itself: `ctx.progress` becomes its
+/// `statusMessage`, and `ctx.task` changes the polling interval it suggests.
+#[tokio::test]
+async fn a_task_reports_progress_into_its_status() {
+    let server = Gated::new();
+    let mut svc = tasked(&server);
+    let _ = initialize(&mut svc).await;
+    let created = ok(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({
+                "name": "reports",
+                "task": {},
+                "_meta": { "progressToken": "p1" },
+            })),
+        ),
+    )
+    .await;
+    let task_id = created["task"]["taskId"].as_str().expect("task").to_owned();
+
+    let mut got = Value::Null;
+    for i in 0..500 {
+        got = ok(
+            &mut svc,
+            JsonRpcRequest::new(10 + i, "tasks/get", Some(json!({ "taskId": task_id }))),
+        )
+        .await;
+        if got["pollInterval"] == 250 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(got["status"], "working", "{got}");
+    assert_eq!(got["statusMessage"], "indexing", "{got}");
+    assert_eq!(got["pollInterval"], 250, "{got}");
+
+    server.gate.add_permits(1);
+    let result = ok(
+        &mut svc,
+        JsonRpcRequest::new(2, "tasks/result", Some(json!({ "taskId": task_id }))),
+    )
+    .await;
+    assert_eq!(result["content"][0]["text"], "gate passed");
 }

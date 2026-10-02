@@ -18,6 +18,7 @@ use turbomcp_service::catch_panic;
 
 use crate::context::{CallToolContext, ListToolsContext};
 use crate::router::MethodRouter;
+use crate::task_handle::{TaskHandle, TaskLink, TaskSlot};
 use crate::tasks::{
     NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus,
 };
@@ -109,7 +110,18 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let sid = session_id(&ctx.extensions).unwrap_or_default().to_owned();
     let mut ctx = ctx;
     ctx.cancellation = token.clone();
-    let Some(fut) = router.dispatch_call_tool(server, CallToolContext::new(ctx), params) else {
+    // Filled once the task exists, before the work starts. "The
+    // `progressToken` provided in the initial request remains valid
+    // throughout the task lifetime", so progress both notifies and becomes
+    // the task's status message.
+    let slot = TaskSlot::default();
+    let task = TaskHandle::bound(slot.clone());
+    let progress = super::capability::progress_reporter::<super::capability::LegacyWire>(req, &ctx)
+        .with_task(task.clone());
+    let call_ctx = CallToolContext::new(ctx)
+        .with_progress(progress)
+        .with_task(task);
+    let Some(fut) = router.dispatch_call_tool(server, call_ctx, params) else {
         return error_response(
             id,
             &McpError::method_not_found(methods::request::TOOLS_CALL),
@@ -126,6 +138,11 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
         Ok(s) => s,
         Err(e) => return task_error_response(id, &e),
     };
+    let _ = slot.set(TaskLink::new(
+        Arc::clone(store),
+        snap.task_id.clone(),
+        token.clone(),
+    ));
 
     let store = Arc::clone(store);
     let task_id = snap.task_id.clone();

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A task's work reports on itself. `ctx.task` (a `TaskHandle`, inert outside
+  a task) sets the task's `statusMessage` and the polling interval it
+  suggests, and inside a task each `ctx.progress` report becomes its
+  `statusMessage` (the message, or `progress/total`). On `2026-07-28` that is
+  the only progress channel a task has ("`notifications/progress` ... are not
+  supported on tasks"), so no progress notifications go out from one; on
+  `2025-11-25` they keep going too, since the progress token "remains valid
+  throughout the task lifetime". Each change bumps `lastUpdatedAt` and is
+  pushed as `notifications/tasks` to subscribers.
 - `#[tool(task = "required")]`: a tool that runs only as a task. It lists as
   `taskSupport: required`; on `2025-11-25` a call that isn't a task is
   `-32601`, and on `2026-07-28` a client that hasn't declared the Tasks
@@ -167,6 +176,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `2025-11-25` task-augmented call had no progress reporter: its handler's
+  `ctx.progress` dropped every report, although the spec keeps the request's
+  progress token valid for the task's lifetime.
 - An MRTR retry whose arguments were re-encoded (`1` written back as `1.0`,
   as a client that parses into typed floats does) no longer fails
   verification. The request binding sorted keys but kept each number's
@@ -413,6 +425,14 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** the task-input seam is a `TaskLink`. `TaskInputBroker`,
+  `TaskInputSlot`, `CallRunner::attach_input_broker` and `with_input_slot`
+  are gone: an extension that taskifies a call binds it with
+  `CallRunner::attach_task(TaskLink::new(backend, task_id, cancel))`, and
+  mid-task client input, `ctx.task` and `ctx.progress` all go through the
+  backend from there (`TaskLink::on_change` hears each change).
+  `TaskBackend` gains `update` (a `TaskUpdate`: status message, polling
+  interval).
 - **Breaking:** one task store fronts both wires. The Tasks extension's
   private registry is gone; `TaskBackend` and the bundled `TaskStore` serve
   `2025-11-25` core Tasks and the `2026-07-28` extension alike, and

@@ -74,7 +74,9 @@ pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `ServerBuilder::with_tasks()`, and a required tool called without a task
 /// is `-32601`. On `2026-07-28` the Tasks extension (`turbomcp-ext-tasks`)
 /// taskifies the tool for a client that declares the extension, and refuses a
-/// required tool to one that doesn't with `-32021`.
+/// required tool to one that doesn't with `-32021`. Running as a task, the
+/// handler reports through `ctx.task` (status message, polling interval), and
+/// its `ctx.progress` reports become the task's status message.
 ///
 /// `tags` categorizes the tool for catalog policy and is *not* a security
 /// boundary — use `scopes` for that. See [`macro@prompt`] for the shared

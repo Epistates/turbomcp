@@ -36,6 +36,7 @@ mod runtime;
 mod session;
 mod subscriptions;
 pub mod tags;
+mod task_handle;
 mod tasks;
 mod traits;
 mod uri_template;
@@ -52,8 +53,7 @@ pub use dispatcher::{
     CachePolicies, DispatcherSessionTerminator, RootsChangedHandler, VersionDispatcher,
 };
 pub use extension::{
-    CallAugmentRequest, CallRunner, Extension, ExtensionRequest, SubscribeOutcome, TaskInputBroker,
-    TaskInputSlot,
+    CallAugmentRequest, CallRunner, Extension, ExtensionRequest, SubscribeOutcome,
 };
 pub use logging::LogSender;
 pub use mrtr::ClientHandle;
@@ -65,9 +65,10 @@ pub use router::MethodRouter;
 pub use runtime::Server;
 pub use session::{SessionBackend, SessionError, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
+pub use task_handle::{TaskHandle, TaskLink, TaskSlot};
 pub use tasks::{
     InputWaiter, NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus,
-    TaskStore,
+    TaskStore, TaskUpdate,
 };
 pub use traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
 pub use uri_template::{UriTemplate, UriTemplateError};

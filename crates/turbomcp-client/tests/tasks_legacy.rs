@@ -19,7 +19,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, InputWaiter, LegacySessionAdapter, ListToolsContext, McpServerCore,
     MethodRouter, NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStore,
-    VersionDispatcher, WithTools,
+    TaskUpdate, VersionDispatcher, WithTools,
 };
 use turbomcp_service::io::LineTransport;
 
@@ -81,6 +81,10 @@ impl TaskBackend for FastPoll {
 
     async fn complete(&self, task_id: &str, outcome: TaskOutcome) {
         self.inner.complete(task_id, outcome).await;
+    }
+
+    async fn update(&self, task_id: &str, update: TaskUpdate) -> Result<bool, TaskError> {
+        self.inner.update(task_id, update).await
     }
 
     async fn get(&self, owner: &TaskOwner, task_id: &str) -> Result<TaskSnapshot, TaskError> {

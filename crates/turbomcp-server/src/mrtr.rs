@@ -355,14 +355,12 @@ enum HandleMode {
     /// server→client channel.
     Bidi { pending: Arc<PendingRequests> },
     /// Taskified call (SEP-2663 in-execution input): requests are published
-    /// to the task (`input_required` + `inputRequests`) via the attached
-    /// [`TaskInputBroker`](crate::TaskInputBroker) and the handler awaits the
-    /// client's `tasks/update` answer. The slot is late-bound — the extension
-    /// attaches its broker only if it actually taskifies the call; a call
-    /// that ran synchronously never gets one and fails as unavailable.
-    TaskMediated {
-        slot: crate::extension::TaskInputSlot,
-    },
+    /// to the task (`input_required` + `inputRequests`) through its
+    /// [`TaskLink`](crate::TaskLink) and the handler awaits the client's
+    /// `tasks/update` answer. The slot is late-bound — filled only if the
+    /// call actually becomes a task; a call that ran synchronously never gets
+    /// one and fails as unavailable.
+    TaskMediated { slot: crate::task_handle::TaskSlot },
     /// No client-interaction channel on this path (reason in the error).
     Unavailable(&'static str),
 }
@@ -484,10 +482,10 @@ impl ClientHandle {
     /// A task-mediated handle for a `tools/call` offered for augmentation
     /// (SEP-2663 in-execution input). `slot` is shared with the
     /// [`CallRunner`](crate::CallRunner) so the taskifying extension can
-    /// attach its broker before spawning.
+    /// bind the task before spawning.
     pub(crate) fn task_mediated(
         client_capabilities: Option<Value>,
-        slot: crate::extension::TaskInputSlot,
+        slot: crate::task_handle::TaskSlot,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -882,10 +880,10 @@ impl ClientHandle {
             }
             // Taskified call: publish to the task and await `tasks/update`.
             HandleMode::TaskMediated { slot } => match slot.get() {
-                Some(broker) => broker.obtain(key, request).await,
+                Some(link) => link.request_input(key, request).await,
                 None => Err(McpError::internal(
                     "client input is unavailable: the call was offered for task \
-                     augmentation but no input broker was attached",
+                     augmentation but never became a task",
                 )),
             },
             // `require_capability` already rejected this mode.
@@ -2426,54 +2424,77 @@ mod tests {
 
     // ---- task-mediated delivery (SEP-2663) -----------------------------------
 
-    /// A `tools/call` offered for augmentation whose extension never attached
-    /// a broker (it ran synchronously) has nowhere to put an input request.
-    /// The handler must learn that, not wait on a slot nobody will fill.
+    /// A `tools/call` offered for augmentation that never became a task (it
+    /// ran synchronously) has nowhere to put an input request. The handler
+    /// must learn that, not wait on a slot nobody will fill.
     #[tokio::test]
-    async fn a_task_mediated_handle_without_a_broker_reports_it() {
+    async fn a_task_mediated_handle_that_never_became_a_task_reports_it() {
         let handle = ClientHandle::task_mediated(
             Some(json!({ "elicitation": {} })),
-            crate::extension::TaskInputSlot::default(),
+            crate::task_handle::TaskSlot::default(),
         );
         let err = handle
             .elicit("k", neutral::ElicitParams::new("?", form_schema()))
             .await
-            .expect_err("no broker was attached");
+            .expect_err("it never became a task");
         assert!(
-            matches!(err, McpError::Internal(ref m) if m.contains("input broker")),
+            matches!(err, McpError::Internal(ref m) if m.contains("never became a task")),
             "{err:?}"
         );
     }
 
     #[tokio::test]
-    async fn a_task_mediated_handle_delegates_to_its_broker() {
-        struct Broker;
-        impl crate::extension::TaskInputBroker for Broker {
-            fn obtain(
-                &self,
-                key: &str,
-                request: Value,
-            ) -> futures::future::BoxFuture<'static, McpResult<Value>> {
-                let key = key.to_owned();
-                Box::pin(async move {
-                    assert_eq!(request["method"], "elicitation/create");
-                    Ok(json!({ "action": "accept", "content": { "via": key } }))
-                })
-            }
-        }
-        let slot = crate::extension::TaskInputSlot::default();
-        slot.set(Arc::new(Broker) as Arc<dyn crate::extension::TaskInputBroker>)
-            .ok()
-            .expect("empty slot");
+    async fn a_task_mediated_handle_asks_through_its_task() {
+        use crate::tasks::{NewTask, TaskBackend, TaskOwner, TaskStore};
+
+        let store: Arc<dyn TaskBackend> = Arc::new(TaskStore::default());
+        let cancel = turbomcp_core::CancellationToken::new();
+        let task = store
+            .create(&TaskOwner::Anonymous, NewTask::new(None), cancel.clone())
+            .await
+            .unwrap();
+        let slot = crate::task_handle::TaskSlot::default();
+        slot.set(crate::TaskLink::new(
+            Arc::clone(&store),
+            task.task_id.clone(),
+            cancel,
+        ))
+        .expect("empty slot");
+
+        // The client: answer each request the task shows, echoing its key.
+        let client = {
+            let store = Arc::clone(&store);
+            let id = task.task_id.clone();
+            tokio::spawn(async move {
+                let mut answered = 0;
+                while answered < 3 {
+                    let snapshot = store.get(&TaskOwner::Anonymous, &id).await.unwrap();
+                    let mut answers = Map::new();
+                    for (key, request) in &snapshot.input_requests {
+                        assert_eq!(request["method"], "elicitation/create");
+                        answers.insert(
+                            key.clone(),
+                            json!({ "action": "accept", "content": { "via": key } }),
+                        );
+                    }
+                    answered += answers.len();
+                    store
+                        .provide_input(&TaskOwner::Anonymous, &id, &answers)
+                        .await
+                        .unwrap();
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+        };
 
         let handle = ClientHandle::task_mediated(Some(json!({ "elicitation": {} })), slot);
         let outcome = handle
             .elicit("k", neutral::ElicitParams::new("?", form_schema()))
             .await
-            .expect("the broker answered");
+            .expect("the client answered");
         assert_eq!(outcome.content["via"], "k");
 
-        // `elicit_all` resolves through the broker one at a time as well.
+        // `elicit_all` resolves through the task one at a time as well.
         let outcomes = handle
             .elicit_all(vec![
                 ("a", neutral::ElicitParams::new("A", form_schema())),
@@ -2483,6 +2504,10 @@ mod tests {
             .expect("both answered");
         assert_eq!(outcomes[0].content["via"], "a");
         assert_eq!(outcomes[1].content["via"], "b");
+        tokio::time::timeout(Duration::from_secs(5), client)
+            .await
+            .expect("the client finished")
+            .unwrap();
     }
 
     /// A handle built for a path with no client channel at all (e.g. stdio

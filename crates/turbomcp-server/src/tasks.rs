@@ -186,6 +186,38 @@ pub enum TaskOutcome {
 /// task ends (or is forgotten) first.
 pub type InputWaiter = BoxFuture<'static, Option<Value>>;
 
+/// What a task's work reports about itself. Fields left `None` keep their
+/// value.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TaskUpdate {
+    /// A new status message: what the work is doing ("Progress descriptions
+    /// for `working`").
+    pub status_message: Option<String>,
+    /// A new polling interval to suggest, in milliseconds.
+    pub poll_interval_ms: Option<i64>,
+}
+
+impl TaskUpdate {
+    /// Set the status message.
+    #[must_use]
+    pub fn status_message(message: impl Into<String>) -> Self {
+        Self {
+            status_message: Some(message.into()),
+            ..Self::default()
+        }
+    }
+
+    /// Suggest a new polling interval, in milliseconds.
+    #[must_use]
+    pub fn poll_interval_ms(interval_ms: i64) -> Self {
+        Self {
+            poll_interval_ms: Some(interval_ms),
+            ..Self::default()
+        }
+    }
+}
+
 /// Pluggable task storage, fronted by both wires.
 ///
 /// The bundled [`TaskStore`] is the in-memory default; a shared store (a
@@ -220,6 +252,11 @@ pub trait TaskBackend: Send + Sync {
     /// Record how the task's underlying request ended. A no-op if the task is
     /// already terminal or gone.
     async fn complete(&self, task_id: &str, outcome: TaskOutcome);
+
+    /// The task's work reports on itself. Bumps `lastUpdatedAt` when
+    /// something changed, and returns whether it did. A no-op on a terminal
+    /// task, whose status message says how it ended.
+    async fn update(&self, task_id: &str, update: TaskUpdate) -> Result<bool, TaskError>;
 
     /// The task's current state.
     async fn get(&self, owner: &TaskOwner, task_id: &str) -> Result<TaskSnapshot, TaskError>;
@@ -566,6 +603,31 @@ impl TaskBackend for TaskStore {
             TaskOutcome::Error(e) => (TaskStatus::Failed, Some(e.message.clone()), Err(e)),
         };
         entry.finish(status, message, outcome);
+    }
+
+    async fn update(&self, task_id: &str, update: TaskUpdate) -> Result<bool, TaskError> {
+        let mut map = self.live();
+        let entry = map.get_mut(task_id).ok_or(TaskError::NotFound)?;
+        if entry.status.is_terminal() {
+            return Ok(false);
+        }
+        let mut changed = false;
+        if let Some(message) = update.status_message
+            && entry.status_message.as_ref() != Some(&message)
+        {
+            entry.status_message = Some(message);
+            changed = true;
+        }
+        if let Some(interval) = update.poll_interval_ms
+            && entry.poll_interval_ms != Some(interval)
+        {
+            entry.poll_interval_ms = Some(interval);
+            changed = true;
+        }
+        if changed {
+            entry.touch();
+        }
+        Ok(changed)
     }
 
     async fn get(&self, owner: &TaskOwner, task_id: &str) -> Result<TaskSnapshot, TaskError> {

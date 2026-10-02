@@ -20,14 +20,14 @@
 //! methods, and (Phase 9b) a task-augmentation hook for `tools/call` — rather
 //! than modeled as standalone trait methods with no consumer.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use serde_json::Value;
 use turbomcp_core::{
-    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, McpResult, RequestContext,
+    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestContext,
 };
+
+use crate::task_handle::{TaskLink, TaskSlot};
 
 /// One inbound request routed to an [`Extension`]. The dispatcher has already
 /// version-gated it to the modern path and verified the client declared the
@@ -43,45 +43,23 @@ pub struct ExtensionRequest {
     pub context: RequestContext,
 }
 
-/// The in-execution task-input seam (SEP-2663 §Task Update Requests).
-///
-/// A taskified call's `ClientHandle` delegates its input requests
-/// (elicitation, …) here instead of MRTR-aborting or sending inline: the
-/// broker publishes the request under a **task-unique** key (flipping the task
-/// to `input_required`, so it surfaces via `tasks/get` `inputRequests`) and
-/// resolves the returned future when the client answers via `tasks/update`
-/// `inputResponses`. The future must also resolve (with an error) when the
-/// task is cancelled or discarded, so an awaiting handler can unwind.
-pub trait TaskInputBroker: Send + Sync {
-    /// Publish `request` (a wire `InputRequest` object) derived from the
-    /// handler's `key`, and await the client's response value.
-    fn obtain(&self, key: &str, request: Value) -> BoxFuture<'static, McpResult<Value>>;
-}
-
-/// The late-bound [`TaskInputBroker`] slot. The dispatcher creates one per
-/// `tools/call` offered for augmentation and wires it into the call's
-/// `ClientHandle`; an extension that decides to taskify the call attaches its
-/// broker via [`CallRunner::attach_input_broker`] **before spawning**. If no
-/// broker is ever attached (the call ran synchronously), the handle's input
-/// methods fail as unavailable.
-pub type TaskInputSlot = Arc<std::sync::OnceLock<Arc<dyn TaskInputBroker>>>;
-
 /// The underlying `tools/call`, prepared for an extension to run as a task.
 ///
 /// The dispatcher builds the call's handler future (with the task's
 /// cancellation token already wired into its context) and hands it over. An
 /// extension that decides to taskify the call reads [`cancel_token`] (to drive
-/// `tasks/cancel`), registers the task, optionally attaches a
-/// [`TaskInputBroker`] (mid-task client input), and spawns [`run`] in the
-/// background; the future resolves to the wire `CallToolResult` JSON on
-/// success, or the JSON-RPC error the call would have answered with.
+/// `tasks/cancel`), registers the task, attaches a [`TaskLink`] to it (so the
+/// handler's `ctx.task`, `ctx.progress` and mid-task client input reach the
+/// task), and spawns [`run`] in the background; the future resolves to the
+/// wire `CallToolResult` JSON on success, or the JSON-RPC error the call
+/// would have answered with.
 ///
 /// [`cancel_token`]: CallRunner::cancel_token
 /// [`run`]: CallRunner::run
 pub struct CallRunner {
     future: BoxFuture<'static, Result<Value, JsonRpcError>>,
     cancel: CancellationToken,
-    input_slot: TaskInputSlot,
+    task: TaskSlot,
 }
 
 impl core::fmt::Debug for CallRunner {
@@ -104,23 +82,21 @@ impl CallRunner {
         Self {
             future,
             cancel,
-            input_slot: TaskInputSlot::default(),
+            task: TaskSlot::default(),
         }
     }
 
-    /// Share the input-broker slot already wired into the call's
-    /// `ClientHandle` (dispatcher-side; see [`TaskInputSlot`]).
+    /// Share the slot already wired into the call's context.
     #[must_use]
-    pub fn with_input_slot(mut self, slot: TaskInputSlot) -> Self {
-        self.input_slot = slot;
+    pub(crate) fn with_task_slot(mut self, slot: TaskSlot) -> Self {
+        self.task = slot;
         self
     }
 
-    /// Attach the task's [`TaskInputBroker`], enabling mid-task client input
-    /// for the call's handler. Call **before** spawning [`run`](Self::run); a
-    /// second attach is a no-op (first wins).
-    pub fn attach_input_broker(&self, broker: Arc<dyn TaskInputBroker>) {
-        let _ = self.input_slot.set(broker);
+    /// Bind the call to the task it now runs as. Call **before** spawning
+    /// [`run`](Self::run); a second attach is a no-op (first wins).
+    pub fn attach_task(&self, link: TaskLink) {
+        let _ = self.task.set(link);
     }
 
     /// The cancellation token wired into the call — fire it from `tasks/cancel`

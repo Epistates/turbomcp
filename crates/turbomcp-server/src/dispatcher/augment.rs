@@ -17,7 +17,9 @@ use turbomcp_protocol::v2026_07_28::types as v0728;
 use crate::context::CallToolContext;
 use crate::extension::{CallAugmentRequest, CallRunner, Extension};
 use crate::mrtr::ClientHandle;
+use crate::progress::ProgressReporter;
 use crate::router::MethodRouter;
+use crate::task_handle::{TaskHandle, TaskSlot};
 use crate::traits::McpServerCore;
 
 use super::params::parse_call_tool_params;
@@ -94,10 +96,12 @@ pub(super) async fn try_augment_call<S: McpServerCore>(
 /// Prepare the underlying `tools/call` as a [`CallRunner`]: parse the envelope,
 /// mint the task's cancellation token, wire it into a fresh context, and build
 /// the handler future that renders to draft `CallToolResult` JSON (or the
-/// JSON-RPC error). Taskified calls get no progress/log channel — the
-/// originating request returns `CreateTaskResult` immediately, so its stream is
-/// gone. Client input DOES work mid-task: the context's `ClientHandle` is
-/// task-mediated (SEP-2663 in-execution `input_required` — published via
+/// JSON-RPC error). The originating request returns `CreateTaskResult`
+/// immediately, so its stream is gone and there is no log channel; the
+/// context reaches the task instead, through one late-bound slot:
+/// `ctx.task`, `ctx.progress` (reports become the task's `statusMessage`,
+/// the only progress channel a task has), and the task-mediated
+/// `ClientHandle` (SEP-2663 in-execution `input_required` — published via
 /// `inputRequests`, answered via `tasks/update`).
 fn build_call_runner<S: McpServerCore>(
     server: &S,
@@ -110,16 +114,18 @@ fn build_call_runner<S: McpServerCore>(
     let cancel = CancellationToken::new();
     let mut call_ctx = ctx.clone();
     call_ctx.cancellation = cancel.clone();
-    // Mid-task client input (SEP-2663 in-execution `input_required`): the
-    // handle publishes input requests through the late-bound broker slot the
-    // taskifying extension attaches via `CallRunner::attach_input_broker`.
-    // Capability gating (SEP-2322 MUST) still applies — the client's
-    // per-request declared capabilities travel with the handle.
-    let input_slot = crate::extension::TaskInputSlot::default();
-    let handle = ClientHandle::task_mediated(ctx.client_capabilities.clone(), input_slot.clone());
+    // The taskifying extension fills the slot via `CallRunner::attach_task`.
+    // Capability gating of client input (SEP-2322 MUST) still applies — the
+    // client's per-request declared capabilities travel with the handle.
+    let slot = TaskSlot::default();
+    let task = TaskHandle::bound(slot.clone());
+    let handle = ClientHandle::task_mediated(ctx.client_capabilities.clone(), slot.clone());
     let fut = router.dispatch_call_tool(
         server.clone(),
-        CallToolContext::new(call_ctx).with_client(handle),
+        CallToolContext::new(call_ctx)
+            .with_client(handle)
+            .with_progress(ProgressReporter::for_task(task.clone()))
+            .with_task(task),
         params,
     );
     let future: BoxFuture<'static, Result<Value, JsonRpcError>> = Box::pin(async move {
@@ -139,5 +145,5 @@ fn build_call_runner<S: McpServerCore>(
             },
         }
     });
-    Ok(CallRunner::new(future, cancel).with_input_slot(input_slot))
+    Ok(CallRunner::new(future, cancel).with_task_slot(slot))
 }

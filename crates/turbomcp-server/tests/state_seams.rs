@@ -18,7 +18,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, InputWaiter, LegacySessionAdapter, ListToolsContext, McpServerCore, NewTask,
     ServerBuilder, SessionBackend, SessionError, SessionState, TaskBackend, TaskError, TaskOutcome,
-    TaskOwner, TaskSnapshot, TaskStore, VersionDispatcher, WithTools,
+    TaskOwner, TaskSnapshot, TaskStore, TaskUpdate, VersionDispatcher, WithTools,
 };
 
 /// A [`SessionBackend`] that keeps sessions as bytes, the way a Redis or SQL
@@ -113,6 +113,10 @@ impl TaskBackend for CountingTasks {
 
     async fn complete(&self, task_id: &str, outcome: TaskOutcome) {
         self.inner.complete(task_id, outcome).await;
+    }
+
+    async fn update(&self, task_id: &str, update: TaskUpdate) -> Result<bool, TaskError> {
+        self.inner.update(task_id, update).await
     }
 
     async fn get(&self, owner: &TaskOwner, task_id: &str) -> Result<TaskSnapshot, TaskError> {

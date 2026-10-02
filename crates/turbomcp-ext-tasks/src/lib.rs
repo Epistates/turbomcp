@@ -56,13 +56,12 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 use turbomcp_core::{
-    CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError,
-    McpResult, RequestContext, RequestId,
+    JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestContext, RequestId,
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallAugmentRequest, Extension, ExtensionRequest, NewTask, SubscribeOutcome, TaskBackend,
-    TaskError, TaskInputBroker, TaskOutcome, TaskOwner, TaskStore,
+    TaskError, TaskLink, TaskOutcome, TaskOwner, TaskStore,
 };
 
 mod render;
@@ -335,52 +334,6 @@ fn ack(id: RequestId) -> JsonRpcMessage {
     ok(id, json!({ "resultType": wire::RESULT_TYPE_COMPLETE }))
 }
 
-/// One task's [`TaskInputBroker`] (SEP-2663 in-execution `input_required`):
-/// publishes the handler's input requests into the task's store entry —
-/// flipping it to `input_required`, surfaced by `tasks/get` — pushes the
-/// status to subscribers, and awaits the client's `tasks/update` answer.
-/// Cancellation (`tasks/cancel`, TTL purge) unblocks the awaiting handler
-/// with an error so it unwinds.
-struct TaskBroker {
-    store: Arc<dyn TaskBackend>,
-    subs: Arc<TaskSubscriptions>,
-    task_id: String,
-    cancel: CancellationToken,
-}
-
-impl TaskInputBroker for TaskBroker {
-    fn obtain(
-        &self,
-        key: &str,
-        request: serde_json::Value,
-    ) -> futures::future::BoxFuture<'static, McpResult<serde_json::Value>> {
-        let store = Arc::clone(&self.store);
-        let subs = Arc::clone(&self.subs);
-        let task_id = self.task_id.clone();
-        let cancel = self.cancel.clone();
-        let key = key.to_owned();
-        Box::pin(async move {
-            let answer = store
-                .request_input(&task_id, &key, request)
-                .await
-                .map_err(|_| {
-                    McpError::internal("the task is no longer live; client input is unavailable")
-                })?;
-            // Announce `input_required` to any listen-stream subscribers
-            // (spec-optional; pollers see it via `tasks/get` regardless).
-            subs::push_status(&subs, store.as_ref(), &task_id).await;
-            tokio::select! {
-                () = cancel.cancelled() => Err(McpError::internal(
-                    "the task was cancelled while awaiting client input",
-                )),
-                answer = answer => answer.ok_or_else(|| {
-                    McpError::internal("the task ended before the client answered")
-                }),
-            }
-        })
-    }
-}
-
 #[async_trait]
 impl Extension for TasksExtension {
     fn id(&self) -> &'static str {
@@ -486,15 +439,20 @@ impl Extension for TasksExtension {
             }
         };
 
-        // Enable mid-task client input (in-execution `input_required`): the
-        // call's ClientHandle publishes through this broker; the client
-        // answers via `tasks/update`.
-        run.attach_input_broker(Arc::new(TaskBroker {
-            store: Arc::clone(&self.store),
-            subs: Arc::clone(&self.subs),
-            task_id: task.task_id.clone(),
-            cancel,
-        }));
+        // Bind the call to its task: `ctx.task`, `ctx.progress` and mid-task
+        // client input (in-execution `input_required`, answered via
+        // `tasks/update`) reach it, and each change it makes is pushed to
+        // `subscriptions/listen` subscribers (spec-optional; pollers see it
+        // via `tasks/get` regardless).
+        let (store, subs) = (Arc::clone(&self.store), Arc::clone(&self.subs));
+        run.attach_task(
+            TaskLink::new(Arc::clone(&self.store), task.task_id.clone(), cancel).on_change(
+                move |task_id| {
+                    let (store, subs) = (Arc::clone(&store), Arc::clone(&subs));
+                    async move { subs::push_status(&subs, store.as_ref(), &task_id).await }
+                },
+            ),
+        );
 
         let store = Arc::clone(&self.store);
         let subs = Arc::clone(&self.subs);

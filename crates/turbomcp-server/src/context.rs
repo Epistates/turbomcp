@@ -15,6 +15,7 @@
 use crate::logging::LogSender;
 use crate::mrtr::ClientHandle;
 use crate::progress::ProgressReporter;
+use crate::task_handle::TaskHandle;
 use turbomcp_core::RequestContext;
 
 /// Define a per-RPC context that wraps only the shared [`RequestContext`].
@@ -67,6 +68,8 @@ macro_rules! mrtr_context {
             /// Structured log messages to the client; inert unless the server
             /// enabled `logging` and the client opted in.
             pub log: LogSender,
+            /// The task this call runs as; inert unless it runs as one.
+            pub task: TaskHandle,
         }
 
         impl $name {
@@ -80,6 +83,7 @@ macro_rules! mrtr_context {
                     client: ClientHandle::unavailable("no client channel attached"),
                     progress: ProgressReporter::disabled(),
                     log: LogSender::disabled(),
+                    task: TaskHandle::disabled(),
                 }
             }
 
@@ -101,6 +105,14 @@ macro_rules! mrtr_context {
             #[must_use]
             pub(crate) fn with_log(mut self, log: LogSender) -> Self {
                 self.log = log;
+                self
+            }
+
+            /// Attach the task the call may run as.
+            #[must_use]
+            #[allow(dead_code)] // only `tools/call` runs as a task, so far
+            pub(crate) fn with_task(mut self, task: TaskHandle) -> Self {
+                self.task = task;
                 self
             }
         }
