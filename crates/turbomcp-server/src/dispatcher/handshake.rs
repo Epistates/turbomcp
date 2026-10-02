@@ -20,7 +20,7 @@ use turbomcp_service::ProtocolError;
 
 use crate::extension::Extension;
 use crate::router::MethodRouter;
-use crate::session::{SessionBackend, SessionState};
+use crate::session::SessionState;
 use crate::traits::McpServerCore;
 
 use super::{error_response, session_id};
@@ -33,11 +33,11 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     server: &S,
     router: &MethodRouter<S>,
     supported: &[ProtocolVersion],
-    sessions: &dyn SessionBackend,
-    tasks_enabled: bool,
+    shared: &super::Shared,
     req: &JsonRpcRequest,
     ext: &Extensions,
 ) -> Result<JsonRpcMessage, ProtocolError> {
+    let tasks_enabled = shared.tasks.is_some() && router.has_tools();
     let id = req.id.clone();
     let Some(params) = req.params.as_ref() else {
         return Ok(error_response(
@@ -78,7 +78,8 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         // A store that can't take the session (down, or full) fails the
         // handshake with `503`: answering success would hand the client a
         // session id that every later request finds unknown.
-        sessions
+        shared
+            .sessions
             .insert(
                 sid,
                 SessionState::new(
@@ -107,7 +108,13 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         serde_json::to_value(&result)
     };
     Ok(match serialized {
-        Ok(value) => JsonRpcResponse::success(id, value).into(),
+        Ok(mut value) => {
+            // "Servers advertise extension support in the `initialize`
+            // response" (SEP-2133). Neither stateful schema has the field, so
+            // it is patched in, as `server/discover` does.
+            advertise_extensions(&mut value, &shared.extensions, |v| *v == negotiated);
+            JsonRpcResponse::success(id, value).into()
+        }
         Err(e) => error_response(id, &McpError::internal(format!("serialize result: {e}"))),
     })
 }
@@ -222,19 +229,36 @@ pub(super) fn discover_response<S: McpServerCore>(
         Ok(v) => v,
         Err(e) => return error_response(id, &McpError::internal(format!("serialize result: {e}"))),
     };
-    if !extensions.is_empty()
-        && let Some(caps) = value.get_mut("capabilities").and_then(Value::as_object_mut)
-    {
-        let ext_map = caps
-            .entry("extensions")
-            .or_insert_with(|| Value::Object(Map::new()));
-        if let Some(ext_map) = ext_map.as_object_mut() {
-            for ext in extensions {
-                ext_map.insert(ext.id().to_owned(), ext.settings());
-            }
+    advertise_extensions(&mut value, extensions, ProtocolVersion::is_stateless);
+    JsonRpcResponse::success(id, value).into()
+}
+
+/// Patch `capabilities.extensions[id] = settings` into a serialized
+/// `initialize`/`server/discover` result for each extension speaking a
+/// revision `speaks` accepts. Nothing is added when none does.
+fn advertise_extensions(
+    value: &mut Value,
+    extensions: &[Arc<dyn Extension>],
+    speaks: impl Fn(&ProtocolVersion) -> bool,
+) {
+    let mut advertised = extensions
+        .iter()
+        .filter(|ext| ext.protocol_versions().iter().any(&speaks))
+        .peekable();
+    if advertised.peek().is_none() {
+        return;
+    }
+    let Some(caps) = value.get_mut("capabilities").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let ext_map = caps
+        .entry("extensions")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Some(ext_map) = ext_map.as_object_mut() {
+        for ext in advertised {
+            ext_map.insert(ext.id().to_owned(), ext.settings());
         }
     }
-    JsonRpcResponse::success(id, value).into()
 }
 
 fn build_discover_result<S: McpServerCore>(

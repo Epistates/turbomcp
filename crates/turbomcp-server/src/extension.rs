@@ -1,14 +1,18 @@
 //! The [`Extension`] seam: a multi-method server plugin (PLAN D10).
 //!
-//! An extension owns a set of request methods (e.g. the draft Tasks extension's
-//! `tasks/get`/`tasks/update`/`tasks/cancel`), advertises itself in
-//! `server/discover` under `capabilities.extensions[id]`, and is dispatched by
-//! the [`VersionDispatcher`](crate::VersionDispatcher) on the modern
-//! (`2026-07-28`) path once the client has declared the extension in its
-//! per-request capabilities.
+//! An extension owns a set of request methods (e.g. the Tasks extension's
+//! `tasks/get`/`tasks/update`/`tasks/cancel`), advertises itself under
+//! `capabilities.extensions[id]` (SEP-2133: in `initialize` on the stateful
+//! revisions, in `server/discover` on the stateless one), and is dispatched by
+//! the [`VersionDispatcher`](crate::VersionDispatcher) on the revisions it
+//! speaks ([`Extension::protocol_versions`], `2026-07-28` by default) once the
+//! client has declared it: per request on `2026-07-28`, in `initialize` on a
+//! session. Handlers ask with
+//! [`RequestContext::supports_extension`](turbomcp_core::RequestContext::supports_extension).
 //!
-//! Extensions are **draft-only**: the legacy `2025-11-25` path serves its
-//! built-in equivalents (core Tasks) instead. The trait is object-safe and
+//! A revision whose core protocol defines a method keeps it: the Tasks
+//! extension speaks only `2026-07-28`, and `2025-11-25` serves its built-in
+//! core Tasks instead. Registration refuses collisions. The trait is object-safe and
 //! dispatched behind `Arc<dyn Extension>`, so extensions live in their own
 //! crates (e.g. `turbomcp-ext-tasks`) and register via
 //! [`ServerBuilder::with_extension`](crate::ServerBuilder::with_extension) /
@@ -20,12 +24,17 @@
 //! methods, and (Phase 9b) a task-augmentation hook for `tools/call` — rather
 //! than modeled as standalone trait methods with no consumer.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use serde_json::Value;
 use turbomcp_core::{
     CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestContext,
 };
+
+use turbomcp_core::ProtocolVersion;
+use turbomcp_protocol::methods::request;
 
 use crate::task_handle::{TaskLink, TaskSlot};
 
@@ -170,11 +179,28 @@ pub trait Extension: Send + Sync + 'static {
         Value::Object(serde_json::Map::new())
     }
 
-    /// The request methods this extension owns. On the modern path the
-    /// dispatcher routes these to [`dispatch`](Extension::dispatch); a client
-    /// that has not declared the extension capability gets `-32021` (Missing
-    /// Required Client Capability) naming it, so it can declare and retry.
+    /// The request methods this extension owns. On the revisions it speaks
+    /// ([`protocol_versions`](Extension::protocol_versions)) the dispatcher
+    /// routes these to [`dispatch`](Extension::dispatch); a client that has
+    /// not declared the extension gets Missing Required Client Capability
+    /// (`-32021`; `-32602` on the stateful revisions) naming it, so it can
+    /// declare and retry. None may be a method the core protocol defines on
+    /// those revisions, nor one another extension claims there.
     fn methods(&self) -> &'static [&'static str];
+
+    /// The revisions this extension speaks. It is advertised only to a
+    /// client on one of them (in `initialize` on the stateful revisions,
+    /// SEP-2133, and in `server/discover` on the stateless one), and its
+    /// methods are routed only there. Defaults to `2026-07-28`, the revision
+    /// this seam began on.
+    ///
+    /// An extension that only shapes what the core methods carry (Apps: UI
+    /// metadata on tools and resources) speaks every revision; one whose
+    /// methods a revision defines itself must not claim that revision (the
+    /// Tasks extension's `tasks/*` are core on `2025-11-25`).
+    fn protocol_versions(&self) -> &'static [ProtocolVersion] {
+        &[ProtocolVersion::V2026_07_28]
+    }
 
     /// Handle one of the extension's [`methods`](Extension::methods) and return
     /// the JSON-RPC response. The dispatcher guarantees the request's method is
@@ -254,5 +280,104 @@ pub trait Extension: Send + Sync + 'static {
         _connection: &turbomcp_core::ConnectionId,
         _subscription_id: &turbomcp_core::RequestId,
     ) {
+    }
+}
+
+/// The request methods the core protocol defines on `version`, which no
+/// extension may claim there.
+fn core_methods(version: &ProtocolVersion) -> &'static [&'static str] {
+    use request::*;
+    const STATELESS: &[&str] = &[
+        DISCOVER,
+        SUBSCRIPTIONS_LISTEN,
+        TOOLS_LIST,
+        TOOLS_CALL,
+        RESOURCES_LIST,
+        RESOURCES_TEMPLATES_LIST,
+        RESOURCES_READ,
+        PROMPTS_LIST,
+        PROMPTS_GET,
+        COMPLETION_COMPLETE,
+    ];
+    const STATEFUL: &[&str] = &[
+        INITIALIZE,
+        PING,
+        RESOURCES_SUBSCRIBE,
+        RESOURCES_UNSUBSCRIBE,
+        LOGGING_SET_LEVEL,
+        TOOLS_LIST,
+        TOOLS_CALL,
+        RESOURCES_LIST,
+        RESOURCES_TEMPLATES_LIST,
+        RESOURCES_READ,
+        PROMPTS_LIST,
+        PROMPTS_GET,
+        COMPLETION_COMPLETE,
+    ];
+    // `2025-11-25` is the stateful set plus core Tasks.
+    const WITH_TASKS: &[&str] = &[
+        INITIALIZE,
+        PING,
+        RESOURCES_SUBSCRIBE,
+        RESOURCES_UNSUBSCRIBE,
+        LOGGING_SET_LEVEL,
+        TOOLS_LIST,
+        TOOLS_CALL,
+        RESOURCES_LIST,
+        RESOURCES_TEMPLATES_LIST,
+        RESOURCES_READ,
+        PROMPTS_LIST,
+        PROMPTS_GET,
+        COMPLETION_COMPLETE,
+        TASKS_LIST,
+        TASKS_GET,
+        TASKS_CANCEL,
+        TASKS_RESULT,
+    ];
+    match version {
+        ProtocolVersion::V2025_11_25 => WITH_TASKS,
+        v if v.is_stateless() => STATELESS,
+        _ => STATEFUL,
+    }
+}
+
+/// Requests the server sends the client: never a method an extension serves.
+const CLIENT_METHODS: [&str; 3] = [
+    request::ELICITATION_CREATE,
+    request::SAMPLING_CREATE_MESSAGE,
+    request::ROOTS_LIST,
+];
+
+/// Refuse to register `new` beside `existing` when they would collide.
+/// "Last-write-wins is how plugins corrupt each other": a silent
+/// first-match-wins let an extension claiming `tools/call` take over every
+/// call.
+///
+/// # Panics
+/// On a second extension with the same id, a method the core protocol
+/// defines on a revision `new` speaks, or a method another extension
+/// already claims on a revision both speak.
+pub(crate) fn check_registration(existing: &[Arc<dyn Extension>], new: &dyn Extension) {
+    let id = new.id();
+    assert!(
+        !existing.iter().any(|e| e.id() == id),
+        "extension `{id}` is registered twice"
+    );
+    for version in new.protocol_versions() {
+        for method in new.methods() {
+            assert!(
+                !core_methods(version).contains(method) && !CLIENT_METHODS.contains(method),
+                "extension `{id}` claims `{method}`, which the core protocol defines on {version}"
+            );
+            if let Some(other) = existing
+                .iter()
+                .find(|e| e.protocol_versions().contains(version) && e.methods().contains(method))
+            {
+                panic!(
+                    "extensions `{}` and `{id}` both claim `{method}` on {version}",
+                    other.id()
+                );
+            }
+        }
     }
 }

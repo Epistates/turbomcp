@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Extensions on every revision (SEP-2133). `Extension::protocol_versions`
+  (default `2026-07-28`) says which revisions an extension speaks: it is
+  advertised under `capabilities.extensions` in `initialize` on the stateful
+  ones as well as in `server/discover`, and its methods are routed on a
+  session too, for a client that declared it in `initialize` (whose
+  declaration a session already kept). `RequestContext::supports_extension`
+  tells a handler whether the client declared one, on any revision, the way
+  Apps tailors tool and resource metadata.
 - Opaque access tokens: `IntrospectionValidator` (`turbomcp-auth` feature
   `introspection`) validates a bearer token by RFC 7662 introspection,
   authenticated as the resource server (`ClientAuth::{basic, post,
@@ -462,6 +470,13 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `with_extension` refuses a colliding registration with a
+  panic at build time: a second extension with the same id, a method the
+  core protocol defines on a revision the extension speaks (an extension
+  claiming `tools/call` used to take over every call), or a method another
+  extension claims on a shared revision. The first match used to win
+  silently. Missing Required Client Capability for an extension is
+  `-32602` on the stateful revisions, which have no `-32021`.
 - **Breaking:** `TokenSet::{access_token, refresh_token}` and
   `ClientCredentials::client_secret` are `Zeroizing<String>`. They deref to
   `String` and serialize as before; compare with `.as_str()`, and build one

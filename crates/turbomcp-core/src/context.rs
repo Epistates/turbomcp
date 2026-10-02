@@ -257,6 +257,26 @@ impl RequestContext {
         self
     }
 
+    /// Builder: set the client's capabilities as it declared them.
+    #[must_use]
+    pub fn with_client_capabilities(mut self, capabilities: Value) -> Self {
+        self.client_capabilities = Some(capabilities);
+        self
+    }
+
+    /// Whether the client declared extension `id` (`capabilities.extensions`,
+    /// SEP-2133) for this request: per request on `2026-07-28`, in
+    /// `initialize` on the stateful revisions. A server tailors what it
+    /// sends on this, as Apps does with `io.modelcontextprotocol/ui`.
+    #[must_use]
+    pub fn supports_extension(&self, id: &str) -> bool {
+        self.client_capabilities
+            .as_ref()
+            .and_then(|caps| caps.get("extensions"))
+            .and_then(Value::as_object)
+            .is_some_and(|extensions| extensions.contains_key(id))
+    }
+
     /// A default context for downstream handler unit tests (round-3 SC-4).
     ///
     /// Available behind the `test-util` feature so that `#[non_exhaustive]`

@@ -22,8 +22,8 @@ use crate::router::MethodRouter;
 use crate::task_handle::{TaskHandle, TaskSlot};
 use crate::traits::McpServerCore;
 
+use super::error_response;
 use super::params::parse_call_tool_params;
-use super::{context_declares_extension, error_response};
 
 // ---- draft Tasks extension augmentation (SEP-2663) -----------------------------
 
@@ -50,7 +50,7 @@ pub(super) async fn try_augment_call<S: McpServerCore>(
     id: &RequestId,
 ) -> Option<JsonRpcMessage> {
     for ext in extensions {
-        if !(ext.augments_calls() && context_declares_extension(ctx, ext.id())) {
+        if !(ext.augments_calls() && ctx.supports_extension(ext.id())) {
             continue;
         }
         let (_, tool) = match super::capability::prepare_tool::<S, super::capability::DraftWire>(

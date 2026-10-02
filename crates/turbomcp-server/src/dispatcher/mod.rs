@@ -559,13 +559,20 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         self
     }
 
-    /// Register a draft [`Extension`] (PLAN D10): it is advertised in
-    /// `server/discover` under `capabilities.extensions[id]` and owns its
-    /// declared methods on the modern (`2026-07-28`) path. Extensions are
-    /// draft-only — the legacy `2025-11-25` path serves its built-in
-    /// equivalents (core Tasks via [`with_task_support`](Self::with_task_support)).
+    /// Register an [`Extension`] (SEP-2133): it is advertised under
+    /// `capabilities.extensions[id]` to clients on the revisions it speaks
+    /// ([`Extension::protocol_versions`]), in `initialize` or
+    /// `server/discover`, and owns its methods there.
+    ///
+    /// # Panics
+    /// When it would collide: an id already registered, a method the core
+    /// protocol defines on a revision it speaks, or a method another
+    /// extension claims on a revision both speak. Registration is
+    /// configuration, so a conflict is a bug to fix rather than a request to
+    /// answer.
     #[must_use]
     pub fn with_extension(mut self, extension: Arc<dyn Extension>) -> Self {
+        crate::extension::check_registration(&self.shared.extensions, extension.as_ref());
         // `with_extension` runs at build time (rare); rebuild the shared `Arc`
         // so per-request `Shared` clones stay a single `Arc` bump.
         let mut extensions = Vec::clone(&self.shared.extensions);
@@ -828,28 +835,41 @@ async fn handle_request<S: McpServerCore>(
     let id = req.id.clone();
     let method = req.method.clone();
 
-    // Extension-owned methods (PLAN D10) are draft-only: on the modern path
-    // route them to the registered extension once the client has declared its
-    // capability; the legacy path falls through to the built-in equivalents
-    // (core Tasks) handled by the arms below.
-    if let Some(extension) = shared
-        .extensions
-        .iter()
-        .find(|e| e.methods().contains(&method.as_str()))
-        .cloned()
-        && matches!(
-            classify_version(req.params.as_ref(), supported),
-            VersionRoute::Modern
-        )
+    // Extension-owned methods (PLAN D10) go to the extension that speaks the
+    // request's revision, once the client has declared it: per request on the
+    // stateless wire, in `initialize` on a session. A revision no extension
+    // speaks falls through to the built-ins below (`2025-11-25`'s core
+    // `tasks/*`, where the Tasks extension speaks only `2026-07-28`).
+    let route = classify_version(req.params.as_ref(), supported);
+    if matches!(route, VersionRoute::Modern | VersionRoute::Legacy(_))
+        && let Some(version) = version::request_protocol_version(req.params.as_ref())
+        && let Some(extension) = shared
+            .extensions
+            .iter()
+            .find(|e| {
+                e.methods().contains(&method.as_str()) && e.protocol_versions().contains(&version)
+            })
+            .cloned()
     {
-        let ctx = build_context(&req, ext);
-        if !context_declares_extension(&ctx, extension.id()) {
+        let ctx = if matches!(route, VersionRoute::Legacy(_)) {
+            match legacy_context(sessions.as_ref(), &req, ext).await? {
+                Ok(ctx) => ctx,
+                Err(response) => return Ok(response),
+            }
+        } else {
+            build_context(&req, ext)
+        };
+        if !ctx.supports_extension(extension.id()) {
             // "Servers MUST return this error [-32021] for non-declaring
             // clients issuing `tasks/get`, `tasks/update`, and `tasks/cancel`
             // requests." `-32601` (a 404 over HTTP) told a client that forgot
             // to re-declare on this request that the server had no Tasks at
             // all; this names what to declare.
-            return Ok(missing_capability_response(id, extension.id()));
+            return Ok(missing_capability_response(
+                id,
+                &ctx.protocol_version,
+                extension.id(),
+            ));
         }
         return Ok(extension
             .dispatch(ExtensionRequest {
@@ -913,17 +933,7 @@ async fn handle_request<S: McpServerCore>(
             // Bound stale-session growth: reclaim idle sessions (and their
             // routes) whenever a new one is minted.
             shared.sweep_idle_sessions().await;
-            let tasks_enabled = tasks.is_some() && router.has_tools();
-            let reply = handle_initialize(
-                &server,
-                router,
-                supported,
-                sessions.as_ref(),
-                tasks_enabled,
-                &req,
-                ext,
-            )
-            .await?;
+            let reply = handle_initialize(&server, router, supported, shared, &req, ext).await?;
             // A successfully initialized session gets a delivery route, so
             // list_changed notifications can reach it from the start.
             if matches!(&reply, JsonRpcMessage::Response(r) if r.error.is_none())
@@ -1361,18 +1371,6 @@ fn cancel_scope(ext: &Extensions) -> Option<&str> {
     session_id(ext).or_else(|| connection_id(ext))
 }
 
-/// Whether the request's per-request client capabilities declare `ext_id` under
-/// `extensions` (SEP-2663 capability negotiation). The draft client stamps its
-/// capabilities into `_meta` (lifted into [`RequestContext::client_capabilities`]
-/// by [`build_context`]).
-fn context_declares_extension(ctx: &RequestContext, ext_id: &str) -> bool {
-    ctx.client_capabilities
-        .as_ref()
-        .and_then(|caps| caps.get("extensions"))
-        .and_then(Value::as_object)
-        .is_some_and(|exts| exts.contains_key(ext_id))
-}
-
 /// Serialize a wire result into a success response, mapping the (practically
 /// impossible) serialization failure to an internal error rather than panicking.
 fn ok_value<T: Serialize>(id: RequestId, value: &T) -> JsonRpcMessage {
@@ -1419,9 +1417,9 @@ fn task_required_refusal(
         .extensions
         .iter()
         .filter(|e| e.augments_calls())
-        .find(|e| !context_declares_extension(ctx, e.id()));
+        .find(|e| !ctx.supports_extension(e.id()));
     match undeclared {
-        Some(extension) => missing_capability_response(id, extension.id()),
+        Some(extension) => missing_capability_response(id, &ctx.protocol_version, extension.id()),
         None => error_response(
             id,
             &McpError::internal(format!(
@@ -1433,10 +1431,21 @@ fn task_required_refusal(
 
 /// Missing Required Client Capability (SEP-2663): the client requested an
 /// extension's behavior without declaring its capability. The `data` names the
-/// required extension so the client can re-declare and retry.
-fn missing_capability_response(id: RequestId, extension_id: &str) -> JsonRpcMessage {
+/// required extension so the client can re-declare and retry. `-32021` exists
+/// only on the stateless wire; the stateful revisions spell it Invalid Params,
+/// as [`McpError::MissingRequiredCapability`] does.
+fn missing_capability_response(
+    id: RequestId,
+    version: &ProtocolVersion,
+    extension_id: &str,
+) -> JsonRpcMessage {
+    let code = if version.is_stateless() {
+        turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY
+    } else {
+        turbomcp_core::codes::INVALID_PARAMS
+    };
     let err = JsonRpcError {
-        code: turbomcp_core::codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
+        code,
         message: "missing required client capability".to_owned(),
         data: Some(serde_json::json!({
             "requiredCapabilities": { "extensions": { extension_id: {} } }

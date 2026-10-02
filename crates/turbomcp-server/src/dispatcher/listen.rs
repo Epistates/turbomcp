@@ -23,8 +23,8 @@ use crate::traits::McpServerCore;
 use super::capability::resource_hidden;
 use super::params::build_context;
 use super::{
-    Shared, VersionRoute, classify_version, context_declares_extension, error_response,
-    invalid_envelope, missing_capability_response, unsupported_version,
+    Shared, VersionRoute, classify_version, error_response, invalid_envelope,
+    missing_capability_response, unsupported_version,
 };
 
 // ---- subscriptions (draft `subscriptions/listen`) ------------------------------
@@ -150,14 +150,18 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
             .cloned()
             .unwrap_or(Value::Null);
         for extension in extensions {
-            let declared = context_declares_extension(&ctx, extension.id());
+            let declared = ctx.supports_extension(extension.id());
             match extension
                 .on_subscribe(&peer, &id, &raw_notifications, declared, &ctx)
                 .await
             {
                 SubscribeOutcome::NotApplicable => {}
                 SubscribeOutcome::MissingCapability => {
-                    return Ok(Some(missing_capability_response(id, extension.id())));
+                    return Ok(Some(missing_capability_response(
+                        id,
+                        &ctx.protocol_version,
+                        extension.id(),
+                    )));
                 }
                 SubscribeOutcome::Subscribed(contribution) => {
                     if let (Some(ack_obj), Some(extra)) =
