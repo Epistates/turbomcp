@@ -148,6 +148,34 @@ async fn unredacted_policy_records_the_raw_subject_but_never_claim_values() {
 }
 
 /// An anonymous request records no identity fields at all.
+/// A request that arrived over HTTP/2 from 203.0.113.9:50000.
+fn http_request() -> McpRequest {
+    McpRequest::new(JsonRpcRequest::new(1, "tools/list", None)).with(
+        turbomcp_service::NetworkFacts::http(Some("2")).with_peer("203.0.113.9", Some(50_000)),
+    )
+}
+
+/// The network attributes are recorded; the client's IP, personal data, is a
+/// keyed hash by default and its port is left out.
+#[tokio::test]
+async fn the_client_address_is_redacted_by_default() {
+    let fields = drive(SpanPolicy::default(), http_request()).await;
+    assert_eq!(fields["network.transport"], "tcp");
+    assert_eq!(fields["network.protocol.name"], "http");
+    assert_eq!(fields["network.protocol.version"], "2");
+    let address = &fields["client.address"];
+    assert!(address.starts_with("ip:"), "hashed, got {address}");
+    assert!(!fields.values().any(|v| v.contains("203.0.113.9")));
+    assert!(!fields.contains_key("client.port"));
+}
+
+#[tokio::test]
+async fn unredacted_policy_records_the_client_address_and_port() {
+    let fields = drive(SpanPolicy::unredacted(), http_request()).await;
+    assert_eq!(fields["client.address"], "203.0.113.9");
+    assert_eq!(fields["client.port"], "50000");
+}
+
 #[tokio::test]
 async fn anonymous_requests_record_no_identity_fields() {
     let req: JsonRpcMessage = JsonRpcRequest::new(1, "ping", None).into();

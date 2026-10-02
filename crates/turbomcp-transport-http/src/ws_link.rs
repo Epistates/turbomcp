@@ -120,6 +120,7 @@ pub(crate) struct Link<M, R> {
     idle_pings: u32,
     close_with: CloseWith,
     going_away: Option<CancellationToken>,
+    network: turbomcp_service::NetworkFacts,
 }
 
 impl<M, S, E> Link<M, SplitStream<S>>
@@ -142,11 +143,19 @@ where
             idle_pings: 0,
             close_with: CloseWith(Arc::default()),
             going_away: None,
+            network: turbomcp_service::NetworkFacts::websocket(),
         }
     }
 }
 
 impl<M, R> Link<M, R> {
+    /// The connection this link carries, as its endpoint knows it (the
+    /// other end's address, chiefly).
+    pub(crate) fn with_network(mut self, network: turbomcp_service::NetworkFacts) -> Self {
+        self.network = network;
+        self
+    }
+
     #[cfg(feature = "client")]
     pub(crate) fn set_keepalive(&mut self, keepalive: Option<Keepalive>) {
         self.keepalive = keepalive;
@@ -234,6 +243,10 @@ where
     E: std::error::Error + Send + Sync + 'static,
 {
     type Error = WsError;
+
+    fn network(&self) -> Option<turbomcp_service::NetworkFacts> {
+        Some(self.network.clone())
+    }
 
     fn invalid_frame(error: WsError) -> Result<InvalidFrame, WsError> {
         match error {

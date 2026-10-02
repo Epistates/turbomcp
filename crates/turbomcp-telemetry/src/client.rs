@@ -116,11 +116,32 @@ impl RequestObserver for ClientTelemetry {
             "gen_ai.operation.name" = Empty,
             "error.type" = Empty,
             "rpc.response.status_code" = Empty,
+            "network.transport" = Empty,
+            "network.protocol.name" = Empty,
+            "network.protocol.version" = Empty,
+            "server.address" = Empty,
+            "server.port" = Empty,
         );
         let mut base = vec![KeyValue::new(
             semconv::MCP_METHOD_NAME,
             method.clone().into_owned(),
         )];
+        if let Some(network) = request.network {
+            for label in semconv::network_labels(network) {
+                span.record(label.key.as_str(), label.value.as_str().as_ref());
+                base.push(label);
+            }
+            // The server's address is no one's personal data, and the
+            // conventions list it for the metric too.
+            if let Some(address) = &network.peer_address {
+                span.record(semconv::SERVER_ADDRESS, address.as_str());
+                base.push(KeyValue::new(semconv::SERVER_ADDRESS, address.clone()));
+                if let Some(port) = network.peer_port {
+                    span.record(semconv::SERVER_PORT, i64::from(port));
+                    base.push(KeyValue::new(semconv::SERVER_PORT, i64::from(port)));
+                }
+            }
+        }
         if let Some(version) = request.protocol_version {
             let version = semconv::version_label(version);
             span.record(semconv::MCP_PROTOCOL_VERSION, version);

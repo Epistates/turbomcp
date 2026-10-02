@@ -88,6 +88,14 @@ pub trait Transport: Send + 'static {
         true
     }
 
+    /// The connection this transport carries, for the network attributes
+    /// telemetry records. A server's serve loop attaches it to every request
+    /// it reads; a client hands it to its observers. `None` (the default)
+    /// says nothing.
+    fn network(&self) -> Option<crate::NetworkFacts> {
+        None
+    }
+
     /// Whether messages ride HTTP requests, so the header-level features of
     /// Streamable HTTP apply: `MCP-Protocol-Version`, `x-mcp-header`
     /// mirroring. Only Streamable HTTP says yes.

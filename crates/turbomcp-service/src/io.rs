@@ -267,6 +267,10 @@ where
 {
     type Error = StdioError;
 
+    fn network(&self) -> Option<crate::NetworkFacts> {
+        Some(crate::NetworkFacts::pipe())
+    }
+
     fn invalid_frame(error: Self::Error) -> Result<InvalidFrame, Self::Error> {
         match error {
             StdioError::InvalidFrame(frame) => Ok(frame),

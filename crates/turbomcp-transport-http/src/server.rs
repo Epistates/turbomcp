@@ -38,9 +38,9 @@ use turbomcp_core::{
     Extensions, JsonRpcMessage, McpRequest, ObservedHeaders, ProtocolVersion, SessionId, meta,
 };
 use turbomcp_service::{
-    CancellationToken, HttpAuthenticator, McpService, Peer, ProtocolError, RateKey, RateLimiter,
-    ScopeChallenge, Serve, ServerHandle, SessionStreams, SessionTerminator, catch_handler_panic,
-    close_then_shut_down,
+    CancellationToken, HttpAuthenticator, McpService, NetworkFacts, Peer, ProtocolError, RateKey,
+    RateLimiter, ScopeChallenge, Serve, ServerHandle, SessionStreams, SessionTerminator,
+    catch_handler_panic, close_then_shut_down,
 };
 
 use config::{HostPolicy, OriginPolicy, RESOURCE_METADATA_PATH};
@@ -466,7 +466,12 @@ where
     // What this endpoint knows about the request travels beside the message,
     // where the client can't write: the verified identity, the session, the
     // mirrors that arrived, and where session streams live.
-    let mut ext = Extensions::new().with(state.streams.clone());
+    let mut ext = Extensions::new()
+        .with(state.streams.clone())
+        .with(peer.network(
+            &state.trusted_proxies,
+            NetworkFacts::http(peer.http_version()),
+        ));
     if let Some(authenticated) = authenticated {
         ext.insert(authenticated.identity);
         // Where a handler says the call needs scopes this token lacks.

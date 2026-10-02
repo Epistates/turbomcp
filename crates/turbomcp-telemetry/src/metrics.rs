@@ -175,6 +175,9 @@ where
                 if let Some(version) = semconv::protocol_version(&req.message) {
                     base.push(KeyValue::new(semconv::MCP_PROTOCOL_VERSION, version));
                 }
+                if let Some(network) = req.extensions.get::<turbomcp_service::NetworkFacts>() {
+                    base.extend(semconv::network_labels(network));
+                }
                 Some(Pending {
                     base,
                     target: Target::of(&req.message),

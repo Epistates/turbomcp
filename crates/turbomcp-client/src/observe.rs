@@ -23,6 +23,9 @@ pub struct OutboundRequest<'a> {
     pub params: Option<&'a Map<String, Value>>,
     /// The revision it goes out under, once the session has one.
     pub protocol_version: Option<&'a ProtocolVersion>,
+    /// The connection it rides, as the transport describes it: the network
+    /// attributes, and the server's address.
+    pub network: Option<&'a turbomcp_service::NetworkFacts>,
 }
 
 /// Watches the requests a client sends.

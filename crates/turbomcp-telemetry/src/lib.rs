@@ -26,17 +26,20 @@
 //! (`docs/gen-ai/mcp.md` in `open-telemetry/semantic-conventions-genai`,
 //! development status): spans named `{mcp.method.name} {target}`, attributes
 //! such as `mcp.method.name`, `mcp.protocol.version`, `gen_ai.tool.name` and
-//! `error.type`, and the `mcp.server.operation.duration` histogram, so
-//! dashboards built for the conventions work unmodified.
+//! `error.type`, the network attributes the transport reports
+//! (`network.transport`, `network.protocol.*`, `client.address` on a server,
+//! `server.address` on a client), and the `mcp.server.operation.duration`
+//! histogram, so dashboards built for the conventions work unmodified.
 //!
 //! ## Redaction
 //!
-//! By default a span records the caller's subject and the session id as keyed
-//! hashes (HMAC-SHA256 under a [`RedactionKey`], random per process unless you
-//! share one), and the claim *keys* only, never claim values. An unkeyed hash
+//! By default a span records the caller's subject, its IP address and the
+//! session id as keyed hashes (HMAC-SHA256 under a [`RedactionKey`], random
+//! per process unless you share one), and the claim *keys* only, never claim
+//! values. An unkeyed hash
 //! of an email is reversible with a dictionary by anyone who can read the
-//! trace backend; a keyed one isn't. Opt into raw subjects with
-//! [`SpanPolicy::unredacted`].
+//! trace backend; a keyed one isn't. Opt into raw subjects and addresses
+//! with [`SpanPolicy::unredacted`].
 //!
 //! ## Export
 //!
@@ -85,6 +88,10 @@ pub struct SpanPolicy {
     /// Record the set of claim *keys* (never values) on the span (default
     /// `true`).
     pub record_claim_keys: bool,
+    /// Record `client.address` as a keyed hash rather than the raw IP, and
+    /// leave `client.port` out (default `true`). An IP address is personal
+    /// data under GDPR, like the subject.
+    pub redact_client_address: bool,
     /// The key subjects and session ids are hashed under (default: random per
     /// process).
     pub key: RedactionKey,
@@ -95,19 +102,22 @@ impl Default for SpanPolicy {
         Self {
             redact_subject: true,
             record_claim_keys: true,
+            redact_client_address: true,
             key: RedactionKey::per_process(),
         }
     }
 }
 
 impl SpanPolicy {
-    /// Record the raw subject (no hashing). Use only where the subject is not
-    /// considered PII in your telemetry backend. Claim values are still never
-    /// recorded, and the session id is still hashed (it is a secret).
+    /// Record the raw subject and client address (no hashing). Use only where
+    /// neither is considered PII in your telemetry backend. Claim values are
+    /// still never recorded, and the session id is still hashed (it is a
+    /// secret).
     #[must_use]
     pub fn unredacted() -> Self {
         Self {
             redact_subject: false,
+            redact_client_address: false,
             ..Self::default()
         }
     }

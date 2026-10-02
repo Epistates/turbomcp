@@ -33,6 +33,7 @@ use tracing::Instrument;
 use tracing::field::Empty;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use turbomcp_core::{Identity, JsonRpcMessage, McpRequest, SessionId};
+use turbomcp_service::NetworkFacts;
 
 use crate::SpanPolicy;
 use crate::propagation;
@@ -186,6 +187,11 @@ impl<S> TraceContextService<S> {
             "gen_ai.operation.name" = Empty,
             "error.type" = Empty,
             "rpc.response.status_code" = Empty,
+            "network.transport" = Empty,
+            "network.protocol.name" = Empty,
+            "network.protocol.version" = Empty,
+            "client.address" = Empty,
+            "client.port" = Empty,
             mcp.identity.sub = Empty,
             mcp.identity.claims = Empty,
         );
@@ -212,6 +218,28 @@ impl<S> TraceContextService<S> {
                 span.record(semconv::MCP_RESOURCE_URI, uri.as_str());
             }
             None => {}
+        }
+        if let Some(network) = req.extensions.get::<NetworkFacts>() {
+            span.record(semconv::NETWORK_TRANSPORT, network.transport);
+            if let Some(name) = network.protocol_name {
+                span.record(semconv::NETWORK_PROTOCOL_NAME, name);
+            }
+            if let Some(version) = network.protocol_version {
+                span.record(semconv::NETWORK_PROTOCOL_VERSION, version);
+            }
+            if let Some(address) = &network.peer_address {
+                if self.policy.redact_client_address {
+                    span.record(
+                        semconv::CLIENT_ADDRESS,
+                        self.policy.key.redact("ip", address),
+                    );
+                } else {
+                    span.record(semconv::CLIENT_ADDRESS, address.as_str());
+                    if let Some(port) = network.peer_port {
+                        span.record(semconv::CLIENT_PORT, i64::from(port));
+                    }
+                }
+            }
         }
         // A session id is a bearer-equivalent handle (the transports spec
         // says to treat it as a secret), so the attribute carries its keyed

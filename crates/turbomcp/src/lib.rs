@@ -137,8 +137,8 @@ pub use turbomcp_server::{ComponentKind, Visibility, VisibilityPolicy, VisibleCo
 
 pub use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
 pub use turbomcp_service::{
-    CancellationToken, Delivery, McpService, Peer, PeerClosed, Pipe, ProtocolError, Serve,
-    ServeConfig, ServerHandle, SessionStreams, Transport, serve, serve_with,
+    CancellationToken, Delivery, McpService, NetworkFacts, Peer, PeerClosed, Pipe, ProtocolError,
+    Serve, ServeConfig, ServerHandle, SessionStreams, Transport, serve, serve_with,
 };
 
 /// RPC middleware: [`tower::Layer`]s over the `Service<McpRequest>` seam,

@@ -97,6 +97,8 @@ struct Inner {
     inbound: watch::Receiver<usize>,
     /// Watches every request this connection sends.
     observer: Option<Arc<dyn crate::RequestObserver>>,
+    /// The connection the transport carries, for the observer.
+    network: Option<turbomcp_service::NetworkFacts>,
 }
 
 impl Drop for Inner {
@@ -184,6 +186,7 @@ impl Connection {
         let done = tokio_util::sync::CancellationToken::new();
         let negotiated = Arc::new(Mutex::new(ProtocolVersion::LATEST));
         let carries_headers = transport.carries_headers();
+        let network = transport.network();
         let progress = Arc::new(ProgressRoutes::default());
         let subscriptions = Arc::new(SubscriptionRoutes::default());
         let (inbound_tx, inbound) = watch::channel(0);
@@ -217,6 +220,7 @@ impl Connection {
                 subscriptions,
                 inbound,
                 observer,
+                network,
             }),
         }
     }
@@ -328,6 +332,7 @@ impl Connection {
             method: &method,
             params: params.as_ref().and_then(Value::as_object),
             protocol_version: facts.get::<turbomcp_service::WireVersion>().map(|w| &w.0),
+            network: self.inner.network.as_ref(),
         });
         crate::observe::merge_meta(&mut params, scope.meta());
         let result = self.request_as_inner(id, method, params, facts, wait).await;

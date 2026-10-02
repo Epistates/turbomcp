@@ -198,12 +198,16 @@ async fn upgrade<H: ServerHandle>(
             .into_response();
     };
     let identity = authenticated.map(|a| a.identity);
+    let network = peer.network(
+        &state.http.trusted_proxies,
+        turbomcp_service::NetworkFacts::websocket(),
+    );
     let max = state.max_message_bytes;
     upgrade
         .protocols([SUBPROTOCOL])
         .max_message_size(max)
         .max_frame_size(max)
-        .on_upgrade(move |socket| connection(state, socket, identity, slot))
+        .on_upgrade(move |socket| connection(state, socket, identity, network, slot))
 }
 
 /// Serve one upgraded socket until either end closes it, the server shuts
@@ -212,11 +216,13 @@ async fn connection<H: ServerHandle>(
     state: WsState<H>,
     socket: WebSocket,
     identity: Option<Identity>,
+    network: turbomcp_service::NetworkFacts,
     _slot: OwnedSemaphorePermit,
 ) {
     let shutdown = state.http.shutdown.child_token();
-    let link =
-        Link::new(socket, state.config.keepalive()).going_away_on(state.http.shutdown.clone());
+    let link = Link::new(socket, state.config.keepalive())
+        .going_away_on(state.http.shutdown.clone())
+        .with_network(network);
     let close_with = link.close_with();
     let expiry = identity.as_ref().and_then(expires_at);
     let serving = turbomcp_service::serve_with(

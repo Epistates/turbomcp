@@ -106,4 +106,19 @@ async fn the_servers_span_is_a_child_of_the_clients() {
         client_span.span_context.span_id(),
         "the server's span is the client's child"
     );
+    // Both ends name the transport: stdio is a pipe, with no protocol.
+    for span in [client_span, server_span] {
+        let transport = span
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "network.transport")
+            .map(|kv| kv.value.as_str().into_owned());
+        assert_eq!(transport.as_deref(), Some("pipe"), "{span:#?}");
+        assert!(
+            !span
+                .attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "network.protocol.name")
+        );
+    }
 }

@@ -134,6 +134,7 @@ where
         identity,
     } = config;
     let capacity = max_in_flight.max(1);
+    let network = transport.network();
 
     // In-process connection identity: lets the dispatcher scope in-flight
     // request cancellation to this connection. Needs only process-uniqueness
@@ -252,6 +253,9 @@ where
                             .with(peer.clone());
                         if let Some(identity) = &identity {
                             request.extensions.insert(identity.clone());
+                        }
+                        if let Some(network) = &network {
+                            request.extensions.insert(network.clone());
                         }
                         let call: futures::future::BoxFuture<'static, _> =
                             match poll_fn(|cx| ready.poll_ready(cx)).now_or_never() {

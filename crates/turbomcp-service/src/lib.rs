@@ -32,6 +32,7 @@ mod host;
 pub mod io;
 pub mod mcp_headers;
 mod middleware;
+mod network;
 mod panic;
 mod peer;
 mod ratelimit;
@@ -43,6 +44,7 @@ pub use auth::{AuthDecision, AuthFuture, HttpAuthenticator, ScopeChallenge};
 pub use error::ProtocolError;
 pub use host::{Pipe, Serve, ServerHandle, close_then_shut_down};
 pub use middleware::{Tracing, TracingLayer};
+pub use network::NetworkFacts;
 pub use panic::{catch_handler_panic, catch_panic};
 pub use peer::{Delivery, Peer, PeerClosed, Reserved, SessionStreams, StreamGuard};
 #[cfg(feature = "governor")]

@@ -65,8 +65,9 @@ pub(super) async fn enforce_auth<S>(
 /// be used directly — axum 0.8's `Option` extractor needs
 /// `OptionalFromRequestParts`, which `ConnectInfo` doesn't implement.
 pub(super) struct PeerIp {
-    socket: Option<IpAddr>,
+    socket: Option<SocketAddr>,
     forwarded: Option<String>,
+    version: axum::http::Version,
 }
 
 impl PeerIp {
@@ -74,7 +75,7 @@ impl PeerIp {
     /// trusted proxy, walk `X-Forwarded-For` from the right to the first hop that
     /// isn't itself trusted; otherwise use the socket peer as-is.
     pub(super) fn client_ip(&self, trusted: &[IpNet]) -> Option<IpAddr> {
-        let socket = self.socket?;
+        let socket = self.socket?.ip();
         let is_trusted = |ip: &IpAddr| trusted.iter().any(|net| net.contains(ip));
         if !is_trusted(&socket) {
             return Some(socket);
@@ -93,6 +94,36 @@ impl PeerIp {
         Some(candidate)
     }
 
+    /// `base` (what protocol the request rides) with the client as this
+    /// request's peer: the IP [`client_ip`](Self::client_ip) resolves, and the
+    /// socket's port when that IP is the socket's own.
+    pub(super) fn network(
+        &self,
+        trusted: &[IpNet],
+        base: turbomcp_service::NetworkFacts,
+    ) -> turbomcp_service::NetworkFacts {
+        match self.client_ip(trusted) {
+            Some(ip) => {
+                let port = self.socket.filter(|s| s.ip() == ip).map(|s| s.port());
+                base.with_peer(ip.to_string(), port)
+            }
+            None => base,
+        }
+    }
+
+    /// The HTTP version the request arrived on, as `network.protocol.version`
+    /// spells it.
+    pub(super) fn http_version(&self) -> Option<&'static str> {
+        use axum::http::Version;
+        match self.version {
+            Version::HTTP_10 => Some("1.0"),
+            Version::HTTP_11 => Some("1.1"),
+            Version::HTTP_2 => Some("2"),
+            Version::HTTP_3 => Some("3"),
+            _ => None,
+        }
+    }
+
     /// Read the socket peer and every `X-Forwarded-For` line, joined in
     /// order (RFC 9110 §5.3: several field lines are one comma-separated
     /// list). A line that isn't text makes the whole chain unusable, which
@@ -105,10 +136,11 @@ impl PeerIp {
             .map(|v| v.to_str().ok())
             .collect();
         PeerIp {
+            version: parts.version,
             socket: parts
                 .extensions
                 .get::<ConnectInfo<SocketAddr>>()
-                .map(|ConnectInfo(addr)| addr.ip()),
+                .map(|ConnectInfo(addr)| *addr),
             forwarded: match lines {
                 Some(lines) if !lines.is_empty() => Some(lines.join(",")),
                 Some(_) => None,
@@ -262,9 +294,23 @@ mod tests {
 
     fn peer(socket: &str, xff: Option<&str>) -> PeerIp {
         PeerIp {
-            socket: Some(ip(socket)),
+            socket: Some(SocketAddr::new(ip(socket), 50_000)),
             forwarded: xff.map(str::to_owned),
+            version: axum::http::Version::HTTP_11,
         }
+    }
+
+    /// The network facts name the client the rate limiter sees, with the
+    /// socket's port only when that client is the socket's own peer.
+    #[test]
+    fn network_facts_name_the_resolved_client() {
+        let base = turbomcp_service::NetworkFacts::http(Some("1.1"));
+        let direct = peer("203.0.113.9", None).network(&[], base.clone());
+        assert_eq!(direct.peer_address.as_deref(), Some("203.0.113.9"));
+        assert_eq!(direct.peer_port, Some(50_000));
+        let proxied = peer("10.0.0.1", Some("203.0.113.7")).network(&[net("10.0.0.1")], base);
+        assert_eq!(proxied.peer_address.as_deref(), Some("203.0.113.7"));
+        assert_eq!(proxied.peer_port, None, "the port is the proxy's");
     }
 
     #[test]
@@ -312,7 +358,8 @@ mod tests {
         assert_eq!(
             PeerIp {
                 socket: None,
-                forwarded: Some("1.2.3.4".into())
+                forwarded: Some("1.2.3.4".into()),
+                version: axum::http::Version::HTTP_11,
             }
             .client_ip(&trusted),
             None

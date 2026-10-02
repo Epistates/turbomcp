@@ -563,6 +563,15 @@ impl Transport for HttpClientTransport {
         self.shared.bearer.is_none()
     }
 
+    fn network(&self) -> Option<turbomcp_service::NetworkFacts> {
+        let url = reqwest::Url::parse(&self.shared.url).ok()?;
+        let facts = turbomcp_service::NetworkFacts::http(None);
+        Some(match url.host_str() {
+            Some(host) => facts.with_peer(host, url.port_or_known_default()),
+            None => facts,
+        })
+    }
+
     /// The negotiated version becomes `MCP-Protocol-Version` and the
     /// `#[mcp_header]` mirrors become `Mcp-Param-*`.
     fn carries_headers(&self) -> bool {

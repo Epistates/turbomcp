@@ -22,6 +22,31 @@ pub(crate) const GEN_AI_PROMPT_NAME: &str = "gen_ai.prompt.name";
 pub(crate) const GEN_AI_OPERATION_NAME: &str = "gen_ai.operation.name";
 pub(crate) const ERROR_TYPE: &str = "error.type";
 pub(crate) const RPC_RESPONSE_STATUS_CODE: &str = "rpc.response.status_code";
+pub(crate) const NETWORK_TRANSPORT: &str = "network.transport";
+pub(crate) const NETWORK_PROTOCOL_NAME: &str = "network.protocol.name";
+pub(crate) const NETWORK_PROTOCOL_VERSION: &str = "network.protocol.version";
+pub(crate) const CLIENT_ADDRESS: &str = "client.address";
+pub(crate) const CLIENT_PORT: &str = "client.port";
+#[cfg(feature = "client")]
+pub(crate) const SERVER_ADDRESS: &str = "server.address";
+#[cfg(feature = "client")]
+pub(crate) const SERVER_PORT: &str = "server.port";
+
+/// The low-cardinality network attributes, for metric labels and spans
+/// alike: `network.transport` and, where there is one, the protocol.
+pub(crate) fn network_labels(
+    facts: &turbomcp_service::NetworkFacts,
+) -> Vec<opentelemetry::KeyValue> {
+    use opentelemetry::KeyValue;
+    let mut labels = vec![KeyValue::new(NETWORK_TRANSPORT, facts.transport)];
+    if let Some(name) = facts.protocol_name {
+        labels.push(KeyValue::new(NETWORK_PROTOCOL_NAME, name));
+    }
+    if let Some(version) = facts.protocol_version {
+        labels.push(KeyValue::new(NETWORK_PROTOCOL_VERSION, version));
+    }
+    labels
+}
 
 /// The label for a method outside the known set, as the HTTP conventions
 /// bucket unknown methods: one series per made-up name would let any caller

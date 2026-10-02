@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- Network attributes in telemetry. Every transport now reports the
+  connection a message rides as `NetworkFacts` (on each request a server
+  receives, and from `Transport::network` on a client): stdio is
+  `network.transport = pipe`, Streamable HTTP is `tcp` + `http` with the
+  request's HTTP version, WebSocket is `tcp` + `websocket`, with the other
+  end's address. `TraceContextLayer` records them and `client.address` (a
+  keyed hash by default, like the subject; raw with `client.port` under
+  `SpanPolicy::unredacted`), `ClientTelemetry` records them and
+  `server.address`/`server.port`, and both duration histograms carry the
+  low-cardinality ones, per the MCP semantic conventions. Behind a trusted
+  proxy the address is the forwarded client's, as for rate limiting.
 - Mid-task client input on `2025-11-25`. A tool running as a core task can
   elicit and sample while it executes: the task reads `input_required`, the
   server sends the request (with `io.modelcontextprotocol/related-task`) on

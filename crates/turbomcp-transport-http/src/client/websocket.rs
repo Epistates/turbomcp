@@ -75,11 +75,21 @@ impl WebSocketClientTransport {
             .headers_mut()
             .entry(SEC_WEBSOCKET_PROTOCOL)
             .or_insert(HeaderValue::from_static("mcp"));
+        let uri = request.uri();
+        let mut network = turbomcp_service::NetworkFacts::websocket();
+        if let Some(host) = uri.host() {
+            let port = uri.port_u16().or(match uri.scheme_str() {
+                Some("wss") => Some(443),
+                Some("ws") => Some(80),
+                _ => None,
+            });
+            network = network.with_peer(host, port);
+        }
         let (socket, _response) = tokio_tungstenite::connect_async(request)
             .await
             .map_err(|e| WsError::Socket(Box::new(e)))?;
         Ok(Self {
-            link: Link::new(socket, None),
+            link: Link::new(socket, None).with_network(network),
         })
     }
 
@@ -106,6 +116,10 @@ pub async fn connect_websocket(url: &str) -> Result<WebSocketClientTransport, Ws
 
 impl Transport for WebSocketClientTransport {
     type Error = WsError;
+
+    fn network(&self) -> Option<turbomcp_service::NetworkFacts> {
+        self.link.network()
+    }
 
     fn invalid_frame(error: WsError) -> Result<InvalidFrame, WsError> {
         <Link<Message, SplitStream<Socket>> as Transport>::invalid_frame(error)
