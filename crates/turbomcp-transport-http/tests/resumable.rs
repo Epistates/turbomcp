@@ -274,3 +274,146 @@ async fn a_stream_cannot_be_resumed_from_another_session() {
         .unwrap();
     assert_eq!(stolen.status(), StatusCode::NOT_FOUND);
 }
+
+/// With polling on, the server closes the connection soon after priming it
+/// (with a `retry`), and the client polls the stream back: nothing the call
+/// sent in between is lost.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_polled_stream_closes_its_connection_and_resumes() {
+    let dispatcher = VersionDispatcher::new(Stepped, MethodRouter::new().with_tools());
+    let terminator = dispatcher.session_terminator();
+    let app = router(
+        dispatcher,
+        HttpConfig::new()
+            .with_session_terminator(Arc::new(terminator))
+            .with_event_store(Arc::new(InMemoryEventStore::new()))
+            .with_sse_polling(turbomcp_transport_http::SsePolling::new(
+                Duration::from_millis(50),
+                Duration::from_millis(10),
+            )),
+    );
+    let sid = open_session(&app).await;
+    let resp = app.clone().oneshot(call(&sid)).await.unwrap();
+    // The whole connection, which the server ends itself.
+    let first = String::from_utf8(
+        resp.into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        first.contains("retry: 10"),
+        "the close says when to come back: {first}"
+    );
+    let mut seen = events_of(&first);
+    let mut last = seen.last().unwrap().0.clone();
+
+    // Poll until the response arrives; each connection is cut short again.
+    while !seen.iter().any(|(_, v)| v.get("result").is_some()) {
+        let resumed = app.clone().oneshot(resume(&sid, &last)).await.unwrap();
+        assert_eq!(resumed.status(), StatusCode::OK);
+        let text = String::from_utf8(
+            resumed
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        let more = events_of(&text);
+        if let Some((id, _)) = more.last() {
+            last = id.clone();
+        }
+        seen.extend(more);
+    }
+    let methods: Vec<&str> = seen
+        .iter()
+        .filter_map(|(_, v)| v.get("method").and_then(Value::as_str))
+        .collect();
+    assert_eq!(
+        methods,
+        ["notifications/progress", "notifications/progress"],
+        "each event once, none lost"
+    );
+}
+
+/// The `(id, data)` of each event in `text` that carries data.
+fn events_of(text: &str) -> Vec<(String, Value)> {
+    text.split("\n\n")
+        .filter_map(|raw| {
+            let id = raw
+                .lines()
+                .find_map(|l| l.strip_prefix("id:"))?
+                .trim()
+                .to_owned();
+            let data = raw.lines().find_map(|l| l.strip_prefix("data:"))?.trim();
+            (!data.is_empty()).then(|| (id, serde_json::from_str(data).expect("JSON data")))
+        })
+        .collect()
+}
+
+fn listen(session: &str) -> Request<Body> {
+    Request::builder()
+        .method("GET")
+        .uri("/mcp")
+        .header(header::ACCEPT, "text/event-stream")
+        .header("mcp-session-id", session)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// The session's `GET` stream is resumable too: a message sent while no
+/// connection carries it is recorded, and a `GET` with `Last-Event-ID`
+/// delivers it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_get_stream_keeps_what_it_missed() {
+    let dispatcher = VersionDispatcher::new(Stepped, MethodRouter::new().with_tools());
+    let terminator = dispatcher.session_terminator();
+    let notifier = dispatcher.notifier();
+    let app = router(
+        dispatcher,
+        HttpConfig::new()
+            .with_session_terminator(Arc::new(terminator))
+            .with_event_store(Arc::new(InMemoryEventStore::new())),
+    );
+    let sid = open_session(&app).await;
+    let resp = app.clone().oneshot(listen(&sid)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body = resp.into_body();
+    let mut buffer = String::new();
+    let prime = next_event(&mut body, &mut buffer).await.unwrap();
+    assert!(prime.data.is_empty());
+
+    notifier.tools_list_changed();
+    let first = next_event(&mut body, &mut buffer).await.unwrap();
+    assert_eq!(
+        json_of(&first)["method"],
+        "notifications/tools/list_changed"
+    );
+    drop(body); // the connection drops; the stream does not
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    notifier.tools_list_changed();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let resumed = app
+        .clone()
+        .oneshot(resume(&sid, first.id.as_deref().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), StatusCode::OK);
+    let mut body = resumed.into_body();
+    let mut buffer = String::new();
+    let missed = next_event(&mut body, &mut buffer).await.unwrap();
+    assert_eq!(
+        json_of(&missed)["method"],
+        "notifications/tools/list_changed"
+    );
+    assert_ne!(missed.id, first.id);
+}

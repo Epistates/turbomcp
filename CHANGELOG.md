@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- Server-initiated SSE polling and a resumable `GET` stream, with an event
+  store. `HttpConfig::with_sse_polling(SsePolling::new(close_after, retry))`
+  closes each resumable stream's connection after `close_after` with a
+  `retry` field, and the client polls it back with `Last-Event-ID`
+  (`2025-11-25` §Sending Messages to the Server). The session's `GET`
+  stream now numbers and records its messages and outlives its connection
+  for `detached_stream_ttl` (default five minutes), so a notification sent
+  during a reconnect is replayed instead of dropped. The bundled client
+  already polled; an end-to-end test drives it.
 - OTLP over HTTP/protobuf. `OtlpConfig::protocol(OtlpProtocol::HttpProtobuf)`
   (or `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`) exports traces and
   metrics to an OTLP/HTTP collector, the OpenTelemetry default and what
@@ -258,6 +267,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A resumable stream's priming event had no `data` field (axum drops an
+  empty one), so SSE parsers, ours included, never surfaced its id, and a
+  stream cut before its first message could not be resumed. It is now
+  written as the spec words it, "an event ID and an empty data field". A
+  live stream that has recorded nothing yet can be resumed, too.
 - A cancelled `2026-07-28` task's handler is dropped. It kept running to a
   result nothing could see (the record was already `cancelled`), forever if
   it ignored its cancellation token; the `2025-11-25` runner and a cancelled

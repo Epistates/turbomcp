@@ -243,7 +243,17 @@ streams are then primed with event ids, and the client's `GET` with
 `Last-Event-ID` replays what it missed and follows the rest live. The bundled
 store keeps 1,024 events per stream and finished streams for five minutes. A
 store shared across replicas still needs the sticky routing above, since the
-call itself runs in one process.
+call itself runs in one process. With a store, the session's `GET` stream is
+resumable too: it keeps recording while no connection carries it (for
+`HttpConfig::detached_stream_ttl`, five minutes by default), so a
+notification or server request sent during a reconnect is replayed rather
+than lost.
+
+Proxies and load balancers that cut long connections can be met halfway:
+`HttpConfig::with_sse_polling(SsePolling::new(close_after, retry))` closes
+each resumable stream's connection after `close_after` with a `retry` field,
+and the client polls it back with `Last-Event-ID` (the `2025-11-25` transport's
+server-initiated polling). Nothing is lost between polls.
 
 A session-store outage answers `503` + `Retry-After` (clients retry), not
 `404` (which would send every client to re-`initialize` at once). The bundled

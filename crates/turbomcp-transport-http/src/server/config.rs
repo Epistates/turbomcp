@@ -22,6 +22,9 @@ pub(super) const DEFAULT_SSE_KEEPALIVE: Duration = Duration::from_secs(15);
 /// Default time a request runs before its response becomes an SSE stream.
 pub(super) const DEFAULT_SSE_UPGRADE_AFTER: Duration = Duration::from_secs(5);
 
+/// How long a detached, resumable `GET` stream waits to be resumed.
+pub(super) const DEFAULT_DETACHED_STREAM_TTL: Duration = Duration::from_secs(5 * 60);
+
 /// Where a request's `Origin` header is checked against (DNS-rebinding guard).
 #[derive(Clone, Debug)]
 pub(super) enum OriginPolicy {
@@ -108,8 +111,30 @@ pub struct HttpConfig {
     pub(super) health_path: Option<String>,
     pub(super) calls: TaskTracker,
     pub(super) event_store: Option<Arc<dyn EventStore>>,
+    pub(super) sse_polling: Option<SsePolling>,
+    pub(super) detached_stream_ttl: Duration,
     #[cfg(feature = "websocket")]
     pub(super) websocket: Option<WebSocketConfig>,
+}
+
+/// Server-initiated polling of resumable streams (`2025-11-25` §Sending
+/// Messages to the Server, SEP-1699): see [`HttpConfig::with_sse_polling`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SsePolling {
+    /// How long a response stream's connection stays open.
+    pub close_after: Duration,
+    /// The `retry` the client waits before polling the stream back.
+    pub retry: Duration,
+}
+
+impl SsePolling {
+    /// Close each connection after `close_after`, asking the client to come
+    /// back after `retry`.
+    #[must_use]
+    pub fn new(close_after: Duration, retry: Duration) -> Self {
+        Self { close_after, retry }
+    }
 }
 
 impl core::fmt::Debug for HttpConfig {
@@ -131,7 +156,9 @@ impl core::fmt::Debug for HttpConfig {
             .field("trusted_proxies", &self.trusted_proxies)
             .field("supported_versions", &self.supported_versions)
             .field("health_path", &self.health_path)
-            .field("event_store", &self.event_store.is_some());
+            .field("event_store", &self.event_store.is_some())
+            .field("sse_polling", &self.sse_polling)
+            .field("detached_stream_ttl", &self.detached_stream_ttl);
         #[cfg(feature = "websocket")]
         f.field("websocket", &self.websocket);
         f.finish()
@@ -162,6 +189,8 @@ impl Default for HttpConfig {
             health_path: None,
             calls: TaskTracker::new(),
             event_store: None,
+            sse_polling: None,
+            detached_stream_ttl: DEFAULT_DETACHED_STREAM_TTL,
             #[cfg(feature = "websocket")]
             websocket: None,
         }
@@ -425,6 +454,31 @@ impl HttpConfig {
     #[must_use]
     pub fn with_event_store(mut self, store: Arc<dyn EventStore>) -> Self {
         self.event_store = Some(store);
+        self
+    }
+
+    /// Don't hold resumable streams open (needs an
+    /// [event store](Self::with_event_store)): each response stream's
+    /// connection closes after `polling.close_after`, with a `retry` field,
+    /// and the client polls it back with `Last-Event-ID` ("the server MAY
+    /// close the connection (without terminating the SSE stream) at any time
+    /// in order to avoid holding a long-lived connection"). Nothing is lost:
+    /// the stream keeps recording while no connection carries it. Useful
+    /// behind proxies and load balancers that cut idle or long connections
+    /// anyway. Off by default.
+    #[must_use]
+    pub fn with_sse_polling(mut self, polling: SsePolling) -> Self {
+        self.sse_polling = Some(polling);
+        self
+    }
+
+    /// How long a session's `GET` stream keeps recording after its client
+    /// disconnects, waiting to be resumed (default 5 minutes; needs an
+    /// [event store](Self::with_event_store)). Past it, the stream ends and
+    /// what was recorded for it is dropped.
+    #[must_use]
+    pub fn detached_stream_ttl(mut self, ttl: Duration) -> Self {
+        self.detached_stream_ttl = ttl;
         self
     }
 

@@ -10,7 +10,7 @@ mod validate;
 #[cfg(feature = "websocket")]
 mod websocket;
 
-pub use config::HttpConfig;
+pub use config::{HttpConfig, SsePolling};
 pub use resume::{EventFuture, EventStore, EventStoreError, InMemoryEventStore, StoredEvent};
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketConfig;
@@ -54,7 +54,7 @@ use reject::{
     unknown_event_rejection, version_header_rejection,
 };
 use sse::{AbortOnDrop, Outlet, SSE_CHANNEL_CAPACITY, request_stream, sse_response};
-use streams::{Admission, StreamBudget};
+use streams::{Admission, StreamBudget, StreamSlot};
 use validate::{declared_version, message_has_version, request_id, validate_request_headers};
 
 /// Errors from running the HTTP transport.
@@ -110,6 +110,10 @@ struct HttpState<S> {
     event_store: Option<Arc<dyn resume::EventStore>>,
     /// The resumable streams whose calls are still running.
     resumable: resume::ResumableStreams,
+    /// Server-initiated polling of resumable streams, if on.
+    sse_polling: Option<SsePolling>,
+    /// How long a detached resumable `GET` stream waits to be resumed.
+    detached_stream_ttl: Duration,
 }
 
 impl<S> HttpState<S> {
@@ -186,6 +190,8 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         calls: config.calls.clone(),
         event_store: config.event_store.clone(),
         resumable: resume::ResumableStreams::default(),
+        sse_polling: config.sse_polling,
+        detached_stream_ttl: config.detached_stream_ttl,
     };
     let mut app = Router::new()
         .route(
@@ -986,7 +992,8 @@ where
                 true,
                 vec![first],
                 Some(events),
-                state.sse_keepalive,
+                (state.sse_keepalive, state.sse_polling),
+                None,
             ),
         },
         () = tokio::time::sleep(state.sse_upgrade_after) => resume::resumable_stream(
@@ -995,14 +1002,22 @@ where
             true,
             Vec::new(),
             Some(events),
-            state.sse_keepalive,
+            (state.sse_keepalive, state.sse_polling),
+            None,
         ),
     }
 }
 
 /// `GET` with `Last-Event-ID` on a session with an event store: replay the
-/// named stream after that event, then follow it live while its call runs.
-async fn resume_stream<S>(state: &HttpState<S>, session: &str, last_event_id: &str) -> Response {
+/// named stream after that event, then follow it live while its call (or,
+/// for the session's `GET` stream, the stream itself) runs. `slot` is the
+/// connection's place in the stream budget.
+async fn resume_stream<S>(
+    state: &HttpState<S>,
+    session: &str,
+    last_event_id: &str,
+    slot: StreamSlot,
+) -> Response {
     let Some(store) = state.event_store.as_deref() else {
         unreachable!("only called with an event store");
     };
@@ -1016,7 +1031,8 @@ async fn resume_stream<S>(state: &HttpState<S>, session: &str, last_event_id: &s
             false,
             events.into_iter().map(|e| (e.seq, e.message)).collect(),
             live,
-            state.sse_keepalive,
+            (state.sse_keepalive, state.sse_polling),
+            Some(Box::new(slot)),
         ),
         Ok(None) => unknown_event_rejection(last_event_id),
         Err(e) => protocol_error_response(&ProtocolError::Unavailable(e.to_string()), None),
@@ -1027,8 +1043,8 @@ async fn resume_stream<S>(state: &HttpState<S>, session: &str, last_event_id: &s
 /// `Mcp-Session-Id` opens the session's notification stream (transports spec
 /// §Listening for Messages). The stream is registered as the session's in this
 /// endpoint's [`SessionStreams`]; a newer GET stream replaces an older one (the
-/// spec forbids broadcasting one message across streams).
-/// Resumability (`Last-Event-ID`) is not supported.
+/// spec forbids broadcasting one message across streams). With an event
+/// store the stream is resumable (see [`resumable_get`]).
 ///
 /// The draft never GETs — it subscribes via `subscriptions/listen` over POST —
 /// so a session-less GET answers `405`, which the spec permits.
@@ -1090,16 +1106,6 @@ where
             Err(e) => return protocol_error_response(&e, None),
         }
     }
-    // "Resumption is always via HTTP GET with `Last-Event-ID`." Without an
-    // event store nothing carries an id, so the header can't name anything
-    // and the request is the session's standalone stream as usual.
-    if state.event_store.is_some()
-        && let Some(last) = headers
-            .get(&headers::LAST_EVENT_ID)
-            .and_then(|v| v.to_str().ok())
-    {
-        return resume_stream(&state, sid, last).await;
-    }
     let slot = match state
         .stream_budget
         .admit(client_key(subject.as_deref(), client_ip))
@@ -1107,6 +1113,19 @@ where
         Ok(slot) => slot,
         Err(rejection) => return *rejection,
     };
+    // "Resumption is always via HTTP GET with `Last-Event-ID`." Without an
+    // event store nothing carries an id, so the header can't name anything
+    // and the request is the session's standalone stream as usual.
+    if let Some(store) = state.event_store.clone() {
+        admission.release();
+        return match headers
+            .get(&headers::LAST_EVENT_ID)
+            .and_then(|v| v.to_str().ok())
+        {
+            Some(last) => resume_stream(&state, sid, last, slot).await,
+            None => resumable_get(&state, store, sid, slot),
+        };
+    }
     let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
     // One stream per session: a newer GET replaces this one in the registry
     // the dispatcher publishes through, and ends it.
@@ -1120,6 +1139,66 @@ where
     };
     admission.release();
     sse_response(state.codec, rx, outlet, state.sse_keepalive, close)
+}
+
+/// The session's `GET` stream, made resumable by the event store: every
+/// message is numbered and recorded, and the stream outlives its connection.
+/// A client that loses the connection (or is asked to poll) sends `GET` with
+/// `Last-Event-ID` and gets what it missed, messages sent while no
+/// connection carried the stream included. The stream ends when a fresh `GET`
+/// replaces it, the session ends, the server shuts down, or no connection has
+/// carried it for `detached_stream_ttl`.
+fn resumable_get<S>(
+    state: &HttpState<S>,
+    store: Arc<dyn resume::EventStore>,
+    session: &str,
+    slot: StreamSlot,
+) -> Response {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
+    let peer = Peer::new(format!("http-get-{}", uuid::Uuid::new_v4()), &tx);
+    let close = state.shutdown.child_token();
+    let guard = state.streams.register(session, peer, close.clone());
+    let (attached, events) = tokio::sync::mpsc::channel(SSE_CHANNEL_CAPACITY);
+    let recorder = state.resumable.open(store, session, attached);
+    let stream = recorder.id().to_owned();
+    let ttl = state.detached_stream_ttl;
+    state.calls.spawn(async move {
+        // The registry entry and the queue's only sender: while this task
+        // runs, the dispatcher reaches the stream, connection or not.
+        let (_tx, _guard) = (tx, guard);
+        let check = (ttl / 4).clamp(Duration::from_millis(50), Duration::from_secs(5));
+        let mut detached_since: Option<tokio::time::Instant> = None;
+        loop {
+            tokio::select! {
+                () = close.cancelled() => break,
+                msg = rx.recv() => match msg {
+                    Some(msg) => recorder.emit(msg).await,
+                    None => break,
+                },
+                () = tokio::time::sleep(check) => {
+                    if recorder.attached().await {
+                        detached_since = None;
+                    } else if detached_since
+                        .get_or_insert_with(tokio::time::Instant::now)
+                        .elapsed()
+                        >= ttl
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        recorder.finish().await;
+    });
+    resume::resumable_stream(
+        state.codec,
+        stream,
+        true,
+        Vec::new(),
+        Some(events),
+        (state.sse_keepalive, state.sse_polling),
+        Some(Box::new(slot)),
+    )
 }
 
 /// Client-initiated session termination (`2025-11-25` spec §Session

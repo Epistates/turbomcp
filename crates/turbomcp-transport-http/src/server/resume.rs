@@ -25,6 +25,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::body::Bytes;
 use axum::http::{HeaderName, HeaderValue};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -361,8 +362,16 @@ impl ResumableStreams {
         // and forwards: events before `next_seq` are in the store, and
         // everything from `next_seq` on comes to the new receiver.
         let mut live = live.lock().await;
-        let Some(events) = store.replay(session, stream, after, live.next_seq).await? else {
-            return Ok(None);
+        // Caught up already (the client saw the last event, or the stream has
+        // none yet): nothing to ask the store, which may hold no record of a
+        // stream that has recorded nothing.
+        let events = if after + 1 >= live.next_seq {
+            Vec::new()
+        } else {
+            let Some(events) = store.replay(session, stream, after, live.next_seq).await? else {
+                return Ok(None);
+            };
+            events
         };
         let (tx, rx) = mpsc::channel(super::sse::SSE_CHANNEL_CAPACITY);
         live.attached = Some(tx);
@@ -374,6 +383,16 @@ impl Recorder {
     /// The stream's id, as event ids carry it.
     pub(super) fn id(&self) -> &str {
         &self.stream
+    }
+
+    /// Whether a response is attached to carry the stream right now.
+    pub(super) async fn attached(&self) -> bool {
+        self.live
+            .lock()
+            .await
+            .attached
+            .as_ref()
+            .is_some_and(|tx| !tx.is_closed())
     }
 
     /// Number `message`, record it, and hand it to the attached response, if
@@ -424,9 +443,11 @@ fn numbered_event(codec: &DefaultCodec, stream: &str, seq: u64, msg: &JsonRpcMes
     sse_event(codec, msg).id(event_id(stream, seq))
 }
 
-/// A resumable response stream: (if `prime`) the priming event, `first` (if
-/// any), the replayed `events`, then whatever `live` delivers, ending with the
-/// call's response.
+/// A resumable response stream: (if `prime`) the priming event, the replayed
+/// `events`, then whatever `live` delivers, ending with the call's response.
+/// With `polling`, the connection closes after `close_after` with a `retry`
+/// field instead, and the client polls the stream back; `hold` (a stream
+/// slot, say) lives as long as the connection.
 ///
 /// "The server SHOULD immediately send an SSE event consisting of an event ID
 /// and an empty `data` field in order to prime the client to reconnect."
@@ -436,41 +457,66 @@ pub(super) fn resumable_stream(
     prime: bool,
     events: Vec<Numbered>,
     live: Option<mpsc::Receiver<Numbered>>,
-    keepalive: Duration,
+    (keepalive, polling): (Duration, Option<super::SsePolling>),
+    hold: Option<Box<dyn Send + Sync>>,
 ) -> Response {
     let ended = events
         .iter()
         .any(|(_, m)| matches!(m, JsonRpcMessage::Response(_)));
     let mut head: Vec<Result<Event, Infallible>> = Vec::new();
-    if prime {
-        head.push(Ok(Event::default().id(event_id(&stream, 0)).data("")));
-    }
     head.extend(
         events
             .iter()
             .map(|(seq, msg)| Ok(numbered_event(&codec, &stream, *seq, msg))),
     );
     let tail_stream = stream.clone();
-    let tail = futures::stream::unfold(live.filter(|_| !ended), move |live| {
+    // "If the server does close the connection prior to terminating the SSE
+    // stream, it SHOULD send an SSE event with a standard `retry` field
+    // before closing the connection."
+    let deadline = polling.map(|p| (tokio::time::Instant::now() + p.close_after, p.retry));
+    let tail = futures::stream::unfold(live.filter(|_| !ended).map(|rx| (rx, hold)), move |live| {
         let stream = tail_stream.clone();
         async move {
-            let mut rx = live?;
-            let (seq, msg) = rx.recv().await?;
+            let (mut rx, hold) = live?;
+            let next = match deadline {
+                Some((at, retry)) => tokio::select! {
+                    next = rx.recv() => next,
+                    () = tokio::time::sleep_until(at) => {
+                        return Some((Ok(Event::default().retry(retry).comment("poll")), None));
+                    }
+                },
+                None => rx.recv().await,
+            };
+            let (seq, msg) = next?;
             let event = numbered_event(&codec, &stream, seq, &msg);
-            let next = (!matches!(msg, JsonRpcMessage::Response(_))).then_some(rx);
+            let next = (!matches!(msg, JsonRpcMessage::Response(_))).then_some((rx, hold));
             Some((Ok::<_, Infallible>(event), next))
         }
     });
     let body = futures::StreamExt::chain(futures::stream::iter(head), tail);
     let sse = Sse::new(body).keep_alive(KeepAlive::new().interval(keepalive).text("keep-alive"));
-    (
+    let response = (
         [(
             HeaderName::from_static("x-accel-buffering"),
             HeaderValue::from_static("no"),
         )],
         sse,
     )
-        .into_response()
+        .into_response();
+    if !prime {
+        return response;
+    }
+    // The priming event is "an event ID and an empty data field", written
+    // out by hand: axum drops an empty `data`, and an event with no data
+    // field at all is one most SSE parsers never surface, id included, so
+    // the client would have nothing to resume from.
+    let (parts, body) = response.into_parts();
+    let primer = Bytes::from(format!("id: {}\ndata: \n\n", event_id(&stream, 0)));
+    let body = futures::StreamExt::chain(
+        futures::stream::once(async move { Ok::<_, axum::Error>(primer) }),
+        body.into_data_stream(),
+    );
+    Response::from_parts(parts, axum::body::Body::from_stream(body))
 }
 
 #[cfg(test)]

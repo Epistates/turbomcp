@@ -291,7 +291,7 @@ pub mod http {
     pub use turbomcp_service::SessionTerminator;
     pub use turbomcp_transport_http::{
         EventFuture, EventStore, EventStoreError, Http, HttpConfig, HttpError, InMemoryEventStore,
-        StoredEvent, router, serve_http,
+        SsePolling, StoredEvent, router, serve_http,
     };
 
     #[cfg(feature = "websocket")]
