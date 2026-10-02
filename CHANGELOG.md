@@ -140,6 +140,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A burst of control messages no longer ends a stdio or WebSocket
+  connection. Notifications and responses share a budget of 64 in flight,
+  and the reader hung up when it was spent: a client that cancelled 80
+  parallel calls on a busy or single-threaded server lost the connection,
+  and with it every call it had not cancelled. A full budget now pauses the
+  reader until one finishes (`ServeConfig::max_control_in_flight`).
 - On a `2025-06-18`/`2025-11-25` HTTP session, a client disconnect no longer
   cancels the call. Those revisions say it SHOULD NOT; a Wi-Fi handoff or a
   proxy's idle cut aborted a side-effecting tool halfway. The call now runs

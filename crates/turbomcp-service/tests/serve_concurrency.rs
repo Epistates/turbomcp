@@ -865,3 +865,75 @@ async fn a_notification_flood_does_not_starve_the_reader() {
     driver.await.unwrap().expect("clean shutdown on EOF");
     pacer.abort();
 }
+
+/// Takes 20 ms over each notification; answers requests at once.
+#[derive(Clone)]
+struct SlowNotifications;
+
+impl Service<McpRequest> for SlowNotifications {
+    type Response = Option<JsonRpcMessage>;
+    type Error = ProtocolError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: McpRequest) -> Self::Future {
+        Box::pin(async move {
+            match request.message {
+                JsonRpcMessage::Request(req) => Ok(Some(
+                    JsonRpcResponse::success(req.id, serde_json::json!({})).into(),
+                )),
+                _ => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Ok(None)
+                }
+            }
+        })
+    }
+}
+
+/// A burst of control messages larger than the control budget pauses the
+/// reader instead of ending the connection. On a single-threaded runtime the
+/// reader used to spawn its way through the budget before any of those tasks
+/// ran, then hang up on the next notification — taking every call the client
+/// had *not* cancelled with it, at the moment it cancelled the rest.
+#[tokio::test(flavor = "current_thread")]
+async fn a_control_burst_backpressures_instead_of_disconnecting() {
+    let (in_tx, in_rx) = mpsc::channel(32);
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+    for _ in 0..10 {
+        in_tx
+            .send(
+                turbomcp_core::JsonRpcNotification::new(
+                    "notifications/cancelled",
+                    Some(serde_json::json!({ "requestId": 1 })),
+                )
+                .into(),
+            )
+            .await
+            .unwrap();
+    }
+    in_tx.send(request(7, "after")).await.unwrap();
+    let config = ServeConfig {
+        max_control_in_flight: 2,
+        ..ServeConfig::default()
+    };
+    let driver = tokio::spawn(serve_with(
+        MockTransport::new(in_rx, out_tx),
+        SlowNotifications,
+        config,
+    ));
+
+    let reply = tokio::time::timeout(Duration::from_secs(5), out_rx.recv())
+        .await
+        .expect("the request behind the burst is answered")
+        .unwrap();
+    assert_eq!(reply_id(&reply), Some(RequestId::from(7i64)));
+    drop(in_tx);
+    driver
+        .await
+        .unwrap()
+        .expect("the connection survived the burst");
+}

@@ -22,7 +22,9 @@
 //!
 //! **Admission** uses separate bounded application and control budgets. Excess
 //! application requests are rejected; responses and cancellation can still
-//! progress when every application slot is occupied.
+//! progress when every application slot is occupied. A full control budget
+//! pauses the reader until a control message finishes rather than ending the
+//! connection: control messages are the ones that free capacity.
 //!
 //! **Graceful shutdown** (PLAN §4.13): firing the configured
 //! [`CancellationToken`] stops the reader, then in-flight handlers are given
@@ -57,6 +59,10 @@ pub struct ServeConfig {
     /// Maximum concurrently in-flight application handlers; excess requests fail.
     /// Doubles as the outbound channel capacity. Default: 1024.
     pub max_in_flight: usize,
+    /// Maximum concurrently in-flight control messages (notifications, and
+    /// responses to the server's own requests). When it is reached, reading
+    /// pauses until one finishes. Default: 64.
+    pub max_control_in_flight: usize,
     /// On shutdown, how long in-flight handlers have to finish and flush before
     /// they are aborted. Default: 30s.
     pub drain_timeout: Duration,
@@ -77,6 +83,7 @@ impl Default for ServeConfig {
     fn default() -> Self {
         Self {
             max_in_flight: 1024,
+            max_control_in_flight: 64,
             drain_timeout: Duration::from_secs(30),
             write_timeout: Duration::from_secs(30),
             shutdown: CancellationToken::new(),
@@ -120,6 +127,7 @@ where
 {
     let ServeConfig {
         max_in_flight,
+        max_control_in_flight,
         drain_timeout,
         write_timeout,
         shutdown,
@@ -142,7 +150,7 @@ where
     // `tx` below is what keeps it open, and dropping `tx` is what closes it.
     let peer = Peer::new(connection_id.clone(), &tx);
     let limiter = Arc::new(Semaphore::new(capacity));
-    let controls = Arc::new(Semaphore::new(64));
+    let controls = Arc::new(Semaphore::new(max_control_in_flight.max(1)));
     let mut handlers: JoinSet<()> = JoinSet::new();
     // `svc` is always the instance most recently driven to readiness; we call a
     // clone of it and keep a fresh clone for the next frame (the canonical tower
@@ -195,12 +203,11 @@ where
                     },
                     Ok(None) => break Ok(()), // clean EOF
                     Ok(Some(msg)) => {
-                        let application = matches!(msg, JsonRpcMessage::Request(_));
-                        let budget = if application { &limiter } else { &controls };
-                        let permit = match Arc::clone(budget).try_acquire_owned() {
-                            Ok(permit) => permit,
-                            Err(_) => {
-                                if let JsonRpcMessage::Request(req) = msg {
+                        let permit = if matches!(msg, JsonRpcMessage::Request(_)) {
+                            match Arc::clone(&limiter).try_acquire_owned() {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    let JsonRpcMessage::Request(req) = msg else { unreachable!() };
                                     let reply = turbomcp_core::JsonRpcResponse::error(req.id,
                                         turbomcp_core::JsonRpcError { code: turbomcp_core::codes::SERVER_ERROR,
                                             message: "server at capacity".into(), data: None }).into();
@@ -210,7 +217,19 @@ where
                                     }
                                     continue;
                                 }
-                                break Err(ProtocolError::Transport("control capacity exceeded".into()));
+                            }
+                        } else {
+                            // A control message (a cancellation, the answer a
+                            // handler is waiting on) is what frees capacity, so
+                            // a full budget waits for one to finish. Ending the
+                            // connection here, as it used to, killed every call
+                            // the client had *not* cancelled, at the moment it
+                            // cancelled the rest.
+                            tokio::select! {
+                                permit = Arc::clone(&controls).acquire_owned() => {
+                                    permit.expect("the control budget is never closed")
+                                }
+                                () = shutdown.cancelled() => break Ok(()),
                             }
                         };
                         let mut ready = svc.clone();
