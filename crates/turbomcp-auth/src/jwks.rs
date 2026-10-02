@@ -136,6 +136,9 @@ mod http {
         pub const DEFAULT_REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
 
         /// A source backed by `jwks_uri`, caching for `ttl` (e.g. 1 hour).
+        ///
+        /// # Panics
+        /// If the TLS backend can't initialize, which the HTTP client needs.
         #[must_use]
         pub fn new(jwks_uri: impl Into<String>, ttl: Duration) -> Self {
             Self {

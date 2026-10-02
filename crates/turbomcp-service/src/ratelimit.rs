@@ -47,6 +47,9 @@ pub trait RateLimiter: Send + Sync {
     /// Charge one request against `key`. `Ok(())` admits it; `Err(retry_after)`
     /// rejects it, carrying the soonest a retry could succeed — the HTTP
     /// transport renders that as `429` + `Retry-After`.
+    ///
+    /// # Errors
+    /// The soonest a retry could succeed, when the request is over budget.
     fn check(&self, key: &RateKey) -> Result<(), Duration>;
 }
 

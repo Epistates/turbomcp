@@ -507,6 +507,9 @@ impl HttpClientTransport {
     }
 
     /// Configure budgets before handing the transport to a connection.
+    ///
+    /// # Panics
+    /// If the transport is already connected; set limits before.
     #[must_use]
     pub fn with_limits(mut self, limits: HttpClientLimits) -> Self {
         let shared = Arc::get_mut(&mut self.shared).expect("configure limits before connecting");

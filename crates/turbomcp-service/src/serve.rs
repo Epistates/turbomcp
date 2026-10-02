@@ -115,6 +115,9 @@ where
 ///
 /// # Errors
 /// Propagates transport I/O failures and the service's readiness error, if any.
+///
+/// # Panics
+/// Never: the control budget is never closed while the driver runs.
 pub async fn serve_with<T, S>(
     mut transport: T,
     service: S,

@@ -122,6 +122,9 @@ impl ProgressReporter {
     /// MUST); violations are dropped with a warning rather than sent. A
     /// missing token or a closed stream makes this a no-op — progress is
     /// best-effort by design, so the call is infallible.
+    ///
+    /// # Panics
+    /// If another thread panicked while reporting on this call.
     pub async fn report(&self, progress: f64, total: Option<f64>, message: Option<&str>) {
         let Some(inner) = &self.inner else { return };
         if inner.notify.is_none() && !inner.task.is_task() {

@@ -66,6 +66,9 @@ pub struct UriTemplate {
 
 impl UriTemplate {
     /// Parse `template`, rejecting what RFC 6570 does not allow.
+    ///
+    /// # Errors
+    /// The [`UriTemplateError`] saying what RFC 6570 does not allow.
     pub fn parse(template: &str) -> Result<Self, UriTemplateError> {
         let mut pattern = String::from("^");
         let mut captures = Vec::new();

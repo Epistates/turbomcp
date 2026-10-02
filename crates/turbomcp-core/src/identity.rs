@@ -59,6 +59,9 @@ impl Identity {
     /// Stable issuer-and-subject key for identity-bound sessions and quotas.
     /// Token rotation and scope changes preserve this key. Anonymous callers
     /// have no key; callers must not log the returned identity data.
+    ///
+    /// # Panics
+    /// Never: serializing a pair of strings can't fail.
     #[must_use]
     pub fn principal_key(&self) -> Option<String> {
         self.subject().map(|subject| {

@@ -29,6 +29,9 @@ use crate::ProtocolError;
 /// so a panic is logged and swallowed). The panic payload is logged but never
 /// put on the wire — it can carry internal detail the peer has no business
 /// seeing; the response says only that the handler panicked.
+///
+/// # Errors
+/// The future's own error, passed on; a panic is an `Ok` error response.
 pub async fn catch_handler_panic<F>(
     id: Option<RequestId>,
     fut: F,

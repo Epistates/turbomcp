@@ -2178,11 +2178,17 @@ impl CreateMessageParams {
     /// by the very next message, one result per call, before the conversation
     /// moves on. [`to_wire`](Self::to_wire) runs this, so a malformed
     /// conversation cannot reach a client by forgetting to ask.
+    ///
+    /// # Errors
+    /// The [`SamplingError`] naming the first rule the conversation breaks.
     pub fn validate(&self) -> Result<(), SamplingError> {
         validate_sampling_messages(&self.messages)
     }
 
     /// Render for `version`, or say why it cannot be rendered.
+    ///
+    /// # Errors
+    /// The [`SamplingError`] saying why `version` can't carry it.
     pub fn to_wire(&self, version: &ProtocolVersion) -> Result<Value, SamplingError> {
         self.validate()?;
         let legacy_or_newer = !matches!(version, ProtocolVersion::V2025_06_18);
@@ -2245,6 +2251,9 @@ impl CreateMessageParams {
     /// Parse inbound params. Version-agnostic and tolerant of both the bare-
     /// object and array forms of `content`: what a client must reject is
     /// decided by its declared capabilities, not by re-deriving the revision.
+    ///
+    /// # Errors
+    /// The [`SamplingError`] naming what is malformed.
     pub fn from_wire(value: &Value) -> Result<Self, SamplingError> {
         let obj = value
             .as_object()
@@ -2362,6 +2371,9 @@ impl CreateMessageResult {
     }
 
     /// Render for `version`, or say why it cannot be rendered.
+    ///
+    /// # Errors
+    /// The [`SamplingError`] saying why `version` can't carry it.
     pub fn to_wire(&self, version: &ProtocolVersion) -> Result<Value, SamplingError> {
         let mut out = Map::new();
         out.insert("role".into(), Value::String(role_wire(self.role).into()));
@@ -2382,6 +2394,9 @@ impl CreateMessageResult {
     }
 
     /// Parse an inbound result, tolerating both `content` forms.
+    ///
+    /// # Errors
+    /// The [`SamplingError`] naming what is malformed.
     pub fn from_wire(value: &Value) -> Result<Self, SamplingError> {
         let obj = value
             .as_object()

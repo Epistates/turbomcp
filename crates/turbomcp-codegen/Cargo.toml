@@ -24,3 +24,6 @@ serde_json = { version = "1", features = ["preserve_order"] }
 prettyplease = "0.3"
 syn = { version = "3", features = ["full", "parsing"] }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

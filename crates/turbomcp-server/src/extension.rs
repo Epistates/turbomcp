@@ -118,6 +118,9 @@ impl CallRunner {
     /// Drive the underlying call to completion. The result is the wire
     /// `CallToolResult` JSON (a tool-level `isError: true` is still `Ok` — that
     /// is a `completed` task, not a `failed` one) or the JSON-RPC error.
+    ///
+    /// # Errors
+    /// The JSON-RPC error the call ended with.
     pub async fn run(self) -> Result<Value, JsonRpcError> {
         self.future.await
     }

@@ -31,3 +31,6 @@ jsonschema = { workspace = true }
 turbomcp-server = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util"] }
 async-trait = { workspace = true }
+
+[lints]
+workspace = true

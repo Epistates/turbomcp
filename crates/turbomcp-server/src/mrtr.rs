@@ -541,6 +541,11 @@ impl ClientHandle {
     /// reuse the same key for the same question or the cached response won't
     /// be found on retry. (On the legacy inline-bidi path the key is unused
     /// on the wire but keeps handler code version-portable.)
+    ///
+    /// # Errors
+    /// The client not declaring the capability, the client failing to answer,
+    /// an answer that doesn't match the schema, or (on `2026-07-28`) the
+    /// input-required abort, which the handler passes on with `?`.
     pub async fn elicit(
         &self,
         key: &str,
@@ -590,6 +595,10 @@ impl ClientHandle {
     /// [`ElicitOutcome`](neutral::ElicitOutcome) carries the
     /// user's [`ElicitAction`](neutral::ElicitAction) with no form content. Uses
     /// the same `key` retry semantics as [`elicit`](Self::elicit).
+    ///
+    /// # Errors
+    /// An invalid URL, the client not declaring URL mode, or as
+    /// [`elicit`](Self::elicit).
     pub async fn elicit_url(
         &self,
         key: &str,
@@ -690,6 +699,9 @@ impl ClientHandle {
     /// requests are packaged into a single `InputRequiredResult` instead of
     /// one abort per `elicit` call. Outcomes are returned in request order.
     /// (On the legacy inline-bidi path this degrades to sequential requests.)
+    ///
+    /// # Errors
+    /// As [`elicit`](Self::elicit).
     pub async fn elicit_all(
         &self,
         requests: Vec<(&str, neutral::ElicitParams)>,
@@ -737,6 +749,10 @@ impl ClientHandle {
     /// needs either is refused here rather than being truncated into something
     /// the model would answer wrongly. Functional on all three revisions
     /// despite the upstream deprecation marking (AUDIT F10).
+    ///
+    /// # Errors
+    /// A conversation this revision can't carry, the client not declaring
+    /// `sampling`, or as [`elicit`](Self::elicit).
     #[deprecated(note = "marked deprecated upstream; still functional in every version")]
     pub async fn create_message(
         &self,
@@ -776,6 +792,10 @@ impl ClientHandle {
     /// Entries whose `uri` is not a `file://` URI are dropped: the spec makes
     /// that scheme a MUST, and a handler that trusted an arbitrary scheme here
     /// would be reading whatever the client named.
+    ///
+    /// # Errors
+    /// As [`elicit`](Self::elicit): the client not declaring `roots`, the
+    /// client failing to answer, or (on `2026-07-28`) the input-required abort.
     #[deprecated(note = "marked deprecated upstream; still functional in every version")]
     pub async fn list_roots(&self, key: &str) -> McpResult<Vec<neutral::Root>> {
         let raw = self
@@ -789,6 +809,12 @@ impl ClientHandle {
     /// into the result's `requestState` — signed, not encrypted: the client
     /// can read it — and each retry's verified copy is readable via
     /// [`ClientHandle::load_state`].
+    ///
+    /// # Errors
+    /// `value` failing to serialize.
+    ///
+    /// # Panics
+    /// If another thread panicked while holding this handle's state.
     pub fn store_state<T: Serialize>(&self, value: &T) -> McpResult<()> {
         let value = serde_json::to_value(value)
             .map_err(|e| McpError::internal(format!("serialize state: {e}")))?;
@@ -797,11 +823,17 @@ impl ClientHandle {
     }
 
     /// Drop the stored resume state, so later rounds see none.
+    ///
+    /// # Panics
+    /// If another thread panicked while holding this handle's state.
     pub fn clear_state(&self) {
         *self.inner.state_out.lock().expect("state lock poisoned") = None;
     }
 
     /// The verified `requestState` data from the retry request, if any.
+    ///
+    /// # Errors
+    /// The stored state failing to deserialize as `T`.
     pub fn load_state<T: DeserializeOwned>(&self) -> McpResult<Option<T>> {
         match &self.inner.state_in {
             None | Some(Value::Null) => Ok(None),

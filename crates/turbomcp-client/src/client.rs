@@ -881,6 +881,9 @@ impl Client {
     /// # Errors
     /// [`ClientError::Protocol`] if the server never declared `tools`;
     /// otherwise propagates RPC and decode failures.
+    ///
+    /// # Panics
+    /// If another thread panicked while holding the client's tool cache.
     pub async fn list_tools(&self, cursor: Option<&str>) -> ClientResult<neutral::ListToolsResult> {
         self.require_server_capability("tools", request::TOOLS_LIST)?;
         let v = self

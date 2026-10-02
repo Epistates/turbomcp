@@ -156,6 +156,9 @@ impl IntrospectionValidator {
 
     /// Introspect at `endpoint`, authenticated with `auth`, accepting tokens
     /// issued for `audience` (this resource's canonical URI).
+    ///
+    /// # Panics
+    /// If the TLS backend can't initialize, which the HTTP client needs.
     #[must_use]
     pub fn new(endpoint: impl Into<String>, audience: impl Into<String>, auth: ClientAuth) -> Self {
         let policy = NetworkPolicy::default();

@@ -280,6 +280,9 @@ impl RedactionKey {
     }
 
     /// `{prefix}:` and the first 64 bits of `HMAC-SHA256(key, value)`, in hex.
+    ///
+    /// # Panics
+    /// Never: HMAC takes a key of any length.
     #[must_use]
     pub fn redact(&self, prefix: &str, value: &str) -> String {
         let mut mac =

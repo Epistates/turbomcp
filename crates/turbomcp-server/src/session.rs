@@ -248,6 +248,9 @@ impl SessionStore {
 
     /// Every session that has expired since the last call. The dispatcher
     /// calls this where sessions are minted and tears down each one's routes.
+    ///
+    /// # Panics
+    /// If another thread panicked while recording an expiry.
     #[must_use]
     pub fn sweep_expired(&self) -> Vec<ExpiredSession> {
         self.cache.run_pending_tasks();

@@ -37,3 +37,6 @@ std = ["turbomcp-core/std", "serde/std", "serde_json/std"]
 all-features = true
 # Lights the `doc(cfg)` labels that name the feature behind each gated item.
 rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

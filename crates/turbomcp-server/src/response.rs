@@ -17,12 +17,18 @@ use turbomcp_protocol::neutral;
 /// Convert a `#[tool]` return value into a [`neutral::CallToolResult`].
 pub trait IntoCallToolResult {
     /// Perform the conversion.
+    ///
+    /// # Errors
+    /// A handler's error, passed on, or a value that can't be rendered.
     fn into_call_tool_result(self) -> McpResult<neutral::CallToolResult>;
 
     /// The conversion for a call made in `ctx`, which is what `#[server]`
     /// calls: the same, except that an internal error's text is masked when
     /// the server was built with `mask_internal_errors`. Implement
     /// [`into_call_tool_result`](Self::into_call_tool_result) only.
+    ///
+    /// # Errors
+    /// As [`into_call_tool_result`](Self::into_call_tool_result).
     fn into_call_tool_result_for(
         self,
         ctx: &crate::CallToolContext,
@@ -202,6 +208,9 @@ where
 /// using the resolved `uri` when wrapping bare text.
 pub trait IntoReadResourceResult {
     /// Perform the conversion. `uri` is the resource being read.
+    ///
+    /// # Errors
+    /// A handler's error, passed on, or a value that can't be rendered.
     fn into_read_resource_result(self, uri: &str) -> McpResult<neutral::ReadResourceResult>;
 }
 
@@ -237,6 +246,9 @@ where
 /// string becomes a single user message.
 pub trait IntoGetPromptResult {
     /// Perform the conversion.
+    ///
+    /// # Errors
+    /// A handler's error, passed on, or a value that can't be rendered.
     fn into_get_prompt_result(self) -> McpResult<neutral::GetPromptResult>;
 }
 

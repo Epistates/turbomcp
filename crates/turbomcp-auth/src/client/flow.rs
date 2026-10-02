@@ -161,6 +161,9 @@ impl OAuthClient {
     /// For a trusted internal or local server, opt out with
     /// [`with_network_policy`](Self::with_network_policy), e.g.
     /// `NetworkPolicy::default()` or `public_only().with_allowed_ranges(…)`.
+    ///
+    /// # Panics
+    /// If the TLS backend can't initialize, which the HTTP client needs.
     #[must_use]
     pub fn new(
         resource: impl Into<String>,
