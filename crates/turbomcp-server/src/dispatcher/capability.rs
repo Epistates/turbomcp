@@ -816,8 +816,10 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     // handler itself, for callers that reach it without a dispatcher.)
     let required: Vec<&str> = crate::visibility::declared_scopes(&tool.meta).collect();
     if !ctx.identity.has_scopes(&required) {
-        let refusal =
-            crate::router::scope_refusal(ctx, required.into_iter().map(String::from).collect());
+        let refusal = crate::router::scope_refusal(
+            ctx.extensions.get::<turbomcp_service::ScopeChallenge>(),
+            required.into_iter().map(String::from).collect(),
+        );
         return Err(Box::new(ok_value(id, &W::CallTool::from(refusal))));
     }
     check_header_mirrors(ctx.extensions.get::<ObservedHeaders>(), &params, &tool)

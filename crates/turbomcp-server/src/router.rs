@@ -20,6 +20,8 @@
 //! [`VersionDispatcher`]: crate::VersionDispatcher
 //! [`has_tools`]: MethodRouter::has_tools
 
+use std::sync::Arc;
+
 use futures::future::BoxFuture;
 
 use turbomcp_core::{McpError, McpResult};
@@ -29,26 +31,29 @@ use crate::context::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext,
     ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, ReadResourceContext,
 };
+use crate::intercept::{Interceptor, hooks};
 use crate::traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
 
 /// The answer to a call whose caller lacks `scopes`: a tool error the model
 /// can read, and, where the transport can send one (HTTP with an
 /// authenticator), the step-up challenge naming them.
 pub(crate) fn scope_refusal(
-    ctx: &turbomcp_core::RequestContext,
+    challenge: Option<&turbomcp_service::ScopeChallenge>,
     scopes: Vec<String>,
 ) -> neutral::CallToolResult {
-    if let Some(challenge) = ctx.extensions.get::<turbomcp_service::ScopeChallenge>() {
+    if let Some(challenge) = challenge {
         challenge.demand(&scopes);
     }
     neutral::CallToolResult::error(McpError::InsufficientScope(scopes).to_string())
 }
 
-/// Type alias for a type-erased `Fn(S, Ctx, Params) -> BoxFuture<Result>` slot.
+/// A type-erased `Fn(S, Ctx, Params) -> BoxFuture<Result>` handler.
+type Slot<S, C, P, R> = Arc<dyn Fn(S, C, P) -> BoxFuture<'static, McpResult<R>> + Send + Sync>;
+
+/// Type alias for one operation's [`Slot`].
 macro_rules! handler_slot {
     ($alias:ident<$s:ident>, $ctx:ty, $params:ty, $result:ty) => {
-        type $alias<$s> =
-            Box<dyn Fn($s, $ctx, $params) -> BoxFuture<'static, McpResult<$result>> + Send + Sync>;
+        type $alias<$s> = Slot<$s, $ctx, $params, $result>;
     };
 }
 
@@ -174,6 +179,8 @@ pub struct MethodRouter<S> {
     get_prompt: Option<GetPromptHandler<S>>,
     complete: Option<CompleteHandler<S>>,
     logging: bool,
+    /// Typed interceptors, outermost first ([`crate::intercept`]).
+    interceptors: Arc<[Arc<dyn Interceptor>]>,
 }
 
 impl<S> Default for MethodRouter<S> {
@@ -192,8 +199,25 @@ impl<S> Default for MethodRouter<S> {
             get_prompt: None,
             complete: None,
             logging: false,
+            interceptors: Arc::from([]),
         }
     }
+}
+
+/// Emit a `pub(crate) fn $name(&self, server, ctx, params) -> Option<BoxFuture>`
+/// that runs the registered handler in `self.$field` (if present) behind the
+/// typed interceptors.
+macro_rules! intercepted_fn {
+    ($name:ident, $field:ident, $hook:ident, $ctx:ty, $params:ty, $result:ty) => {
+        pub(crate) fn $name(
+            &self,
+            server: S,
+            ctx: $ctx,
+            params: $params,
+        ) -> Option<BoxFuture<'static, McpResult<$result>>> {
+            self.intercept(&self.$field, hooks::$hook, server, ctx, params)
+        }
+    };
 }
 
 /// Emit a `pub(crate) fn $name(&self, server, ctx, params) -> Option<BoxFuture>`
@@ -212,6 +236,41 @@ macro_rules! dispatch_fn {
 }
 
 impl<S: McpServerCore> MethodRouter<S> {
+    /// Add `interceptor` inside those already added (see [`crate::intercept`]).
+    #[must_use]
+    pub fn with_interceptor(mut self, interceptor: Arc<dyn Interceptor>) -> Self {
+        let mut chain = self.interceptors.to_vec();
+        chain.push(interceptor);
+        self.interceptors = chain.into();
+        self
+    }
+
+    /// `handler` behind the interceptors, if it is registered.
+    fn intercept<C, P, R>(
+        &self,
+        handler: &Option<Slot<S, C, P, R>>,
+        hook: crate::intercept::Hook<C, P, R>,
+        server: S,
+        ctx: C,
+        params: P,
+    ) -> Option<BoxFuture<'static, McpResult<R>>>
+    where
+        C: Send + 'static,
+        P: Send + 'static,
+        R: Send + 'static,
+    {
+        let handler = Arc::clone(handler.as_ref()?);
+        if self.interceptors.is_empty() {
+            return Some(handler(server, ctx, params));
+        }
+        let terminal: crate::intercept::Terminal<C, P, R> =
+            Arc::new(move |ctx, params| handler(server.clone(), ctx, params));
+        Some(
+            crate::intercept::Next::new(Arc::clone(&self.interceptors), hook, terminal)
+                .run(ctx, params),
+        )
+    }
+
     dispatch_fn!(
         dispatch_lookup_resource_template,
         lookup_resource_template,
@@ -258,28 +317,14 @@ impl<S: McpServerCore> MethodRouter<S> {
     where
         S: WithTools,
     {
-        self.lookup_tool = Some(Box::new(|server: S, ctx, name| {
+        self.lookup_tool = Some(Arc::new(|server: S, ctx, name| {
             Box::pin(async move { server.lookup_tool(&ctx, name).await })
         }));
-        self.list_tools = Some(Box::new(|server: S, ctx, params| {
+        self.list_tools = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_tools(&ctx, params).await })
         }));
-        self.call_tool = Some(Box::new(|server: S, ctx, params| {
-            Box::pin(async move {
-                // A tool that ran and failed is a result the model reads, not a
-                // protocol error, whichever way the handler was written. Only
-                // `#[tool]`'s return conversion did this; a hand-written
-                // `call_tool` returning the same error sent JSON-RPC `-32603`.
-                match server.call_tool(&ctx, params).await {
-                    Err(e @ McpError::ToolExecutionFailed { .. }) => {
-                        Ok(neutral::CallToolResult::error(e.to_string()))
-                    }
-                    Err(McpError::InsufficientScope(scopes)) => {
-                        Ok(scope_refusal(&ctx.base, scopes))
-                    }
-                    other => other,
-                }
-            })
+        self.call_tool = Some(Arc::new(|server: S, ctx, params| {
+            Box::pin(async move { server.call_tool(&ctx, params).await })
         }));
         self
     }
@@ -290,19 +335,19 @@ impl<S: McpServerCore> MethodRouter<S> {
     where
         S: WithResources,
     {
-        self.lookup_resource = Some(Box::new(|server: S, ctx, name| {
+        self.lookup_resource = Some(Arc::new(|server: S, ctx, name| {
             Box::pin(async move { server.lookup_resource(&ctx, name).await })
         }));
-        self.list_resources = Some(Box::new(|server: S, ctx, params| {
+        self.list_resources = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_resources(&ctx, params).await })
         }));
-        self.read_resource = Some(Box::new(|server: S, ctx, params| {
+        self.read_resource = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.read_resource(&ctx, params).await })
         }));
-        self.lookup_resource_template = Some(Box::new(|server: S, ctx, name| {
+        self.lookup_resource_template = Some(Arc::new(|server: S, ctx, name| {
             Box::pin(async move { server.lookup_resource_template(&ctx, name).await })
         }));
-        self.list_resource_templates = Some(Box::new(|server: S, ctx, params| {
+        self.list_resource_templates = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_resource_templates(&ctx, params).await })
         }));
         self
@@ -314,13 +359,13 @@ impl<S: McpServerCore> MethodRouter<S> {
     where
         S: WithPrompts,
     {
-        self.lookup_prompt = Some(Box::new(|server: S, ctx, name| {
+        self.lookup_prompt = Some(Arc::new(|server: S, ctx, name| {
             Box::pin(async move { server.lookup_prompt(&ctx, name).await })
         }));
-        self.list_prompts = Some(Box::new(|server: S, ctx, params| {
+        self.list_prompts = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_prompts(&ctx, params).await })
         }));
-        self.get_prompt = Some(Box::new(|server: S, ctx, params| {
+        self.get_prompt = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.get_prompt(&ctx, params).await })
         }));
         self
@@ -332,7 +377,7 @@ impl<S: McpServerCore> MethodRouter<S> {
     where
         S: WithCompletions,
     {
-        self.complete = Some(Box::new(|server: S, ctx, params| {
+        self.complete = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.complete(&ctx, params).await })
         }));
         self
@@ -379,57 +424,87 @@ impl<S: McpServerCore> MethodRouter<S> {
         self.logging
     }
 
-    dispatch_fn!(
+    intercepted_fn!(
         dispatch_list_tools,
+        list_tools,
         list_tools,
         ListToolsContext,
         neutral::ListParams,
         neutral::ListToolsResult
     );
-    dispatch_fn!(
-        dispatch_call_tool,
-        call_tool,
-        CallToolContext,
-        neutral::CallToolParams,
-        neutral::CallToolResult
-    );
-    dispatch_fn!(
+    /// Run a `tools/call` through the interceptors to the handler.
+    ///
+    /// A tool that ran and failed is a result the model reads, not a protocol
+    /// error, whichever way the handler (or an interceptor) said so: a
+    /// `tool_execution_failed` error becomes an `isError` result, and missing
+    /// scopes become the step-up refusal.
+    pub(crate) fn dispatch_call_tool(
+        &self,
+        server: S,
+        ctx: CallToolContext,
+        params: neutral::CallToolParams,
+    ) -> Option<BoxFuture<'static, McpResult<neutral::CallToolResult>>> {
+        let challenge = ctx
+            .base
+            .extensions
+            .get::<turbomcp_service::ScopeChallenge>()
+            .cloned();
+        let call = self.intercept(&self.call_tool, hooks::call_tool, server, ctx, params)?;
+        Some(Box::pin(async move {
+            match call.await {
+                Err(e @ McpError::ToolExecutionFailed { .. }) => {
+                    Ok(neutral::CallToolResult::error(e.to_string()))
+                }
+                Err(McpError::InsufficientScope(scopes)) => {
+                    Ok(scope_refusal(challenge.as_ref(), scopes))
+                }
+                other => other,
+            }
+        }))
+    }
+    intercepted_fn!(
         dispatch_list_resources,
+        list_resources,
         list_resources,
         ListResourcesContext,
         neutral::ListParams,
         neutral::ListResourcesResult
     );
-    dispatch_fn!(
+    intercepted_fn!(
         dispatch_read_resource,
+        read_resource,
         read_resource,
         ReadResourceContext,
         neutral::ReadResourceParams,
         neutral::ReadResourceResult
     );
-    dispatch_fn!(
+    intercepted_fn!(
         dispatch_list_resource_templates,
+        list_resource_templates,
         list_resource_templates,
         ListResourceTemplatesContext,
         neutral::ListParams,
         neutral::ListResourceTemplatesResult
     );
-    dispatch_fn!(
+    intercepted_fn!(
         dispatch_list_prompts,
+        list_prompts,
         list_prompts,
         ListPromptsContext,
         neutral::ListParams,
         neutral::ListPromptsResult
     );
-    dispatch_fn!(
+    intercepted_fn!(
         dispatch_get_prompt,
+        get_prompt,
         get_prompt,
         GetPromptContext,
         neutral::GetPromptParams,
         neutral::GetPromptResult
     );
-    dispatch_fn!(
+    intercepted_fn!(
         dispatch_complete,
+        complete,
         complete,
         CompleteContext,
         neutral::CompleteParams,

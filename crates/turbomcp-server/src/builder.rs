@@ -276,6 +276,15 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
+    /// Run every operation through `interceptor`, inside any added before
+    /// it: typed middleware over the neutral request and result, on every
+    /// revision and every path a call takes. See [`crate::intercept`].
+    #[must_use]
+    pub fn intercept(mut self, interceptor: Arc<dyn crate::Interceptor>) -> Self {
+        self.router = self.router.with_interceptor(interceptor);
+        self
+    }
+
     /// Carry change notifications between replicas over `bus`: the
     /// [`ServerNotifier`](crate::ServerNotifier) publishes each change to
     /// it, and every replica delivers what it carries to the subscriptions

@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- Typed interceptors. `ServerBuilder::intercept(…)` runs every operation
+  (`tools/call`, `prompts/get`, `resources/read`, the four lists,
+  `completion/complete`) through an `Interceptor`: middleware over the
+  neutral context, params and result, after the wire is decoded and before
+  it is encoded, so one rule holds on every revision and on every path a
+  call takes (plain, task-augmented, MRTR retries, mounted children). Each
+  hook gets a `Next` to continue, rewrite or answer itself; closures cover
+  the one-hook case (`intercept::on_call_tool`, `on_get_prompt`,
+  `on_read_resource`, `on_list_tools`). A `tool_execution_failed` error from
+  an interceptor is a tool error result, like one from a handler.
 - An in-memory transport and a test harness. `turbomcp::memory::pair()`
   returns the two ends of one connection, each frame encoded and decoded as
   on a real wire (a bad frame is answered and the connection carries on,

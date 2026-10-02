@@ -210,6 +210,10 @@ pub use turbomcp_server::{Composite, CompositeServer};
 /// [`ServerBuilder::with_notification_bus`].
 pub use turbomcp_server::bus;
 
+/// Typed interceptors over each operation's neutral request and result: see
+/// [`ServerBuilder::intercept`].
+pub use turbomcp_server::intercept;
+
 pub use turbomcp_server::{
     Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, ExpiredSession,
     GetPromptContext, Image, InputWaiter, IntoCallToolResult, IntoGetPromptResult,

@@ -27,6 +27,7 @@ mod context;
 mod dispatcher;
 mod extension;
 mod inflight;
+pub mod intercept;
 mod logging;
 mod masking;
 mod mrtr;
@@ -57,6 +58,7 @@ pub use dispatcher::{
 pub use extension::{
     CallAugmentRequest, CallRunner, Extension, ExtensionRequest, SubscribeOutcome,
 };
+pub use intercept::Interceptor;
 pub use logging::LogSender;
 pub use mrtr::ClientHandle;
 pub use progress::ProgressReporter;

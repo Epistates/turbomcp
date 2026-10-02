@@ -56,7 +56,11 @@ zero-boilerplate surface and strict spec compliance as a feature.
   so cross-cutting concerns are ordinary `Layer`s — one `call` for every method
   under every transport, and `ServiceBuilder` / `timeout` / `ConcurrencyLimit`
   compose onto an MCP server unchanged. No hook list to keep in sync with the
-  protocol.
+  protocol. When a rule is about *content* rather than frames, typed
+  interceptors (`ServerBuilder::intercept`, `intercept::on_call_tool(…)`) see
+  the neutral params and result a handler sees, identical on every revision
+  and on every path a call takes (plain, task, multi-round-trip), so a
+  redaction written once can't be bypassed per tool.
 - **Production seams.** OAuth 2.1 on both halves (resource-server bearer
   validation and the client auth-code + PKCE flow), identity-keyed rate
   limiting, OpenTelemetry tracing + metrics, progress/logging, subscriptions,
