@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
 use turbomcp_client::{
-    Client, ClientBuilder, ClientError, ElicitationHandler, NotificationHandler,
+    Client, ClientBuilder, ClientError, ElicitationHandler, NotificationHandler, TaskStatus,
 };
 use turbomcp_core::LogLevel;
 use turbomcp_core::codec::SerdeJsonCodec;
@@ -363,10 +363,20 @@ async fn list_all_tasks_follows_pages() {
         |method, frame| match method {
             "tasks/list" => {
                 let first = frame["params"].get("cursor").is_none();
+                let task = |id: &str| {
+                    json!({
+                        "taskId": id,
+                        "status": "working",
+                        "createdAt": "2026-01-01T00:00:00Z",
+                        "lastUpdatedAt": "2026-01-01T00:00:00Z",
+                        "ttl": 60000,
+                        "pollInterval": 500,
+                    })
+                };
                 let result = if first {
-                    json!({ "tasks": [{ "taskId": "t1" }], "nextCursor": "p2" })
+                    json!({ "tasks": [task("t1")], "nextCursor": "p2" })
                 } else {
-                    json!({ "tasks": [{ "taskId": "t2" }] })
+                    json!({ "tasks": [task("t2")] })
                 };
                 vec![result_for(frame, result)]
             }
@@ -377,12 +387,18 @@ async fn list_all_tasks_follows_pages() {
 
     let tasks = client.list_all_tasks().await.expect("tasks paginate");
     assert_eq!(tasks.len(), 2);
-    assert_eq!(tasks[0]["taskId"], "t1");
-    assert_eq!(tasks[1]["taskId"], "t2");
+    assert_eq!(tasks[0].task_id, "t1");
+    assert_eq!(tasks[1].task_id, "t2");
+    assert_eq!(tasks[0].status, TaskStatus::Working);
+    assert_eq!(tasks[0].ttl, Some(std::time::Duration::from_secs(60)));
+    assert_eq!(
+        tasks[0].poll_interval,
+        Some(std::time::Duration::from_millis(500))
+    );
 
     // The single-page form is still available for manual cursor control.
     let page = client.task_list(None).await.expect("one page");
-    assert_eq!(page["nextCursor"], "p2");
+    assert_eq!(page.next_cursor.as_deref(), Some("p2"));
 }
 
 /// A server with no Tasks support answers `-32601`; that must surface, not be

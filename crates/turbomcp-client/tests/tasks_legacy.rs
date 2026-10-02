@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
-use turbomcp_client::{Client, ClientBuilder, ClientError, ConnectMode};
+use turbomcp_client::{CallOptions, Client, ClientBuilder, ClientError, ConnectMode, Detached};
 use turbomcp_core::codec::DefaultCodec;
 use turbomcp_core::{CancellationToken, Implementation, JsonRpcError, McpResult};
 use turbomcp_protocol::neutral;
@@ -184,6 +184,39 @@ async fn task_augmented_call_round_trips_against_a_real_server() {
     assert_eq!(backend.creates.load(SeqCst), 1, "plain call stays inline");
 }
 
+/// A detached call keeps its task; its id is enough to wait on it later, and
+/// the typed view reads the `2025-11-25` field names.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_detached_task_resumes_from_its_id() {
+    let backend = Arc::new(FastPoll {
+        inner: TaskStore::default(),
+        creates: AtomicUsize::new(0),
+    });
+    let client = connect_real(Some(Arc::clone(&backend))).await;
+
+    let task = match client
+        .call_tool_detached("nap", Map::new(), &CallOptions::new())
+        .await
+        .expect("tools/call")
+    {
+        Detached::Task(task) => task,
+        Detached::Done(result) => panic!("expected a task, got {result:?}"),
+    };
+    let info = task.get().await.expect("tasks/get");
+    assert_eq!(info.task_id, task.id());
+    assert_eq!(
+        info.poll_interval,
+        Some(std::time::Duration::from_millis(10))
+    );
+    assert!(info.ttl.is_some());
+
+    let id = task.id().to_owned();
+    drop(task);
+    let result = client.resume_task(id).wait().await.expect("settles");
+    assert_eq!(text_of(&result), "well rested");
+    assert_eq!(backend.creates.load(SeqCst), 1);
+}
+
 /// A server without Tasks enabled doesn't declare `tasks.requests.tools.call`,
 /// so the client MUST NOT augment: `call_tool_task` goes out as a plain call.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -257,10 +290,14 @@ fn task_handle(status: &str, ttl: u64) -> Value {
 }
 
 fn task_state(status: &str) -> Value {
+    task_state_with_ttl(status, 60000)
+}
+
+fn task_state_with_ttl(status: &str, ttl: u64) -> Value {
     json!({ "result": {
         "taskId": "t-1", "status": status,
         "createdAt": "2026-01-01T00:00:00Z", "lastUpdatedAt": "2026-01-01T00:00:00Z",
-        "ttl": 60000, "pollInterval": 10
+        "ttl": ttl, "pollInterval": 10
     }})
 }
 
@@ -372,7 +409,7 @@ async fn the_reported_ttl_bounds_polling() {
         "initialize" => Some(initialize_ok()),
         "tools/list" => Some(tools_list(Some("optional"))),
         "tools/call" => Some(task_handle("working", 30)),
-        "tasks/get" => Some(task_state("working")),
+        "tasks/get" => Some(task_state_with_ttl("working", 30)),
         other => panic!("unexpected method: {other}"),
     })
     .await;
@@ -380,6 +417,39 @@ async fn the_reported_ttl_bounds_polling() {
     match client.call_tool_task("nap", Map::new(), None).await {
         Err(ClientError::Timeout) => {}
         other => panic!("expected a ttl timeout, got {other:?}"),
+    }
+}
+
+/// "The value of `ttlMs` MAY change over the lifetime of a task": the backstop
+/// follows the latest one. A deadline fixed at the first answer gave up on a
+/// task the server had just extended.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_extended_ttl_extends_the_backstop() {
+    let gets = Arc::new(AtomicUsize::new(0));
+    let gets_in = Arc::clone(&gets);
+    let client = connect_scripted(move |method, _| match method {
+        "initialize" => Some(initialize_ok()),
+        "tools/list" => Some(tools_list(Some("optional"))),
+        "tools/call" => Some(task_handle("working", 30)),
+        // Polled every 10 ms: well past the first TTL before it completes.
+        "tasks/get" => Some(match gets_in.fetch_add(1, SeqCst) {
+            0..8 => task_state_with_ttl("working", 60000),
+            _ => task_state("completed"),
+        }),
+        "tasks/result" => Some(json!({ "result": {
+            "content": [ { "type": "text", "text": "extended" } ]
+        }})),
+        other => panic!("unexpected method: {other}"),
+    })
+    .await;
+
+    let result = client
+        .call_tool_task("nap", Map::new(), None)
+        .await
+        .expect("the extended TTL kept it alive");
+    match &result.content[0] {
+        neutral::Content::Text { text, .. } => assert_eq!(text, "extended"),
+        other => panic!("expected text, got {other:?}"),
     }
 }
 

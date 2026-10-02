@@ -11,7 +11,10 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 use tokio::io::{BufReader, split};
-use turbomcp::client::{Client, ClientBuilder, ConnectMode, ElicitationHandler, async_trait};
+use turbomcp::client::{
+    CallOptions, Client, ClientBuilder, ConnectMode, Detached, ElicitationHandler, TaskStatus,
+    async_trait,
+};
 use turbomcp::ext_tasks::{EXTENSION_ID, TasksExtension};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
@@ -206,23 +209,73 @@ async fn mid_task_elicitation_flows_through_tasks_update() {
 async fn typed_task_cancel_reaches_the_server() {
     let client = connect().await;
 
-    // Create the task via the raw escape hatch (keeping the handle instead of
-    // auto-driving it).
-    let created = client
-        .request("tools/call", {
-            let mut p = Map::new();
-            p.insert("name".into(), json!("guarded_report"));
-            p.insert("arguments".into(), json!({ "topic": "never" }));
-            p
-        })
+    // Keep the task instead of driving it.
+    let mut args = Map::new();
+    args.insert("topic".into(), json!("never"));
+    let Detached::Task(task) = client
+        .call_tool_detached("guarded_report", args, &CallOptions::new())
         .await
-        .expect("tools/call");
-    assert_eq!(created["resultType"], "task");
-    let task_id = created["taskId"].as_str().expect("taskId").to_owned();
+        .expect("tools/call")
+    else {
+        panic!("expected a task");
+    };
 
-    client.task_cancel(&task_id).await.expect("tasks/cancel");
-    let got = client.task_get(&task_id).await.expect("tasks/get");
-    assert_eq!(got["status"], "cancelled");
+    task.cancel().await.expect("tasks/cancel");
+    let got = task.get().await.expect("tasks/get");
+    assert_eq!(got.status, TaskStatus::Cancelled);
+    assert!(got.status.is_terminal());
+}
+
+/// "Clients SHOULD persist task IDs to durable storage so that polling can
+/// resume after a crash or restart": a detached task's id is all it takes to
+/// pick it up again, input requests and all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_detached_task_resumes_from_its_id() {
+    let client = connect().await;
+    for (tool, expected) in [
+        ("generate_report", "Report: latency"),
+        // Elicits mid-task: `wait` answers it through the client's handler.
+        ("guarded_report", "Confirmed report: latency"),
+    ] {
+        let mut args = Map::new();
+        args.insert("topic".into(), json!("latency"));
+        let task_id = match client
+            .call_tool_detached(tool, args, &CallOptions::new())
+            .await
+            .expect("tools/call")
+        {
+            Detached::Task(task) => task.id().to_owned(),
+            Detached::Done(result) => panic!("expected a task, got {result:?}"),
+        };
+
+        let result = client.resume_task(&task_id).wait().await.expect("settles");
+        match &result.content[0] {
+            neutral::Content::Text { text, .. } => assert_eq!(text, expected),
+            other => panic!("unexpected content {other:?}"),
+        }
+        let info = client.task_get(&task_id).await.expect("tasks/get");
+        assert_eq!(info.status, TaskStatus::Completed);
+        assert!(info.result.is_some());
+    }
+}
+
+/// A tool the server runs inline comes back as a plain result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_detached_call_that_runs_inline_is_done() {
+    let client = connect().await;
+    let mut args = Map::new();
+    args.insert("path".into(), json!("/tmp/x"));
+    let Detached::Done(result) = client
+        .call_tool_detached("delete", args, &CallOptions::new())
+        .await
+        .expect("tools/call")
+    else {
+        panic!("`delete` is not a task tool");
+    };
+    match &result.content[0] {
+        neutral::Content::Text { text, .. } => assert_eq!(text, "deleted /tmp/x"),
+        other => panic!("unexpected content {other:?}"),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

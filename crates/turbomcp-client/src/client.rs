@@ -41,6 +41,7 @@ use crate::handler::{
 use crate::options::CallOptions;
 use crate::progress::Registration;
 use crate::subscription::Subscription;
+use crate::task::{Detached, TaskInfo, TaskPage, ToolTask};
 
 /// Cap on MRTR re-issue rounds — a guard against a server that keeps answering
 /// `input_required` forever.
@@ -1016,15 +1017,76 @@ impl Client {
             .await
     }
 
+    /// Call a tool and keep the task it becomes instead of waiting on it:
+    /// [`Detached::Task`] with a [`ToolTask`] to [`wait`](ToolTask::wait) on,
+    /// [`cancel`](ToolTask::cancel), or persist the [`id`](ToolTask::id) of
+    /// and [`resume`](Self::resume_task) after a restart. A call that doesn't
+    /// become a task comes back as [`Detached::Done`].
+    ///
+    /// On `2025-11-25` the call asks to run as a task wherever the tool
+    /// allows it (with `options`' TTL, if it sets one through
+    /// [`CallOptions::task`]); on `2026-07-28` the server decides.
+    ///
+    /// # Errors
+    /// As [`call_tool_with`](Self::call_tool_with).
+    pub async fn call_tool_detached(
+        &self,
+        name: impl Into<String>,
+        arguments: Map<String, Value>,
+        options: &CallOptions,
+    ) -> ClientResult<Detached> {
+        let name = name.into();
+        self.run(options, async {
+            let task = Some(options.task.flatten());
+            let v = self
+                .call_tool_answer(&name, &arguments, options, task)
+                .await?;
+            match created_task(&v) {
+                Some(task_id) => Ok(Detached::Task(Box::new(ToolTask::new(
+                    self.clone(),
+                    task_id,
+                    Some(name.clone()),
+                )))),
+                None => Ok(Detached::Done(self.settle_tool_call(&name, v).await?)),
+            }
+        })
+        .await
+    }
+
+    /// The task `task_id`, to wait on, inspect or cancel: one a
+    /// [`call_tool_detached`](Self::call_tool_detached) call became, from
+    /// this process or an earlier one. No request goes out until the handle
+    /// is used.
+    #[must_use]
+    pub fn resume_task(&self, task_id: impl Into<String>) -> ToolTask {
+        ToolTask::new(self.clone(), task_id.into(), None)
+    }
+
     async fn call_tool_inner(
         &self,
         name: &str,
         arguments: &Map<String, Value>,
         options: &CallOptions,
     ) -> ClientResult<neutral::CallToolResult> {
+        let v = self
+            .call_tool_answer(name, arguments, options, options.task)
+            .await?;
+        self.settle_tool_call(name, v).await
+    }
+
+    /// Send a `tools/call` and return its first answer: a result, or a task
+    /// it became. `task` asks for task augmentation (with an optional TTL)
+    /// where the tool allows it.
+    async fn call_tool_answer(
+        &self,
+        name: &str,
+        arguments: &Map<String, Value>,
+        options: &CallOptions,
+        task: Option<Option<i64>>,
+    ) -> ClientResult<Value> {
         self.require_server_capability("tools", request::TOOLS_CALL)?;
         let per = self.prepare(options)?;
-        let task = options.task.map(|ttl| match ttl {
+        let task = task.map(|ttl| match ttl {
             Some(ttl) => json!({ "ttl": ttl }),
             None => json!({}),
         });
@@ -1067,7 +1129,7 @@ impl Client {
             }
             other => other?,
         };
-        self.settle_tool_call(name, v).await
+        Ok(v)
     }
 
     /// The `task` field this call carries, if any (`2025-11-25` §Tool-Level
@@ -1134,7 +1196,7 @@ impl Client {
         // fixed-shape APIs, drive the polling flow and surface only the final
         // result.
         if v.get("resultType").and_then(Value::as_str) == Some(RESULT_TYPE_TASK) {
-            v = self.drive_task(v).await?;
+            v = self.drive_task(v, true).await?;
         }
         // Legacy: a task-augmented call answers `CreateTaskResult { task }`
         // (core Tasks, `2025-11-25`). `content` is required on a real
@@ -1143,11 +1205,32 @@ impl Client {
             && let Some(handle) = v.get("task")
             && handle.get("taskId").is_some()
         {
-            v = self.drive_legacy_task(handle.clone()).await?;
+            v = self.drive_legacy_task(handle.clone(), true).await?;
         }
         let result: neutral::CallToolResult =
             self.decode::<v0728::CallToolResult, legacy::CallToolResult, _>(v)?;
         self.check_output(name, &result)?;
+        Ok(result)
+    }
+
+    /// Drive task `task_id` to its end without cancelling it if the wait is
+    /// dropped ([`ToolTask::wait`]), and decode the tool result.
+    pub(crate) async fn wait_task(
+        &self,
+        task_id: &str,
+        tool: Option<&str>,
+    ) -> ClientResult<neutral::CallToolResult> {
+        let current = self.task_get_raw(task_id).await?;
+        let v = if self.version == ProtocolVersion::V2026_07_28 {
+            self.drive_task(current, false).await?
+        } else {
+            self.drive_legacy_task(current, false).await?
+        };
+        let result: neutral::CallToolResult =
+            self.decode::<v0728::CallToolResult, legacy::CallToolResult, _>(v)?;
+        if let Some(tool) = tool {
+            self.check_output(tool, &result)?;
+        }
         Ok(result)
     }
 
@@ -1615,15 +1698,19 @@ impl Client {
             .await
     }
 
-    /// Poll a task's current state (`tasks/get`, SEP-2663 Tasks extension).
-    ///
-    /// Returns the raw task object (the extension owns its wire types): a
-    /// `Task` with status-specific fields inlined — `inputRequests` when
-    /// `input_required`, `result` when `completed`, `error` when `failed`.
+    /// A task's current state (`tasks/get`, on either revision): on
+    /// `2026-07-28` with what its status calls for inlined (`input_requests`
+    /// while `input_required`, `result` once `completed`, `error` once
+    /// `failed`).
     ///
     /// # Errors
-    /// Propagates RPC failures (`-32602` for an unknown task).
-    pub async fn task_get(&self, task_id: &str) -> ClientResult<Value> {
+    /// Propagates RPC failures (`-32602` for an unknown task), and
+    /// [`ClientError::Decode`] for a task that isn't one.
+    pub async fn task_get(&self, task_id: &str) -> ClientResult<TaskInfo> {
+        TaskInfo::from_wire(&self.task_get_raw(task_id).await?)
+    }
+
+    async fn task_get_raw(&self, task_id: &str) -> ClientResult<Value> {
         let mut params = Map::new();
         params.insert("taskId".into(), json!(task_id));
         self.versioned_request(request::TASKS_GET, params).await
@@ -1670,8 +1757,7 @@ impl Client {
 
     /// Enumerate this session's tasks (`tasks/list`), one page at a time.
     ///
-    /// Returns the raw result (`{ "tasks": [...], "nextCursor": ... }`), since
-    /// tasks are wire-owned. `2025-11-25` only: the `2026-07-28` Tasks
+    /// `2025-11-25` only: the `2026-07-28` Tasks
     /// extension removed enumeration, so a task is reachable only through
     /// the handle its creator was given. Use
     /// [`list_all_tasks`](Self::list_all_tasks) unless you are driving the
@@ -1680,13 +1766,27 @@ impl Client {
     /// # Errors
     /// [`ClientError::Protocol`] on `2026-07-28`; otherwise propagates RPC
     /// failures (`-32601` if the server has no Tasks support).
-    pub async fn task_list(&self, cursor: Option<&str>) -> ClientResult<Value> {
+    pub async fn task_list(&self, cursor: Option<&str>) -> ClientResult<TaskPage> {
         self.require_stateful(
             request::TASKS_LIST,
             "keep the task ids your calls were handed",
         )?;
-        self.versioned_request(request::TASKS_LIST, list_params(cursor))
-            .await
+        let page = self
+            .versioned_request(request::TASKS_LIST, list_params(cursor))
+            .await?;
+        let tasks = page
+            .get("tasks")
+            .and_then(Value::as_array)
+            .map(|tasks| tasks.iter().map(TaskInfo::from_wire).collect())
+            .transpose()?
+            .unwrap_or_default();
+        Ok(TaskPage {
+            tasks,
+            next_cursor: page
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        })
     }
 
     /// Every task in this session, following pagination to the last page.
@@ -1694,19 +1794,10 @@ impl Client {
     /// # Errors
     /// Propagates RPC failures, and rejects a server whose cursor doesn't
     /// advance (see [`list_all_tools`](Self::list_all_tools)).
-    pub async fn list_all_tasks(&self) -> ClientResult<Vec<Value>> {
+    pub async fn list_all_tasks(&self) -> ClientResult<Vec<TaskInfo>> {
         self.collect_pages(request::TASKS_LIST, |cursor| async move {
             let page = self.task_list(cursor.as_deref()).await?;
-            let tasks = page
-                .get("tasks")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let next = page
-                .get("nextCursor")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            Ok((tasks, next))
+            Ok((page.tasks, page.next_cursor))
         })
         .await
     }
@@ -1717,21 +1808,26 @@ impl Client {
     /// polls, per spec) via `tasks/update`, and return the task's final
     /// `result` value. A `failed` task surfaces its JSON-RPC error; a
     /// `cancelled` task is a protocol error; a finite `ttlMs` acts as the
-    /// spec's polling backstop.
-    async fn drive_task(&self, mut current: Value) -> ClientResult<Value> {
+    /// spec's polling backstop. With `cancel_on_drop`, giving up on it
+    /// (dropping the future, a failing input handler, the TTL) sends
+    /// `tasks/cancel`.
+    async fn drive_task(&self, mut current: Value, cancel_on_drop: bool) -> ClientResult<Value> {
         let task_id = current
             .get("taskId")
             .and_then(Value::as_str)
             .ok_or_else(|| ClientError::Decode("CreateTaskResult without a taskId".into()))?
             .to_owned();
         let mut guard = CancelTaskOnDrop::new(self, &task_id);
+        if !cancel_on_drop {
+            guard.disarm();
+        }
         // TTL backstop (spec: the client MAY consider the task unusable after
-        // `createdAt + ttlMs`). Measured from now — at or after `createdAt`,
-        // so never stricter than the spec allows. `null` ⇒ poll indefinitely.
-        let deadline = current
-            .get("ttlMs")
-            .and_then(Value::as_u64)
-            .map(|ms| std::time::Instant::now() + Duration::from_millis(ms));
+        // `createdAt + ttlMs`). Measured from when we first saw it — at or
+        // after `createdAt`, so never stricter than the spec allows — and
+        // from each poll's TTL, which "MAY change over the lifetime of a
+        // task". `null` ⇒ poll indefinitely.
+        let first_seen = std::time::Instant::now();
+        let mut ttl = None;
         let mut answered: std::collections::HashSet<String> = std::collections::HashSet::new();
         loop {
             match current.get("status").and_then(Value::as_str) {
@@ -1810,9 +1906,8 @@ impl Client {
                 // `working` (or a status from a newer revision) → keep polling.
                 _ => {}
             }
-            if let Some(deadline) = deadline
-                && std::time::Instant::now() >= deadline
-            {
+            refresh_ttl(&mut ttl, &current, "ttlMs");
+            if ttl.is_some_and(|ttl| first_seen.elapsed() >= ttl) {
                 return Err(ClientError::Timeout);
             }
             let interval = current
@@ -1821,7 +1916,7 @@ impl Client {
                 .unwrap_or(DEFAULT_TASK_POLL_MS)
                 .max(MIN_TASK_POLL_MS);
             tokio::time::sleep(Duration::from_millis(interval)).await;
-            current = self.task_get(&task_id).await?;
+            current = self.task_get_raw(&task_id).await?;
         }
     }
 
@@ -1838,20 +1933,25 @@ impl Client {
     /// pending elicitation on that request's stream, and the connection actor
     /// answers it there. Polling carries on alongside, so a `tasks/result`
     /// that outlives the request timeout just gets issued again.
-    async fn drive_legacy_task(&self, mut current: Value) -> ClientResult<Value> {
+    async fn drive_legacy_task(
+        &self,
+        mut current: Value,
+        cancel_on_drop: bool,
+    ) -> ClientResult<Value> {
         let task_id = current
             .get("taskId")
             .and_then(Value::as_str)
             .ok_or_else(|| ClientError::Decode("CreateTaskResult without a taskId".into()))?
             .to_owned();
         let mut guard = CancelTaskOnDrop::new(self, &task_id);
-        // TTL backstop, measured from now (at or after `createdAt`, so never
-        // stricter than the spec allows). Legacy types it `ttl` (ms);
-        // `null` ⇒ poll indefinitely.
-        let deadline = current
-            .get("ttl")
-            .and_then(Value::as_u64)
-            .map(|ms| std::time::Instant::now() + Duration::from_millis(ms));
+        if !cancel_on_drop {
+            guard.disarm();
+        }
+        // TTL backstop, measured from when we first saw it (at or after
+        // `createdAt`, so never stricter than the spec allows), against each
+        // poll's TTL. Legacy types it `ttl` (ms); `null` ⇒ poll indefinitely.
+        let first_seen = std::time::Instant::now();
+        let mut ttl = None;
         let mut early: Option<futures::future::BoxFuture<'_, ClientResult<Value>>> = None;
         loop {
             match current.get("status").and_then(Value::as_str) {
@@ -1876,9 +1976,8 @@ impl Client {
                 // `working`, or a status from a newer revision → keep polling.
                 _ => {}
             }
-            if let Some(deadline) = deadline
-                && std::time::Instant::now() >= deadline
-            {
+            refresh_ttl(&mut ttl, &current, "ttl");
+            if ttl.is_some_and(|ttl| first_seen.elapsed() >= ttl) {
                 return Err(ClientError::Timeout);
             }
             let interval = current
@@ -1903,7 +2002,7 @@ impl Client {
             } else {
                 nap.await;
             }
-            current = self.task_get(&task_id).await?;
+            current = self.task_get_raw(&task_id).await?;
         }
     }
 
@@ -2180,6 +2279,38 @@ impl Client {
                 .map(Into::into)
                 .map_err(|e| ClientError::Decode(e.to_string()))
         }
+    }
+}
+
+/// The id of the task a `tools/call` answer says the call became, on either
+/// revision: a `resultType: "task"` result (`2026-07-28`), or a
+/// `CreateTaskResult`'s `task` (`2025-11-25`; `content` is required on a real
+/// `CallToolResult`, so its absence next to a `task` is unambiguous).
+fn created_task(answer: &Value) -> Option<String> {
+    let task = if answer.get("resultType").and_then(Value::as_str) == Some(RESULT_TYPE_TASK) {
+        answer
+    } else if answer.get("content").is_none() {
+        answer.get("task")?
+    } else {
+        return None;
+    };
+    task.get("taskId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// Take a task's TTL from its latest description: a number replaces it,
+/// `null` makes it unlimited, and a description that leaves it out (which the
+/// spec doesn't allow) keeps the last one seen.
+fn refresh_ttl(ttl: &mut Option<Duration>, task: &Value, key: &str) {
+    match task.get(key) {
+        Some(Value::Null) => *ttl = None,
+        Some(value) => {
+            if let Some(ms) = value.as_u64() {
+                *ttl = Some(Duration::from_millis(ms));
+            }
+        }
+        None => {}
     }
 }
 
