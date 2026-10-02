@@ -217,6 +217,35 @@ lock-check:
     fi
   done
 
+# Compile the excluded crates the way their CI jobs do. They resolve the
+# workspace by path, so a public-type change here breaks them, and nothing in
+# the workspace build notices: a renamed field once reached `main` and failed
+# only the conformance job. Unlocked on purpose, like CI: cargo adds the
+# minimal edges a new dependency needs, and this recipe fails until that
+# lockfile change is staged with the code that caused it.
+[group: 'quality']
+excluded-check:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  for dir in crates/turbomcp-conformance crates/turbomcp-interop; do
+    echo "clippy: ${dir}"
+    (cd "${dir}" && cargo clippy --all-targets --quiet -- -D warnings)
+  done
+  echo "check: fuzz"
+  (cd fuzz && cargo check --all-targets --quiet)
+  echo "check: crates/turbomcp/tests/renamed_dependency"
+  cargo check --locked --quiet --manifest-path crates/turbomcp/tests/renamed_dependency/Cargo.toml
+  stale=$(git diff --name-only -- crates/turbomcp-conformance/Cargo.lock \
+    crates/turbomcp-interop/Cargo.lock fuzz/Cargo.lock)
+  if [ -n "$stale" ]; then
+    echo >&2
+    echo "Building the excluded crates changed their lockfiles:" >&2
+    echo "$stale" >&2
+    echo "Review them and stage them with the change that needed them." >&2
+    exit 1
+  fi
+  echo "Excluded crates build, and their lockfiles are staged."
+
 # =============================================================================
 # Setup
 # =============================================================================
@@ -312,15 +341,15 @@ build-all-features:
 [group: 'test']
 test:
   echo "Running comprehensive test suite..."
-  echo "Step 1/8: Running unit, integration, and doc tests (all features)..."
+  echo "Step 1/9: Running unit, integration, and doc tests (all features)..."
   cargo test --workspace --all-features
-  echo "Step 2/8: Running clippy on all crates, targets, and examples..."
+  echo "Step 2/9: Running clippy on all crates, targets, and examples..."
   cargo clippy {{workspace_flags}} --all-targets --all-features -- -D warnings
-  echo "Step 3/8: Verifying the no-default-features facade still lints..."
+  echo "Step 3/9: Verifying the no-default-features facade still lints..."
   cargo clippy -p turbomcp -- -D warnings
-  echo "Step 4/8: Testing non-default foundation configs (no_std core/protocol, serde_json codec)..."
+  echo "Step 4/9: Testing non-default foundation configs (no_std core/protocol, serde_json codec)..."
   cargo test -p turbomcp-core -p turbomcp-protocol --no-default-features
-  echo "Step 5/8: Checking formatting on all code (workspace + excluded crates)..."
+  echo "Step 5/9: Checking formatting on all code (workspace + excluded crates)..."
   cargo fmt --all -- --check
   # `--all` stops at the workspace, and the excluded crates have their own CI
   # jobs that run `cargo fmt -- --check`. Skipping them here meant a gate that
@@ -328,15 +357,17 @@ test:
   cd crates/turbomcp-conformance && cargo fmt -- --check
   cd crates/turbomcp-interop && cargo fmt -- --check
   cd fuzz && cargo fmt -- --check
-  echo "Step 6/8: Verifying wasm portability (no_std foundation, default + no-default)..."
+  echo "Step 6/9: Verifying wasm portability (no_std foundation, default + no-default)..."
   cargo build -p turbomcp-core -p turbomcp-protocol --target wasm32-unknown-unknown
   cargo build -p turbomcp-core -p turbomcp-protocol --no-default-features --target wasm32-unknown-unknown
-  echo "Step 7/8: Building docs the way docs.rs does (nightly, --cfg docsrs)..."
+  echo "Step 7/9: Building docs the way docs.rs does (nightly, --cfg docsrs)..."
   just docs-rs
-  echo "Step 8/8: Checking generated artifacts still match their sources..."
+  echo "Step 8/9: Checking generated artifacts still match their sources..."
   just lock-check
   just codes-check
   just codegen-check
+  echo "Step 9/9: Building the excluded crates against this tree..."
+  just excluded-check
   echo "All tests, linting, and formatting checks passed!"
 
 # Run tests only (no linting/formatting)
