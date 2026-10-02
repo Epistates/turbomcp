@@ -45,6 +45,7 @@ const DURATION_BOUNDARIES: [f64; 14] = [
 #[derive(Clone)]
 pub struct ClientTelemetry {
     duration: Histogram<f64>,
+    session_duration: Histogram<f64>,
     extra_methods: Arc<[String]>,
 }
 
@@ -73,8 +74,15 @@ impl ClientTelemetry {
             .with_unit("s")
             .with_boundaries(DURATION_BOUNDARIES.to_vec())
             .build();
+        let session_duration = global::meter("turbomcp")
+            .f64_histogram("mcp.client.session.duration")
+            .with_description("The duration of the MCP session as observed by the MCP client.")
+            .with_unit("s")
+            .with_boundaries(DURATION_BOUNDARIES.to_vec())
+            .build();
         Self {
             duration,
+            session_duration,
             extra_methods: Arc::from([]),
         }
     }
@@ -127,19 +135,12 @@ impl RequestObserver for ClientTelemetry {
             method.clone().into_owned(),
         )];
         if let Some(network) = request.network {
-            for label in semconv::network_labels(network) {
-                span.record(label.key.as_str(), label.value.as_str().as_ref());
+            for label in peer_labels(network) {
+                match &label.value {
+                    opentelemetry::Value::I64(port) => span.record(label.key.as_str(), *port),
+                    value => span.record(label.key.as_str(), value.as_str().as_ref()),
+                };
                 base.push(label);
-            }
-            // The server's address is no one's personal data, and the
-            // conventions list it for the metric too.
-            if let Some(address) = &network.peer_address {
-                span.record(semconv::SERVER_ADDRESS, address.as_str());
-                base.push(KeyValue::new(semconv::SERVER_ADDRESS, address.clone()));
-                if let Some(port) = network.peer_port {
-                    span.record(semconv::SERVER_PORT, i64::from(port));
-                    base.push(KeyValue::new(semconv::SERVER_PORT, i64::from(port)));
-                }
             }
         }
         if let Some(version) = request.protocol_version {
@@ -175,6 +176,31 @@ impl RequestObserver for ClientTelemetry {
             finished: false,
         })
     }
+
+    fn closed(&self, session: &turbomcp_client::ClosedSession<'_>) {
+        let mut labels = session.network.map(peer_labels).unwrap_or_default();
+        if let Some(version) = session.protocol_version {
+            labels.push(KeyValue::new(
+                semconv::MCP_PROTOCOL_VERSION,
+                semconv::version_label(version),
+            ));
+        }
+        self.session_duration
+            .record(session.duration.as_secs_f64(), &labels);
+    }
+}
+
+/// The network labels and the server's address. The address is no one's
+/// personal data, and the conventions list it for the metrics too.
+fn peer_labels(network: &turbomcp_service::NetworkFacts) -> Vec<KeyValue> {
+    let mut labels = semconv::network_labels(network);
+    if let Some(address) = &network.peer_address {
+        labels.push(KeyValue::new(semconv::SERVER_ADDRESS, address.clone()));
+        if let Some(port) = network.peer_port {
+            labels.push(KeyValue::new(semconv::SERVER_PORT, i64::from(port)));
+        }
+    }
+    labels
 }
 
 fn request_id(id: &RequestId) -> String {

@@ -47,6 +47,7 @@ const DURATION_BOUNDARIES: [f64; 14] = [
 struct Instruments {
     duration: Histogram<f64>,
     in_flight: UpDownCounter<i64>,
+    session_duration: Histogram<f64>,
 }
 
 impl Instruments {
@@ -67,6 +68,12 @@ impl Instruments {
             in_flight: meter
                 .i64_up_down_counter("turbomcp.server.active_operations")
                 .with_description("MCP requests in flight.")
+                .build(),
+            session_duration: meter
+                .f64_histogram("mcp.server.session.duration")
+                .with_description("The duration of the MCP session as observed on the MCP server.")
+                .with_unit("s")
+                .with_boundaries(DURATION_BOUNDARIES.to_vec())
                 .build(),
         }
     }
@@ -109,6 +116,28 @@ impl MetricsLayer {
 impl Default for MetricsLayer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// `mcp.server.session.duration`, for each stateful session that ends:
+/// register the layer with `ServerBuilder::observe_sessions` as well as
+/// composing it.
+///
+/// ```ignore
+/// let metrics = MetricsLayer::new();
+/// MyServer.into_server()
+///     .observe_sessions(Arc::new(metrics.clone()))
+///     .layer(metrics)
+/// ```
+impl turbomcp_service::SessionObserver for MetricsLayer {
+    fn session_ended(&self, session: &turbomcp_service::EndedSession<'_>) {
+        self.instruments.session_duration.record(
+            session.duration.as_secs_f64(),
+            &[KeyValue::new(
+                semconv::MCP_PROTOCOL_VERSION,
+                semconv::version_label(session.protocol_version),
+            )],
+        );
     }
 }
 

@@ -34,7 +34,7 @@ pub use error::{ClientError, ClientResult};
 pub use handler::{
     ClientHandlers, ElicitationHandler, NotificationHandler, RootsHandler, SamplingHandler,
 };
-pub use observe::{OutboundRequest, RequestObserver, RequestScope};
+pub use observe::{ClosedSession, OutboundRequest, RequestObserver, RequestScope};
 pub use options::CallOptions;
 pub use progress::ProgressCallback;
 pub use stdio::connect_child;

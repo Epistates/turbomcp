@@ -28,10 +28,27 @@ pub struct OutboundRequest<'a> {
     pub network: Option<&'a turbomcp_service::NetworkFacts>,
 }
 
+/// A client's connection, closed: its session, as far as the client is
+/// concerned, is over.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct ClosedSession<'a> {
+    /// From connecting to closing.
+    pub duration: std::time::Duration,
+    /// The revision the handshake settled on, if it got that far.
+    pub protocol_version: Option<&'a ProtocolVersion>,
+    /// The connection, as the transport described it.
+    pub network: Option<&'a turbomcp_service::NetworkFacts>,
+}
+
 /// Watches the requests a client sends.
 pub trait RequestObserver: Send + Sync {
     /// `request` is about to go out. The scope returned sees how it ends.
     fn start(&self, request: &OutboundRequest<'_>) -> Box<dyn RequestScope>;
+
+    /// The client's connection closed (its last handle dropped). The default
+    /// ignores it.
+    fn closed(&self, _session: &ClosedSession<'_>) {}
 }
 
 /// One observed request, from [`RequestObserver::start`]. Dropped without

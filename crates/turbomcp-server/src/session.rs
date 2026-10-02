@@ -23,7 +23,7 @@
 //! [`LegacySessionAdapter`]: crate::LegacySessionAdapter
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use moka::notification::RemovalCause;
@@ -53,6 +53,10 @@ pub struct SessionState {
     /// `None` ⇒ no opt-in yet ⇒ this server sends no `notifications/message`
     /// (the spec leaves un-opted behavior to the server; we choose opt-in).
     pub log_level: Option<LogLevel>,
+    /// When `initialize` created it, for the session's duration. Wall-clock,
+    /// so a session a shared backend hands to another replica keeps it.
+    #[serde(default = "SystemTime::now")]
+    pub created_at: SystemTime,
 }
 
 impl SessionState {
@@ -70,7 +74,14 @@ impl SessionState {
             client_info,
             client_capabilities,
             log_level: None,
+            created_at: SystemTime::now(),
         }
+    }
+
+    /// How long ago `initialize` created it.
+    #[must_use]
+    pub fn age(&self) -> Duration {
+        self.created_at.elapsed().unwrap_or_default()
     }
 
     /// Bind the session to the principal that created it (an issuer-and-subject
@@ -86,6 +97,27 @@ impl SessionState {
     pub fn with_log_level(mut self, level: Option<LogLevel>) -> Self {
         self.log_level = level;
         self
+    }
+}
+
+/// A session a backend reclaimed for idling ([`SessionBackend::sweep_expired`]).
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct ExpiredSession {
+    /// Its id.
+    pub id: String,
+    /// Its state as it expired, when the backend still has it.
+    pub state: Option<Arc<SessionState>>,
+}
+
+impl ExpiredSession {
+    /// Session `id` expired, with `state` if the backend kept it.
+    #[must_use]
+    pub fn new(id: impl Into<String>, state: Option<Arc<SessionState>>) -> Self {
+        Self {
+            id: id.into(),
+            state,
+        }
     }
 }
 
@@ -125,7 +157,7 @@ pub struct SessionStore {
     cache: moka::sync::Cache<String, Arc<SessionState>>,
     capacity: usize,
     idle_timeout: Option<Duration>,
-    expired: Arc<Mutex<Vec<String>>>,
+    expired: Arc<Mutex<Vec<ExpiredSession>>>,
 }
 
 impl core::fmt::Debug for SessionStore {
@@ -163,18 +195,18 @@ impl SessionStore {
     }
 
     fn build(capacity: usize, idle_timeout: Option<Duration>) -> Self {
-        let expired: Arc<Mutex<Vec<String>>> = Arc::default();
+        let expired: Arc<Mutex<Vec<ExpiredSession>>> = Arc::default();
         let reported = Arc::clone(&expired);
         let mut builder = moka::sync::Cache::builder()
             // A backstop: inserts are refused at capacity first, so this
             // only trims what concurrent `initialize`s squeeze past the check.
             .max_capacity(capacity as u64)
-            .eviction_listener(move |id: Arc<String>, _, cause| {
+            .eviction_listener(move |id: Arc<String>, state, cause| {
                 if matches!(cause, RemovalCause::Expired | RemovalCause::Size) {
                     reported
                         .lock()
                         .expect("expired-session list poisoned")
-                        .push(id.as_ref().clone());
+                        .push(ExpiredSession::new(id.as_ref().clone(), Some(state)));
                 }
             });
         if let Some(timeout) = idle_timeout {
@@ -217,7 +249,7 @@ impl SessionStore {
     /// Every session that has expired since the last call. The dispatcher
     /// calls this where sessions are minted and tears down each one's routes.
     #[must_use]
-    pub fn sweep_expired(&self) -> Vec<String> {
+    pub fn sweep_expired(&self) -> Vec<ExpiredSession> {
         self.cache.run_pending_tasks();
         std::mem::take(&mut *self.expired.lock().expect("expired-session list poisoned"))
     }
@@ -240,9 +272,9 @@ impl SessionStore {
         true
     }
 
-    /// Terminate a session. Returns whether it existed.
-    pub fn remove(&self, id: &str) -> bool {
-        self.cache.remove(id).is_some()
+    /// Terminate a session, returning it if it existed.
+    pub fn remove(&self, id: &str) -> Option<Arc<SessionState>> {
+        self.cache.remove(id)
     }
 
     /// Number of live sessions (settles pending maintenance first).
@@ -297,12 +329,14 @@ pub trait SessionBackend: Send + Sync {
     /// session exists.
     async fn set_log_level(&self, id: &str, level: LogLevel) -> Result<bool, SessionError>;
 
-    /// Terminate a session. Returns whether it existed.
-    async fn remove(&self, id: &str) -> Result<bool, SessionError>;
+    /// Terminate a session, returning its state if it existed (`Some` of a
+    /// backend that can't read it back on removal is fine too, as long as it
+    /// says the session existed).
+    async fn remove(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError>;
 
-    /// Reclaim expired sessions, returning their ids (the dispatcher tears
-    /// down each id's routes).
-    async fn sweep_expired(&self) -> Result<Vec<String>, SessionError>;
+    /// Reclaim expired sessions (the dispatcher tears down each one's routes
+    /// and reports how long it lived, when the state comes back with it).
+    async fn sweep_expired(&self) -> Result<Vec<ExpiredSession>, SessionError>;
 }
 
 #[async_trait]
@@ -319,11 +353,11 @@ impl SessionBackend for SessionStore {
         Ok(SessionStore::set_log_level(self, id, level))
     }
 
-    async fn remove(&self, id: &str) -> Result<bool, SessionError> {
+    async fn remove(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
         Ok(SessionStore::remove(self, id))
     }
 
-    async fn sweep_expired(&self) -> Result<Vec<String>, SessionError> {
+    async fn sweep_expired(&self) -> Result<Vec<ExpiredSession>, SessionError> {
         Ok(SessionStore::sweep_expired(self))
     }
 }
@@ -346,9 +380,9 @@ mod tests {
         store.insert("a", state()).unwrap();
         assert!(store.contains("a"));
         assert_eq!(store.get("a").unwrap().client_info.name, "test-client");
-        assert!(store.remove("a"));
+        assert!(store.remove("a").is_some());
         assert!(store.get("a").is_none());
-        assert!(!store.remove("a"));
+        assert!(store.remove("a").is_none());
     }
 
     /// A full table refuses a newcomer rather than evicting a live session:
@@ -364,7 +398,7 @@ mod tests {
         // Replacing an existing one is fine at capacity.
         store.insert("a", state()).unwrap();
         // And a deletion makes room.
-        assert!(store.remove("b"));
+        assert!(store.remove("b").is_some());
         store.insert("c", state()).unwrap();
     }
 
@@ -379,7 +413,14 @@ mod tests {
         std::thread::sleep(Duration::from_millis(800));
         store.insert("c", state()).unwrap();
         assert!(store.get("a").is_none(), "idle past the timeout → gone");
-        let mut swept = store.sweep_expired();
+        let mut swept: Vec<String> = store
+            .sweep_expired()
+            .into_iter()
+            .map(|expired| {
+                assert!(expired.state.is_some(), "the state comes back with it");
+                expired.id
+            })
+            .collect();
         swept.sort();
         assert_eq!(swept, vec!["a".to_owned(), "b".to_owned()]);
         assert!(store.contains("c"));

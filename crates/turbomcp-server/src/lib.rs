@@ -63,7 +63,7 @@ pub use response::{
 };
 pub use router::MethodRouter;
 pub use runtime::Server;
-pub use session::{SessionBackend, SessionError, SessionState, SessionStore};
+pub use session::{ExpiredSession, SessionBackend, SessionError, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
 pub use task_handle::{TaskHandle, TaskLink, TaskSlot};
 pub use tasks::{

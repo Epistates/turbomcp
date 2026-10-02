@@ -63,6 +63,7 @@ pub struct ServerBuilder<S> {
     request_state_ttl: Option<std::time::Duration>,
     visibility: Option<Arc<dyn crate::VisibilityPolicy>>,
     roots_changed: Option<Arc<crate::dispatcher::RootsChangedHandler>>,
+    session_observer: Option<Arc<dyn turbomcp_service::SessionObserver>>,
     mask_internal_errors: bool,
 }
 
@@ -86,6 +87,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             request_state_ttl: None,
             visibility: None,
             roots_changed: None,
+            session_observer: None,
             mask_internal_errors: false,
         }
     }
@@ -109,6 +111,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             request_state_ttl: None,
             visibility: None,
             roots_changed: None,
+            session_observer: None,
             mask_internal_errors: false,
         }
     }
@@ -255,6 +258,18 @@ impl<S: McpServerCore> ServerBuilder<S> {
         handler: impl Fn(&turbomcp_core::RequestContext) + Send + Sync + 'static,
     ) -> Self {
         self.roots_changed = Some(Arc::new(handler));
+        self
+    }
+
+    /// Tell `observer` when each stateful session ends, and how long it
+    /// lived: `turbomcp-telemetry`'s `MetricsLayer` records
+    /// `mcp.server.session.duration` from it.
+    #[must_use]
+    pub fn observe_sessions(
+        mut self,
+        observer: Arc<dyn turbomcp_service::SessionObserver>,
+    ) -> Self {
+        self.session_observer = Some(observer);
         self
     }
 
@@ -426,6 +441,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             request_state_ttl,
             visibility,
             roots_changed,
+            session_observer,
             mask_internal_errors,
         } = self;
         if *tasks {
@@ -463,6 +479,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if roots_changed.is_some() {
             return Some("on_roots_changed");
+        }
+        if session_observer.is_some() {
+            return Some("observe_sessions");
         }
         if *mask_internal_errors {
             return Some("mask_internal_errors");
@@ -529,6 +548,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if let Some(policy) = self.visibility {
             dispatcher = dispatcher.with_visibility(policy);
+        }
+        if let Some(observer) = self.session_observer {
+            dispatcher = dispatcher.observe_sessions(observer);
         }
         if let Some(handler) = self.roots_changed {
             dispatcher = dispatcher.on_roots_changed(handler);

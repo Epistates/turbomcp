@@ -28,8 +28,18 @@
 //! such as `mcp.method.name`, `mcp.protocol.version`, `gen_ai.tool.name` and
 //! `error.type`, the network attributes the transport reports
 //! (`network.transport`, `network.protocol.*`, `client.address` on a server,
-//! `server.address` on a client), and the `mcp.server.operation.duration`
-//! histogram, so dashboards built for the conventions work unmodified.
+//! `server.address` on a client), and the `mcp.{server,client}.operation.duration`
+//! and `mcp.{server,client}.session.duration` histograms, so dashboards built
+//! for the conventions work unmodified. The server's session histogram needs
+//! the layer registered as a session observer too:
+//!
+//! ```ignore
+//! let metrics = MetricsLayer::new();
+//! MyServer.into_server()
+//!     .observe_sessions(Arc::new(metrics.clone()))
+//!     .layer(metrics)
+//!     .serve(target)
+//! ```
 //!
 //! ## Redaction
 //!

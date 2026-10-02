@@ -15,8 +15,8 @@ use turbomcp_core::{
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
-    CallToolContext, IntoServerBuilder, ListToolsContext, McpServerCore, MethodRouter,
-    SessionBackend, SessionError, SessionState, SessionStore, WithTools,
+    CallToolContext, ExpiredSession, IntoServerBuilder, ListToolsContext, McpServerCore,
+    MethodRouter, SessionBackend, SessionError, SessionState, SessionStore, WithTools,
 };
 use turbomcp_service::{CancellationToken, Pipe, ServeConfig, Transport};
 
@@ -196,11 +196,11 @@ async fn a_connections_session_ends_with_the_connection() {
         async fn set_log_level(&self, id: &str, level: LogLevel) -> Result<bool, SessionError> {
             SessionBackend::set_log_level(&self.inner, id, level).await
         }
-        async fn remove(&self, id: &str) -> Result<bool, SessionError> {
+        async fn remove(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
             self.removes.fetch_add(1, Ordering::SeqCst);
             SessionBackend::remove(&self.inner, id).await
         }
-        async fn sweep_expired(&self) -> Result<Vec<String>, SessionError> {
+        async fn sweep_expired(&self) -> Result<Vec<ExpiredSession>, SessionError> {
             SessionBackend::sweep_expired(&self.inner).await
         }
     }
@@ -298,4 +298,72 @@ async fn layers_see_the_session_the_connection_established() {
             ("tools/list".to_owned(), true)
         ]
     );
+}
+
+/// Records every session ending it hears of.
+#[derive(Default)]
+struct Endings(Mutex<Vec<(turbomcp_service::SessionEndReason, String)>>);
+
+impl turbomcp_service::SessionObserver for Endings {
+    fn session_ended(&self, session: &turbomcp_service::EndedSession<'_>) {
+        self.0
+            .lock()
+            .unwrap()
+            .push((session.reason, session.protocol_version.to_string()));
+    }
+}
+
+async fn wait_for(endings: &Endings, n: usize) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while endings.0.lock().unwrap().len() < n {
+        assert!(tokio::time::Instant::now() < deadline, "no session ending");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// A session observer hears a connection's session end when the connection
+/// closes, and an idle one end when it expires.
+#[tokio::test]
+async fn the_session_observer_hears_how_sessions_end() {
+    use turbomcp_service::SessionEndReason;
+
+    let endings = Arc::new(Endings::default());
+    let (transport, in_tx, mut out_rx) = pipe();
+    let serving = tokio::spawn(
+        Echo.into_server()
+            .observe_sessions(Arc::clone(&endings) as Arc<dyn turbomcp_service::SessionObserver>)
+            .serve(transport),
+    );
+    in_tx.send(initialize()).await.unwrap();
+    assert!(matches!(next(&mut out_rx).await, JsonRpcMessage::Response(r) if !r.is_error()));
+    drop(in_tx);
+    serving.await.unwrap().unwrap();
+    wait_for(&endings, 1).await;
+    assert_eq!(
+        endings.0.lock().unwrap()[0],
+        (SessionEndReason::Closed, "2025-11-25".to_owned())
+    );
+
+    // Expiry is noticed where sessions are minted, at the next `initialize`.
+    let endings = Arc::new(Endings::default());
+    let dispatcher = Echo
+        .into_server()
+        .session_idle_timeout(Duration::from_millis(100))
+        .observe_sessions(Arc::clone(&endings) as Arc<dyn turbomcp_service::SessionObserver>)
+        .build();
+    for _ in 0..2 {
+        let mut adapter = turbomcp_server::LegacySessionAdapter::new(dispatcher.clone());
+        let out = tower::ServiceExt::ready(&mut adapter)
+            .await
+            .unwrap()
+            .call(McpRequest::new(initialize()))
+            .await
+            .unwrap();
+        assert!(matches!(out, Some(JsonRpcMessage::Response(r)) if !r.is_error()));
+        // An adapter built with `new` leaves its session to the store, so
+        // dropping it ends nothing: the store's idle clock has to.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    wait_for(&endings, 1).await;
+    assert_eq!(endings.0.lock().unwrap()[0].0, SessionEndReason::Expired);
 }

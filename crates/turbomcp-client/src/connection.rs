@@ -33,8 +33,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -99,11 +99,27 @@ struct Inner {
     observer: Option<Arc<dyn crate::RequestObserver>>,
     /// The connection the transport carries, for the observer.
     network: Option<turbomcp_service::NetworkFacts>,
+    /// When the connection opened, for the observer's session duration.
+    opened: Instant,
+    /// Whether a handshake settled `negotiated` (it starts as a default).
+    settled: AtomicBool,
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
         self.shutdown.cancel();
+        if let Some(observer) = &self.observer {
+            let version = self
+                .negotiated
+                .lock()
+                .map(|v| v.clone())
+                .unwrap_or(ProtocolVersion::LATEST);
+            observer.closed(&crate::observe::ClosedSession {
+                duration: self.opened.elapsed(),
+                protocol_version: self.settled.load(Ordering::Acquire).then_some(&version),
+                network: self.network.as_ref(),
+            });
+        }
     }
 }
 
@@ -221,6 +237,8 @@ impl Connection {
                 inbound,
                 observer,
                 network,
+                opened: Instant::now(),
+                settled: AtomicBool::new(false),
             }),
         }
     }
@@ -233,6 +251,7 @@ impl Connection {
             .negotiated
             .lock()
             .expect("negotiated version mutex poisoned") = version;
+        self.inner.settled.store(true, Ordering::Release);
     }
 
     /// Whether this connection runs over Streamable HTTP, which is where the

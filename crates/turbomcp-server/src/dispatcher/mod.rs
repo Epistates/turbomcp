@@ -116,6 +116,8 @@ struct Shared {
     validators: Arc<crate::catalog::Validators>,
     /// Observer for `notifications/roots/list_changed`, if one was registered.
     roots_changed: Option<Arc<RootsChangedHandler>>,
+    /// Told when each stateful session ends.
+    session_observer: Option<Arc<dyn turbomcp_service::SessionObserver>>,
     /// Replace internal errors' text with a logged reference.
     mask_internal_errors: bool,
 }
@@ -253,12 +255,30 @@ impl Shared {
                 return;
             }
         };
-        for id in expired {
-            self.inflight.cancel_scope(&id);
-            self.subs.legacy_remove(&id);
+        for expired in expired {
+            let id = expired.id.as_str();
+            self.inflight.cancel_scope(id);
+            self.subs.legacy_remove(id);
             if let Some(tasks) = &self.tasks {
-                tasks.end_session(&id).await;
+                tasks.end_session(id).await;
             }
+            if let Some(state) = &expired.state {
+                self.session_ended(state, turbomcp_service::SessionEndReason::Expired);
+            }
+        }
+    }
+
+    fn session_ended(
+        &self,
+        state: &crate::SessionState,
+        reason: turbomcp_service::SessionEndReason,
+    ) {
+        if let Some(observer) = &self.session_observer {
+            observer.session_ended(&turbomcp_service::EndedSession::new(
+                state.age(),
+                &state.version,
+                reason,
+            ));
         }
     }
 
@@ -266,8 +286,16 @@ impl Shared {
     /// routes. Returns whether the session existed. Backs explicit `DELETE`
     /// session termination. A store that fails to delete it leaves its routes
     /// in place, since the session may well still exist.
-    async fn terminate_session(&self, id: &str) -> Result<bool, SessionError> {
-        let existed = self.sessions.remove(id).await?;
+    async fn terminate_session(
+        &self,
+        id: &str,
+        reason: turbomcp_service::SessionEndReason,
+    ) -> Result<bool, SessionError> {
+        let ended = self.sessions.remove(id).await?;
+        if let Some(state) = &ended {
+            self.session_ended(state, reason);
+        }
+        let existed = ended.is_some();
         self.inflight.cancel_scope(id);
         self.subs.legacy_remove(id);
         // Nothing can ask about the session's tasks any more, so they are
@@ -318,7 +346,10 @@ impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
             if !self.owns(session_id, owner).await? {
                 return Ok(false);
             }
-            Ok(self.shared.terminate_session(session_id).await?)
+            Ok(self
+                .shared
+                .terminate_session(session_id, turbomcp_service::SessionEndReason::Terminated)
+                .await?)
         })
     }
     fn negotiated_version<'a>(
@@ -355,7 +386,11 @@ impl SessionEnd {
     pub(crate) fn end(self, id: String) {
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                if let Err(e) = self.shared.terminate_session(&id).await {
+                if let Err(e) = self
+                    .shared
+                    .terminate_session(&id, turbomcp_service::SessionEndReason::Closed)
+                    .await
+                {
                     tracing::warn!(error = %e, "could not end a closed connection's session");
                 }
             });
@@ -411,6 +446,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 visibility: None,
                 validators: Arc::new(crate::catalog::Validators::default()),
                 roots_changed: None,
+                session_observer: None,
                 mask_internal_errors: false,
             },
         }
@@ -430,6 +466,17 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn on_roots_changed(mut self, handler: Arc<RootsChangedHandler>) -> Self {
         self.shared.roots_changed = Some(handler);
+        self
+    }
+
+    /// Tell `observer` when each stateful session ends. See
+    /// [`ServerBuilder::observe_sessions`](crate::ServerBuilder::observe_sessions).
+    #[must_use]
+    pub fn observe_sessions(
+        mut self,
+        observer: Arc<dyn turbomcp_service::SessionObserver>,
+    ) -> Self {
+        self.shared.session_observer = Some(observer);
         self
     }
 

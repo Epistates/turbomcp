@@ -16,9 +16,10 @@ use turbomcp_core::{
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
-    CallToolContext, InputWaiter, LegacySessionAdapter, ListToolsContext, McpServerCore, NewTask,
-    ServerBuilder, SessionBackend, SessionError, SessionState, TaskBackend, TaskError, TaskOutcome,
-    TaskOwner, TaskSnapshot, TaskStore, TaskUpdate, VersionDispatcher, WithTools,
+    CallToolContext, ExpiredSession, InputWaiter, LegacySessionAdapter, ListToolsContext,
+    McpServerCore, NewTask, ServerBuilder, SessionBackend, SessionError, SessionState, TaskBackend,
+    TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStore, TaskUpdate, VersionDispatcher,
+    WithTools,
 };
 
 /// A [`SessionBackend`] that keeps sessions as bytes, the way a Redis or SQL
@@ -72,13 +73,15 @@ impl SessionBackend for ByteSessions {
         Ok(true)
     }
 
-    async fn remove(&self, id: &str) -> Result<bool, SessionError> {
+    async fn remove(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
         self.up()?;
         self.removes.fetch_add(1, Ordering::SeqCst);
-        Ok(self.rows.lock().unwrap().remove(id).is_some())
+        Ok(self.rows.lock().unwrap().remove(id).map(|bytes| {
+            Arc::new(serde_json::from_slice(&bytes).expect("session state deserializes"))
+        }))
     }
 
-    async fn sweep_expired(&self) -> Result<Vec<String>, SessionError> {
+    async fn sweep_expired(&self) -> Result<Vec<ExpiredSession>, SessionError> {
         Ok(Vec::new())
     }
 }

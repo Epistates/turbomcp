@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- Session duration metrics. `mcp.server.session.duration` is recorded for
+  each stateful session that ends, by `MetricsLayer` registered with the new
+  `ServerBuilder::observe_sessions` (a `turbomcp_service::SessionObserver`,
+  told the duration, revision and `SessionEndReason`: terminated, closed,
+  expired), and `mcp.client.session.duration` by `ClientTelemetry` when the
+  client's connection closes (`RequestObserver::closed`). `SessionState`
+  records `created_at`.
 - Network attributes in telemetry. Every transport now reports the
   connection a message rides as `NetworkFacts` (on each request a server
   receives, and from `Transport::network` on a client): stdio is
@@ -513,6 +520,10 @@ Earlier in this cycle:
   `ClientCredentials::client_secret` are `Zeroizing<String>`. They deref to
   `String` and serialize as before; compare with `.as_str()`, and build one
   from a `String` with `.into()`.
+- **Breaking:** `SessionBackend::remove` returns the removed
+  `Option<Arc<SessionState>>` (was `bool`), and `sweep_expired` returns
+  `Vec<ExpiredSession>` (was the ids), so the dispatcher can report how
+  long each session lived.
 - **Breaking:** `BearerSource::bearer` returns `Option<Zeroizing<String>>`,
   and the provided impls are for `Zeroizing<String>` and
   `Mutex<Option<Zeroizing<String>>>` (were `String` and
