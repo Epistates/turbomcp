@@ -43,9 +43,10 @@ impl<V: BearerValidator> ResourceServer<V> {
         }
     }
 
-    /// Require every request to carry these scopes (a baseline gate; per-tool
-    /// scope policy is a separate, later concern). A token missing any of them
-    /// is answered 403 `insufficient_scope`.
+    /// Require every request to carry these scopes (a baseline gate). A token
+    /// missing any of them is answered 403 `insufficient_scope`. Per-tool
+    /// scopes (`#[tool(scopes(…))]`) are checked when the tool is called, and
+    /// answered with the same challenge naming the tool's scopes.
     #[must_use]
     pub fn required_scopes(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.required_scopes = scopes.into_iter().map(Into::into).collect();
@@ -73,15 +74,18 @@ impl<V: BearerValidator> ResourceServer<V> {
     /// The 403 challenge for a valid token lacking a required scope
     /// (RFC 6750 §3.1: `error="insufficient_scope"`).
     fn forbidden(&self) -> AuthDecision {
-        let params = vec![
-            ("error".to_owned(), "insufficient_scope".to_owned()),
-            ("scope".to_owned(), self.required_scopes.join(" ")),
-            ("resource_metadata".to_owned(), self.metadata_url.clone()),
-        ];
         AuthDecision::Challenge {
             status: 403,
-            www_authenticate: www_authenticate(&params),
+            www_authenticate: self.insufficient_scope_challenge(&self.required_scopes),
         }
+    }
+
+    fn insufficient_scope_challenge(&self, scopes: &[String]) -> String {
+        www_authenticate(&[
+            ("error".to_owned(), "insufficient_scope".to_owned()),
+            ("scope".to_owned(), scopes.join(" ")),
+            ("resource_metadata".to_owned(), self.metadata_url.clone()),
+        ])
     }
 }
 
@@ -113,6 +117,12 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
 
     fn resource_metadata(&self) -> Value {
         serde_json::to_value(&self.metadata).unwrap_or(Value::Null)
+    }
+
+    /// A tool (or any handler) said it needs `scopes`: the same challenge as
+    /// the baseline gate's, naming them.
+    fn insufficient_scope(&self, scopes: &[String]) -> Option<String> {
+        Some(self.insufficient_scope_challenge(scopes))
     }
 }
 

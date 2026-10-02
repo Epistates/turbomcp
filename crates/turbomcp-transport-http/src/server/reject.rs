@@ -18,6 +18,33 @@ pub(super) fn challenge_response(status: u16, www_authenticate: &str) -> Respons
     (status, [(axum::http::header::WWW_AUTHENTICATE, header)]).into_response()
 }
 
+/// `403` for an operation that needs scopes the token lacks ("Runtime
+/// Insufficient Scope Errors"): the authenticator's `WWW-Authenticate`
+/// challenge, which an OAuth client answers by stepping up and retrying, and
+/// the JSON-RPC error naming the scopes for one that doesn't.
+pub(super) fn insufficient_scope(
+    id: &RequestId,
+    scopes: &[String],
+    www_authenticate: &str,
+) -> Response {
+    // The code and data are the same on every revision.
+    let error = turbomcp_core::McpError::InsufficientScope(scopes.to_vec())
+        .to_jsonrpc_error(&ProtocolVersion::V2026_07_28);
+    let mut response = transport_error(
+        StatusCode::FORBIDDEN,
+        Some(id),
+        error.code,
+        error.message,
+        error.data,
+    );
+    let header = HeaderValue::from_str(www_authenticate)
+        .unwrap_or_else(|_| HeaderValue::from_static("Bearer error=\"insufficient_scope\""));
+    response
+        .headers_mut()
+        .insert(header::WWW_AUTHENTICATE, header);
+    response
+}
+
 /// `429 Too Many Requests` with a `Retry-After` header (seconds, rounded up).
 pub(super) fn too_many_requests(retry_after: Duration) -> Response {
     retry_later(

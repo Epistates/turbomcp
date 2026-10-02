@@ -39,7 +39,7 @@ use turbomcp_core::{
 };
 use turbomcp_service::{
     CancellationToken, HttpAuthenticator, McpService, Peer, ProtocolError, RateKey, RateLimiter,
-    Serve, ServerHandle, SessionStreams, SessionTerminator, catch_handler_panic,
+    ScopeChallenge, Serve, ServerHandle, SessionStreams, SessionTerminator, catch_handler_panic,
     close_then_shut_down,
 };
 
@@ -48,10 +48,10 @@ use guards::{
     PeerIp, accepts, check_host, check_origin, client_key, enforce_auth, enforce_rate_limit,
 };
 use reject::{
-    deadline_passed, envelope_rejection, invalid_frame_response, method_not_allowed,
-    not_acceptable_rejection, protocol_error_response, service_unavailable, session_not_found,
-    session_required_rejection, sessions_need_an_owner, too_many_requests, unknown_event_rejection,
-    version_header_rejection,
+    deadline_passed, envelope_rejection, insufficient_scope, invalid_frame_response,
+    method_not_allowed, not_acceptable_rejection, protocol_error_response, service_unavailable,
+    session_not_found, session_required_rejection, sessions_need_an_owner, too_many_requests,
+    unknown_event_rejection, version_header_rejection,
 };
 use sse::{AbortOnDrop, Outlet, SSE_CHANNEL_CAPACITY, request_stream, sse_response};
 use streams::{Admission, StreamBudget};
@@ -469,6 +469,8 @@ where
     let mut ext = Extensions::new().with(state.streams.clone());
     if let Some(authenticated) = authenticated {
         ext.insert(authenticated.identity);
+        // Where a handler says the call needs scopes this token lacks.
+        ext.insert(ScopeChallenge::default());
     }
 
     // Rate limit (if configured) per identity: authenticated → per-subject,
@@ -672,6 +674,29 @@ where
     }
 }
 
+/// The plain-JSON answer to a request: its reply, or the step-up `403` when
+/// the handler said the call needs scopes the token lacks and the
+/// authenticator can phrase the challenge. (A reply already streaming as SSE
+/// has sent its `200` and stays as it is.)
+fn reply_response<S>(
+    state: &HttpState<S>,
+    reply: &JsonRpcMessage,
+    challenge: Option<&ScopeChallenge>,
+    stateless_request: bool,
+) -> Response {
+    if let (Some(scopes), Some(authenticator), JsonRpcMessage::Response(response)) = (
+        challenge.and_then(ScopeChallenge::demanded),
+        state.authenticator.as_deref(),
+        reply,
+    ) && let (Some(header), Some(id)) = (authenticator.insufficient_scope(scopes), &response.id)
+    {
+        return insufficient_scope(id, scopes, &header);
+    }
+    let mut resp = encode_json_response(&state.codec, reply);
+    apply_stateless_error_status(&mut resp, reply, stateless_request);
+    resp
+}
+
 /// Give a stateless-wire reply the HTTP status its JSON-RPC error code calls
 /// for (transports spec / SEP-2575). Two codes are not "the request was fine,
 /// the operation failed", so they do not get the usual `200`:
@@ -805,6 +830,7 @@ where
         unreachable!("request_post is only called for requests");
     };
     let request_id = req.id.clone();
+    let challenge = request.extensions.get::<ScopeChallenge>().cloned();
     let session = (!stateless_request)
         .then(|| request.extensions.get::<SessionId>())
         .flatten()
@@ -860,9 +886,7 @@ where
             // The call ended without emitting anything first.
             None => match outcome.await {
                 Ok(Ok(Some(reply))) => {
-                    let mut resp = encode_json_response(&state.codec, &reply);
-                    apply_stateless_error_status(&mut resp, &reply, stateless_request);
-                    resp
+                    reply_response(state, &reply, challenge.as_ref(), stateless_request)
                 }
                 // Cancelled before it answered: nothing to say.
                 Ok(Ok(None)) | Err(_) => StatusCode::ACCEPTED.into_response(),
@@ -903,6 +927,7 @@ where
         unreachable!("request_post is only called for requests");
     };
     let request_id = req.id.clone();
+    let challenge = request.extensions.get::<ScopeChallenge>().cloned();
     let (outlet, mut call_rx) = Outlet::open("http-post", &mut request);
     let mut svc = state.service.clone();
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
@@ -946,11 +971,7 @@ where
             // Answered with nothing on the way: plain JSON, with the status
             // the outcome calls for.
             Some((_, JsonRpcMessage::Response(_))) => match outcome.await {
-                Ok(Ok(Some(reply))) => {
-                    let mut resp = encode_json_response(&state.codec, &reply);
-                    apply_stateless_error_status(&mut resp, &reply, false);
-                    resp
-                }
+                Ok(Ok(Some(reply))) => reply_response(state, &reply, challenge.as_ref(), false),
                 Ok(Err(e)) => protocol_error_response(&e, Some(request_id)),
                 Ok(Ok(None)) | Err(_) => StatusCode::ACCEPTED.into_response(),
             },

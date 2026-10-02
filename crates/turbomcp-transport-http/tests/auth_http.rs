@@ -46,17 +46,26 @@ impl WithTools for Whoami {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
-            "whoami",
-            serde_json::json!({"type":"object"}),
-        )]))
+        Ok(neutral::ListToolsResult::new(vec![
+            neutral::Tool::new("whoami", serde_json::json!({"type":"object"})),
+            neutral::Tool::new("write", serde_json::json!({"type":"object"})),
+        ]))
     }
 
     async fn call_tool(
         &self,
         ctx: &CallToolContext,
-        _params: neutral::CallToolParams,
+        params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
+        // A per-tool scope check, written by hand: what `#[tool(scopes(…))]`
+        // generates.
+        if params.name == "write" {
+            let needed = ["files:read", "files:write"];
+            if !ctx.base.identity.has_scopes(&needed) {
+                return Err(turbomcp_core::McpError::insufficient_scope(needed));
+            }
+            return Ok(neutral::CallToolResult::text("written"));
+        }
         let who = ctx
             .base
             .identity
@@ -84,19 +93,30 @@ fn app() -> axum::Router {
 }
 
 fn token() -> String {
+    token_with_scope(None)
+}
+
+fn token_with_scope(scope: Option<&str>) -> String {
     let mut header = Header::new(Algorithm::HS256);
     header.kid = Some(KID.to_owned());
-    let claims = json!({
+    let mut claims = json!({
         "sub": "alice", "aud": RESOURCE, "iss": ISSUER, "exp": 4_102_444_800i64,
     });
+    if let Some(scope) = scope {
+        claims["scope"] = json!(scope);
+    }
     encode(&header, &claims, &EncodingKey::from_secret(SECRET)).unwrap()
 }
 
 fn call_request(auth: Option<&str>) -> Request<Body> {
+    call_tool_request("whoami", auth)
+}
+
+fn call_tool_request(tool: &str, auth: Option<&str>) -> Request<Body> {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {
-            "name": "whoami", "arguments": {},
+            "name": tool, "arguments": {},
             "_meta": {
                 "io.modelcontextprotocol/protocolVersion": "2026-07-28",
                 "io.modelcontextprotocol/clientCapabilities": {},
@@ -111,7 +131,7 @@ fn call_request(auth: Option<&str>) -> Request<Body> {
         // The draft envelope requires the mirrored request-metadata headers.
         .header("MCP-Protocol-Version", "2026-07-28")
         .header("Mcp-Method", "tools/call")
-        .header("Mcp-Name", "whoami");
+        .header("Mcp-Name", tool);
     if let Some(auth) = auth {
         req = req.header(header::AUTHORIZATION, auth);
     }
@@ -256,6 +276,55 @@ async fn insufficient_scope_is_403_over_the_wire() {
         "{challenge}"
     );
     assert!(challenge.contains("scope=\"mcp:use\""), "{challenge}");
+}
+
+/// A tool that needs scopes the token lacks answers the spec's step-up
+/// challenge ("Runtime Insufficient Scope Errors"), naming every scope the
+/// tool needs, and the body says the same for a client that doesn't step up.
+#[tokio::test]
+async fn a_tool_needing_more_scope_answers_a_step_up_challenge() {
+    let auth = format!("Bearer {}", token_with_scope(Some("files:read")));
+    let resp = app()
+        .oneshot(call_tool_request("write", Some(&auth)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let challenge = resp.headers()[header::WWW_AUTHENTICATE]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        challenge.contains("error=\"insufficient_scope\""),
+        "{challenge}"
+    );
+    assert!(
+        challenge.contains("scope=\"files:read files:write\""),
+        "{challenge}"
+    );
+    assert!(
+        challenge.contains(&format!("resource_metadata=\"{METADATA_URL}\"")),
+        "{challenge}"
+    );
+    let body = body_json(resp).await;
+    assert_eq!(body["id"], 1);
+    assert_eq!(body["error"]["code"], -32000);
+    assert_eq!(
+        body["error"]["data"]["requiredScopes"],
+        json!(["files:read", "files:write"])
+    );
+
+    // With the scopes, the same call goes through.
+    let auth = format!(
+        "Bearer {}",
+        token_with_scope(Some("files:read files:write"))
+    );
+    let resp = app()
+        .oneshot(call_tool_request("write", Some(&auth)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["result"]["content"][0]["text"], "written");
 }
 
 #[tokio::test]

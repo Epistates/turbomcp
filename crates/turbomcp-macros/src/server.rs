@@ -1313,15 +1313,14 @@ fn gen_tool_call_arm(self_ty: &Type, t: &Handler) -> TokenStream {
         quote!(__args.#f)
     });
     // `#[tool(scopes(…))]`: deny the call unless the caller holds every scope.
+    // The error names all of them (one step-up asks for everything the tool
+    // needs); the router makes it a tool error and a step-up challenge.
     let scope_guard = (!t.scopes.is_empty()).then(|| {
         let scopes = &t.scopes;
-        let needed = t.scopes.join(", ");
         quote! {
             if !ctx.base.identity.has_scopes(&[#(#scopes),*]) {
-                return ::core::result::Result::Ok(
-                    ::turbomcp::neutral::CallToolResult::error(
-                        ::std::format!("insufficient scope: '{}' requires {}", #name, #needed)
-                    )
+                return ::core::result::Result::Err(
+                    ::turbomcp::McpError::insufficient_scope([#(#scopes),*])
                 );
             }
         }

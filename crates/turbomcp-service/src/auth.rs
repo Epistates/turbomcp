@@ -17,6 +17,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
 use turbomcp_core::Identity;
@@ -35,6 +36,40 @@ pub trait HttpAuthenticator: Send + Sync {
     /// The RFC 9728 Protected Resource Metadata document to serve at
     /// `/.well-known/oauth-protected-resource` (an arbitrary JSON object).
     fn resource_metadata(&self) -> Value;
+
+    /// The `WWW-Authenticate` value for an authenticated request whose
+    /// operation needs `scopes` the token lacks: `Bearer
+    /// error="insufficient_scope", scope="…", resource_metadata="…"`, which
+    /// the transport sends with a `403` ("Runtime Insufficient Scope
+    /// Errors"). `None`, the default, answers such a request as usual, with
+    /// the error in its body.
+    fn insufficient_scope(&self, scopes: &[String]) -> Option<String> {
+        let _ = scopes;
+        None
+    }
+}
+
+/// Where a request's handler says which scopes its operation needs and the
+/// caller lacks, for the HTTP transport to answer with a step-up challenge
+/// ([`HttpAuthenticator::insufficient_scope`]).
+///
+/// The transport attaches one to each authenticated request's extensions; the
+/// dispatcher fills it from an [`McpError::InsufficientScope`](turbomcp_core::McpError)
+/// a handler returned. The first demand wins.
+#[derive(Clone, Debug, Default)]
+pub struct ScopeChallenge(Arc<OnceLock<Vec<String>>>);
+
+impl ScopeChallenge {
+    /// The operation needs `scopes`.
+    pub fn demand(&self, scopes: &[String]) {
+        let _ = self.0.set(scopes.to_vec());
+    }
+
+    /// What the operation said it needs, if it said.
+    #[must_use]
+    pub fn demanded(&self) -> Option<&[String]> {
+        self.0.get().map(Vec::as_slice)
+    }
 }
 
 /// The outcome of authenticating one request.

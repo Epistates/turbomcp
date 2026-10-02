@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-tool step-up authorization. A `#[tool(scopes(…))]` called with a token
+  that lacks them, or any `tools/call` handler returning the new
+  `McpError::insufficient_scope(…)`, is answered over HTTP with the spec's
+  `403` and `WWW-Authenticate: Bearer error="insufficient_scope",
+  scope="…", resource_metadata="…"`, naming every scope the tool needs, so
+  an OAuth client steps up and retries. It used to be a `200` tool error no
+  client could act on. The authenticator phrases the challenge
+  (`HttpAuthenticator::insufficient_scope`, implemented by `ResourceServer`;
+  the default declines); the request carries a `ScopeChallenge` slot the
+  dispatcher fills. Elsewhere (stdio, WebSocket, no authenticator, a
+  response already streaming) the denial stays a tool error.
 - Resumable client tasks. `Client::call_tool_detached` keeps the task a call
   becomes (`Detached::Task`, holding a `ToolTask`) instead of waiting on it,
   or returns `Detached::Done` when the server answers inline;
@@ -437,6 +448,12 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `McpError::InsufficientScope(Vec<String>)` is new (JSON-RPC
+  `-32000` with `data: { requiredScopes }`, HTTP 403), and
+  `#[tool(scopes(…))]`'s generated `call_tool` returns it rather than a
+  tool-error result; the router turns it into the tool error. A caller of
+  the generated `WithTools::call_tool` that bypasses the dispatcher sees the
+  error. The denial's text is `insufficient scope: requires …`.
 - **Breaking:** the client reads tasks typed. `Client::task_get` returns a
   `TaskInfo` (status, message, TTL and polling interval as `Duration`s,
   outstanding input, result or error, on either revision's field names),

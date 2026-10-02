@@ -39,7 +39,7 @@ mod serve;
 mod session;
 mod transport;
 
-pub use auth::{AuthDecision, AuthFuture, HttpAuthenticator};
+pub use auth::{AuthDecision, AuthFuture, HttpAuthenticator, ScopeChallenge};
 pub use error::ProtocolError;
 pub use host::{Pipe, Serve, ServerHandle, close_then_shut_down};
 pub use middleware::{Tracing, TracingLayer};

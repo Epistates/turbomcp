@@ -119,6 +119,18 @@ pub enum McpError {
     /// The identity is authenticated but not permitted. JSON-RPC `-32000`,
     /// HTTP 403.
     PermissionDenied(String),
+    /// The identity lacks scopes the operation needs: every one it needs, not
+    /// only the missing ones, so a client can ask for them in one step-up
+    /// ("servers SHOULD include all scopes required for the current
+    /// operation in a single challenge"). JSON-RPC `-32000` with
+    /// `data: { requiredScopes }`, HTTP 403.
+    ///
+    /// From a `tools/call` handler it reaches the client as a tool error, as
+    /// any failure does, and over HTTP with an authenticator the response is
+    /// the spec's `403` with `WWW-Authenticate: Bearer
+    /// error="insufficient_scope", scope="…"` instead, which an OAuth client
+    /// answers by stepping up and retrying. `#[tool(scopes(…))]` raises it.
+    InsufficientScope(Vec<String>),
     /// The operation timed out. JSON-RPC `-32000`, HTTP 504. Retryable.
     Timeout(String),
     /// Transport-level failure (connection closed, I/O error). JSON-RPC
@@ -203,6 +215,15 @@ impl McpError {
     /// Construct an [`McpError::PermissionDenied`].
     pub fn permission_denied(msg: impl Into<String>) -> Self {
         Self::PermissionDenied(msg.into())
+    }
+    /// Construct an [`McpError::InsufficientScope`]: the operation needs
+    /// `scopes`.
+    pub fn insufficient_scope<I, S>(scopes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self::InsufficientScope(scopes.into_iter().map(Into::into).collect())
     }
     /// Construct an [`McpError::Timeout`].
     pub fn timeout(msg: impl Into<String>) -> Self {
@@ -301,6 +322,13 @@ impl McpError {
                     supported,
                 })
             }
+            codes::SERVER_ERROR => data
+                .get("requiredScopes")?
+                .as_array()?
+                .iter()
+                .map(|v| v.as_str().map(String::from))
+                .collect::<Option<Vec<_>>>()
+                .map(Self::InsufficientScope),
             _ => None,
         }
     }
@@ -342,6 +370,7 @@ impl McpError {
             Self::MethodNotFound(_) => codes::METHOD_NOT_FOUND,
             Self::Authentication(_)
             | Self::PermissionDenied(_)
+            | Self::InsufficientScope(_)
             | Self::Timeout(_)
             | Self::Transport(_) => codes::SERVER_ERROR,
             Self::HeaderMismatch(_) => codes::HEADER_MISMATCH,
@@ -396,6 +425,7 @@ impl McpError {
                 "supported": supported,
                 "requested": requested.as_deref().unwrap_or(""),
             })),
+            Self::InsufficientScope(scopes) => Some(json!({ "requiredScopes": scopes })),
             Self::Rpc { data, .. } => data.clone(),
             _ => None,
         }
@@ -430,7 +460,7 @@ impl McpError {
             Self::MethodNotFound(_) | Self::ToolNotFound(_) | Self::ResourceNotFound(_) => 404,
             Self::ToolExecutionFailed { .. } => 200,
             Self::Authentication(_) => 401,
-            Self::PermissionDenied(_) => 403,
+            Self::PermissionDenied(_) | Self::InsufficientScope(_) => 403,
             Self::Timeout(_) => 504,
             Self::Transport(_) => 503,
         }
@@ -456,6 +486,9 @@ impl fmt::Display for McpError {
             Self::ResourceNotFound(m) => write!(f, "resource not found: {m}"),
             Self::Authentication(m) => write!(f, "authentication error: {m}"),
             Self::PermissionDenied(m) => write!(f, "permission denied: {m}"),
+            Self::InsufficientScope(scopes) => {
+                write!(f, "insufficient scope: requires {}", scopes.join(", "))
+            }
             Self::Timeout(m) => write!(f, "timeout: {m}"),
             Self::Transport(m) => write!(f, "transport error: {m}"),
             Self::UnsupportedProtocolVersion {
@@ -722,6 +755,7 @@ mod tests {
             McpError::method_not_found("x"),
             McpError::resource_not_found("mem://gone"),
             McpError::permission_denied("x"),
+            McpError::insufficient_scope(["files:read", "files:write"]),
             McpError::HeaderMismatch("x".into()),
             McpError::MissingRequiredCapability("elicitation.url".into()),
             McpError::MissingRequiredCapability("sampling".into()),

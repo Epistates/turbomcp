@@ -261,6 +261,20 @@ impl<S: McpServerCore> MethodRouter<S> {
                     Err(e @ McpError::ToolExecutionFailed { .. }) => {
                         Ok(neutral::CallToolResult::error(e.to_string()))
                     }
+                    // The caller lacks scopes the tool needs: a tool error the
+                    // model can read, and, where the transport can send one
+                    // (HTTP with an authenticator), the step-up challenge.
+                    Err(e @ McpError::InsufficientScope(_)) => {
+                        if let (McpError::InsufficientScope(scopes), Some(challenge)) = (
+                            &e,
+                            ctx.base
+                                .extensions
+                                .get::<turbomcp_service::ScopeChallenge>(),
+                        ) {
+                            challenge.demand(scopes);
+                        }
+                        Ok(neutral::CallToolResult::error(e.to_string()))
+                    }
                     other => other,
                 }
             })

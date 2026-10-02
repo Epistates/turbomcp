@@ -94,6 +94,20 @@ validators and key sources. `JwtValidator::add_issuer` deliberately trusts every
 key in that validator for every added issuer; use it only for shared key trust.
 JWKS refreshes coalesce and failed refreshes establish a cooldown.
 
+Per-tool scopes drive step-up ("Runtime Insufficient Scope Errors"). A
+`#[tool(scopes(…))]` called by a token that lacks them, or any `tools/call`
+handler returning `McpError::insufficient_scope(…)`, is answered `403` with
+`WWW-Authenticate: Bearer error="insufficient_scope", scope="<every scope the
+tool needs>", resource_metadata="…"` when the HTTP endpoint has an
+authenticator that phrases the challenge (`ResourceServer` does; a custom
+`HttpAuthenticator` opts in with `insufficient_scope`). An `OAuthSession`
+re-authorizes with the union of its scopes and retries. Without an
+authenticator, on stdio and WebSocket, or on a response already streaming as
+SSE, the same denial is a tool error. Under a visibility policy that hides
+tools the caller lacks scopes for (`Visibility::requiring_declared_scopes`),
+such a tool is unknown to the caller instead, so it neither lists nor
+challenges. Hiding and stepping up are alternatives; pick one per server.
+
 ## Resource bounds and overload
 
 The stream driver defaults to 1,024 concurrent application calls and an outbound
