@@ -1,0 +1,5 @@
+error: `task` is `task`, `task = "optional"` or `task = "required"`, not `always`
+  --> tests/ui/task_mode_unknown.rs:10:12
+   |
+10 |     #[tool(task = "always")]
+   |            ^^^^

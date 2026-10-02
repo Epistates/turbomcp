@@ -509,6 +509,14 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                     Ok(prepared) => prepared,
                     Err(response) => return *response,
                 };
+            // On 2026-07-28 a call reaches this path only once every
+            // call-augmenting extension has passed on it, so a tool that can
+            // only run as a task has nowhere to go.
+            if W::VERSION.is_stateless()
+                && tool.task_support == Some(neutral::TaskSupport::Required)
+            {
+                return super::task_required_refusal(shared, &ctx, id, &tool.name);
+            }
             call_prepared_tool::<S, W>(server, router, req, &ctx, shared, id, params, tool).await
         }
         methods::request::RESOURCES_LIST => {

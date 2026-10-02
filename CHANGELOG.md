@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `#[tool(task = "required")]`: a tool that runs only as a task. It lists as
+  `taskSupport: required`; on `2025-11-25` a call that isn't a task is
+  `-32601`, and on `2026-07-28` a client that hasn't declared the Tasks
+  extension gets `-32021` naming it. `#[tool(task)]` is the same as
+  `task = "optional"`.
 - Client-side telemetry. `ClientBuilder::with_observer` takes a
   `RequestObserver`, which sees every request the client sends (it may add
   `_meta` entries) and how each ended. `turbomcp_telemetry::ClientTelemetry`
@@ -408,6 +413,12 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `#[tool(task)]` also drives the `2026-07-28` Tasks
+  extension. `TasksExtension::new()` with no `task_tools`/`task_policy` used
+  to taskify nothing; it now taskifies the tools that declare task support,
+  the same marker that opts them into `2025-11-25` core Tasks. A policy still
+  decides for the rest, but a required tool is always a task. Extensions see
+  the resolved tool as `CallAugmentRequest::tool`.
 - **Breaking:** telemetry follows the OpenTelemetry MCP semantic
   conventions, so dashboards built for them work unmodified.
   - Spans are named `{mcp.method.name} {target}` (`tools/call add`) with

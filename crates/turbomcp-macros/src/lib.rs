@@ -63,10 +63,18 @@ pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marker: declares a method as an MCP tool. Consumed by [`macro@server`].
 ///
 /// Accepts `#[tool]`, `#[tool("description")]`, or a list of:
-/// `description = "…"`, `name = "…"`, `title = "…"`, `task`,
+/// `description = "…"`, `name = "…"`, `title = "…"`, `task` (or
+/// `task = "optional"` / `task = "required"`),
 /// `scopes("…", …)`, `tags("…", …)`, and the behavior hints `read_only` /
 /// `destructive` / `idempotent` / `open_world` (bare = true, or `= false` to
 /// declare the opposite — distinct from leaving a hint unset).
+///
+/// `task` lets the tool run as a task (`taskSupport: optional`); `task =
+/// "required"` lets it run *only* as one. On `2025-11-25` that needs
+/// `ServerBuilder::with_tasks()`, and a required tool called without a task
+/// is `-32601`. On `2026-07-28` the Tasks extension (`turbomcp-ext-tasks`)
+/// taskifies the tool for a client that declares the extension, and refuses a
+/// required tool to one that doesn't with `-32021`.
 ///
 /// `tags` categorizes the tool for catalog policy and is *not* a security
 /// boundary — use `scopes` for that. See [`macro@prompt`] for the shared

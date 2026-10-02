@@ -152,6 +152,9 @@ pub struct CallAugmentRequest {
     pub context: RequestContext,
     /// The prepared underlying call (spawn it if you take over the request).
     pub run: CallRunner,
+    /// The tool being called, as the server lists it: its `task_support`
+    /// says whether it may (or must) run as a task.
+    pub tool: turbomcp_protocol::neutral::Tool,
 }
 
 /// The result of offering a `subscriptions/listen` request to an extension

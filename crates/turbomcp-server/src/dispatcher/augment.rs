@@ -69,7 +69,7 @@ pub(super) async fn try_augment_call<S: McpServerCore>(
             router,
             req,
             ctx,
-            (shared.validators.clone(), tool.output_schema),
+            (shared.validators.clone(), tool.output_schema.clone()),
         ) {
             Ok(run) => run,
             // A malformed `tools/call` envelope is `-32602` regardless of
@@ -81,6 +81,7 @@ pub(super) async fn try_augment_call<S: McpServerCore>(
                 request: req.clone(),
                 context: ctx.clone(),
                 run,
+                tool,
             })
             .await
         {

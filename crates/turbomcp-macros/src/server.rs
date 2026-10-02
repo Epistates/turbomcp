@@ -441,7 +441,8 @@ enum ArgKind {
     Name(LitStr),
     Title(String),
     MimeType(String),
-    Task,
+    /// `task` / `task = "optional"` (`false`) or `task = "required"` (`true`).
+    Task(bool),
     Scopes(Vec<String>),
     Tags(Vec<String>),
     Hint(HintKind, bool),
@@ -458,7 +459,7 @@ impl ArgKind {
             Self::Name(_) => "name",
             Self::Title(_) => "title",
             Self::MimeType(_) => "mime_type",
-            Self::Task => "task",
+            Self::Task(_) => "task",
             Self::Scopes(_) => "scopes",
             Self::Tags(_) => "tags",
             Self::Hint(k, _) => k.key(),
@@ -516,7 +517,7 @@ impl Parse for MarkerArg {
         // `task` is a flag; the rest take a value, so their shape is checked here
         // and the marker gate (which key belongs on which marker) runs later.
         let kind = match key.as_str() {
-            "task" => ArgKind::Task,
+            "task" => ArgKind::Task(task_required(&meta)?),
             "description" => ArgKind::Desc(name_value_str(&meta, &key)?),
             "name" => ArgKind::Name(name_value_lit(&meta, &key)?),
             "title" => ArgKind::Title(name_value_str(&meta, &key)?),
@@ -615,6 +616,31 @@ fn name_value_lit(meta: &Meta, key: &str) -> syn::Result<LitStr> {
     }
 }
 
+/// `task` alone or `task = "optional"` is `false`; `task = "required"` is
+/// `true`; anything else is an error at the value.
+fn task_required(meta: &Meta) -> syn::Result<bool> {
+    match meta {
+        Meta::Path(_) => Ok(false),
+        Meta::NameValue(_) => {
+            let value = name_value_str(meta, "task")?;
+            match value.as_str() {
+                "optional" => Ok(false),
+                "required" => Ok(true),
+                _ => Err(syn::Error::new(
+                    meta.span(),
+                    format!(
+                        "`task` is `task`, `task = \"optional\"` or `task = \"required\"`, not `{value}`"
+                    ),
+                )),
+            }
+        }
+        Meta::List(_) => Err(syn::Error::new(
+            meta.span(),
+            "`task` is `task`, `task = \"optional\"` or `task = \"required\"`",
+        )),
+    }
+}
+
 fn name_value_str(meta: &Meta, key: &str) -> syn::Result<String> {
     name_value_lit(meta, key).map(|s| s.value())
 }
@@ -672,6 +698,7 @@ struct MarkerArgs {
     title: Option<String>,
     mime_type: Option<String>,
     task: bool,
+    task_required: bool,
     scopes: Vec<String>,
     tags: Vec<String>,
     hints: ToolHints,
@@ -721,7 +748,10 @@ impl MarkerArgs {
                 ArgKind::Name(s) => parsed.name = Some(s),
                 ArgKind::Title(s) => parsed.title = Some(s),
                 ArgKind::MimeType(s) => parsed.mime_type = Some(s),
-                ArgKind::Task => parsed.task = true,
+                ArgKind::Task(required) => {
+                    parsed.task = true;
+                    parsed.task_required = required;
+                }
                 ArgKind::Scopes(s) => parsed.scopes = s,
                 ArgKind::Tags(t) => parsed.tags = t,
                 ArgKind::Hint(HintKind::ReadOnly, v) => parsed.hints.read_only = Some(v),
@@ -840,8 +870,11 @@ struct Handler {
     /// The declared return type (`None` for `-> ()`), used to detect a
     /// `Json<T>` result and generate the tool's `outputSchema`.
     ret_ty: Option<Type>,
-    /// `#[tool(task)]`: opt this tool into `2025-11-25` task support. Tools only.
+    /// `#[tool(task)]`: the tool may run as a task (on `2025-11-25` core Tasks
+    /// and the `2026-07-28` Tasks extension alike). Tools only.
     task: bool,
+    /// `#[tool(task = "required")]`: it can only run as a task.
+    task_required: bool,
     /// `#[tool(scopes(…))]`: OAuth scopes the caller must hold. Tools only.
     scopes: Vec<String>,
     /// `tags(…)`: categorization for catalog policy, carried in the
@@ -867,6 +900,7 @@ impl Handler {
         self.title = args.title;
         self.mime_type = args.mime_type;
         self.task = args.task;
+        self.task_required = args.task_required;
         self.scopes = args.scopes;
         self.tags = args.tags;
         self.hints = args.hints;
@@ -1002,6 +1036,7 @@ impl Handler {
             slots,
             ret_ty,
             task: false,
+            task_required: false,
             scopes: Vec::new(),
             tags: Vec::new(),
             title: None,
@@ -1209,10 +1244,15 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
             )
         ))
     });
-    // `#[tool(task)]` advertises per-tool `2025-11-25` task support (Optional).
-    let task_support = t
-        .task
-        .then(|| quote!(.with_task_support(::turbomcp::neutral::TaskSupport::Optional)));
+    // `#[tool(task)]` advertises per-tool task support: `Optional`, or
+    // `Required` for `task = "required"`.
+    let task_support = t.task.then(|| {
+        if t.task_required {
+            quote!(.with_task_support(::turbomcp::neutral::TaskSupport::Required))
+        } else {
+            quote!(.with_task_support(::turbomcp::neutral::TaskSupport::Optional))
+        }
+    });
     let title = t.title.as_ref().map(|s| quote!(.with_title(#s)));
     // Behavior hints (`read_only`, `destructive`, …) → `ToolAnnotations`.
     let annotations = t.hints.any().then(|| {

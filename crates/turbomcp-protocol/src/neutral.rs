@@ -184,7 +184,8 @@ impl Content {
 /// A tool descriptor.
 /// Whether a tool supports being run as an asynchronous task (`2025-11-25` core
 /// Tasks). Mirrors the wire `execution.taskSupport`; the draft models Tasks as a
-/// server-directed extension instead, so this rides only the legacy wire.
+/// server-directed extension instead, so this rides only the legacy wire, and
+/// on `2026-07-28` it tells the Tasks extension which tools to taskify.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskSupport {
     /// The tool must not be run as a task.

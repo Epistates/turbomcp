@@ -36,10 +36,14 @@
 //!
 //! ## Which calls become tasks
 //!
-//! By default **no** `tools/call` is taskified (existing behavior is
-//! unchanged). Opt specific tools in with [`TasksExtension::task_tools`], or
-//! supply an arbitrary predicate with [`TasksExtension::task_policy`]. The
-//! server is the sole decider; a declared client never *requires* a task.
+//! By default a tool becomes a task when it says it can: `#[tool(task)]`
+//! (`Tool::with_task_support`), the same marker that opts it into
+//! `2025-11-25` core Tasks. `#[tool(task = "required")]` marks a tool that
+//! can only run as a task; a client that hasn't declared the extension gets
+//! `-32021` for it rather than a synchronous run. To decide otherwise, name
+//! the tools with [`TasksExtension::task_tools`] or supply a predicate with
+//! [`TasksExtension::task_policy`]; either replaces the default for every tool
+//! but a required one, which has no synchronous path to fall back to.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -52,6 +56,7 @@ use turbomcp_core::{
     CancellationToken, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError,
     McpResult, RequestContext, RequestId,
 };
+use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallAugmentRequest, Extension, ExtensionRequest, SubscribeOutcome, TaskInputBroker,
 };
@@ -135,15 +140,16 @@ impl Default for TasksExtension {
 }
 
 impl TasksExtension {
-    /// Create the extension with an empty registry. No `tools/call` is taskified
-    /// until you opt tools in via [`task_tools`](Self::task_tools) /
-    /// [`task_policy`](Self::task_policy).
+    /// Create the extension with an empty registry. Tools declared
+    /// task-capable become tasks; [`task_tools`](Self::task_tools) /
+    /// [`task_policy`](Self::task_policy) replace that rule.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Run the named tools as tasks (when the client declared the extension).
+    /// Run the named tools as tasks (when the client declared the extension),
+    /// plus any tool that can only run as one.
     #[must_use]
     pub fn task_tools<I, S>(mut self, names: I) -> Self
     where
@@ -159,6 +165,7 @@ impl TasksExtension {
 
     /// Decide per call whether to taskify, with full access to the tool name and
     /// request context. Supersedes any prior [`task_tools`](Self::task_tools).
+    /// A tool that can only run as a task is one regardless.
     #[must_use]
     pub fn task_policy<F>(mut self, policy: F) -> Self
     where
@@ -219,10 +226,17 @@ impl TasksExtension {
     }
 
     /// Whether `name` should run as a task under `ctx`.
-    fn should_task(&self, name: &str, ctx: &RequestContext) -> bool {
-        self.taskify
-            .as_ref()
-            .is_some_and(|decide| decide(name, ctx))
+    /// With no policy set, a tool declared task-capable (`#[tool(task)]`,
+    /// `Tool::with_task_support`) becomes a task; a policy, when set, decides
+    /// for the rest. A required tool is always one: declining it would only
+    /// turn the call into an error.
+    fn should_task(&self, tool: &neutral::Tool, ctx: &RequestContext) -> bool {
+        use neutral::TaskSupport::{Optional, Required};
+        match (&self.taskify, tool.task_support) {
+            (_, Some(Required)) => true,
+            (Some(decide), _) => decide(&tool.name, ctx),
+            (None, support) => support == Some(Optional),
+        }
     }
 }
 
@@ -232,12 +246,6 @@ impl TasksExtension {
 struct TaskIdParams {
     #[serde(rename = "taskId")]
     task_id: String,
-}
-
-/// The `name` field of a `tools/call`, to decide taskification.
-#[derive(Deserialize)]
-struct CallToolName {
-    name: String,
 }
 
 /// Parse the request's `taskId` (`-32602` on an absent/invalid one, SEP-2663
@@ -332,8 +340,10 @@ impl Extension for TasksExtension {
         OWNED_METHODS
     }
 
+    // With no policy, a tool's own `taskSupport` decides, so any call may be
+    // one this extension takes.
     fn augments_calls(&self) -> bool {
-        self.taskify.is_some()
+        true
     }
 
     fn notification_topics(&self) -> &'static [&'static str] {
@@ -398,15 +408,7 @@ impl Extension for TasksExtension {
         let request = augment.request;
         let context = augment.context;
         let run = augment.run;
-
-        // Decide from the tool name; an unparseable call falls through to the
-        // normal dispatch (which answers `-32602` for the bad envelope).
-        let name = request
-            .params
-            .as_ref()
-            .and_then(|p| serde_json::from_value::<CallToolName>(p.clone()).ok())?
-            .name;
-        if !self.should_task(&name, &context) {
+        if !self.should_task(&augment.tool, &context) {
             return None;
         }
 

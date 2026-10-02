@@ -1403,6 +1403,34 @@ fn error_response_for(id: RequestId, version: &ProtocolVersion, err: &McpError) 
     JsonRpcResponse::error(id, err.to_jsonrpc_error(version)).into()
 }
 
+/// The answer for a task-required tool no extension made a task of. "If a
+/// server is unable to service a request to a client that does not declare
+/// this extension capability without returning `CreateTaskResult`, the server
+/// MUST return an error with the code `-32021`", naming the extension to
+/// declare. A client that did declare one was refused a task for another
+/// reason (the registry is full), which is the server's to report.
+fn task_required_refusal(
+    shared: &Shared,
+    ctx: &RequestContext,
+    id: RequestId,
+    tool: &str,
+) -> JsonRpcMessage {
+    let undeclared = shared
+        .extensions
+        .iter()
+        .filter(|e| e.augments_calls())
+        .find(|e| !context_declares_extension(ctx, e.id()));
+    match undeclared {
+        Some(extension) => missing_capability_response(id, extension.id()),
+        None => error_response(
+            id,
+            &McpError::internal(format!(
+                "the tool `{tool}` runs only as a task, and no task could be created for it"
+            )),
+        ),
+    }
+}
+
 /// Missing Required Client Capability (SEP-2663): the client requested an
 /// extension's behavior without declaring its capability. The `data` names the
 /// required extension so the client can re-declare and retry.
