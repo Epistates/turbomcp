@@ -8,9 +8,10 @@ use tower::{Service, ServiceExt};
 use turbomcp::neutral::{CallToolParams, CallToolResult};
 use turbomcp::prelude::*;
 use turbomcp::{
-    CallToolContext, Claims, Identity, JsonRpcMessage, JsonRpcRequest, McpRequest, ProtocolVersion,
-    RequestContext, WithTools,
+    CallToolContext, Claims, Identity, JsonRpcMessage, JsonRpcRequest, LegacySessionAdapter,
+    McpRequest, ProtocolVersion, RequestContext, WithTools,
 };
+use turbomcp_service::ScopeChallenge;
 
 #[derive(Clone)]
 struct Guarded;
@@ -21,6 +22,12 @@ impl Guarded {
     #[tool(description = "Admin only", scopes("admin"))]
     async fn secret(&self) -> String {
         "top secret".into()
+    }
+
+    /// Requires `admin`, and runs only as a task.
+    #[tool(description = "Admin batch", task = "required", scopes("admin"))]
+    async fn batch(&self) -> String {
+        "batched".into()
     }
 
     /// No scope requirement.
@@ -120,4 +127,87 @@ async fn unscoped_tool_allows_anyone() {
     let r = call("open", &ctx(None)).await.unwrap();
     assert!(!r.is_error);
     assert_eq!(text(&r), "public");
+}
+
+fn reader() -> Identity {
+    Identity::Bearer {
+        sub: "u".into(),
+        claims: json!({ "scope": "read" }).as_object().unwrap().clone(),
+    }
+}
+
+/// The refusal a task-augmented call to a scoped tool must get: the tool
+/// error and the step-up challenge, never a task that fails later (whose
+/// caller would have no challenge to step up on).
+fn assert_refused(r: &turbomcp::JsonRpcResponse, challenge: &ScopeChallenge) {
+    let result = r.result.as_ref().expect("a tool result");
+    assert_eq!(result["isError"], true, "{result}");
+    assert!(
+        result.get("task").is_none() && result.get("taskId").is_none(),
+        "{result}"
+    );
+    assert_eq!(challenge.demanded(), Some(&["admin".to_owned()][..]));
+}
+
+#[tokio::test]
+async fn a_scoped_task_call_on_2025_11_25_is_refused_before_it_becomes_a_task() {
+    let mut svc = LegacySessionAdapter::new(Guarded.into_server().with_tasks().build());
+    let init = JsonRpcRequest::new(
+        0,
+        "initialize",
+        Some(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "c", "version": "1" },
+        })),
+    );
+    // A session belongs to the principal that opened it.
+    let init = McpRequest::new(init).with(reader());
+    svc.ready().await.unwrap().call(init).await.unwrap();
+    let challenge = ScopeChallenge::default();
+    let call = McpRequest::new(JsonRpcRequest::new(
+        1,
+        "tools/call",
+        Some(json!({ "name": "batch", "arguments": {}, "task": { "ttl": 60000 } })),
+    ))
+    .with(reader())
+    .with(challenge.clone());
+    let Some(JsonRpcMessage::Response(r)) = svc.ready().await.unwrap().call(call).await.unwrap()
+    else {
+        panic!("expected a response");
+    };
+    assert_refused(&r, &challenge);
+}
+
+#[cfg(feature = "ext-tasks")]
+#[tokio::test]
+async fn a_scoped_task_call_on_2026_07_28_is_refused_before_it_becomes_a_task() {
+    let mut svc = Guarded
+        .into_server()
+        .with_extension(std::sync::Arc::new(
+            turbomcp::ext_tasks::TasksExtension::new(),
+        ))
+        .build();
+    let challenge = ScopeChallenge::default();
+    let call = McpRequest::new(JsonRpcRequest::new(
+        1,
+        "tools/call",
+        Some(json!({
+            "name": "batch",
+            "arguments": {},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {
+                    "extensions": { "io.modelcontextprotocol/tasks": {} },
+                },
+            },
+        })),
+    ))
+    .with(reader())
+    .with(challenge.clone());
+    let Some(JsonRpcMessage::Response(r)) = svc.ready().await.unwrap().call(call).await.unwrap()
+    else {
+        panic!("expected a response");
+    };
+    assert_refused(&r, &challenge);
 }

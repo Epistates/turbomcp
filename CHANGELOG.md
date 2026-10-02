@@ -34,7 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`HttpAuthenticator::insufficient_scope`, implemented by `ResourceServer`;
   the default declines); the request carries a `ScopeChallenge` slot the
   dispatcher fills. Elsewhere (stdio, WebSocket, no authenticator, a
-  response already streaming) the denial stays a tool error.
+  response already streaming) the denial stays a tool error. The dispatcher
+  checks the scopes a tool declares (`_meta` `io.turbomcp/scopes`, which
+  `scopes(…)` writes) before anything acts on the call, so a task-augmented
+  call on either revision is challenged rather than answered with a task
+  that then fails, and a hand-written tool declaring scopes is enforced the
+  same way.
 - Resumable client tasks. `Client::call_tool_detached` keeps the task a call
   becomes (`Detached::Task`, holding a `ToolTask`) instead of waiting on it,
   or returns `Detached::Done` when the server answers inline;

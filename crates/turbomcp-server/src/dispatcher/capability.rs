@@ -809,6 +809,17 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     }) {
         return Err(Box::new(unknown()));
     }
+    // Declared scopes are checked here, before any path can act on the call:
+    // a task-augmented call refused inside its handler would already have
+    // answered `CreateTaskResult`, so its caller would get a failed task
+    // instead of the step-up challenge. (`#[tool(scopes(…))]` also guards the
+    // handler itself, for callers that reach it without a dispatcher.)
+    let required: Vec<&str> = crate::visibility::declared_scopes(&tool.meta).collect();
+    if !ctx.identity.has_scopes(&required) {
+        let refusal =
+            crate::router::scope_refusal(ctx, required.into_iter().map(String::from).collect());
+        return Err(Box::new(ok_value(id, &W::CallTool::from(refusal))));
+    }
     check_header_mirrors(ctx.extensions.get::<ObservedHeaders>(), &params, &tool)
         .map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?;
     shared

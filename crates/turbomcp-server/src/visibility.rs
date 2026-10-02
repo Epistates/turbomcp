@@ -117,14 +117,18 @@ impl VisibleComponent<'_> {
     /// The OAuth scopes the component declares it requires
     /// (`#[tool(scopes(…))]`). Empty when it declares none.
     pub fn declared_scopes(&self) -> impl Iterator<Item = &str> {
-        self.meta
-            .get(meta::keys::SCOPES)
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-            .iter()
-            .filter_map(Value::as_str)
+        declared_scopes(self.meta)
     }
+}
+
+/// The OAuth scopes a component's `_meta` declares it requires.
+pub(crate) fn declared_scopes(meta: &Map<String, Value>) -> impl Iterator<Item = &str> {
+    meta.get(meta::keys::SCOPES)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_str)
 }
 
 /// Decides whether a caller may see — and therefore reach — a component.

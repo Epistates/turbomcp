@@ -31,6 +31,19 @@ use crate::context::{
 };
 use crate::traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
 
+/// The answer to a call whose caller lacks `scopes`: a tool error the model
+/// can read, and, where the transport can send one (HTTP with an
+/// authenticator), the step-up challenge naming them.
+pub(crate) fn scope_refusal(
+    ctx: &turbomcp_core::RequestContext,
+    scopes: Vec<String>,
+) -> neutral::CallToolResult {
+    if let Some(challenge) = ctx.extensions.get::<turbomcp_service::ScopeChallenge>() {
+        challenge.demand(&scopes);
+    }
+    neutral::CallToolResult::error(McpError::InsufficientScope(scopes).to_string())
+}
+
 /// Type alias for a type-erased `Fn(S, Ctx, Params) -> BoxFuture<Result>` slot.
 macro_rules! handler_slot {
     ($alias:ident<$s:ident>, $ctx:ty, $params:ty, $result:ty) => {
@@ -261,19 +274,8 @@ impl<S: McpServerCore> MethodRouter<S> {
                     Err(e @ McpError::ToolExecutionFailed { .. }) => {
                         Ok(neutral::CallToolResult::error(e.to_string()))
                     }
-                    // The caller lacks scopes the tool needs: a tool error the
-                    // model can read, and, where the transport can send one
-                    // (HTTP with an authenticator), the step-up challenge.
-                    Err(e @ McpError::InsufficientScope(_)) => {
-                        if let (McpError::InsufficientScope(scopes), Some(challenge)) = (
-                            &e,
-                            ctx.base
-                                .extensions
-                                .get::<turbomcp_service::ScopeChallenge>(),
-                        ) {
-                            challenge.demand(scopes);
-                        }
-                        Ok(neutral::CallToolResult::error(e.to_string()))
+                    Err(McpError::InsufficientScope(scopes)) => {
+                        Ok(scope_refusal(&ctx.base, scopes))
                     }
                     other => other,
                 }
