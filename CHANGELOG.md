@@ -222,6 +222,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A cancelled `2026-07-28` task's handler is dropped. It kept running to a
+  result nothing could see (the record was already `cancelled`), forever if
+  it ignored its cancellation token; the `2025-11-25` runner and a cancelled
+  request already drop theirs.
 - The client's TTL backstop for a task it drives follows each poll's TTL
   ("The value of `ttlMs` MAY change over the lifetime of a task"). It was
   fixed at the first answer, so a task the server extended was abandoned

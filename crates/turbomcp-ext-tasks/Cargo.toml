@@ -21,7 +21,7 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 time = { workspace = true, features = ["std", "formatting"] }
 uuid = { workspace = true, features = ["v4"] }
 tracing = { workspace = true }

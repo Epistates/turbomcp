@@ -446,12 +446,15 @@ impl Extension for TasksExtension {
         // via `tasks/get` regardless).
         let (store, subs) = (Arc::clone(&self.store), Arc::clone(&self.subs));
         run.attach_task(
-            TaskLink::new(Arc::clone(&self.store), task.task_id.clone(), cancel).on_change(
-                move |task_id| {
-                    let (store, subs) = (Arc::clone(&store), Arc::clone(&subs));
-                    async move { subs::push_status(&subs, store.as_ref(), &task_id).await }
-                },
-            ),
+            TaskLink::new(
+                Arc::clone(&self.store),
+                task.task_id.clone(),
+                cancel.clone(),
+            )
+            .on_change(move |task_id| {
+                let (store, subs) = (Arc::clone(&store), Arc::clone(&subs));
+                async move { subs::push_status(&subs, store.as_ref(), &task_id).await }
+            }),
         );
 
         let store = Arc::clone(&self.store);
@@ -464,17 +467,24 @@ impl Extension for TasksExtension {
             // path answers a panicking handler `-32603`; so does this.
             // A tool-level `isError: true` is still a `completed` task here,
             // unlike on `2025-11-25`.
-            let outcome = match turbomcp_service::catch_panic(run.run()).await {
-                Ok(Ok(result)) => TaskOutcome::Completed(result),
-                Ok(Err(err)) => TaskOutcome::Error(err),
-                Err(panic) => {
-                    tracing::error!(panic, task = %task_id, "task handler panicked");
-                    TaskOutcome::Error(turbomcp_core::JsonRpcError {
-                        code: turbomcp_core::codes::INTERNAL_ERROR,
-                        message: "handler panicked".to_owned(),
-                        data: None,
-                    })
-                }
+            let outcome = tokio::select! {
+                // `tasks/cancel`, expiry or the end of the owner's session
+                // already settled the record, so nothing the handler returns
+                // could be seen: dropping the call aborts it, as on
+                // `2025-11-25` and for any cancelled request.
+                () = cancel.cancelled() => return,
+                out = turbomcp_service::catch_panic(run.run()) => match out {
+                    Ok(Ok(result)) => TaskOutcome::Completed(result),
+                    Ok(Err(err)) => TaskOutcome::Error(err),
+                    Err(panic) => {
+                        tracing::error!(panic, task = %task_id, "task handler panicked");
+                        TaskOutcome::Error(turbomcp_core::JsonRpcError {
+                            code: turbomcp_core::codes::INTERNAL_ERROR,
+                            message: "handler panicked".to_owned(),
+                            data: None,
+                        })
+                    }
+                },
             };
             store.complete(&task_id, outcome).await;
             // Push the terminal status to any `subscriptions/listen` subscribers

@@ -3,6 +3,7 @@
 //! cancellation — driven against a real [`VersionDispatcher`].
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -20,6 +21,18 @@ use turbomcp_server::{
 #[derive(Clone)]
 struct Tools;
 
+/// Set when the `held` handler starts, and when its future is dropped.
+static HELD_STARTED: AtomicBool = AtomicBool::new(false);
+static HELD_DROPPED: AtomicBool = AtomicBool::new(false);
+
+struct SetOnDrop(&'static AtomicBool);
+
+impl Drop for SetOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 impl McpServerCore for Tools {
     fn server_info(&self) -> Implementation {
         Implementation::new("tools", "1.0.0")
@@ -36,6 +49,7 @@ impl WithTools for Tools {
             neutral::Tool::new("echo", json!({"type": "object"})),
             neutral::Tool::new("slow", json!({"type": "object"})),
             neutral::Tool::new("boom", json!({"type": "object"})),
+            neutral::Tool::new("held", json!({"type": "object"})),
         ]))
     }
 
@@ -52,6 +66,13 @@ impl WithTools for Tools {
             }
             // A JSON-RPC protocol error during execution ⇒ `failed` task.
             "boom" => Err(McpError::internal("kaboom")),
+            // Never returns and ignores its cancellation token: only dropping
+            // its future ends it.
+            "held" => {
+                let _dropped = SetOnDrop(&HELD_DROPPED);
+                HELD_STARTED.store(true, Ordering::SeqCst);
+                std::future::pending().await
+            }
             other => Ok(neutral::CallToolResult::error(format!("unknown: {other}"))),
         }
     }
@@ -60,7 +81,7 @@ impl WithTools for Tools {
 fn dispatcher() -> VersionDispatcher<Tools> {
     VersionDispatcher::new(Tools, MethodRouter::new().with_tools()).with_extension(Arc::new(
         TasksExtension::new()
-            .task_tools(["echo", "slow", "boom"])
+            .task_tools(["echo", "slow", "boom", "held"])
             .poll_interval_ms(Some(10)),
     ))
 }
@@ -173,7 +194,7 @@ async fn cancel_transitions_to_cancelled() {
     assert_eq!(working["result"]["status"], "working");
 
     // Cancel acks with an empty `complete` result, then the task reads back
-    // `cancelled` immediately (cooperative; the spawned handler unwinds later).
+    // `cancelled` immediately (the handler is dropped: `cancel_drops_the_handler`).
     let cancelled_ack = call(
         &mut svc,
         JsonRpcRequest::new(
@@ -188,6 +209,43 @@ async fn cancel_transitions_to_cancelled() {
 
     let after = get_task(&mut svc, 4, &task_id).await;
     assert_eq!(after["result"]["status"], "cancelled");
+}
+
+/// A cancelled task's handler is dropped, not left running to a result no
+/// one can see — even one that never looks at its cancellation token.
+#[tokio::test]
+async fn cancel_drops_the_handler() {
+    let mut svc = dispatcher();
+    let created = call_tool(&mut svc, 1, "held").await;
+    let task_id = created["result"]["taskId"]
+        .as_str()
+        .expect("taskId")
+        .to_owned();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !HELD_STARTED.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("the handler starts");
+    assert!(!HELD_DROPPED.load(Ordering::SeqCst));
+
+    call(
+        &mut svc,
+        JsonRpcRequest::new(
+            2,
+            "tasks/cancel",
+            Some(json!({ "taskId": task_id, "_meta": draft_meta() })),
+        ),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !HELD_DROPPED.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("the cancelled handler is dropped");
 }
 
 #[tokio::test]
