@@ -4,6 +4,7 @@
 //! Registration with the mandatory `application_type`.
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use super::OAuthClientError;
 use super::discovery::AuthorizationServerMetadata;
@@ -17,8 +18,9 @@ pub struct ClientCredentials {
     /// The OAuth `client_id`.
     pub client_id: String,
     /// The client secret, when the registration produced a confidential
-    /// client. Public clients (the common MCP case) have none.
-    pub client_secret: Option<String>,
+    /// client. Public clients (the common MCP case) have none. Wiped from
+    /// memory when dropped.
+    pub client_secret: Option<Zeroizing<String>>,
 }
 
 impl std::fmt::Debug for ClientCredentials {
@@ -132,7 +134,7 @@ impl DynamicRegistration {
 struct RegistrationResponse {
     client_id: String,
     #[serde(default)]
-    client_secret: Option<String>,
+    client_secret: Option<Zeroizing<String>>,
 }
 
 /// Resolve credentials at `as_meta`'s server per the spec's priority:

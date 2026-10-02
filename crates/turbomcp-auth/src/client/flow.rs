@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use zeroize::Zeroizing;
 
 use oauth2::basic::BasicClient;
 use oauth2::{
@@ -56,7 +57,7 @@ pub struct PendingAuthorization {
     pub authorize_url: String,
     /// The `state` value bound to this authorization.
     pub state: String,
-    pkce_verifier: String,
+    pkce_verifier: Zeroizing<String>,
     expected_issuer: String,
     iss_advertised: bool,
     scopes: Vec<String>,
@@ -341,7 +342,7 @@ impl OAuthClient {
         Ok(PendingAuthorization {
             authorize_url: authorize_url.to_string(),
             state: state.secret().clone(),
-            pkce_verifier: pkce_verifier.secret().clone(),
+            pkce_verifier: pkce_verifier.secret().clone().into(),
             expected_issuer: discovered.server.issuer.clone(),
             iss_advertised: discovered
                 .server
@@ -439,7 +440,7 @@ impl OAuthClient {
         let policy = self.network.clone();
         let token = client
             .exchange_code(AuthorizationCode::new(code.clone()))
-            .set_pkce_verifier(PkceCodeVerifier::new(pending.pkce_verifier.clone()))
+            .set_pkce_verifier(PkceCodeVerifier::new(pending.pkce_verifier.to_string()))
             .add_extra_param("resource", &self.resource)
             .request_async(&move |req| {
                 let http = http.clone();
@@ -486,7 +487,7 @@ impl OAuthClient {
         let http = self.http.clone();
         let policy = self.network.clone();
         let token = client
-            .exchange_refresh_token(&RefreshToken::new(refresh_token.clone()))
+            .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
             .add_extra_param("resource", &self.resource)
             .request_async(&move |req| {
                 let http = http.clone();
@@ -559,7 +560,7 @@ fn build_oauth2_client(
         );
     if let Some(secret) = &credentials.client_secret {
         client = client
-            .set_client_secret(ClientSecret::new(secret.clone()))
+            .set_client_secret(ClientSecret::new(secret.to_string()))
             .set_auth_type(token_endpoint_auth_type(&discovered.server));
     }
     Ok(client)
@@ -601,8 +602,8 @@ fn to_token_set(
         .map(|s| s.iter().map(|v| v.to_string()).collect())
         .unwrap_or_else(|| requested_scopes.to_vec());
     TokenSet {
-        access_token: token.access_token().secret().clone(),
-        refresh_token: token.refresh_token().map(|t| t.secret().clone()),
+        access_token: token.access_token().secret().clone().into(),
+        refresh_token: token.refresh_token().map(|t| t.secret().clone().into()),
         expires_at_epoch_secs,
         scopes,
     }
@@ -675,8 +676,8 @@ mod tests {
     fn secret_bearing_debug_is_redacted() {
         // A stray `{:?}` on any of these must not spill the secret into logs.
         let tokens = TokenSet {
-            access_token: "at-super-secret".into(),
-            refresh_token: Some("rt-super-secret".into()),
+            access_token: "at-super-secret".to_owned().into(),
+            refresh_token: Some("rt-super-secret".to_owned().into()),
             expires_at_epoch_secs: Some(42),
             scopes: vec!["files:read".into()],
         };
@@ -686,7 +687,7 @@ mod tests {
 
         let creds = ClientCredentials {
             client_id: "public-id".into(),
-            client_secret: Some("cs-super-secret".into()),
+            client_secret: Some("cs-super-secret".to_owned().into()),
         };
         let dbg = format!("{creds:?}");
         assert!(!dbg.contains("super-secret"), "client secret leaked: {dbg}");
@@ -695,7 +696,7 @@ mod tests {
         let pending = PendingAuthorization {
             authorize_url: "https://as.example/authorize?state=s".into(),
             state: "s".into(),
-            pkce_verifier: "pv-super-secret".into(),
+            pkce_verifier: "pv-super-secret".to_owned().into(),
             expected_issuer: "https://as.example".into(),
             iss_advertised: true,
             scopes: vec![],

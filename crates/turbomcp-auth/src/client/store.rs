@@ -150,8 +150,8 @@ mod tests {
                 "https://issuer.example",
                 "https://mcp.example",
                 &TokenSet {
-                    access_token: "at-super-secret".into(),
-                    refresh_token: Some("rt-super-secret".into()),
+                    access_token: "at-super-secret".to_owned().into(),
+                    refresh_token: Some("rt-super-secret".to_owned().into()),
                     expires_at_epoch_secs: None,
                     scopes: vec!["mcp:read".into()],
                 },

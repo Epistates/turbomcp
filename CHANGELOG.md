@@ -117,6 +117,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- OAuth secrets are wiped from memory when dropped: `TokenSet`'s access and
+  refresh tokens, `ClientCredentials::client_secret`, the PKCE verifier,
+  and `ClientAuth`'s credentials are `zeroize::Zeroizing<String>` (already
+  linked through rustls). The MRTR state keys were already wiped by the
+  AEAD. Not covered: the copies handed to the `oauth2` crate and to
+  `BearerSource::bearer`, and the telemetry `RedactionKey` (it is `Copy`,
+  and a leaked one only correlates hashes).
 - MRTR `requestState` is sealed with XChaCha20-Poly1305 instead of signed,
   so a client (or anything logging its retries) can no longer read what a
   handler stored or the principal the state is bound to. Each state names
@@ -455,6 +462,10 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `TokenSet::{access_token, refresh_token}` and
+  `ClientCredentials::client_secret` are `Zeroizing<String>`. They deref to
+  `String` and serialize as before; compare with `.as_str()`, and build one
+  from a `String` with `.into()`.
 - **Breaking:** `McpError::InsufficientScope(Vec<String>)` is new (JSON-RPC
   `-32000` with `data: { requiredScopes }`, HTTP 403), and
   `#[tool(scopes(…))]`'s generated `call_tool` returns it rather than a

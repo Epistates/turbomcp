@@ -25,6 +25,7 @@ pub mod registration;
 pub mod store;
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 pub use challenge::{BearerChallenge, parse_bearer_challenge};
 pub use discovery::{AuthorizationServerMetadata, ProtectedResourceMetadata};
@@ -42,10 +43,12 @@ pub use store::{CredentialStore, MemoryCredentialStore};
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TokenSet {
-    /// The bearer access token presented to the MCP server.
-    pub access_token: String,
-    /// The refresh token, when the AS issued one.
-    pub refresh_token: Option<String>,
+    /// The bearer access token presented to the MCP server. Wiped from
+    /// memory when dropped.
+    pub access_token: Zeroizing<String>,
+    /// The refresh token, when the AS issued one. Wiped from memory when
+    /// dropped.
+    pub refresh_token: Option<Zeroizing<String>>,
     /// Access-token expiry as Unix epoch seconds, when known.
     pub expires_at_epoch_secs: Option<u64>,
     /// The scopes this token set was granted (or requested, when the AS
@@ -136,4 +139,44 @@ pub enum OAuthClientError {
     /// The token endpoint rejected the exchange/refresh.
     #[error("token exchange failed: {0}")]
     TokenExchange(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The secrets are wiped on drop, and a credential store still persists
+    /// them as the same plain JSON.
+    #[test]
+    fn wiped_secrets_serialize_as_before() {
+        let tokens = TokenSet {
+            access_token: "at".to_owned().into(),
+            refresh_token: Some("rt".to_owned().into()),
+            expires_at_epoch_secs: Some(42),
+            scopes: vec!["files:read".into()],
+        };
+        let value = serde_json::to_value(&tokens).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "access_token": "at",
+                "refresh_token": "rt",
+                "expires_at_epoch_secs": 42,
+                "scopes": ["files:read"],
+            })
+        );
+        assert_eq!(serde_json::from_value::<TokenSet>(value).unwrap(), tokens);
+
+        let creds = ClientCredentials {
+            client_id: "id".into(),
+            client_secret: Some("cs".to_owned().into()),
+        };
+        let value = serde_json::to_value(&creds).unwrap();
+        assert_eq!(value, json!({ "client_id": "id", "client_secret": "cs" }));
+        assert_eq!(
+            serde_json::from_value::<ClientCredentials>(value).unwrap(),
+            creds
+        );
+    }
 }

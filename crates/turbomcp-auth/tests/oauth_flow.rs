@@ -272,8 +272,11 @@ async fn full_flow_discovery_registration_pkce_exchange_refresh() {
         .complete(&discovered, &credentials, pending, &callback)
         .await
         .unwrap();
-    assert_eq!(tokens.access_token, "access-1");
-    assert_eq!(tokens.refresh_token.as_deref(), Some("refresh-1"));
+    assert_eq!(tokens.access_token.as_str(), "access-1");
+    assert_eq!(
+        tokens.refresh_token.as_deref().map(String::as_str),
+        Some("refresh-1")
+    );
     assert_eq!(tokens.scopes, vec!["mcp:tools"]);
 
     // The RFC 8707 resource parameter reached BOTH requests.
@@ -303,8 +306,11 @@ async fn full_flow_discovery_registration_pkce_exchange_refresh() {
         .refresh(&discovered, &credentials, &tokens)
         .await
         .unwrap();
-    assert_eq!(rotated.access_token, "access-2");
-    assert_eq!(rotated.refresh_token.as_deref(), Some("refresh-2"));
+    assert_eq!(rotated.access_token.as_str(), "access-2");
+    assert_eq!(
+        rotated.refresh_token.as_deref().map(String::as_str),
+        Some("refresh-2")
+    );
     {
         let s = state.lock().unwrap();
         let refresh_form = s.token_forms.last().unwrap();
@@ -325,7 +331,8 @@ async fn full_flow_discovery_registration_pkce_exchange_refresh() {
             .stored_tokens(&discovered)
             .await
             .unwrap()
-            .access_token,
+            .access_token
+            .as_str(),
         "access-2"
     );
 }
@@ -599,9 +606,9 @@ async fn a_non_rotating_refresh_keeps_the_existing_token() {
         .refresh(&discovered, &credentials, &tokens)
         .await
         .unwrap();
-    assert_eq!(rotated.access_token, "access-2");
+    assert_eq!(rotated.access_token.as_str(), "access-2");
     assert_eq!(
-        rotated.refresh_token.as_deref(),
+        rotated.refresh_token.as_deref().map(String::as_str),
         Some("refresh-1"),
         "the previous refresh token must survive a non-rotating response"
     );
@@ -612,7 +619,8 @@ async fn a_non_rotating_refresh_keeps_the_existing_token() {
             .await
             .unwrap()
             .refresh_token
-            .as_deref(),
+            .as_deref()
+            .map(String::as_str),
         Some("refresh-1")
     );
 }

@@ -29,6 +29,7 @@ introspection = [
 
 [dependencies]
 subtle = { workspace = true }
+zeroize = { workspace = true, features = ["serde"] }
 turbomcp-core = { workspace = true }
 turbomcp-service = { workspace = true }
 jsonwebtoken = { workspace = true }

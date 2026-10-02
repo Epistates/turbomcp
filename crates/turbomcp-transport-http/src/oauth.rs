@@ -76,7 +76,7 @@ impl crate::BearerSource for OAuthSession {
                 }
             }
         }
-        Some(current.tokens.access_token.clone())
+        Some(current.tokens.access_token.to_string())
     }
 
     async fn on_challenge(

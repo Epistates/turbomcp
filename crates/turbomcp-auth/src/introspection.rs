@@ -27,6 +27,7 @@ use base64::Engine;
 use futures::future::BoxFuture;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 use crate::NetworkPolicy;
 use crate::error::AuthError;
@@ -43,18 +44,19 @@ pub enum ClientAuth {
     Basic {
         /// The resource server's client id.
         client_id: String,
-        /// Its client secret.
-        client_secret: String,
+        /// Its client secret, wiped from memory when dropped.
+        client_secret: Zeroizing<String>,
     },
     /// The client id and secret in the form body (`client_secret_post`).
     Post {
         /// The resource server's client id.
         client_id: String,
-        /// Its client secret.
-        client_secret: String,
+        /// Its client secret, wiped from memory when dropped.
+        client_secret: Zeroizing<String>,
     },
-    /// A bearer token of the resource server's own.
-    Bearer(String),
+    /// A bearer token of the resource server's own, wiped from memory when
+    /// dropped.
+    Bearer(Zeroizing<String>),
 }
 
 impl ClientAuth {
@@ -63,7 +65,7 @@ impl ClientAuth {
     pub fn basic(client_id: impl Into<String>, client_secret: impl Into<String>) -> Self {
         Self::Basic {
             client_id: client_id.into(),
-            client_secret: client_secret.into(),
+            client_secret: Zeroizing::new(client_secret.into()),
         }
     }
 
@@ -72,14 +74,14 @@ impl ClientAuth {
     pub fn post(client_id: impl Into<String>, client_secret: impl Into<String>) -> Self {
         Self::Post {
             client_id: client_id.into(),
-            client_secret: client_secret.into(),
+            client_secret: Zeroizing::new(client_secret.into()),
         }
     }
 
     /// A bearer token.
     #[must_use]
     pub fn bearer(token: impl Into<String>) -> Self {
-        Self::Bearer(token.into())
+        Self::Bearer(Zeroizing::new(token.into()))
     }
 }
 
@@ -283,7 +285,7 @@ impl IntrospectionValidator {
                 form.push(("client_id", client_id));
                 form.push(("client_secret", client_secret));
             }
-            ClientAuth::Bearer(bearer) => request = request.bearer_auth(bearer),
+            ClientAuth::Bearer(bearer) => request = request.bearer_auth(bearer.as_str()),
         }
         let unavailable = |e: String| AuthError::KeyUnavailable(format!("introspection: {e}"));
         let response = self

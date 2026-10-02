@@ -118,6 +118,8 @@ sha2 = "0.10"
 # MRTR requestState sealing. 0.10, the generation sha2/hmac share (0.11
 # moves to crypto-common 0.2; all of them move together).
 chacha20poly1305 = "0.10"
+# Wipes secrets on drop. Already linked (rustls, aws-lc-rs, the AEAD).
+zeroize = "1.8"
 # RFC 8785 canonical JSON, for the MRTR request binding.
 serde_json_canonicalizer = "0.3"
 # OS randomness for keys (uuid already links it).
