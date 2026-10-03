@@ -20,6 +20,7 @@
 
 pub mod challenge;
 pub mod discovery;
+pub mod enterprise;
 pub mod flow;
 pub mod registration;
 pub mod store;
@@ -29,6 +30,10 @@ use zeroize::Zeroizing;
 
 pub use challenge::{BearerChallenge, parse_bearer_challenge};
 pub use discovery::{AuthorizationServerMetadata, ProtectedResourceMetadata};
+pub use enterprise::{
+    AssertionKind, EnterpriseAuthorization, ID_JAG_PROFILE, IdJag, IdentityAssertion,
+    IdentityProvider,
+};
 pub use flow::{CallbackParams, Discovered, OAuthClient, PendingAuthorization};
 pub use registration::{
     ApplicationType, ClientCredentials, DynamicRegistration, RegistrationStrategy,

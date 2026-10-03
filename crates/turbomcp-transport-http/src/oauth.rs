@@ -6,7 +6,8 @@
 //! application-owned; concurrent challenges and refreshes are serialized.
 use std::{sync::Arc, time::Duration};
 use turbomcp_auth::client::{
-    CallbackParams, ClientCredentials, Discovered, OAuthClient, TokenSet, parse_bearer_challenge,
+    CallbackParams, ClientCredentials, Discovered, EnterpriseAuthorization, IdentityAssertion,
+    OAuthClient, TokenSet, parse_bearer_challenge,
 };
 
 /// Opens the authorization URL and returns the validated application's callback.
@@ -153,6 +154,107 @@ impl crate::BearerSource for OAuthSession {
             tokens,
             refresh_failed: false,
         });
+        Ok(true)
+    }
+}
+
+/// Supplies the user's identity assertion from SSO (an OpenID ID Token, or a
+/// SAML assertion) for [`EnterpriseSession`]. Consulted whenever a new
+/// access token is needed, so a re-login takes effect without rebuilding
+/// the transport.
+#[async_trait::async_trait]
+pub trait AssertionSource: Send + Sync + 'static {
+    /// The current assertion, or `None` when the user is not signed in.
+    async fn identity_assertion(&self) -> Option<IdentityAssertion>;
+}
+
+/// Enterprise-Managed Authorization as the transport's bearer source: the
+/// organization's IdP issues an ID-JAG for the MCP server, which the server's
+/// authorization server exchanges for the access token presented here. No
+/// browser, no consent screen: the IdP's policy decides. Attach with
+/// `HttpClientTransport::with_bearer_source`, and declare the extension
+/// ([`turbomcp_auth::client::enterprise::EXTENSION_ID`]) on the client.
+pub struct EnterpriseSession {
+    engine: EnterpriseAuthorization,
+    assertions: Arc<dyn AssertionSource>,
+    tokens: tokio::sync::Mutex<Option<TokenSet>>,
+}
+
+impl std::fmt::Debug for EnterpriseSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnterpriseSession")
+            .field("resource", &self.engine.resource())
+            .finish_non_exhaustive()
+    }
+}
+
+impl EnterpriseSession {
+    /// Authorize through `engine`, with assertions from `assertions`.
+    #[must_use]
+    pub fn new(engine: EnterpriseAuthorization, assertions: Arc<dyn AssertionSource>) -> Self {
+        Self {
+            engine,
+            assertions,
+            tokens: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// A fresh token set for `challenge` (or the server's defaults).
+    async fn authorize(
+        &self,
+        challenge: Option<&turbomcp_auth::client::BearerChallenge>,
+    ) -> Result<TokenSet, String> {
+        let assertion = self
+            .assertions
+            .identity_assertion()
+            .await
+            .ok_or("no identity assertion: the user is not signed in")?;
+        self.engine
+            .authorize(&assertion, challenge)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::BearerSource for EnterpriseSession {
+    async fn bearer(&self) -> Option<zeroize::Zeroizing<String>> {
+        let mut tokens = self.tokens.lock().await;
+        let live = tokens
+            .as_ref()
+            .is_some_and(|t| !t.expires_within(Duration::from_secs(30)));
+        if !live {
+            // An ID-JAG grant is cheap to repeat and needs no user, so an
+            // expiring token is replaced outright rather than refreshed.
+            *tokens = self.authorize(None).await.ok();
+        }
+        tokens.as_ref().map(|t| t.access_token.clone())
+    }
+
+    async fn on_challenge(
+        &self,
+        status: u16,
+        header: Option<&str>,
+        rejected: Option<&str>,
+    ) -> Result<bool, String> {
+        if !matches!(status, 401 | 403) {
+            return Ok(false);
+        }
+        let challenge = header.and_then(parse_bearer_challenge);
+        if status == 403
+            && challenge.as_ref().and_then(|c| c.error.as_deref()) != Some("insufficient_scope")
+        {
+            return Ok(false);
+        }
+        let mut tokens = self.tokens.lock().await;
+        // Another request already replaced the rejected token.
+        if let Some(current) = tokens.as_ref()
+            && Some(current.access_token.as_str()) != rejected
+            && !current.expires_within(Duration::from_secs(30))
+        {
+            return Ok(true);
+        }
+        *tokens = Some(self.authorize(challenge.as_ref()).await?);
         Ok(true)
     }
 }

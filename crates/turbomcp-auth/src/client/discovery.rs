@@ -29,7 +29,9 @@ pub struct AuthorizationServerMetadata {
     /// The issuer identifier. MUST equal the issuer the document was
     /// discovered for (validated in [`discover_authorization_server`]).
     pub issuer: String,
-    /// The authorization endpoint.
+    /// The authorization endpoint. Empty when the server serves no grant
+    /// that uses one (an ID-JAG-only server, say).
+    #[serde(default)]
     pub authorization_endpoint: String,
     /// The token endpoint.
     pub token_endpoint: String,
@@ -53,6 +55,14 @@ pub struct AuthorizationServerMetadata {
     /// Scopes the AS can grant.
     #[serde(default)]
     pub scopes_supported: Option<Vec<String>>,
+    /// The grant types the AS accepts (RFC 8414 §2).
+    #[serde(default)]
+    pub grant_types_supported: Option<Vec<String>>,
+    /// Authorization grant profiles the AS accepts, such as the ID-JAG
+    /// profile of Enterprise-Managed Authorization
+    /// ([`ID_JAG_PROFILE`](super::ID_JAG_PROFILE)).
+    #[serde(default)]
+    pub authorization_grant_profiles_supported: Option<Vec<String>>,
 }
 
 /// Fetch Protected Resource Metadata: from the challenge's
@@ -275,6 +285,34 @@ pub(crate) async fn discover_authorization_server_with_policy(
     issuer: &str,
     policy: &crate::NetworkPolicy,
 ) -> Result<AuthorizationServerMetadata, OAuthClientError> {
+    let meta = fetch_authorization_server(http, issuer, policy).await?;
+    // The authorization-code flow needs the authorization endpoint the
+    // metadata may leave out for other grants.
+    if meta.authorization_endpoint.is_empty() {
+        return Err(OAuthClientError::Discovery(format!(
+            "authorization server {issuer} names no authorization_endpoint"
+        )));
+    }
+    // MCP MUST: no advertised PKCE ⇒ refuse to proceed.
+    let has_pkce = meta
+        .code_challenge_methods_supported
+        .as_ref()
+        .is_some_and(|m| m.iter().any(|method| method == "S256"));
+    if !has_pkce {
+        return Err(OAuthClientError::PkceUnsupported);
+    }
+    Ok(meta)
+}
+
+/// Fetch and validate `issuer`'s metadata: the document's `issuer` MUST equal
+/// the one asked for, and every endpoint it names must be HTTPS. What a
+/// particular grant further requires (PKCE, a grant profile) is the caller's
+/// to check.
+pub(crate) async fn fetch_authorization_server(
+    http: &reqwest::Client,
+    issuer: &str,
+    policy: &crate::NetworkPolicy,
+) -> Result<AuthorizationServerMetadata, OAuthClientError> {
     // Before anything is fetched: an issuer we would talk to in the clear is
     // refused outright, rather than after its metadata has been read and
     // trusted.
@@ -294,18 +332,12 @@ pub(crate) async fn discover_authorization_server_with_policy(
                 // An HTTPS issuer can still hand back plaintext endpoints, and
                 // those are where the credentials actually go — so each is
                 // checked on its own rather than inferred from the issuer.
-                require_secure_url(&meta.authorization_endpoint, "the authorization endpoint")?;
+                if !meta.authorization_endpoint.is_empty() {
+                    require_secure_url(&meta.authorization_endpoint, "the authorization endpoint")?;
+                }
                 require_secure_url(&meta.token_endpoint, "the token endpoint")?;
                 if let Some(registration) = &meta.registration_endpoint {
                     require_secure_url(registration, "the registration endpoint")?;
-                }
-                // MCP MUST: no advertised PKCE ⇒ refuse to proceed.
-                let has_pkce = meta
-                    .code_challenge_methods_supported
-                    .as_ref()
-                    .is_some_and(|m| m.iter().any(|method| method == "S256"));
-                if !has_pkce {
-                    return Err(OAuthClientError::PkceUnsupported);
                 }
                 return Ok(meta);
             }

@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- Enterprise-Managed Authorization (ID-JAG, SEP-990) on the client.
+  `auth::client::EnterpriseAuthorization` discovers the MCP server's
+  authorization server, refuses one that doesn't advertise the ID-JAG
+  grant profile, exchanges the user's SSO identity assertion for an ID-JAG
+  at the organization's IdP (RFC 8693, with the `audience` and `resource`
+  the extension requires) and the ID-JAG for an access token (RFC 7523),
+  through the same network policy and HTTPS checks as the authorization-code
+  flow. `client::oauth::EnterpriseSession` is the transport's bearer source
+  for it, fed by an `AssertionSource`. Authorization-server metadata gains
+  `grant_types_supported` and `authorization_grant_profiles_supported`,
+  and `authorization_endpoint` may be absent for a server with no grant
+  that uses it.
 - A performance parity gate against rmcp. `tests/perf_parity.rs` (interop
   crate, opt-in with `TURBOMCP_PERF=1`, run in CI) times a `tools/call`
   round trip through each SDK's own client and server, interleaved, on both

@@ -66,6 +66,19 @@ Choose a request timeout long enough for your consent UI. The timeout includes
 queue admission and authorization. Call `client.connection().close().await`
 when deterministic connection teardown is needed; this closes all clones.
 
+In an enterprise, the organization's identity provider can decide instead of
+the user (Enterprise-Managed Authorization, ID-JAG). Build an
+`auth::client::EnterpriseAuthorization` with the resource URI, an
+`IdentityProvider` (the IdP's token endpoint and this client's SSO
+credentials) and the client's credentials at the MCP authorization server;
+wrap it in `client::oauth::EnterpriseSession` with an `AssertionSource` that
+returns the user's ID token (or SAML assertion) from SSO; attach it like
+`OAuthSession`, and declare the extension
+(`auth::client::enterprise::EXTENSION_ID`). The session trades the assertion
+for an ID-JAG at the IdP (RFC 8693) and the ID-JAG for an access token at the
+authorization server (RFC 7523), with no browser and no consent screen, and
+refuses an authorization server that doesn't advertise the ID-JAG profile.
+
 `ClientError::Http` preserves the status, bounded decoded JSON-RPC error,
 `WWW-Authenticate`, and `Retry-After`. `as_rpc`/`rpc_code` also see nested protocol
 errors. Do not parse error text to decide whether to authorize or retry.
