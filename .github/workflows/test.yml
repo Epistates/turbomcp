@@ -581,6 +581,16 @@ jobs:
         TURBOMCP_INTEROP_REQUIRE: '1'
       run: cargo test -- --nocapture
 
+    # turbomcp's client and server against rmcp's, same process, interleaved,
+    # medians compared. Shared runners are noisy, hence a looser factor than
+    # the local default; the numbers are printed either way.
+    - name: Performance parity with rmcp
+      working-directory: crates/turbomcp-interop
+      env:
+        TURBOMCP_PERF: '1'
+        TURBOMCP_PERF_FACTOR: '1.5'
+      run: cargo test --release --test perf_parity -- --nocapture
+
   semver:
     name: SemVer (public API)
     runs-on: ubuntu-latest

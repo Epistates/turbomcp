@@ -581,13 +581,12 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 params,
             );
             let fut = with_cache_default(fut, shared.cache.resources_read);
-            let subject = ctx.identity.principal_key();
             finish_mrtr::<_, W::ReadResource>(
                 id,
                 MrtrTurn {
-                    method: &request_binding(req),
+                    req,
+                    identity: &ctx.identity,
                     version: &W::VERSION,
-                    subject,
                     handle: &handle,
                     sealer,
                     mrtr_enabled: W::MRTR,
@@ -647,13 +646,12 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                     .with_log(log_sender::<W>(&ctx, router.has_logging())),
                 params,
             );
-            let subject = ctx.identity.principal_key();
             finish_mrtr::<_, W::GetPrompt>(
                 id,
                 MrtrTurn {
-                    method: &request_binding(req),
+                    req,
+                    identity: &ctx.identity,
                     version: &W::VERSION,
-                    subject,
                     handle: &handle,
                     sealer,
                     mrtr_enabled: W::MRTR,
@@ -744,13 +742,12 @@ pub(super) async fn call_prepared_tool<S: McpServerCore, W: WireFamily>(
             })
         },
     );
-    let subject = ctx.identity.principal_key();
     finish_mrtr::<_, W::CallTool>(
         id,
         MrtrTurn {
-            method: &request_binding(req),
+            req,
+            identity: &ctx.identity,
             version: &W::VERSION,
-            subject,
             handle: &handle,
             sealer,
             mrtr_enabled: W::MRTR,
@@ -824,9 +821,21 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     }
     check_header_mirrors(ctx.extensions.get::<ObservedHeaders>(), &params, &tool)
         .map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?;
+    // The request's own `arguments`, borrowed: the parsed params hold a copy,
+    // and cloning it again per call only to validate was waste. Anything but
+    // an object (absent, `null`) is validated as the parsed params read it.
+    let parsed;
+    let arguments = match req.params.as_ref().and_then(|p| p.get("arguments")) {
+        Some(raw @ Value::Object(_)) => raw,
+        _ if params.arguments.is_empty() => &*EMPTY_ARGUMENTS,
+        _ => {
+            parsed = Value::Object(params.arguments.clone());
+            &parsed
+        }
+    };
     shared
         .validators
-        .validate(&tool.input_schema, &Value::Object(params.arguments.clone()))
+        .validate(&tool.input_schema, arguments)
         .map_err(|e| match e {
             // Arguments that miss the schema are a tool execution error the
             // model can read and correct (tools.mdx: "Input validation errors").
@@ -842,6 +851,10 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     Ok((params, tool))
 }
 
+/// What a `tools/call` without `arguments` is validated as.
+static EMPTY_ARGUMENTS: std::sync::LazyLock<Value> =
+    std::sync::LazyLock::new(|| Value::Object(Map::new()));
+
 /// A digest of the request a `requestState` belongs to: "the method name and a
 /// digest of its salient parameters". The params are RFC 8785 canonical JSON,
 /// so a retry an intermediary or a client re-encoded (keys reordered, `1`
@@ -855,13 +868,17 @@ fn request_binding(req: &JsonRpcRequest) -> String {
         }
     }
     use sha2::{Digest, Sha256};
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let encoded =
         serde_json_canonicalizer::to_vec(&serde_json::json!([req.method.as_str(), params]))
             .expect("JSON request binding");
-    Sha256::digest(encoded)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    let digest = Sha256::digest(encoded);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push(char::from(HEX[usize::from(byte >> 4)]));
+        hex.push(char::from(HEX[usize::from(byte & 0xf)]));
+    }
+    hex
 }
 
 // ---- MRTR (SEP-2322) -----------------------------------------------------------
@@ -924,7 +941,7 @@ fn mrtr_handle<W: WireFamily>(
     let fields: RawMrtrFields = req
         .params
         .as_ref()
-        .map(|p| serde_json::from_value(p.clone()))
+        .map(RawMrtrFields::deserialize)
         .transpose()
         .map_err(|e| McpError::invalid_params(format!("invalid MRTR fields: {e}")))?
         .unwrap_or_default();
@@ -948,12 +965,13 @@ fn mrtr_handle<W: WireFamily>(
 /// Everything [`finish_mrtr`] needs about the *request* it is completing, as
 /// one value (the alternative trips clippy's argument limit).
 pub(super) struct MrtrTurn<'a> {
-    /// The originating method — names the error and binds the signed state.
-    pub(super) method: &'a str,
+    /// The originating request: its method names the error, and its digest
+    /// binds the sealed state (computed only when a state is sealed).
+    pub(super) req: &'a JsonRpcRequest,
+    /// The caller, whose principal is bound into any sealed `requestState`.
+    pub(super) identity: &'a turbomcp_core::Identity,
     /// The wire family's version, for the version-split error codes.
     pub(super) version: &'a ProtocolVersion,
-    /// The authenticated principal, bound into any minted `requestState`.
-    pub(super) subject: Option<String>,
     /// The handler's client channel: what it recorded, what it stashed.
     pub(super) handle: &'a ClientHandle,
     pub(super) sealer: &'a StateSealer,
@@ -975,15 +993,19 @@ where
     WIRE: Serialize + From<N>,
 {
     let MrtrTurn {
-        method,
+        req,
+        identity,
         version,
-        subject,
         handle,
         sealer,
         mrtr_enabled,
     } = turn;
     let Some(f) = fut else {
-        return error_response_for(id, version, &McpError::method_not_found(method));
+        return error_response_for(
+            id,
+            version,
+            &McpError::method_not_found(req.method.as_str()),
+        );
     };
     let outcome = f.await;
     // The handle, not the error, says whether the handler asked the client
@@ -1009,7 +1031,8 @@ where
             );
         }
         if let Some(data) = state_out {
-            match sealer.seal(method, subject.as_deref(), &data) {
+            let subject = identity.principal_key();
+            match sealer.seal(&request_binding(req), subject.as_deref(), &data) {
                 Ok(token) => {
                     result.insert("requestState".to_owned(), serde_json::json!(token));
                 }

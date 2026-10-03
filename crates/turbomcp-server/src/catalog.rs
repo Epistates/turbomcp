@@ -6,6 +6,32 @@ use std::sync::Arc;
 use turbomcp_core::{McpError, McpResult};
 use turbomcp_protocol::neutral;
 
+/// Feed `value`'s structure into `hasher`, objects in key order. Two equal
+/// values with keys in different orders hash differently, which costs a
+/// cache miss and nothing else.
+fn hash_value(value: &Value, hasher: &mut impl std::hash::Hasher) {
+    use std::hash::Hash as _;
+    match value {
+        Value::Null => 0u8.hash(hasher),
+        Value::Bool(b) => (1u8, b).hash(hasher),
+        Value::Number(n) => (2u8, n.to_string()).hash(hasher),
+        Value::String(s) => (3u8, s).hash(hasher),
+        Value::Array(items) => {
+            (4u8, items.len()).hash(hasher);
+            for item in items {
+                hash_value(item, hasher);
+            }
+        }
+        Value::Object(map) => {
+            (5u8, map.len()).hash(hasher);
+            for (k, v) in map {
+                k.hash(hasher);
+                hash_value(v, hasher);
+            }
+        }
+    }
+}
+
 /// Compatibility lookup for dynamic providers. Providers with a direct index
 /// should override the capability's lookup method to avoid enumeration.
 pub(crate) async fn find<T, F, Fut>(
@@ -34,7 +60,12 @@ where
 
 /// Cache keyed by the complete schema, not a tool name or a first caller's
 /// catalog. Changed definitions acquire a new validator; errors aren't cached.
-pub(crate) struct Validators(moka::sync::Cache<String, Arc<jsonschema::Validator>>);
+///
+/// Looked up on every call, so the key is a structural hash of the schema
+/// (no serialization, no allocation) and a hit is confirmed by comparing the
+/// schema itself: a hash collision costs a recompile, never the wrong
+/// validator.
+pub(crate) struct Validators(moka::sync::Cache<u64, Arc<(Value, Arc<jsonschema::Validator>)>>);
 impl Default for Validators {
     fn default() -> Self {
         Self(moka::sync::Cache::new(256))
@@ -59,15 +90,21 @@ impl Validators {
     }
 
     pub(crate) fn validate(&self, schema: &Value, value: &Value) -> McpResult<()> {
-        let key = serde_json::to_string(schema).map_err(|e| McpError::internal(e.to_string()))?;
-        let validator = match self.0.get(&key) {
-            Some(v) => v,
+        let key = {
+            use std::hash::Hasher as _;
+            let mut hasher = std::hash::DefaultHasher::new();
+            hash_value(schema, &mut hasher);
+            hasher.finish()
+        };
+        let validator = match self.0.get(&key).filter(|entry| entry.0 == *schema) {
+            Some(entry) => Arc::clone(&entry.1),
             None => {
                 let v = Arc::new(
                     jsonschema::validator_for(schema)
                         .map_err(|e| McpError::internal(format!("invalid tool schema: {e}")))?,
                 );
-                self.0.insert(key, v.clone());
+                self.0
+                    .insert(key, Arc::new((schema.clone(), Arc::clone(&v))));
                 v
             }
         };

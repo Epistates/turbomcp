@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- A performance parity gate against rmcp. `tests/perf_parity.rs` (interop
+  crate, opt-in with `TURBOMCP_PERF=1`, run in CI) times a `tools/call`
+  round trip through each SDK's own client and server, interleaved, on both
+  revisions, and fails when turbomcp's median exceeds rmcp's by more than
+  a factor (1.25 locally, 1.5 on shared runners). The comparison benchmark
+  covers `2026-07-28` too, and both share one fixture.
 - A four-SDK interop matrix. `crates/turbomcp-interop/tests/sdk_matrix.rs`
   runs turbomcp against the official TypeScript (v2.3), Python (2.3) and Go
   (1.8) SDKs over Streamable HTTP, each SDK's client against turbomcp's
@@ -308,6 +314,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `tools/call` costs less to dispatch: the `requestState` binding (a
+  canonical-JSON SHA-256) and the caller's principal key are computed only
+  when a state is sealed, not on every call; the schema-validator cache is
+  keyed by a structural hash checked by comparison instead of a serialized
+  copy of the schema; the MRTR fields are read from the params in place;
+  and the arguments are validated where they lie rather than cloned. Measured
+  against rmcp in the same process, a round trip went from parity (1.00×
+  on `2025-11-25`, 1.10× on `2026-07-28`) to 0.87× and 0.92×. The
+  "method not found" for an unregistered MRTR method also named a digest
+  instead of the method; it names the method.
 - A resumable stream's priming event had no `data` field (axum drops an
   empty one), so SSE parsers, ours included, never surfaced its id, and a
   stream cut before its first message could not be resumed. It is now
