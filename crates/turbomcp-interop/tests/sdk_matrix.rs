@@ -119,9 +119,14 @@ impl Sdk {
     }
 
     /// Start the peer's server; its URL once it says it is serving.
-    async fn serve(self) -> (Child, String) {
-        let mut child = self
-            .command("server")
+    async fn serve(self) -> (PeerServer, String) {
+        let mut command = self.command("server");
+        // Its own process group: `uv run` and `go run` start the real server
+        // as a grandchild, which killing the direct child leaves running
+        // (holding the test's stdout open, so the run never ends).
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
@@ -139,7 +144,7 @@ impl Sdk {
         .expect("the peer server comes up");
         // Keep draining its stdout so a chatty server never blocks on it.
         tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
-        (child, format!("http://127.0.0.1:{port}/mcp"))
+        (PeerServer(child), format!("http://127.0.0.1:{port}/mcp"))
     }
 
     /// Run the peer's client against `url` in `era`; what it printed.
@@ -161,6 +166,21 @@ impl Sdk {
         let stdout = String::from_utf8(out.stdout).unwrap();
         let line = stdout.lines().last().expect("a JSON line");
         serde_json::from_str(line).unwrap_or_else(|e| panic!("{self:?} printed {line:?}: {e}"))
+    }
+}
+
+/// A running peer server; dropping it ends the server's whole process group.
+struct PeerServer(Child);
+
+impl Drop for PeerServer {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.0.id() {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &format!("-{pid}")])
+                .status();
+        }
+        let _ = self.0.start_kill();
     }
 }
 
