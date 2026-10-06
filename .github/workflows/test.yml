@@ -593,6 +593,20 @@ jobs:
       timeout-minutes: 10
       run: timeout -k 20s 8m cargo test --test rmcp_interop -- --nocapture
 
+    - name: Interop with the Python SDK
+      working-directory: crates/turbomcp-interop
+      timeout-minutes: 10
+      env:
+        TURBOMCP_INTEROP_REQUIRE: '1'
+      run: timeout -k 20s 8m cargo test --test sdk_matrix python -- --nocapture
+
+    - name: Interop with the Go SDK
+      working-directory: crates/turbomcp-interop
+      timeout-minutes: 10
+      env:
+        TURBOMCP_INTEROP_REQUIRE: '1'
+      run: timeout -k 20s 8m cargo test --test sdk_matrix go_ -- --nocapture
+
     # Output to a capped file, printed in part: if a peer floods its output,
     # the step still ends with a readable log.
     - name: Interop with the TypeScript SDK
@@ -609,20 +623,6 @@ jobs:
         ls -la ts.log
         head -c 20000 ts.log; echo; echo "[...]"; tail -c 20000 ts.log
         exit $status
-
-    - name: Interop with the Python SDK
-      working-directory: crates/turbomcp-interop
-      timeout-minutes: 10
-      env:
-        TURBOMCP_INTEROP_REQUIRE: '1'
-      run: timeout -k 20s 8m cargo test --test sdk_matrix python -- --nocapture
-
-    - name: Interop with the Go SDK
-      working-directory: crates/turbomcp-interop
-      timeout-minutes: 10
-      env:
-        TURBOMCP_INTEROP_REQUIRE: '1'
-      run: timeout -k 20s 8m cargo test --test sdk_matrix go_ -- --nocapture
 
     # turbomcp's client and server against rmcp's, same process, interleaved,
     # medians compared. Shared runners are noisy, hence a looser factor than
