@@ -2939,6 +2939,7 @@ version = "4.0.0-alpha.5"
 dependencies = [
  "async-trait",
  "futures",
+ "http",
  "moka",
  "rustix",
  "serde",

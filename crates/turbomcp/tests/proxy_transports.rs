@@ -166,3 +166,72 @@ async fn a_public_only_policy_refuses_an_internal_upstream() {
         );
     }
 }
+
+/// Lets in only `Authorization: Bearer let-me-in`.
+#[cfg(feature = "websocket")]
+struct KeyCheck;
+
+#[cfg(feature = "websocket")]
+impl turbomcp::HttpAuthenticator for KeyCheck {
+    fn authenticate<'a>(&'a self, authorization: Option<&'a str>) -> turbomcp::AuthFuture<'a> {
+        Box::pin(async move {
+            if authorization == Some("Bearer let-me-in") {
+                turbomcp::AuthDecision::Allow(turbomcp::Identity::Anonymous)
+            } else {
+                turbomcp::AuthDecision::Challenge {
+                    status: 401,
+                    www_authenticate: "Bearer".into(),
+                }
+            }
+        })
+    }
+
+    fn resource_metadata(&self) -> serde_json::Value {
+        json!({})
+    }
+}
+
+#[cfg(feature = "websocket")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn configured_headers_reach_http_and_websocket_upstreams() {
+    use turbomcp::http::{Http, HttpConfig, WebSocketConfig};
+    use turbomcp::prelude::*;
+
+    #[derive(Clone)]
+    struct Hello;
+
+    #[server(name = "hello", version = "1.0.0")]
+    impl Hello {
+        /// Say hello.
+        #[tool]
+        async fn hello(&self, name: String) -> String {
+            format!("Hello, {name}!")
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let config = HttpConfig::new()
+        .with_websocket(WebSocketConfig::new("/ws"))
+        .with_authenticator(std::sync::Arc::new(KeyCheck));
+    tokio::spawn(
+        Hello
+            .into_server()
+            .serve(Http::listener(listener).config(config)),
+    );
+
+    for upstream in [
+        Upstream::http(format!("http://{addr}/mcp")),
+        Upstream::websocket(format!("ws://{addr}/ws")),
+    ] {
+        let refused = RemoteServer::connect(upstream.clone()).await;
+        assert!(refused.is_err(), "{upstream:?} let in without the header");
+        let remote =
+            RemoteServer::connect(upstream.clone().header("Authorization", "Bearer let-me-in"))
+                .await
+                .unwrap_or_else(|e| panic!("{upstream:?}: {e}"));
+        assert_eq!(hello_through(remote).await, "Hello, Ada!", "{upstream:?}");
+    }
+}

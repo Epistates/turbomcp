@@ -111,6 +111,7 @@ users need, so a typical dependency is just `turbomcp`.
 | `turbomcp-telemetry` | OpenTelemetry tracing (W3C `_meta` propagation, PII-safe spans) |
 | `turbomcp-ext-tasks` | Draft Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) |
 | `turbomcp-proxy` | The embeddable gateway: remote MCP servers as mountable, version-translating servers |
+| `turbomcp-cli` | The `turbomcp` command: the gateway over an `mcpServers` config, and protocol operations (`tools`, `call`, `probe`, …) against any server |
 
 ## Verification
 

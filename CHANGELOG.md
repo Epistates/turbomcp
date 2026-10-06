@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `turbomcp` command (`turbomcp-cli`, rebuilt for v4). `turbomcp proxy
+  --config servers.json` serves the servers in an `mcpServers` configuration
+  (Claude Desktop, Cursor, VS Code's `servers`) as one MCP server over stdio
+  or Streamable HTTP, each under its name, translating revisions both ways;
+  `${VAR}` comes from the environment, unreachable servers are left out
+  unless `--strict`, the retired `sse` type is refused with a reason.
+  `tools`, `resources`, `prompts`, `call`, `read`, `prompt` and `probe`
+  (which revisions a server negotiates, stateful or not, what it declares
+  and offers) work against a URL, a command over stdio, or a configured
+  server; `--json` prints the protocol's own shapes. v3's scaffolding
+  commands (`new`, `build`, `deploy`, `install`, `dev`) are not carried
+  over.
+- Gateway upstream headers: `Upstream::header` sends a header (an API key, a
+  tenant) with every request to an HTTP upstream or with a WebSocket
+  upstream's upgrade; `Debug` shows the names only.
 - The gateway acts for its callers: `OutboundAuth::TokenExchange(ServiceAccount)`
   exchanges each caller's token at the upstream's authorization server
   (RFC 8693) for one issued for the upstream, so the upstream sees who is

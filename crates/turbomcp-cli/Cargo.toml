@@ -1,0 +1,33 @@
+[package]
+name = "turbomcp-cli"
+version = "4.0.0-alpha.5"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "The turbomcp command: an MCP gateway over an mcpServers config, and protocol operations against any MCP server."
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "cli", "proxy", "gateway", "llm"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "turbomcp"
+path = "src/main.rs"
+
+[dependencies]
+turbomcp = { workspace = true, features = ["client", "http", "websocket", "proxy", "client-oauth"] }
+turbomcp-protocol = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "signal", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

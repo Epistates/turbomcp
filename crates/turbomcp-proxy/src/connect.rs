@@ -102,6 +102,27 @@ impl Credential {
     }
 }
 
+/// `headers` as an HTTP header map, refusing the `Mcp-*` headers the
+/// protocol owns.
+#[cfg(feature = "http")]
+fn header_map(
+    headers: &std::collections::BTreeMap<String, String>,
+) -> Result<http::HeaderMap, String> {
+    let mut map = http::HeaderMap::new();
+    for (name, value) in headers {
+        let name = http::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|e| format!("header `{name}`: {e}"))?;
+        if name.as_str().starts_with("mcp-") {
+            return Err(format!("header `{name}` is the protocol's own"));
+        }
+        let mut value =
+            http::HeaderValue::from_str(value).map_err(|e| format!("header `{name}`: {e}"))?;
+        value.set_sensitive(true);
+        map.insert(name, value);
+    }
+    Ok(map)
+}
+
 /// A connection's caller's latest token, for exchange.
 #[cfg(feature = "oauth")]
 struct SlotSource(crate::link::Subject);
@@ -203,18 +224,21 @@ pub(crate) async fn upstream(
             Ok((client, Some(process)))
         }
         #[cfg(feature = "http")]
-        Upstream::Http { url } => {
+        Upstream::Http { url, headers } => {
+            let config = |e: &dyn std::fmt::Display| ProxyError::Config(format!("{url}: {e}"));
             let mut transport = turbomcp_transport_http::HttpClientTransport::new(url.clone())
-                .map_err(|e| ProxyError::Config(format!("{url}: {e}")))?;
+                .map_err(|e| config(&e))?;
+            let headers = header_map(headers).map_err(|e| config(&e))?;
             if let Some(policy) = &options.network {
-                policy
-                    .validate_url(url)
-                    .map_err(|e| ProxyError::Config(format!("{url}: {e}")))?;
+                policy.validate_url(url).map_err(|e| config(&e))?;
                 let http = policy
                     .client_builder()
+                    .default_headers(headers)
                     .build()
-                    .map_err(|e| ProxyError::Config(format!("{url}: {e}")))?;
+                    .map_err(|e| config(&e))?;
                 transport = transport.with_client(http);
+            } else if !headers.is_empty() {
+                transport = transport.with_headers(headers).map_err(|e| config(&e))?;
             }
             if let Some(bearer) = &bearer {
                 transport = transport.with_bearer_source(Arc::clone(bearer));
@@ -223,9 +247,12 @@ pub(crate) async fn upstream(
             Ok((client, None))
         }
         #[cfg(feature = "websocket")]
-        Upstream::WebSocket { url } => {
+        Upstream::WebSocket { url, headers } => {
             use turbomcp_transport_http::WebSocketClientTransport;
             let mut request = http::Request::builder().uri(url.as_str());
+            for (name, value) in headers {
+                request = request.header(name.as_str(), value.as_str());
+            }
             // One token per upgrade: a connection outliving it is closed by
             // the server, and the next one gets a fresh token.
             if let Some(bearer) = &bearer

@@ -17,12 +17,12 @@ default = ["http"]
 # Upstreams over Streamable HTTP.
 http = [
   "dep:turbomcp-transport-http", "turbomcp-transport-http/client",
-  "dep:turbomcp-auth", "turbomcp-auth/network",
+  "dep:turbomcp-auth", "turbomcp-auth/network", "dep:http",
 ]
 # OAuth upstream credentials: `OutboundAuth::ClientCredentials`.
 oauth = ["http", "turbomcp-auth/oauth-client", "turbomcp-transport-http/oauth"]
 # Upstreams over WebSocket.
-websocket = ["http", "dep:http", "turbomcp-transport-http/websocket"]
+websocket = ["http", "turbomcp-transport-http/websocket"]
 
 [dependencies]
 turbomcp-core = { workspace = true, features = ["std"] }

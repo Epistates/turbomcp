@@ -32,12 +32,17 @@ pub enum Upstream {
     Http {
         /// The MCP endpoint URL.
         url: String,
+        /// Headers sent with every request (an API key, a tenant), beside
+        /// the [`OutboundAuth`] credential.
+        headers: BTreeMap<String, String>,
     },
     /// A WebSocket endpoint (feature `websocket`).
     #[cfg(feature = "websocket")]
     WebSocket {
         /// The `ws://` or `wss://` URL.
         url: String,
+        /// Headers sent with the upgrade.
+        headers: BTreeMap<String, String>,
     },
 }
 
@@ -60,9 +65,18 @@ impl core::fmt::Debug for Upstream {
                 .field("cwd", cwd)
                 .finish(),
             #[cfg(feature = "http")]
-            Self::Http { url } => f.debug_struct("Http").field("url", url).finish(),
+            // Header values are where API keys go: names only.
+            Self::Http { url, headers } => f
+                .debug_struct("Http")
+                .field("url", url)
+                .field("headers", &headers.keys().collect::<Vec<_>>())
+                .finish(),
             #[cfg(feature = "websocket")]
-            Self::WebSocket { url } => f.debug_struct("WebSocket").field("url", url).finish(),
+            Self::WebSocket { url, headers } => f
+                .debug_struct("WebSocket")
+                .field("url", url)
+                .field("headers", &headers.keys().collect::<Vec<_>>())
+                .finish(),
         }
     }
 }
@@ -87,14 +101,20 @@ impl Upstream {
     #[cfg(feature = "http")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
     pub fn http(url: impl Into<String>) -> Self {
-        Self::Http { url: url.into() }
+        Self::Http {
+            url: url.into(),
+            headers: BTreeMap::new(),
+        }
     }
 
     /// Connect to the WebSocket endpoint at `url`.
     #[cfg(feature = "websocket")]
     #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn websocket(url: impl Into<String>) -> Self {
-        Self::WebSocket { url: url.into() }
+        Self::WebSocket {
+            url: url.into(),
+            headers: BTreeMap::new(),
+        }
     }
 
     /// Set an environment variable for a stdio upstream (ignored otherwise).
@@ -104,6 +124,26 @@ impl Upstream {
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         if let Self::Stdio { env, .. } = &mut self {
             env.insert(key.into(), value.into());
+        }
+        self
+    }
+
+    /// Send header `name: value` with every request to an HTTP upstream, or
+    /// with a WebSocket upstream's upgrade (ignored for stdio). For a bearer
+    /// token, prefer [`OutboundAuth`], which also handles refresh.
+    #[must_use]
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        let _ = (&name, &value);
+        match &mut self {
+            Self::Stdio { .. } => {}
+            #[cfg(feature = "http")]
+            Self::Http { headers, .. } => {
+                headers.insert(name.into(), value.into());
+            }
+            #[cfg(feature = "websocket")]
+            Self::WebSocket { headers, .. } => {
+                headers.insert(name.into(), value.into());
+            }
         }
         self
     }
@@ -135,9 +175,9 @@ impl Upstream {
     pub(crate) fn resource(&self) -> Option<String> {
         match self {
             Self::Stdio { .. } => None,
-            Self::Http { url } => Some(url.clone()),
+            Self::Http { url, .. } => Some(url.clone()),
             #[cfg(feature = "websocket")]
-            Self::WebSocket { url } => Some(url.replacen("ws", "http", 1)),
+            Self::WebSocket { url, .. } => Some(url.replacen("ws", "http", 1)),
         }
     }
 
@@ -146,9 +186,9 @@ impl Upstream {
         match self {
             Self::Stdio { command, .. } => format!("stdio:{command}"),
             #[cfg(feature = "http")]
-            Self::Http { url } => url.clone(),
+            Self::Http { url, .. } => url.clone(),
             #[cfg(feature = "websocket")]
-            Self::WebSocket { url } => url.clone(),
+            Self::WebSocket { url, .. } => url.clone(),
         }
     }
 }

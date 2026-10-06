@@ -14,6 +14,7 @@ members = [
     "crates/turbomcp-telemetry",
     "crates/turbomcp-ext-tasks",
     "crates/turbomcp-proxy",
+    "crates/turbomcp-cli",
     "crates/turbomcp",
 ]
 # Excluded, separately-run test surfaces. Each carries its own lockfile and stays
@@ -92,6 +93,7 @@ tokio-tungstenite = { version = "0.29.0", default-features = false }
 thiserror = "2.0.18"
 async-trait = "0.1.89"
 anyhow = "1.0.102"
+clap = { version = "4.5", features = ["derive", "env"] }
 
 # Observability and monitoring
 tracing = "0.1.44"
@@ -167,6 +169,7 @@ turbomcp-auth = { version = "4.0.0-alpha.5", path = "crates/turbomcp-auth" }
 turbomcp-telemetry = { version = "4.0.0-alpha.5", path = "crates/turbomcp-telemetry" }
 turbomcp-ext-tasks = { version = "4.0.0-alpha.5", path = "crates/turbomcp-ext-tasks" }
 turbomcp-proxy = { version = "4.0.0-alpha.5", path = "crates/turbomcp-proxy", default-features = false }
+turbomcp = { version = "4.0.0-alpha.5", path = "crates/turbomcp", default-features = false }
 
 [profile.dev]
 opt-level = 1

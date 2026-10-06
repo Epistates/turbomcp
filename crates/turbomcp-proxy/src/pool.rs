@@ -162,7 +162,11 @@ impl Pool {
                 })
                 .await
                 .map_err(|e| {
-                    tracing::warn!(upstream = %self.linker.label, error = %e, "upstream unavailable");
+                    tracing::warn!(
+                        upstream = %self.linker.label,
+                        error = %crate::error::chain(&e),
+                        "upstream unavailable"
+                    );
                     McpError::transport(format!("upstream {} unavailable", self.linker.label))
                 })?;
             if link.is_alive() {
