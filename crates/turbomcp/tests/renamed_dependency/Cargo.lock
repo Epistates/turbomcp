@@ -1317,6 +1317,7 @@ dependencies = [
  "tower",
  "tracing",
  "turbomcp-core",
+ "zeroize",
 ]
 
 [[package]]

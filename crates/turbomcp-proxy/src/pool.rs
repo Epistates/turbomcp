@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::OnceCell;
 use turbomcp_core::{McpError, McpResult, RequestContext, SessionId};
 
-use crate::link::{Lease, Link, Linker};
+use crate::link::{Lease, Link, Linker, Subject};
 
 /// Which upstream connection serves a call.
 ///
@@ -62,7 +62,14 @@ pub(crate) const DEFAULT_MAX: u64 = 1_000;
 /// How often idle connections are looked for.
 const SWEEP_EVERY: Duration = Duration::from_secs(30);
 
-type Cell = Arc<OnceCell<Arc<Link>>>;
+/// One key's connection, and the caller it acts for.
+#[derive(Default)]
+struct Entry {
+    subject: Subject,
+    link: OnceCell<Arc<Link>>,
+}
+
+type Cell = Arc<Entry>;
 
 /// The connections to one upstream, by key.
 pub(crate) struct Pool {
@@ -73,6 +80,8 @@ pub(crate) struct Pool {
     spare: Mutex<Option<Arc<Link>>>,
     links: moka::sync::Cache<String, Cell>,
     sweeper: tokio::task::JoinHandle<()>,
+    /// Every connection acts for its caller, whose token it needs.
+    for_callers: bool,
 }
 
 impl Drop for Pool {
@@ -85,16 +94,16 @@ impl Pool {
     pub(crate) fn new(
         key: UpstreamKey,
         linker: Linker,
-        spare: Arc<Link>,
-        idle: Duration,
-        max: u64,
+        spare: Option<Arc<Link>>,
+        (idle, max): (Duration, u64),
+        for_callers: bool,
     ) -> Self {
         let runtime = tokio::runtime::Handle::current();
         let links: moka::sync::Cache<String, Cell> = moka::sync::Cache::builder()
             .max_capacity(max)
             .time_to_idle(idle)
             .eviction_listener(move |_key, cell: Cell, _cause| {
-                if let Some(link) = cell.get().cloned() {
+                if let Some(link) = cell.link.get().cloned() {
                     runtime.spawn(retire(link));
                 }
             })
@@ -112,9 +121,10 @@ impl Pool {
         Self {
             key,
             linker,
-            spare: Mutex::new(Some(spare)),
+            spare: Mutex::new(spare),
             links,
             sweeper,
+            for_callers,
         }
     }
 
@@ -122,14 +132,32 @@ impl Pool {
     /// one died) as needed.
     pub(crate) async fn get(&self, base: &RequestContext) -> McpResult<Lease> {
         let key = self.key.of(base);
+        let token = base.extensions.get::<turbomcp_service::SubjectToken>();
+        if self.for_callers && token.is_none() {
+            tracing::warn!(
+                upstream = %self.linker.label,
+                "no caller token to exchange: retain tokens on the gateway's authenticator"
+            );
+            return Err(McpError::internal(format!(
+                "upstream {} acts for its caller, and the gateway kept no token to act with",
+                self.linker.label
+            )));
+        }
         for _ in 0..2 {
             let cell = self.links.get_with(key.clone(), Cell::default);
+            if self.for_callers {
+                *cell.subject.lock().expect("subject slot") = token.cloned();
+            }
             let link = cell
+                .link
                 .get_or_try_init(|| async {
                     let spare = self.spare.lock().expect("pool spare").take();
                     match spare {
                         Some(link) if link.is_alive() => Ok(link),
-                        _ => self.linker.link().await,
+                        _ => {
+                            let subject = self.for_callers.then(|| Arc::clone(&cell.subject));
+                            self.linker.link(subject).await
+                        }
                     }
                 })
                 .await
@@ -162,7 +190,7 @@ impl Pool {
         let links: Vec<Arc<Link>> = self
             .links
             .iter()
-            .filter_map(|(_, cell)| cell.get().cloned())
+            .filter_map(|(_, cell)| cell.link.get().cloned())
             .chain(self.spare.lock().expect("pool spare").take())
             .collect();
         futures::future::join_all(links.iter().map(|link| link.shutdown())).await;

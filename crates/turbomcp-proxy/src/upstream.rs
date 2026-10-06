@@ -220,6 +220,19 @@ pub enum OutboundAuth {
     #[cfg(feature = "oauth")]
     #[cfg_attr(docsrs, doc(cfg(feature = "oauth")))]
     ClientCredentials(ServiceAccount),
+    /// OAuth token exchange (RFC 8693) at the upstream's authorization
+    /// server: each caller's token, as the gateway's authenticator retained
+    /// it (`ResourceServer::retain_token`), is exchanged for one issued for
+    /// the upstream, so the upstream sees who is calling without the
+    /// caller's token ever reaching it. Each caller gets its own connection
+    /// ([`UpstreamKey::Principal`](crate::UpstreamKey::Principal) by
+    /// default; `Global` is refused), the gateway holds callers to the
+    /// upstream tools' declared scopes by default, and the connection made
+    /// at startup to learn what the upstream serves uses the account's
+    /// client credentials and serves no caller (feature `oauth`).
+    #[cfg(feature = "oauth")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "oauth")))]
+    TokenExchange(ServiceAccount),
 }
 
 /// The proxy's own OAuth client at an upstream's authorization server: a
@@ -280,6 +293,8 @@ impl core::fmt::Debug for OutboundAuth {
             Self::ClientCredentials(account) => {
                 f.debug_tuple("ClientCredentials").field(account).finish()
             }
+            #[cfg(feature = "oauth")]
+            Self::TokenExchange(account) => f.debug_tuple("TokenExchange").field(account).finish(),
         }
     }
 }

@@ -21,6 +21,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
 use turbomcp_core::Identity;
+use zeroize::Zeroizing;
 
 /// Boxed future returned by [`HttpAuthenticator::authenticate`] (keeps the
 /// trait dyn-compatible).
@@ -47,6 +48,57 @@ pub trait HttpAuthenticator: Send + Sync {
         let _ = scopes;
         None
     }
+
+    /// Whether the transport keeps an authorized request's bearer token
+    /// beside it, as a [`SubjectToken`], for a gateway to exchange (RFC 8693)
+    /// for a token to an upstream on the caller's behalf. Default `false`:
+    /// the service sees the identity, never the token.
+    fn retains_token(&self) -> bool {
+        false
+    }
+}
+
+/// The bearer token an authorized request arrived with, kept beside it when
+/// its authenticator [retains tokens](HttpAuthenticator::retains_token).
+///
+/// It is there to be *exchanged*: a gateway presents it to an authorization
+/// server as the `subject_token` of an RFC 8693 token exchange and gets back
+/// a token issued for its upstream. It is not to be forwarded as is ("MUST
+/// NOT pass through the token it received from the MCP client"). Any handler
+/// can read a request's facts, so retain tokens only on a server whose
+/// handlers are trusted with them. Wiped from memory when the last copy
+/// drops; `Debug` never renders it.
+#[derive(Clone)]
+pub struct SubjectToken(Arc<Zeroizing<String>>);
+
+impl SubjectToken {
+    /// `token`, as presented.
+    #[must_use]
+    pub fn new(token: impl Into<String>) -> Self {
+        Self(Arc::new(Zeroizing::new(token.into())))
+    }
+
+    /// The token.
+    #[must_use]
+    pub fn secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl core::fmt::Debug for SubjectToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("SubjectToken(<redacted>)")
+    }
+}
+
+/// The token of an `Authorization: Bearer …` header value (the scheme is
+/// case-insensitive, RFC 7235 §2.1), for retention.
+#[must_use]
+pub fn bearer_of(authorization: Option<&str>) -> Option<SubjectToken> {
+    let value = authorization?.trim();
+    let (scheme, token) = value.split_once(' ')?;
+    let token = token.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then(|| SubjectToken::new(token))
 }
 
 /// Where a request's handler says which scopes its operation needs and the
@@ -87,4 +139,24 @@ pub enum AuthDecision {
         /// The `WWW-Authenticate` response header value.
         www_authenticate: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_bearer_credential_is_retained() {
+        let token = |header| bearer_of(Some(header)).map(|t| t.secret().to_owned());
+        assert_eq!(token("Bearer abc").as_deref(), Some("abc"));
+        assert_eq!(token("bearer  abc ").as_deref(), Some("abc"));
+        assert_eq!(token("Basic abc"), None);
+        assert_eq!(token("Bearer "), None);
+        assert_eq!(token("Bearer"), None);
+        assert_eq!(bearer_of(None).map(|t| t.secret().to_owned()), None);
+        assert_eq!(
+            format!("{:?}", SubjectToken::new("abc")),
+            "SubjectToken(<redacted>)"
+        );
+    }
 }

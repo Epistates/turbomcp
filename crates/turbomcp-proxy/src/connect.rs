@@ -15,47 +15,113 @@ use crate::OutboundAuth;
 use crate::process::ChildProcess;
 use crate::{Inherit, ProxyError, Upstream};
 
-/// The credential `auth` presents to `upstream`, under `network` for any
-/// authorization server it has to reach.
 #[cfg(feature = "http")]
-pub(crate) fn bearer(
-    upstream: &Upstream,
-    auth: &OutboundAuth,
-    network: Option<&turbomcp_auth::NetworkPolicy>,
-) -> Result<Option<Arc<dyn turbomcp_transport_http::BearerSource>>, ProxyError> {
-    let _ = (upstream, network);
-    Ok(match auth {
-        OutboundAuth::None => None,
-        OutboundAuth::Static(token) => Some(Arc::new(token.clone())),
+type Bearer = Arc<dyn turbomcp_transport_http::BearerSource>;
+
+/// What an upstream connection presents.
+#[cfg(feature = "http")]
+pub(crate) enum Credential {
+    None,
+    /// One credential for every connection: the proxy's own.
+    Shared(Bearer),
+    /// A token exchanged per caller; the gateway's own (client credentials)
+    /// for a connection acting for no caller.
+    #[cfg(feature = "oauth")]
+    Exchange {
+        engine: turbomcp_auth::client::MachineAuthorization,
+        scopes: Option<Vec<String>>,
+    },
+}
+
+#[cfg(feature = "http")]
+impl Credential {
+    /// What `auth` presents to `upstream`, under `network` for any
+    /// authorization server it has to reach.
+    pub(crate) fn of(
+        upstream: &Upstream,
+        auth: &OutboundAuth,
+        network: Option<&turbomcp_auth::NetworkPolicy>,
+    ) -> Result<Self, ProxyError> {
         #[cfg(feature = "oauth")]
-        OutboundAuth::ClientCredentials(account) => {
-            use turbomcp_auth::client::MachineAuthorization;
-            use turbomcp_transport_http::oauth::MachineSession;
+        let engine = |account: &crate::ServiceAccount| {
             let resource = upstream.resource().ok_or_else(|| {
                 ProxyError::Config("OAuth credentials are for HTTP and WebSocket upstreams".into())
             })?;
-            let mut engine = MachineAuthorization::new(resource, account.credentials());
-            if let Some(policy) = network {
-                engine = engine
+            let engine =
+                turbomcp_auth::client::MachineAuthorization::new(resource, account.credentials());
+            match network {
+                Some(policy) => engine
                     .with_network_policy(policy.clone())
-                    .map_err(|e| ProxyError::Config(e.to_string()))?;
+                    .map_err(|e| ProxyError::Config(e.to_string())),
+                None => Ok(engine),
             }
-            let mut session = MachineSession::client_credentials(engine);
-            if let Some(scopes) = &account.scopes {
-                session = session.with_scopes(scopes.clone());
+        };
+        let _ = (upstream, network);
+        Ok(match auth {
+            OutboundAuth::None => Self::None,
+            OutboundAuth::Static(token) => Self::Shared(Arc::new(token.clone())),
+            #[cfg(feature = "oauth")]
+            OutboundAuth::ClientCredentials(account) => {
+                use turbomcp_transport_http::oauth::MachineSession;
+                let mut session = MachineSession::client_credentials(engine(account)?);
+                if let Some(scopes) = &account.scopes {
+                    session = session.with_scopes(scopes.clone());
+                }
+                Self::Shared(Arc::new(session))
             }
-            Some(Arc::new(session))
+            #[cfg(feature = "oauth")]
+            OutboundAuth::TokenExchange(account) => Self::Exchange {
+                engine: engine(account)?,
+                scopes: account.scopes.clone(),
+            },
+        })
+    }
+
+    /// The bearer source of one connection, acting for `subject`'s caller.
+    fn for_link(&self, subject: Option<&crate::link::Subject>) -> Option<Bearer> {
+        let _ = subject;
+        match self {
+            Self::None => None,
+            Self::Shared(bearer) => Some(Arc::clone(bearer)),
+            #[cfg(feature = "oauth")]
+            Self::Exchange { engine, scopes } => {
+                use turbomcp_transport_http::oauth::MachineSession;
+                let mut session = match subject {
+                    Some(slot) => MachineSession::token_exchange(
+                        engine.clone(),
+                        Arc::new(SlotSource(Arc::clone(slot))),
+                    ),
+                    None => MachineSession::client_credentials(engine.clone()),
+                };
+                if let Some(scopes) = scopes {
+                    session = session.with_scopes(scopes.clone());
+                }
+                Some(Arc::new(session))
+            }
         }
-    })
+    }
+}
+
+/// A connection's caller's latest token, for exchange.
+#[cfg(feature = "oauth")]
+struct SlotSource(crate::link::Subject);
+
+#[cfg(feature = "oauth")]
+#[async_trait::async_trait]
+impl turbomcp_transport_http::oauth::SubjectSource for SlotSource {
+    async fn subject_token(&self) -> Option<zeroize::Zeroizing<String>> {
+        let slot = self.0.lock().ok()?;
+        slot.as_ref()
+            .map(|token| zeroize::Zeroizing::new(token.secret().to_owned()))
+    }
 }
 
 /// How a connection to an upstream is made, beside where it goes.
 pub(crate) struct ConnectOptions {
     pub(crate) grace: Duration,
-    /// The credential presented to an HTTP or WebSocket upstream, shared by
-    /// every connection to it.
+    /// The credential presented to an HTTP or WebSocket upstream.
     #[cfg(feature = "http")]
-    pub(crate) bearer: Option<Arc<dyn turbomcp_transport_http::BearerSource>>,
+    pub(crate) credential: Credential,
     /// Where an HTTP or WebSocket upstream may be (`None`: anywhere).
     #[cfg(feature = "http")]
     pub(crate) network: Option<turbomcp_auth::NetworkPolicy>,
@@ -66,7 +132,12 @@ pub(crate) async fn upstream(
     upstream: &Upstream,
     options: &ConnectOptions,
     client: ClientBuilder,
+    subject: Option<&crate::link::Subject>,
 ) -> Result<(Client, Option<ChildProcess>), ProxyError> {
+    #[cfg(feature = "http")]
+    let bearer = options.credential.for_link(subject);
+    #[cfg(not(feature = "http"))]
+    let _ = subject;
     let grace = options.grace;
     let label = upstream.label();
     let connect_error = |source| ProxyError::Connect {
@@ -145,7 +216,7 @@ pub(crate) async fn upstream(
                     .map_err(|e| ProxyError::Config(format!("{url}: {e}")))?;
                 transport = transport.with_client(http);
             }
-            if let Some(bearer) = &options.bearer {
+            if let Some(bearer) = &bearer {
                 transport = transport.with_bearer_source(Arc::clone(bearer));
             }
             let client = client.connect(transport).await.map_err(connect_error)?;
@@ -157,7 +228,7 @@ pub(crate) async fn upstream(
             let mut request = http::Request::builder().uri(url.as_str());
             // One token per upgrade: a connection outliving it is closed by
             // the server, and the next one gets a fresh token.
-            if let Some(bearer) = &options.bearer
+            if let Some(bearer) = &bearer
                 && let Some(token) = bearer.bearer().await
             {
                 request = request.header("authorization", format!("Bearer {}", token.as_str()));

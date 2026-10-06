@@ -44,7 +44,10 @@ What a remote advertises is what its upstream advertised in the handshake.
 The caller's token is never passed upstream: the proxy authenticates as
 itself, with a static token or OAuth client credentials at the upstream's
 own authorization server (`OutboundAuth`, feature `oauth`), stepping up
-there when the upstream asks for more scope. A stdio upstream inherits only
+there when the upstream asks for more scope. Or it acts for each caller
+by token exchange (RFC 8693): the caller's token, retained by the
+gateway's authenticator, is exchanged for one issued for the upstream, so
+the upstream sees who is calling without ever seeing the caller's token. A stdio upstream inherits only
 what a program needs of the proxy's environment, and HTTP and WebSocket
 upstreams can be held to a `NetworkPolicy` (SSRF and DNS rebinding checked
 at every connect). Cancellation, progress and trace context cross the hop, and a stdio

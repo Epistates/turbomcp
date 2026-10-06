@@ -26,6 +26,7 @@ pub struct ResourceServer<V> {
     metadata: ResourceMetadata,
     metadata_url: String,
     required_scopes: Vec<String>,
+    retain_token: bool,
 }
 
 impl<V: BearerValidator> ResourceServer<V> {
@@ -40,7 +41,19 @@ impl<V: BearerValidator> ResourceServer<V> {
             metadata,
             metadata_url: metadata_url.into(),
             required_scopes: Vec::new(),
+            retain_token: false,
         }
+    }
+
+    /// Keep each authorized request's bearer token beside it, as a
+    /// `SubjectToken`, for a gateway to exchange (RFC 8693) for a token to
+    /// an upstream on the caller's behalf (default off). Every handler can
+    /// read it then: turn this on only for a server whose handlers are
+    /// trusted with its callers' tokens.
+    #[must_use]
+    pub fn retain_token(mut self, retain: bool) -> Self {
+        self.retain_token = retain;
+        self
     }
 
     /// Require every request to carry these scopes (a baseline gate). A token
@@ -113,6 +126,10 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
                 claims: principal.claims,
             })
         })
+    }
+
+    fn retains_token(&self) -> bool {
+        self.retain_token
     }
 
     fn resource_metadata(&self) -> Value {

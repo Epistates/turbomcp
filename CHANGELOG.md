@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The gateway acts for its callers: `OutboundAuth::TokenExchange(ServiceAccount)`
+  exchanges each caller's token at the upstream's authorization server
+  (RFC 8693) for one issued for the upstream, so the upstream sees who is
+  calling and never sees the caller's token. Each caller gets its own
+  upstream connection (`Principal` by default, `Global` refused), the
+  latest token a caller presented is the one exchanged, upstream scopes
+  are enforced at the gateway by default, and the connection made at
+  startup authenticates with the account's client credentials and serves
+  no caller. A call with no retained token fails, saying so.
+- Token retention for exchange: `ResourceServer::retain_token(true)`
+  (`HttpAuthenticator::retains_token`) keeps an authorized request's bearer
+  token beside it as a `SubjectToken` (redacted, wiped on drop), on POST
+  and for every request on a WebSocket connection (`ServeConfig::
+  subject_token`). Off by default: handlers see identities, not tokens.
 - Authorization with no user in the loop. `MachineAuthorization`
   (`turbomcp-auth`, `oauth-client`) gets a token for an MCP server from its
   own authorization server, found by discovery and bound to it with

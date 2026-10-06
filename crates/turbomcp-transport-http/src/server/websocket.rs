@@ -197,7 +197,10 @@ async fn upgrade<H: ServerHandle>(
         )
             .into_response();
     };
-    let identity = authenticated.map(|a| a.identity);
+    let (identity, subject_token) = match authenticated {
+        Some(a) => (Some(a.identity), a.token),
+        None => (None, None),
+    };
     let network = peer.network(
         &state.http.trusted_proxies,
         turbomcp_service::NetworkFacts::websocket(),
@@ -207,7 +210,9 @@ async fn upgrade<H: ServerHandle>(
         .protocols([SUBPROTOCOL])
         .max_message_size(max)
         .max_frame_size(max)
-        .on_upgrade(move |socket| connection(state, socket, identity, network, slot))
+        .on_upgrade(move |socket| {
+            connection(state, socket, (identity, subject_token), network, slot)
+        })
 }
 
 /// Serve one upgraded socket until either end closes it, the server shuts
@@ -215,7 +220,7 @@ async fn upgrade<H: ServerHandle>(
 async fn connection<H: ServerHandle>(
     state: WsState<H>,
     socket: WebSocket,
-    identity: Option<Identity>,
+    (identity, subject_token): (Option<Identity>, Option<turbomcp_service::SubjectToken>),
     network: turbomcp_service::NetworkFacts,
     _slot: OwnedSemaphorePermit,
 ) {
@@ -232,6 +237,7 @@ async fn connection<H: ServerHandle>(
             shutdown: shutdown.clone(),
             drain_timeout: state.drain,
             identity,
+            subject_token,
             ..ServeConfig::default()
         },
     );

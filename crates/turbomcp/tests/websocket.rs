@@ -42,6 +42,16 @@ impl Srv {
             .to_owned()
     }
 
+    /// The bearer token the connection authenticated with, if retained.
+    #[tool]
+    async fn held_token(&self, ctx: &CallToolContext) -> String {
+        ctx.base
+            .extensions
+            .get::<turbomcp::SubjectToken>()
+            .map_or("none", |t| t.secret())
+            .to_owned()
+    }
+
     /// Finish after a while.
     #[tool]
     async fn slow(&self) -> String {
@@ -175,6 +185,10 @@ impl HttpAuthenticator for Tokens {
     fn resource_metadata(&self) -> Value {
         json!({})
     }
+
+    fn retains_token(&self) -> bool {
+        true
+    }
 }
 
 fn authorized(url: &str) -> tokio_tungstenite::tungstenite::handshake::client::Request {
@@ -203,6 +217,9 @@ async fn authentication_happens_before_the_upgrade() {
         .unwrap();
     let who = client.call_tool("whoami", Map::new()).await.unwrap();
     assert_eq!(text(&who), "tester");
+    // Retained at the upgrade, for every request on the connection.
+    let held = client.call_tool("held_token", Map::new()).await.unwrap();
+    assert_eq!(text(&held), "good");
 }
 
 /// An `http::Request` built by hand carries only what its author put on it;

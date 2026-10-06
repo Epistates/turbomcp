@@ -414,7 +414,7 @@ pub use turbomcp_auth as auth;
 /// The HTTP authentication seam (implemented by [`auth::ResourceServer`]).
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-pub use turbomcp_service::{AuthDecision, AuthFuture, HttpAuthenticator};
+pub use turbomcp_service::{AuthDecision, AuthFuture, HttpAuthenticator, SubjectToken};
 
 /// The HTTP rate-limiting seam + the in-process `governor`-backed default.
 /// Apply with [`HttpConfig::with_rate_limiter`](http::HttpConfig::with_rate_limiter).

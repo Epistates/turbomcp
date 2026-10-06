@@ -42,7 +42,9 @@ mod session;
 mod session_observer;
 mod transport;
 
-pub use auth::{AuthDecision, AuthFuture, HttpAuthenticator, ScopeChallenge};
+pub use auth::{
+    AuthDecision, AuthFuture, HttpAuthenticator, ScopeChallenge, SubjectToken, bearer_of,
+};
 pub use error::ProtocolError;
 pub use host::{Pipe, Serve, ServerHandle, close_then_shut_down};
 pub use middleware::{Tracing, TracingLayer};

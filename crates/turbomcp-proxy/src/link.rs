@@ -28,9 +28,17 @@ const CHANGE_BUFFER: usize = 64;
 /// process behind it when the upstream is a command.
 pub(crate) type Opened = (Client, Option<ChildProcess>);
 
-/// Opens a connection with the client a [`ClientBuilder`] describes.
+/// The caller a connection acts for, when the upstream sees callers (token
+/// exchange): the latest token they presented, refreshed by each call.
+pub(crate) type Subject = Arc<Mutex<Option<turbomcp_service::SubjectToken>>>;
+
+/// Opens a connection with the client a [`ClientBuilder`] describes, for
+/// the caller in `Subject` (`None`: the gateway itself, as at startup).
 pub(crate) type Dial = Arc<
-    dyn Fn(ClientBuilder) -> Pin<Box<dyn Future<Output = Result<Opened, ProxyError>> + Send>>
+    dyn Fn(
+            ClientBuilder,
+            Option<Subject>,
+        ) -> Pin<Box<dyn Future<Output = Result<Opened, ProxyError>> + Send>>
         + Send
         + Sync,
 >;
@@ -48,8 +56,9 @@ pub(crate) struct Linker {
 }
 
 impl Linker {
-    /// Open a link and run the handshake.
-    pub(crate) async fn link(&self) -> Result<Arc<Link>, ProxyError> {
+    /// Open a link, for `subject` when it acts for a caller, and run the
+    /// handshake.
+    pub(crate) async fn link(&self, subject: Option<Subject>) -> Result<Arc<Link>, ProxyError> {
         let (tap, _) = broadcast::channel(CHANGE_BUFFER);
         let completions = crate::bridge::completions();
         let mut client = self
@@ -65,7 +74,7 @@ impl Linker {
                 .with_sampling(handlers.clone())
                 .with_roots(handlers);
         }
-        let (client, child) = (self.dial)(client).await?;
+        let (client, child) = (self.dial)(client, subject).await?;
         let link = Arc::new(Link {
             tools: Catalog::new(self.catalog_ttl),
             prompts: Catalog::new(self.catalog_ttl),

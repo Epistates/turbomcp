@@ -77,6 +77,10 @@ pub struct ServeConfig {
     /// WebSocket bearer check at the upgrade); `None` leaves requests
     /// anonymous. Default: `None`.
     pub identity: Option<Identity>,
+    /// The bearer token the connection authenticated with, attached to every
+    /// request beside its identity when the authenticator retains tokens
+    /// ([`SubjectToken`](crate::SubjectToken)). Default: `None`.
+    pub subject_token: Option<crate::SubjectToken>,
 }
 
 impl Default for ServeConfig {
@@ -88,6 +92,7 @@ impl Default for ServeConfig {
             write_timeout: Duration::from_secs(30),
             shutdown: CancellationToken::new(),
             identity: None,
+            subject_token: None,
         }
     }
 }
@@ -135,6 +140,7 @@ where
         write_timeout,
         shutdown,
         identity,
+        subject_token,
     } = config;
     let capacity = max_in_flight.max(1);
     let network = transport.network();
@@ -256,6 +262,9 @@ where
                             .with(peer.clone());
                         if let Some(identity) = &identity {
                             request.extensions.insert(identity.clone());
+                        }
+                        if let Some(token) = &subject_token {
+                            request.extensions.insert(token.clone());
                         }
                         if let Some(network) = &network {
                             request.extensions.insert(network.clone());

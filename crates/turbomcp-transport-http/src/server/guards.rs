@@ -24,6 +24,8 @@ pub(super) struct Authenticated {
     pub(super) subject: Option<String>,
     /// Who it is, attached to the request for the dispatcher.
     pub(super) identity: Identity,
+    /// The token it presented, when the authenticator retains tokens.
+    pub(super) token: Option<turbomcp_service::SubjectToken>,
 }
 
 /// Run the configured authenticator. `Err` carries the challenge response
@@ -48,6 +50,10 @@ pub(super) async fn enforce_auth<S>(
         AuthDecision::Allow(identity) => Ok(Some(Authenticated {
             subject: identity.principal_key(),
             identity,
+            token: authenticator
+                .retains_token()
+                .then(|| turbomcp_service::bearer_of(authorization))
+                .flatten(),
         })),
         AuthDecision::Challenge {
             status,

@@ -480,6 +480,9 @@ where
         ));
     if let Some(authenticated) = authenticated {
         ext.insert(authenticated.identity);
+        if let Some(token) = authenticated.token {
+            ext.insert(token);
+        }
         // Where a handler says the call needs scopes this token lacks.
         ext.insert(ScopeChallenge::default());
     }

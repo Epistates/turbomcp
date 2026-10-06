@@ -98,7 +98,7 @@ pub struct RemoteServerBuilder {
     catalog_ttl: Duration,
     shutdown_grace: Duration,
     forward_input: bool,
-    enforce_scopes: bool,
+    enforce_scopes: Option<bool>,
     key: Option<UpstreamKey>,
     serialize: bool,
     idle: Duration,
@@ -132,7 +132,7 @@ impl RemoteServerBuilder {
             catalog_ttl: DEFAULT_CATALOG_TTL,
             shutdown_grace: Duration::from_secs(2),
             forward_input: true,
-            enforce_scopes: false,
+            enforce_scopes: None,
             key: None,
             serialize: false,
             idle: DEFAULT_IDLE,
@@ -203,7 +203,8 @@ impl RemoteServerBuilder {
 
     /// Whether the gateway holds its callers to the scopes upstream tools
     /// declare (`#[tool(scopes(…))]`, carried in their `_meta`), filtering
-    /// lists and refusing calls by them (default `false`). Those scopes are
+    /// lists and refusing calls by them (default `false`, and `true` under
+    /// [`OutboundAuth::TokenExchange`]). Those scopes are
     /// about the token presented upstream: the proxy's own, unless it
     /// exchanges the caller's. Turn this on when the gateway's callers and
     /// the upstream share one authorization server and scope vocabulary;
@@ -211,7 +212,7 @@ impl RemoteServerBuilder {
     /// upstream enforces them on the proxy's token, and the gateway's own
     /// access policy is its visibility and its own tools' scopes.
     pub fn enforce_upstream_scopes(mut self, enforce: bool) -> Self {
-        self.enforce_scopes = enforce;
+        self.enforce_scopes = Some(enforce);
         self
     }
 
@@ -263,6 +264,17 @@ impl RemoteServerBuilder {
     /// The upstream failing to start, to connect, or to complete the
     /// handshake.
     pub async fn connect(self) -> Result<RemoteServer, ProxyError> {
+        #[cfg(feature = "oauth")]
+        let for_callers = matches!(self.auth, OutboundAuth::TokenExchange(_));
+        #[cfg(not(feature = "oauth"))]
+        let for_callers = false;
+        if for_callers && self.key == Some(UpstreamKey::Global) {
+            return Err(ProxyError::Config(
+                "token exchange acts for each caller, so it can't share one connection \
+                 (UpstreamKey::Global)"
+                    .into(),
+            ));
+        }
         let (label, dial, by_stream) = match self.target {
             Target::Upstream(upstream) => {
                 let label = upstream.label();
@@ -271,19 +283,21 @@ impl RemoteServerBuilder {
                 #[cfg(not(feature = "http"))]
                 let by_stream = false;
                 #[cfg(feature = "http")]
-                let bearer = crate::connect::bearer(&upstream, &self.auth, self.network.as_ref())?;
+                let credential =
+                    crate::connect::Credential::of(&upstream, &self.auth, self.network.as_ref())?;
                 let options = Arc::new(crate::connect::ConnectOptions {
                     grace: self.shutdown_grace,
                     #[cfg(feature = "http")]
-                    bearer,
+                    credential,
                     #[cfg(feature = "http")]
                     network: self.network,
                 });
-                let dial: Dial = Arc::new(move |client| {
+                let dial: Dial = Arc::new(move |client, subject| {
                     let (upstream, options) = (upstream.clone(), Arc::clone(&options));
-                    Box::pin(
-                        async move { crate::connect::upstream(&upstream, &options, client).await },
-                    )
+                    Box::pin(async move {
+                        crate::connect::upstream(&upstream, &options, client, subject.as_ref())
+                            .await
+                    })
                 });
                 (label, dial, by_stream)
             }
@@ -299,10 +313,12 @@ impl RemoteServerBuilder {
             serialize: self.serialize,
             changes: changes.clone(),
         };
-        let probe = linker.link().await?;
+        let probe = linker.link(None).await?;
         let client = &probe.client;
         let version = client.protocol_version().clone();
-        let key = self.key.unwrap_or(if by_stream || !version.is_stateful() {
+        let key = self.key.unwrap_or(if for_callers {
+            UpstreamKey::Principal
+        } else if by_stream || !version.is_stateful() {
             UpstreamKey::Global
         } else {
             UpstreamKey::Principal
@@ -317,10 +333,20 @@ impl RemoteServerBuilder {
             version,
             changes,
             forward_input: self.forward_input,
-            enforce_scopes: self.enforce_scopes,
+            enforce_scopes: self.enforce_scopes.unwrap_or(for_callers),
             key,
-            pool: Pool::new(key, linker, probe, self.idle, self.max),
             label,
+            pool: {
+                // The startup connection is the gateway's own: under token
+                // exchange it must never serve a caller.
+                let spare = if for_callers {
+                    probe.shutdown().await;
+                    None
+                } else {
+                    Some(probe)
+                };
+                Pool::new(key, linker, spare, (self.idle, self.max), for_callers)
+            },
         };
         Ok(RemoteServer {
             inner: Arc::new(shared),
@@ -353,7 +379,7 @@ impl RemoteServer {
     {
         let label = label.into();
         let name = label.clone();
-        let dial: Dial = Arc::new(move |client: ClientBuilder| {
+        let dial: Dial = Arc::new(move |client: ClientBuilder, _subject| {
             let opening = open();
             let upstream = name.clone();
             Box::pin(async move {
