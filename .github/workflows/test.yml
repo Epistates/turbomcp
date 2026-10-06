@@ -593,25 +593,21 @@ jobs:
       timeout-minutes: 10
       run: timeout -k 20s 8m cargo test --test rmcp_interop -- --nocapture
 
-    # No swap, and a memory ceiling on the whole step: a runaway process is
-    # killed with its log instead of swapping the runner to a standstill
-    # (which also stops the runner enforcing any timeout).
+    # Output to a capped file, printed in part: if a peer floods its output,
+    # the step still ends with a readable log.
     - name: Interop with the TypeScript SDK
       working-directory: crates/turbomcp-interop
       timeout-minutes: 10
       env:
         TURBOMCP_INTEROP_REQUIRE: '1'
       run: |
-        node --version; npm --version; nproc; free -m | head -3
-        sudo swapoff -a
+        node --version; npm --version; nproc; free -m | head -2
         set +e
-        sudo systemd-run --scope --quiet -p MemoryMax=4G -p MemorySwapMax=0 \
-          --uid="$(id -u)" --gid="$(id -g)" --setenv=PATH="$PATH" \
-          --setenv=HOME="$HOME" --setenv=TURBOMCP_INTEROP_REQUIRE=1 \
-          --working-directory="$PWD" \
-          timeout -k 20s 8m cargo test --test sdk_matrix typescript -- --nocapture --test-threads=1
-        status=$?
-        sudo dmesg | grep -iE "oom|killed process" | tail -5 || true
+        timeout -k 20s 8m cargo test --test sdk_matrix typescript -- --nocapture --test-threads=1 2>&1 \
+          | head -c 100000000 > ts.log
+        status=${PIPESTATUS[0]}
+        ls -la ts.log
+        head -c 20000 ts.log; echo; echo "[...]"; tail -c 20000 ts.log
         exit $status
 
     - name: Interop with the Python SDK
