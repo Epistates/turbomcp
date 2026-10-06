@@ -598,7 +598,9 @@ jobs:
       timeout-minutes: 10
       env:
         TURBOMCP_INTEROP_REQUIRE: '1'
-      run: timeout -k 20s 8m cargo test --test sdk_matrix python -- --nocapture
+      # In a session of its own: nothing the tests do can signal the
+      # runner's process group.
+      run: setsid --wait timeout -k 20s 8m cargo test --test sdk_matrix python -- --nocapture
 
     - name: Interop with the Go SDK
       working-directory: crates/turbomcp-interop
