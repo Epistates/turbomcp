@@ -586,17 +586,33 @@ jobs:
       timeout-minutes: 15
       run: timeout -k 20s 12m cargo test --no-run
 
-    - name: Run the interop suite
+    # One step per peer SDK: a hang that takes the runner with it still
+    # says, by which step it stopped in, whose it is.
+    - name: Interop with rmcp
       working-directory: crates/turbomcp-interop
-      timeout-minutes: 15
+      timeout-minutes: 10
+      run: timeout -k 20s 8m cargo test --test rmcp_interop -- --nocapture
+
+    - name: Interop with the TypeScript SDK
+      working-directory: crates/turbomcp-interop
+      timeout-minutes: 10
       env:
         TURBOMCP_INTEROP_REQUIRE: '1'
-      run: |
-        ( while sleep 60; do
-            echo "--- watchdog $(date -u +%T)"; free -m | head -2
-            ps -eo pid,ppid,etimes,rss,args --sort=-rss | head -12 | cut -c1-160
-          done ) &
-        timeout -k 20s 12m cargo test -- --nocapture
+      run: timeout -k 20s 8m cargo test --test sdk_matrix typescript -- --nocapture
+
+    - name: Interop with the Python SDK
+      working-directory: crates/turbomcp-interop
+      timeout-minutes: 10
+      env:
+        TURBOMCP_INTEROP_REQUIRE: '1'
+      run: timeout -k 20s 8m cargo test --test sdk_matrix python -- --nocapture
+
+    - name: Interop with the Go SDK
+      working-directory: crates/turbomcp-interop
+      timeout-minutes: 10
+      env:
+        TURBOMCP_INTEROP_REQUIRE: '1'
+      run: timeout -k 20s 8m cargo test --test sdk_matrix go_ -- --nocapture
 
     # turbomcp's client and server against rmcp's, same process, interleaved,
     # medians compared. Shared runners are noisy, hence a looser factor than
