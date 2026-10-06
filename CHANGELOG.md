@@ -9,12 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `gateway` example (a remote server beside local tools, under one
+  visibility policy, over HTTP) and a MIGRATION section mapping v3's
+  `turbomcp-proxy` and `turbomcp-cli` onto v4.
 - The `turbomcp` command (`turbomcp-cli`, rebuilt for v4). `turbomcp proxy
   --config servers.json` serves the servers in an `mcpServers` configuration
   (Claude Desktop, Cursor, VS Code's `servers`) as one MCP server over stdio
   or Streamable HTTP, each under its name, translating revisions both ways;
   `${VAR}` comes from the environment, unreachable servers are left out
   unless `--strict`, the retired `sse` type is refused with a reason.
+  Over HTTP it can require OAuth 2.1 bearer tokens (`--auth-issuer`,
+  `--auth-jwks`, `--auth-audience`, `--auth-scopes`; JWTs checked for
+  signature, `iss`, `exp` and `aud`, RFC 9728 metadata served).
   `tools`, `resources`, `prompts`, `call`, `read`, `prompt` and `probe`
   (which revisions a server negotiates, stateful or not, what it declares
   and offers) work against a URL, a command over stdio, or a configured

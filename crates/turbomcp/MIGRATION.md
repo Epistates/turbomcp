@@ -373,6 +373,42 @@ v3 surfaced Tasks one way. In v4 they split by protocol version:
   session-less and server-directed (`resultType: "task"`, `tasks/get|update|cancel`,
   `notifications/tasks`).
 
+## Gateway and CLI: `turbomcp-proxy` and `turbomcp-cli`
+
+v3's proxy relayed frames from one backend to one frontend, from a catalogue
+it read at startup. v4's is a library: a `RemoteServer` is an upstream served
+as if it were local, so it mounts in a `Composite` beside your own tools and
+other remotes, under the composite's visibility, interceptors, telemetry and
+HTTP authentication. What v3 left out is relayed: sampling, elicitation and
+roots requests (to the caller whose call caused them, on any revision),
+progress, cancellation, and `list_changed` / `resources/updated` (so a
+catalogue change no longer needs a restart). The CLI is one binary,
+`turbomcp`, for both the gateway and protocol operations.
+
+| v3 | v4 |
+|---|---|
+| `turbomcp-proxy inspect --backend stdio --cmd "…"` | `turbomcp probe …` (revisions, capabilities, counts), `turbomcp tools …` |
+| `turbomcp-proxy serve --backend stdio --cmd "…" --frontend http --bind ADDR` | `turbomcp proxy --config servers.json --http ADDR` (any number of servers, each under its name), or `RemoteServer` + `Http` in your own binary |
+| `--jwt-jwks-uri`, `--jwt-issuer`, `--jwt-audience` | `--auth-jwks`, `--auth-issuer`, `--auth-audience` (plus `--auth-scopes`); RFC 9728 metadata is served |
+| `--jwt-secret` (HS256) | Not offered: MCP authorization expects an authorization server's asymmetric keys. Embed with a `JwtValidator` over `StaticJwks` if you must. |
+| `--backend tcp` / `--backend unix` | Dropped with those transports. |
+| `generate` (Rust codegen), `schema openapi\|graphql\|protobuf` | Not carried over. An OpenAPI adapter is planned post-GA, on the same seam as `RemoteServer`. |
+| `RuntimeProxy`, `ProxyService`, `BackendConnector` | `RemoteServer` (`builder`, `connect`, `dial`, `over`), mounted with `Composite::mount` |
+| `turbomcp-cli tools list --command "./server"` | `turbomcp tools ./server` |
+| `turbomcp-cli tools call NAME --arguments '{…}'` | `turbomcp call NAME --args '{…}' …` or `-a key=value` |
+| `turbomcp-cli resources list --url …`, `prompts list` | `turbomcp resources …`, `turbomcp prompts …` (plus `read`, `prompt`) |
+| `--auth TOKEN` / `MCP_AUTH` | `--bearer TOKEN` / `TURBOMCP_BEARER`, and `--header 'Name: value'` |
+| `new`, `build`, `deploy`, `install`, `dev` | Not carried over: use `cargo` and your host's own configuration. |
+
+New in v4, with no v3 counterpart: per-caller or per-session upstream
+connections (`UpstreamKey`), OAuth client credentials and RFC 8693 token
+exchange to upstreams (`OutboundAuth`), a safe-list environment for stdio
+upstreams, network policy for HTTP and WebSocket upstreams, and the
+`mcpServers` configuration format MCP hosts share. See
+[`turbomcp-proxy`](../turbomcp-proxy/README.md),
+[`turbomcp-cli`](../turbomcp-cli/README.md) and the
+[`gateway` example](examples/gateway.rs).
+
 ## Not yet ported from v3
 
 Tracked for later phases; absent in this alpha:
@@ -386,15 +422,15 @@ Tracked for later phases; absent in this alpha:
 
 ## Companion crates published for v3
 
-These shipped alongside `turbomcp` 3.x and have **no 4.x release**. There is no
-4.x crate to upgrade to, so a project using one of them should stay on the `3.x`
+These shipped alongside `turbomcp` 3.x. Two are rebuilt for v4; the rest have
+**no 4.x release**, so a project using one of them should stay on the `3.x`
 line for that piece — the two majors are independent crates and can coexist in
 one workspace while you migrate the server/client code.
 
 | v3 crate (3.1.5) | Status in v4 |
 |---|---|
-| `turbomcp-cli` | Not ported. Use the official [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to poke at a server, or drive one from the [`client` example](examples/client.rs). |
-| `turbomcp-proxy` | Not ported. Planned to be rebuilt on `turbomcp-client` post-GA. |
+| `turbomcp-cli` | Rebuilt for v4 (same crate, binary `turbomcp`): see [the gateway and the CLI](#gateway-and-cli-turbomcp-proxy-and-turbomcp-cli). |
+| `turbomcp-proxy` | Rebuilt for v4 (same crate, now a library; the facade's `proxy` feature): see [the gateway and the CLI](#gateway-and-cli-turbomcp-proxy-and-turbomcp-cli). |
 | `turbomcp-openapi` | Not ported. Planned post-GA. |
 | `turbomcp-wasm` / `turbomcp-wasm-macros` | No WASM *transport* at GA, but the foundation (`turbomcp-core`, `-codec`, `-protocol`) builds `no_std` for `wasm32-unknown-unknown` — CI enforces it on every run. The bindings layer is a later effort. |
 | `turbomcp-grpc` | Not ported, and unlikely to be: gRPC is not an MCP-spec transport. |

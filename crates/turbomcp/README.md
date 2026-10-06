@@ -244,6 +244,7 @@ In [`examples/`](examples/) — run with `cargo run -p turbomcp --example <name>
 | `elicitation` | asking the user for input (MRTR + legacy inline) |
 | `middleware` | `tower::Layer`s over the dispatcher: one that audits, one that refuses |
 | `composition` | three servers mounted under prefixes and served as one |
+| `gateway` | a remote MCP server (any command) beside local tools, under one visibility policy, over HTTP (`--features "proxy http"`) |
 | `dual_transport` | one server over stdio **and** HTTP (`--features http`) |
 | `tasks` | the draft Tasks extension (`--features ext-tasks`) |
 | `client` | the other half: a client that spawns `hello_world` and drives it (`--features client`) |
