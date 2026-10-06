@@ -42,7 +42,12 @@ gateway.serve(Http::bind(addr).config(HttpConfig::new())).await?;
 
 What a remote advertises is what its upstream advertised in the handshake.
 The caller's token is never passed upstream: the proxy authenticates as
-itself. Cancellation, progress and trace context cross the hop, and a stdio
+itself, with a static token or OAuth client credentials at the upstream's
+own authorization server (`OutboundAuth`, feature `oauth`), stepping up
+there when the upstream asks for more scope. A stdio upstream inherits only
+what a program needs of the proxy's environment, and HTTP and WebSocket
+upstreams can be held to a `NetworkPolicy` (SSRF and DNS rebinding checked
+at every connect). Cancellation, progress and trace context cross the hop, and a stdio
 upstream gets the specification's shutdown sequence (stdin closed, then
 `SIGTERM`, then `SIGKILL`, to its whole process group).
 

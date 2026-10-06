@@ -22,8 +22,10 @@ pub mod challenge;
 pub mod discovery;
 pub mod enterprise;
 pub mod flow;
+pub mod machine;
 pub mod registration;
 pub mod store;
+mod token_endpoint;
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -35,6 +37,7 @@ pub use enterprise::{
     IdentityProvider,
 };
 pub use flow::{CallbackParams, Discovered, OAuthClient, PendingAuthorization};
+pub use machine::MachineAuthorization;
 pub use registration::{
     ApplicationType, ClientCredentials, DynamicRegistration, RegistrationStrategy,
 };

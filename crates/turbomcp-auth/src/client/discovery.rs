@@ -304,6 +304,27 @@ pub(crate) async fn discover_authorization_server_with_policy(
     Ok(meta)
 }
 
+/// Discover `resource`'s authorization server: its RFC 9728 document (from
+/// the challenge's `resource_metadata` when given), then the first named
+/// authorization server's validated metadata.
+pub(crate) async fn discover_with_policy(
+    http: &reqwest::Client,
+    resource: &str,
+    challenge: Option<&super::challenge::BearerChallenge>,
+    policy: &crate::NetworkPolicy,
+) -> Result<super::flow::Discovered, OAuthClientError> {
+    let resource = discover_protected_resource_with_policy(
+        http,
+        resource,
+        challenge.and_then(|c| c.resource_metadata.as_deref()),
+        policy,
+    )
+    .await?;
+    let issuer = resource.authorization_servers[0].clone();
+    let server = fetch_authorization_server(http, &issuer, policy).await?;
+    Ok(super::flow::Discovered { resource, server })
+}
+
 /// Fetch and validate `issuer`'s metadata: the document's `issuer` MUST equal
 /// the one asked for, and every endpoint it names must be HTTPS. What a
 /// particular grant further requires (PKCE, a grant profile) is the caller's

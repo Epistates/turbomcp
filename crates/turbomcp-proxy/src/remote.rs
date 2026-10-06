@@ -65,6 +65,8 @@ struct Shared {
     changes: broadcast::Sender<Change>,
     /// Bridge the upstream's requests for input to downstream callers.
     forward_input: bool,
+    /// Keep the upstream tools' declared scopes, for the gateway to enforce.
+    enforce_scopes: bool,
     key: UpstreamKey,
     pool: Pool,
 }
@@ -96,6 +98,7 @@ pub struct RemoteServerBuilder {
     catalog_ttl: Duration,
     shutdown_grace: Duration,
     forward_input: bool,
+    enforce_scopes: bool,
     key: Option<UpstreamKey>,
     serialize: bool,
     idle: Duration,
@@ -129,6 +132,7 @@ impl RemoteServerBuilder {
             catalog_ttl: DEFAULT_CATALOG_TTL,
             shutdown_grace: Duration::from_secs(2),
             forward_input: true,
+            enforce_scopes: false,
             key: None,
             serialize: false,
             idle: DEFAULT_IDLE,
@@ -197,6 +201,20 @@ impl RemoteServerBuilder {
         self
     }
 
+    /// Whether the gateway holds its callers to the scopes upstream tools
+    /// declare (`#[tool(scopes(…))]`, carried in their `_meta`), filtering
+    /// lists and refusing calls by them (default `false`). Those scopes are
+    /// about the token presented upstream: the proxy's own, unless it
+    /// exchanges the caller's. Turn this on when the gateway's callers and
+    /// the upstream share one authorization server and scope vocabulary;
+    /// off, the scopes are dropped from what the gateway serves, the
+    /// upstream enforces them on the proxy's token, and the gateway's own
+    /// access policy is its visibility and its own tools' scopes.
+    pub fn enforce_upstream_scopes(mut self, enforce: bool) -> Self {
+        self.enforce_scopes = enforce;
+        self
+    }
+
     /// Which upstream connection serves a call. The default follows the
     /// upstream: [`UpstreamKey::Global`] where it attributes its requests
     /// for input itself (a `2026-07-28` upstream, or Streamable HTTP), and
@@ -252,9 +270,12 @@ impl RemoteServerBuilder {
                 let by_stream = matches!(upstream, Upstream::Http { .. });
                 #[cfg(not(feature = "http"))]
                 let by_stream = false;
+                #[cfg(feature = "http")]
+                let bearer = crate::connect::bearer(&upstream, &self.auth, self.network.as_ref())?;
                 let options = Arc::new(crate::connect::ConnectOptions {
-                    auth: self.auth,
                     grace: self.shutdown_grace,
+                    #[cfg(feature = "http")]
+                    bearer,
                     #[cfg(feature = "http")]
                     network: self.network,
                 });
@@ -296,6 +317,7 @@ impl RemoteServerBuilder {
             version,
             changes,
             forward_input: self.forward_input,
+            enforce_scopes: self.enforce_scopes,
             key,
             pool: Pool::new(key, linker, probe, self.idle, self.max),
             label,
@@ -626,7 +648,7 @@ impl WithTools for RemoteServer {
                     .map_err(|e| self.upstream_error(&e))?;
                 Ok(tools
                     .into_iter()
-                    .map(|t| (t.name.clone(), downstream_tool(t)))
+                    .map(|t| (t.name.clone(), self.downstream_tool(t)))
                     .collect())
             })
             .await
@@ -643,7 +665,11 @@ impl WithTools for RemoteServer {
             .list_tools(params.cursor.as_deref())
             .await
             .map_err(|e| self.upstream_error(&e))?;
-        page.tools = page.tools.into_iter().map(downstream_tool).collect();
+        page.tools = page
+            .tools
+            .into_iter()
+            .map(|t| self.downstream_tool(t))
+            .collect();
         Ok(page)
     }
 
@@ -806,11 +832,17 @@ impl WithCompletions for RemoteServer {
     }
 }
 
-/// A tool as the downstream sees it. Its task support is the upstream's
-/// business: the upstream client drives an upstream task to its result, and
-/// whether the proxied call runs as a task downstream is the downstream
-/// server's own policy.
-fn downstream_tool(mut tool: neutral::Tool) -> neutral::Tool {
-    tool.task_support = None;
-    tool
+impl RemoteServer {
+    /// A tool as the downstream sees it. Its task support is the upstream's
+    /// business: the upstream client drives an upstream task to its result,
+    /// and whether the proxied call runs as a task downstream is the
+    /// downstream server's own policy. Its declared scopes are the
+    /// upstream's too, unless the gateway enforces them.
+    fn downstream_tool(&self, mut tool: neutral::Tool) -> neutral::Tool {
+        tool.task_support = None;
+        if !self.inner.enforce_scopes {
+            tool.meta.remove(turbomcp_core::meta::keys::SCOPES);
+        }
+        tool
+    }
 }

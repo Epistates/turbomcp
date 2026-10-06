@@ -59,4 +59,6 @@ pub use remote::{RemoteServer, RemoteServerBuilder};
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub use turbomcp_auth::NetworkPolicy;
+#[cfg(feature = "oauth")]
+pub use upstream::ServiceAccount;
 pub use upstream::{Inherit, OutboundAuth, Upstream};

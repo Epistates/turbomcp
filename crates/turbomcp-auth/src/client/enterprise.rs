@@ -21,20 +21,15 @@
 //! Every endpoint passes the same [`NetworkPolicy`](crate::NetworkPolicy)
 //! and HTTPS checks as the authorization-code flow.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use super::OAuthClientError;
 use super::TokenSet;
 use super::challenge::BearerChallenge;
-use super::discovery::{
-    AuthorizationServerMetadata, discover_protected_resource_with_policy,
-    fetch_authorization_server, require_secure_url,
-};
+use super::discovery::{AuthorizationServerMetadata, discover_with_policy};
 use super::flow::Discovered;
 use super::registration::ClientCredentials;
+use super::token_endpoint::{ClientAuth, TokenResponse, post_form, split_scopes};
 
 /// The extension's identifier, declared in the client's capabilities.
 pub const EXTENSION_ID: &str = "io.modelcontextprotocol/enterprise-managed-authorization";
@@ -225,22 +220,16 @@ impl EnterpriseAuthorization {
         &self,
         challenge: Option<&BearerChallenge>,
     ) -> Result<Discovered, OAuthClientError> {
-        let resource = discover_protected_resource_with_policy(
-            &self.http,
-            &self.resource,
-            challenge.and_then(|c| c.resource_metadata.as_deref()),
-            &self.network,
-        )
-        .await?;
-        let issuer = resource.authorization_servers[0].clone();
-        let server = fetch_authorization_server(&self.http, &issuer, &self.network).await?;
-        if !accepts_id_jag(&server) {
+        let discovered =
+            discover_with_policy(&self.http, &self.resource, challenge, &self.network).await?;
+        if !accepts_id_jag(&discovered.server) {
             return Err(OAuthClientError::Discovery(format!(
-                "authorization server {issuer} does not accept ID-JAGs \
-                 (no {ID_JAG_PROFILE} in authorization_grant_profiles_supported)"
+                "authorization server {} does not accept ID-JAGs \
+                 (no {ID_JAG_PROFILE} in authorization_grant_profiles_supported)",
+                discovered.server.issuer
             )));
         }
-        Ok(Discovered { resource, server })
+        Ok(discovered)
     }
 
     /// Exchange `assertion` at the IdP for an ID-JAG for `discovered`'s
@@ -270,7 +259,7 @@ impl EnterpriseAuthorization {
         if !scope.is_empty() {
             form.push(("scope", &scope));
         }
-        let response: TokenExchangeResponse = self
+        let response: TokenResponse = self
             .post_form(
                 &self.idp.token_endpoint,
                 "the IdP token endpoint",
@@ -279,10 +268,13 @@ impl EnterpriseAuthorization {
                 form,
             )
             .await?;
-        if response.issued_token_type != ID_JAG_TOKEN_TYPE {
+        if response.issued_token_type.as_deref() != Some(ID_JAG_TOKEN_TYPE) {
             return Err(OAuthClientError::TokenExchange(format!(
                 "the IdP issued `{}`, not an ID-JAG",
-                response.issued_token_type
+                response
+                    .issued_token_type
+                    .as_deref()
+                    .unwrap_or("an untyped token")
             )));
         }
         Ok(IdJag {
@@ -307,7 +299,7 @@ impl EnterpriseAuthorization {
             ("assertion", id_jag.token.as_str()),
         ];
         let auth = ClientAuth::for_server(&discovered.server);
-        let response: AccessTokenResponse = self
+        let response: TokenResponse = self
             .post_form(
                 &discovered.server.token_endpoint,
                 "the token endpoint",
@@ -316,23 +308,7 @@ impl EnterpriseAuthorization {
                 form,
             )
             .await?;
-        let expires_at_epoch_secs = response.expires_in.map(|ttl| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                + ttl
-        });
-        Ok(TokenSet {
-            access_token: response.access_token,
-            refresh_token: response.refresh_token,
-            expires_at_epoch_secs,
-            scopes: response
-                .scope
-                .map(|s| split_scopes(&s))
-                .or_else(|| id_jag.scopes.clone())
-                .unwrap_or_default(),
-        })
+        Ok(response.into_token_set(id_jag.scopes.as_deref().unwrap_or_default()))
     }
 
     /// The whole flow: discover, exchange `assertion` for an ID-JAG, and the
@@ -353,60 +329,25 @@ impl EnterpriseAuthorization {
         self.exchange_id_jag(&discovered, &id_jag).await
     }
 
-    /// POST `form` to `endpoint`, authenticated as `credentials`, and parse
-    /// the JSON answer (or the RFC 6749 §5.2 error).
+    /// POST `form` to `endpoint`, authenticated as `credentials`.
     async fn post_form<T: serde::de::DeserializeOwned>(
         &self,
         endpoint: &str,
         what: &str,
         credentials: &ClientCredentials,
         auth: ClientAuth,
-        mut form: Vec<(&str, &str)>,
+        form: Vec<(&str, &str)>,
     ) -> Result<T, OAuthClientError> {
-        require_secure_url(endpoint, what)?;
-        self.network
-            .validate_url(endpoint)
-            .map_err(OAuthClientError::Discovery)?;
-        let mut request = self
-            .http
-            .post(endpoint)
-            .header("accept", "application/json");
-        match (&credentials.client_secret, auth) {
-            (Some(secret), ClientAuth::Basic) => {
-                request = request.basic_auth(
-                    form_urlencode(&credentials.client_id),
-                    Some(form_urlencode(secret)),
-                );
-            }
-            (Some(secret), ClientAuth::Post) => {
-                form.push(("client_id", &credentials.client_id));
-                form.push(("client_secret", secret.as_str()));
-            }
-            (None, _) => form.push(("client_id", &credentials.client_id)),
-        }
-        let response = self
-            .network
-            .send(&self.http, request.form(&form))
-            .await
-            .map_err(OAuthClientError::TokenExchange)?;
-        let status = response.status();
-        let body = self
-            .network
-            .body(response)
-            .await
-            .map_err(OAuthClientError::TokenExchange)?;
-        if !status.is_success() {
-            let detail = serde_json::from_slice::<TokenError>(&body).map_or_else(
-                |_| format!("http status {status}"),
-                |e| match e.error_description {
-                    Some(d) => format!("{}: {d}", e.error),
-                    None => e.error,
-                },
-            );
-            return Err(OAuthClientError::TokenExchange(format!("{what}: {detail}")));
-        }
-        serde_json::from_slice(&body)
-            .map_err(|e| OAuthClientError::TokenExchange(format!("{what}: malformed answer: {e}")))
+        post_form(
+            &self.http,
+            &self.network,
+            endpoint,
+            what,
+            credentials,
+            auth,
+            form,
+        )
+        .await
     }
 }
 
@@ -417,62 +358,4 @@ pub fn accepts_id_jag(server: &AuthorizationServerMetadata) -> bool {
         .authorization_grant_profiles_supported
         .as_ref()
         .is_some_and(|profiles| profiles.iter().any(|p| p == ID_JAG_PROFILE))
-}
-
-/// Where the client secret goes.
-#[derive(Clone, Copy, Debug)]
-enum ClientAuth {
-    Basic,
-    Post,
-}
-
-impl ClientAuth {
-    /// RFC 8414 §2's default is Basic; an authorization server that offers
-    /// only `client_secret_post` gets the secret in the body.
-    fn for_server(server: &AuthorizationServerMetadata) -> Self {
-        let Some(methods) = &server.token_endpoint_auth_methods_supported else {
-            return Self::Basic;
-        };
-        let supports = |name: &str| methods.iter().any(|m| m == name);
-        if supports("client_secret_basic") || !supports("client_secret_post") {
-            Self::Basic
-        } else {
-            Self::Post
-        }
-    }
-}
-
-/// RFC 6749 §2.3.1: Basic credentials are form-urlencoded before encoding.
-fn form_urlencode(value: &str) -> String {
-    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
-}
-
-fn split_scopes(scope: &str) -> Vec<String> {
-    scope.split_whitespace().map(str::to_owned).collect()
-}
-
-#[derive(Deserialize)]
-struct TokenExchangeResponse {
-    access_token: Zeroizing<String>,
-    issued_token_type: String,
-    #[serde(default)]
-    scope: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct AccessTokenResponse {
-    access_token: Zeroizing<String>,
-    #[serde(default)]
-    refresh_token: Option<Zeroizing<String>>,
-    #[serde(default)]
-    expires_in: Option<u64>,
-    #[serde(default)]
-    scope: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct TokenError {
-    error: String,
-    #[serde(default)]
-    error_description: Option<String>,
 }

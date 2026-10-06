@@ -129,6 +129,18 @@ impl Upstream {
         self
     }
 
+    /// The URL an OAuth authorization is for: the endpoint, a WebSocket one
+    /// as its HTTP equivalent (where its metadata is served).
+    #[cfg(feature = "oauth")]
+    pub(crate) fn resource(&self) -> Option<String> {
+        match self {
+            Self::Stdio { .. } => None,
+            Self::Http { url } => Some(url.clone()),
+            #[cfg(feature = "websocket")]
+            Self::WebSocket { url } => Some(url.replacen("ws", "http", 1)),
+        }
+    }
+
     /// A short label for logs and errors (never a secret).
     pub(crate) fn label(&self) -> String {
         match self {
@@ -200,6 +212,63 @@ pub enum OutboundAuth {
     /// A fixed bearer token from configuration, presented on every request
     /// to an HTTP or WebSocket upstream. Wiped from memory when dropped.
     Static(Zeroizing<String>),
+    /// OAuth client credentials (RFC 6749 §4.4) at the upstream's own
+    /// authorization server, found by its discovery: the proxy calls as
+    /// itself, with a token bound to the upstream, re-granted when it
+    /// expires, on a `401`, and with wider scopes on a
+    /// `403 insufficient_scope` (feature `oauth`).
+    #[cfg(feature = "oauth")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "oauth")))]
+    ClientCredentials(ServiceAccount),
+}
+
+/// The proxy's own OAuth client at an upstream's authorization server: a
+/// confidential client, registered there ahead of time. `Debug` never
+/// renders the secret, which is wiped from memory when dropped.
+#[cfg(feature = "oauth")]
+#[cfg_attr(docsrs, doc(cfg(feature = "oauth")))]
+#[derive(Clone)]
+pub struct ServiceAccount {
+    pub(crate) client_id: String,
+    pub(crate) client_secret: Zeroizing<String>,
+    pub(crate) scopes: Option<Vec<String>>,
+}
+
+#[cfg(feature = "oauth")]
+impl core::fmt::Debug for ServiceAccount {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ServiceAccount")
+            .field("client_id", &self.client_id)
+            .field("scopes", &self.scopes)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "oauth")]
+impl ServiceAccount {
+    /// Client `client_id`, authenticated by `client_secret`.
+    pub fn new(client_id: impl Into<String>, client_secret: impl Into<String>) -> Self {
+        Self {
+            client_id: client_id.into(),
+            client_secret: Zeroizing::new(client_secret.into()),
+            scopes: None,
+        }
+    }
+
+    /// Ask for `scopes` (default: what the upstream's challenge names, else
+    /// what its metadata advertises).
+    #[must_use]
+    pub fn scopes(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.scopes = Some(scopes.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub(crate) fn credentials(&self) -> turbomcp_auth::client::ClientCredentials {
+        turbomcp_auth::client::ClientCredentials {
+            client_id: self.client_id.clone(),
+            client_secret: Some(self.client_secret.clone()),
+        }
+    }
 }
 
 impl core::fmt::Debug for OutboundAuth {
@@ -207,6 +276,10 @@ impl core::fmt::Debug for OutboundAuth {
         match self {
             Self::None => f.write_str("None"),
             Self::Static(_) => f.write_str("Static(<redacted>)"),
+            #[cfg(feature = "oauth")]
+            Self::ClientCredentials(account) => {
+                f.debug_tuple("ClientCredentials").field(account).finish()
+            }
         }
     }
 }

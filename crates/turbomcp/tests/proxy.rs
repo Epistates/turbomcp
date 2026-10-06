@@ -511,3 +511,48 @@ async fn an_unattributable_question_is_refused_not_guessed() {
     let (a, b) = ada_and_bob(&remote, ConnectMode::Legacy).await;
     assert_eq!((a.as_str(), b.as_str()), ("Cancel", "Cancel"));
 }
+
+/// Scope-gated upstream tools.
+#[derive(Clone)]
+struct Guarded;
+
+#[server(name = "guarded", version = "1.0.0")]
+impl Guarded {
+    /// For admins.
+    #[tool(scopes("admin"))]
+    async fn purge(&self) -> String {
+        "purged".into()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upstream_scopes_reach_the_gateway_only_when_it_enforces_them() {
+    for enforce in [false, true] {
+        use turbomcp::Serve as _;
+        use turbomcp::testing::TestServer as _;
+        let (server_end, client_end) = turbomcp::memory::pair();
+        let handle = Guarded.into_server().into_handle();
+        tokio::spawn(async move {
+            let _ = server_end.serve(handle).await;
+        });
+        let once = Mutex::new(Some(client_end));
+        let remote = RemoteServer::dial("guarded", move || {
+            let end = once.lock().unwrap().take();
+            async move { end.ok_or_else(|| std::io::Error::other("used")) }
+        })
+        .enforce_upstream_scopes(enforce)
+        .connect()
+        .await
+        .unwrap();
+        let client = turbomcp::testing::connect(remote.into_server(), ClientBuilder::new("a", "1"))
+            .await
+            .unwrap();
+        let tools = client.list_all_tools().await.unwrap();
+        let purge = tools.iter().find(|t| t.name == "purge");
+        let declared = purge.is_some_and(|t| t.meta.contains_key("io.turbomcp/scopes"));
+        // Listed either way (no visibility policy here); its scopes come
+        // along only for the gateway to enforce.
+        assert!(purge.is_some(), "enforce={enforce}");
+        assert_eq!(declared, enforce, "enforce={enforce}");
+    }
+}

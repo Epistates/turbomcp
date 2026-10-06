@@ -1,6 +1,8 @@
 //! Opening the connection to an upstream.
 
 use std::process::Stdio;
+#[cfg(feature = "http")]
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::BufReader;
@@ -8,13 +10,52 @@ use turbomcp_client::{Client, ClientBuilder};
 use turbomcp_core::codec::DefaultCodec;
 use turbomcp_service::io::LineTransport;
 
+#[cfg(feature = "http")]
+use crate::OutboundAuth;
 use crate::process::ChildProcess;
-use crate::{Inherit, OutboundAuth, ProxyError, Upstream};
+use crate::{Inherit, ProxyError, Upstream};
+
+/// The credential `auth` presents to `upstream`, under `network` for any
+/// authorization server it has to reach.
+#[cfg(feature = "http")]
+pub(crate) fn bearer(
+    upstream: &Upstream,
+    auth: &OutboundAuth,
+    network: Option<&turbomcp_auth::NetworkPolicy>,
+) -> Result<Option<Arc<dyn turbomcp_transport_http::BearerSource>>, ProxyError> {
+    let _ = (upstream, network);
+    Ok(match auth {
+        OutboundAuth::None => None,
+        OutboundAuth::Static(token) => Some(Arc::new(token.clone())),
+        #[cfg(feature = "oauth")]
+        OutboundAuth::ClientCredentials(account) => {
+            use turbomcp_auth::client::MachineAuthorization;
+            use turbomcp_transport_http::oauth::MachineSession;
+            let resource = upstream.resource().ok_or_else(|| {
+                ProxyError::Config("OAuth credentials are for HTTP and WebSocket upstreams".into())
+            })?;
+            let mut engine = MachineAuthorization::new(resource, account.credentials());
+            if let Some(policy) = network {
+                engine = engine
+                    .with_network_policy(policy.clone())
+                    .map_err(|e| ProxyError::Config(e.to_string()))?;
+            }
+            let mut session = MachineSession::client_credentials(engine);
+            if let Some(scopes) = &account.scopes {
+                session = session.with_scopes(scopes.clone());
+            }
+            Some(Arc::new(session))
+        }
+    })
+}
 
 /// How a connection to an upstream is made, beside where it goes.
 pub(crate) struct ConnectOptions {
-    pub(crate) auth: OutboundAuth,
     pub(crate) grace: Duration,
+    /// The credential presented to an HTTP or WebSocket upstream, shared by
+    /// every connection to it.
+    #[cfg(feature = "http")]
+    pub(crate) bearer: Option<Arc<dyn turbomcp_transport_http::BearerSource>>,
     /// Where an HTTP or WebSocket upstream may be (`None`: anywhere).
     #[cfg(feature = "http")]
     pub(crate) network: Option<turbomcp_auth::NetworkPolicy>,
@@ -26,7 +67,7 @@ pub(crate) async fn upstream(
     options: &ConnectOptions,
     client: ClientBuilder,
 ) -> Result<(Client, Option<ChildProcess>), ProxyError> {
-    let (auth, grace) = (&options.auth, options.grace);
+    let grace = options.grace;
     let label = upstream.label();
     let connect_error = |source| ProxyError::Connect {
         upstream: label.clone(),
@@ -42,7 +83,6 @@ pub(crate) async fn upstream(
         } => {
             // A child's credentials are its environment, which the operator
             // configured; there is no request to put a bearer on.
-            let _ = auth;
             let mut cmd = tokio::process::Command::new(command);
             match inherit {
                 Inherit::All => {}
@@ -105,8 +145,8 @@ pub(crate) async fn upstream(
                     .map_err(|e| ProxyError::Config(format!("{url}: {e}")))?;
                 transport = transport.with_client(http);
             }
-            if let OutboundAuth::Static(token) = auth {
-                transport = transport.with_bearer(token.as_str());
+            if let Some(bearer) = &options.bearer {
+                transport = transport.with_bearer_source(Arc::clone(bearer));
             }
             let client = client.connect(transport).await.map_err(connect_error)?;
             Ok((client, None))
@@ -115,7 +155,11 @@ pub(crate) async fn upstream(
         Upstream::WebSocket { url } => {
             use turbomcp_transport_http::WebSocketClientTransport;
             let mut request = http::Request::builder().uri(url.as_str());
-            if let OutboundAuth::Static(token) = auth {
+            // One token per upgrade: a connection outliving it is closed by
+            // the server, and the next one gets a fresh token.
+            if let Some(bearer) = &options.bearer
+                && let Some(token) = bearer.bearer().await
+            {
                 request = request.header("authorization", format!("Bearer {}", token.as_str()));
             }
             let request = request

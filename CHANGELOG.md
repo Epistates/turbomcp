@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Authorization with no user in the loop. `MachineAuthorization`
+  (`turbomcp-auth`, `oauth-client`) gets a token for an MCP server from its
+  own authorization server, found by discovery and bound to it with
+  `resource` (RFC 8707): as the client itself (`client_credentials`, RFC
+  6749 §4.4) or for a user it serves (`exchange`, RFC 8693, the caller's
+  token as `subject_token`). It refuses a public client, or a grant the
+  server doesn't list, before anything is sent. `MachineSession`
+  (`turbomcp-transport-http`, `oauth`) is the matching bearer source: it
+  re-grants on expiry, on a `401`, and on a `403 insufficient_scope` with
+  the scopes already granted plus the ones named.
+- Gateway OAuth credentials: `OutboundAuth::ClientCredentials(ServiceAccount)`
+  (`turbomcp-proxy` feature `oauth`, on with the facade's `client-oauth`).
+  The proxy calls the upstream as itself and steps up there on its own.
+  Upstream tools' declared scopes are dropped from what the gateway serves
+  unless `enforce_upstream_scopes(true)`, since they concern the token
+  presented upstream, not the gateway's caller.
 - Gateway upstream policy. A stdio upstream inherits only what a program
   needs of the proxy's environment (`Inherit::Safe`, the official SDKs'
   list; `Inherit::All` and `Inherit::Nothing` otherwise), so the proxy's own

@@ -19,6 +19,8 @@ http = [
   "dep:turbomcp-transport-http", "turbomcp-transport-http/client",
   "dep:turbomcp-auth", "turbomcp-auth/network",
 ]
+# OAuth upstream credentials: `OutboundAuth::ClientCredentials`.
+oauth = ["http", "turbomcp-auth/oauth-client", "turbomcp-transport-http/oauth"]
 # Upstreams over WebSocket.
 websocket = ["http", "dep:http", "turbomcp-transport-http/websocket"]
 
