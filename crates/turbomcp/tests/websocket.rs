@@ -205,6 +205,24 @@ async fn authentication_happens_before_the_upgrade() {
     assert_eq!(text(&who), "tester");
 }
 
+/// An `http::Request` built by hand carries only what its author put on it;
+/// the transport adds the upgrade's own headers rather than fail it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_built_by_hand_upgrades() {
+    let server = spawn(with_ws().with_authenticator(Arc::new(Tokens { ttl: None }))).await;
+    let request = tokio_tungstenite::tungstenite::http::Request::builder()
+        .uri(server.url.as_str())
+        .header("authorization", "Bearer good")
+        .body(())
+        .unwrap();
+    let client = ClientBuilder::new("ws-hand", "1.0.0")
+        .connect(WebSocketClientTransport::connect(request).await.unwrap())
+        .await
+        .unwrap();
+    let who = client.call_tool("whoami", Map::new()).await.unwrap();
+    assert_eq!(text(&who), "tester");
+}
+
 /// A token that expires stops authorizing the connection it opened: the
 /// server closes it with `1008`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

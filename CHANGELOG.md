@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gateway upstream policy. A stdio upstream inherits only what a program
+  needs of the proxy's environment (`Inherit::Safe`, the official SDKs'
+  list; `Inherit::All` and `Inherit::Nothing` otherwise), so the proxy's own
+  credentials don't reach a third-party server it launches. An HTTP or
+  WebSocket upstream can be held to a `NetworkPolicy`
+  (`RemoteServerBuilder::network_policy`): its scheme and every address its
+  name resolves to are checked at each connect, the WebSocket one included
+  (`WebSocketClientTransport::connect_over` connects to the address the
+  policy resolved, so the name can't be rebound in between).
+- `turbomcp-auth` feature `network`: `NetworkPolicy` on its own, with
+  `client_builder` (a policy-bound HTTP client builder without the
+  whole-request deadline, for long-lived streams) and `resolve`.
 - Gateway connection keying: `UpstreamKey::{Global, Principal, Session}`
   picks which upstream connection serves a call (one shared, one per
   authenticated caller, one per downstream session). The default follows
@@ -374,6 +386,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `WebSocketClientTransport::connect` with an `http::Request` built by hand
+  (the documented way to add an `Authorization` header) failed the upgrade:
+  the request lacked the handshake's own headers. The transport now adds
+  whichever are missing.
 - A `tools/call` costs less to dispatch: the `requestState` binding (a
   canonical-JSON SHA-256) and the caller's principal key are computed only
   when a state is sealed, not on every call; the schema-validator cache is

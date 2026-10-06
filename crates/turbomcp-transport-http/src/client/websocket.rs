@@ -6,7 +6,9 @@ use bytes::Bytes;
 use futures::stream::SplitStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
-use tokio_tungstenite::tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
+use tokio_tungstenite::tungstenite::http::header::{
+    CONNECTION, HOST, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE,
+};
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -68,24 +70,29 @@ impl WebSocketClientTransport {
     /// # Errors
     /// [`WsError::Socket`] if the connection or the handshake fails.
     pub async fn connect(request: impl IntoClientRequest + Unpin) -> Result<Self, WsError> {
-        let mut request = request
-            .into_client_request()
-            .map_err(|e| WsError::Socket(Box::new(e)))?;
-        request
-            .headers_mut()
-            .entry(SEC_WEBSOCKET_PROTOCOL)
-            .or_insert(HeaderValue::from_static("mcp"));
-        let uri = request.uri();
-        let mut network = turbomcp_service::NetworkFacts::websocket();
-        if let Some(host) = uri.host() {
-            let port = uri.port_u16().or(match uri.scheme_str() {
-                Some("wss") => Some(443),
-                Some("ws") => Some(80),
-                _ => None,
-            });
-            network = network.with_peer(host, port);
-        }
+        let (request, network) = prepare(request)?;
         let (socket, _response) = tokio_tungstenite::connect_async(request)
+            .await
+            .map_err(|e| WsError::Socket(Box::new(e)))?;
+        Ok(Self {
+            link: Link::new(socket, None).with_network(network),
+        })
+    }
+
+    /// Connect with `request` over `stream`, a TCP connection to the server
+    /// you opened yourself (TLS is negotiated on it for `wss://`): for an
+    /// address chosen under a policy of your own, such as one a network
+    /// policy resolved and checked, so the name can't be rebound between the
+    /// check and the connect.
+    ///
+    /// # Errors
+    /// [`WsError::Socket`] if the handshake fails.
+    pub async fn connect_over(
+        request: impl IntoClientRequest + Unpin,
+        stream: tokio::net::TcpStream,
+    ) -> Result<Self, WsError> {
+        let (request, network) = prepare(request)?;
+        let (socket, _response) = tokio_tungstenite::client_async_tls(request, stream)
             .await
             .map_err(|e| WsError::Socket(Box::new(e)))?;
         Ok(Self {
@@ -104,6 +111,66 @@ impl WebSocketClientTransport {
         }));
         self
     }
+}
+
+/// The request with the `mcp` subprotocol asked for, and what it says about
+/// the peer.
+fn prepare(
+    request: impl IntoClientRequest + Unpin,
+) -> Result<
+    (
+        tokio_tungstenite::tungstenite::handshake::client::Request,
+        turbomcp_service::NetworkFacts,
+    ),
+    WsError,
+> {
+    let mut request = request
+        .into_client_request()
+        .map_err(|e| WsError::Socket(Box::new(e)))?;
+    // A URL gets the handshake headers from tungstenite; an `http::Request`
+    // of the caller's own is passed through as built, so fill in what it
+    // lacks rather than fail the upgrade.
+    let host = request.uri().authority().map(|authority| {
+        authority
+            .as_str()
+            .rsplit('@')
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    });
+    let headers = request.headers_mut();
+    if let Some(host) = host.and_then(|h| HeaderValue::from_str(&h).ok()) {
+        headers.entry(HOST).or_insert(host);
+    }
+    headers
+        .entry(CONNECTION)
+        .or_insert(HeaderValue::from_static("Upgrade"));
+    headers
+        .entry(UPGRADE)
+        .or_insert(HeaderValue::from_static("websocket"));
+    headers
+        .entry(SEC_WEBSOCKET_VERSION)
+        .or_insert(HeaderValue::from_static("13"));
+    if !headers.contains_key(SEC_WEBSOCKET_KEY) {
+        let key = tokio_tungstenite::tungstenite::handshake::client::generate_key();
+        if let Ok(key) = HeaderValue::from_str(&key) {
+            headers.insert(SEC_WEBSOCKET_KEY, key);
+        }
+    }
+    headers
+        .entry(SEC_WEBSOCKET_PROTOCOL)
+        .or_insert(HeaderValue::from_static("mcp"));
+    let uri = request.uri();
+    let mut network = turbomcp_service::NetworkFacts::websocket();
+    if let Some(host) = uri.host() {
+        let port = uri.port_u16().or(match uri.scheme_str() {
+            Some("wss") => Some(443),
+            Some("ws") => Some(80),
+            _ => None,
+        });
+        network = network.with_peer(host, port);
+    }
+    Ok((request, network))
 }
 
 /// Connect to a WebSocket MCP server at `url` (`ws://…` or `wss://…`).

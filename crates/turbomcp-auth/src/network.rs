@@ -2,7 +2,7 @@
 //! HTTPS endpoints (an operator's own JWKS or authorization server);
 //! [`NetworkPolicy::public_only`] is for URLs someone else chose, and is what
 //! the OAuth client engine uses unless told otherwise.
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -117,15 +117,54 @@ impl NetworkPolicy {
     /// # Errors
     /// Returns an error if the TLS/HTTP client cannot be initialized.
     pub fn http_client(&self) -> Result<reqwest::Client, reqwest::Error> {
-        let builder = reqwest::Client::builder()
+        self.client_builder().timeout(self.timeout).build()
+    }
+
+    /// An HTTP client builder under this policy (redirects disabled, no
+    /// environment proxy, every DNS answer checked, a bounded connect), with
+    /// no deadline on a whole request: for long-lived streams, such as an MCP
+    /// connection's, that [`http_client`](Self::http_client)'s deadline would
+    /// cut off. Add your own headers, roots or client certificate.
+    pub fn client_builder(&self) -> reqwest::ClientBuilder {
+        reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .dns_resolver(Arc::new(PolicyResolver {
                 policy: self.clone(),
             }))
-            .timeout(self.timeout)
-            .connect_timeout(self.timeout.min(Duration::from_secs(10)));
-        builder.build()
+            .connect_timeout(self.timeout.min(Duration::from_secs(10)))
+    }
+
+    /// Resolve `host` the way this policy's clients do: every answer must be
+    /// an address the policy permits, or none is returned. For connections
+    /// that don't go through a [`client_builder`](Self::client_builder)
+    /// client (a WebSocket's), so connecting to what this returns can't be
+    /// rebound elsewhere between the check and the connect.
+    ///
+    /// # Errors
+    /// The name not resolving, or resolving to an address the policy refuses.
+    pub async fn resolve(&self, host: &str, port: u16) -> std::io::Result<Vec<SocketAddr>> {
+        let host = host.trim_matches(['[', ']']);
+        let name = host.trim_end_matches('.').to_ascii_lowercase();
+        let addresses: Vec<SocketAddr> = if let Ok(ip) = name.parse::<IpAddr>() {
+            vec![SocketAddr::new(ip, port)]
+        } else if name == "localhost" || name.ends_with(".localhost") {
+            // The plaintext exception must stay on loopback regardless of a
+            // resolver's search domains or DNS answers.
+            vec![SocketAddr::from(([127, 0, 0, 1], port))]
+        } else {
+            tokio::net::lookup_host((host, port)).await?.collect()
+        };
+        // Every answer must pass: a reply mixing a public address with a
+        // private one is the shape a rebinding attack takes, and the
+        // connector is free to pick either.
+        if addresses.is_empty() || !addresses.iter().all(|a| self.permits(a.ip())) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "DNS returned an address this network policy refuses",
+            ));
+        }
+        Ok(addresses)
     }
 
     /// Validate a URL before making any connection.
@@ -166,6 +205,11 @@ impl NetworkPolicy {
         Ok(())
     }
 
+    #[cfg(any(
+        feature = "http-jwks",
+        feature = "oauth-client",
+        feature = "introspection"
+    ))]
     pub(crate) async fn send(
         &self,
         client: &reqwest::Client,
@@ -179,6 +223,11 @@ impl NetworkPolicy {
             .map_err(|e| e.to_string())
     }
 
+    #[cfg(any(
+        feature = "http-jwks",
+        feature = "oauth-client",
+        feature = "introspection"
+    ))]
     pub(crate) async fn body(&self, mut response: reqwest::Response) -> Result<Vec<u8>, String> {
         tokio::time::timeout(self.timeout, async {
             let mut bytes = Vec::new();
@@ -204,25 +253,7 @@ impl reqwest::dns::Resolve for PolicyResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let policy = self.policy.clone();
         Box::pin(async move {
-            let host = name.as_str().trim_end_matches('.');
-            let addresses: Vec<std::net::SocketAddr> =
-                if host == "localhost" || host.ends_with(".localhost") {
-                    // The plaintext exception must stay on loopback regardless
-                    // of a resolver's search domains or DNS answers.
-                    vec![std::net::SocketAddr::from(([127, 0, 0, 1], 0))]
-                } else {
-                    tokio::net::lookup_host((name.as_str(), 0)).await?.collect()
-                };
-            // Every answer must pass: a reply mixing a public address with a
-            // private one is the shape a rebinding attack takes, and the
-            // connector is free to pick either.
-            if addresses.is_empty() || !addresses.iter().all(|a| policy.permits(a.ip())) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "DNS returned an address this network policy refuses",
-                )
-                .into());
-            }
+            let addresses = policy.resolve(name.as_str(), 0).await?;
             Ok(Box::new(addresses.into_iter()) as reqwest::dns::Addrs)
         })
     }
@@ -259,6 +290,28 @@ fn public_address(ip: IpAddr) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn resolve_holds_every_answer_to_the_policy() {
+        let open = NetworkPolicy::default();
+        let strict = NetworkPolicy::public_only();
+        assert_eq!(
+            open.resolve("10.0.0.7", 443).await.unwrap(),
+            [SocketAddr::from(([10, 0, 0, 7], 443))]
+        );
+        assert!(strict.resolve("10.0.0.7", 443).await.is_err());
+        assert!(strict.resolve("[::ffff:10.0.0.7]", 443).await.is_err());
+        // Loopback names stay on loopback, whatever DNS would say.
+        assert_eq!(
+            open.resolve("api.LOCALHOST.", 80).await.unwrap(),
+            [SocketAddr::from(([127, 0, 0, 1], 80))]
+        );
+        assert!(strict.resolve("localhost", 80).await.is_err());
+        assert_eq!(
+            strict.resolve("1.1.1.1", 443).await.unwrap(),
+            [SocketAddr::from(([1, 1, 1, 1], 443))]
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -330,6 +383,11 @@ mod tests {
     /// The allowlist has to reach the resolver too, or a hostname pointing into
     /// the named range still fails at connect time. Exercised through a real
     /// request, because the resolver is only installed on SDK-built clients.
+    #[cfg(any(
+        feature = "http-jwks",
+        feature = "oauth-client",
+        feature = "introspection"
+    ))]
     #[tokio::test]
     async fn an_allowed_range_is_reachable_by_name() {
         use axum::{Router, routing::get};
@@ -354,6 +412,11 @@ mod tests {
         task.abort();
     }
 
+    #[cfg(any(
+        feature = "http-jwks",
+        feature = "oauth-client",
+        feature = "introspection"
+    ))]
     #[tokio::test]
     async fn defaults_do_not_follow_redirects_and_bound_bodies() {
         use axum::{Router, response::Redirect, routing::get};

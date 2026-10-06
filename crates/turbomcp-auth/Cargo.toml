@@ -14,17 +14,21 @@ categories = ["authentication", "network-programming"]
 
 [features]
 default = []
+# Outbound network policy (`NetworkPolicy`): SSRF and DNS-rebinding defences
+# for HTTP clients that reach URLs someone else chose. Every feature below
+# that makes outbound requests builds on it.
+network = ["dep:reqwest", "dep:tokio", "dep:ipnet"]
 # Live JWKS fetching over HTTP (pulls in reqwest + a tokio runtime). Without
 # it, supply keys via `StaticJwks` (or implement `JwkSource` yourself).
-http-jwks = ["dep:reqwest", "dep:tokio", "dep:ipnet"]
+http-jwks = ["network"]
 # The OAuth 2.1 *client* half: authorization-code + PKCE flows, RFC 9728/8414
 # discovery, client registration (CIMD / pre-registered / DCR), RFC 9207 iss
 # validation, issuer-keyed credential store.
-oauth-client = ["dep:oauth2", "dep:reqwest", "dep:tokio", "dep:url", "dep:ipnet"]
+oauth-client = ["network", "dep:oauth2", "dep:url"]
 # Opaque access tokens validated by RFC 7662 introspection against the
 # authorization server, with a short SHA-256-keyed answer cache.
 introspection = [
-  "dep:reqwest", "dep:tokio", "dep:ipnet", "dep:url", "dep:moka", "dep:sha2", "dep:base64",
+  "network", "dep:url", "dep:moka", "dep:sha2", "dep:base64",
 ]
 
 [dependencies]

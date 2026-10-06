@@ -2946,6 +2946,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "turbomcp-auth",
  "turbomcp-client",
  "turbomcp-core",
  "turbomcp-protocol",

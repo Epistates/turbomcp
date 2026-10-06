@@ -100,6 +100,8 @@ pub struct RemoteServerBuilder {
     serialize: bool,
     idle: Duration,
     max: u64,
+    #[cfg(feature = "http")]
+    network: Option<turbomcp_auth::NetworkPolicy>,
 }
 
 impl core::fmt::Debug for RemoteServerBuilder {
@@ -131,7 +133,22 @@ impl RemoteServerBuilder {
             serialize: false,
             idle: DEFAULT_IDLE,
             max: DEFAULT_MAX,
+            #[cfg(feature = "http")]
+            network: None,
         }
+    }
+
+    /// Hold an HTTP or WebSocket upstream to `policy`: its scheme, and every
+    /// address its name resolves to, checked at each connect (so a name
+    /// rebound to an internal address is refused). Unset, the operator's
+    /// URL is trusted as configured. Set
+    /// [`NetworkPolicy::public_only`](turbomcp_auth::NetworkPolicy::public_only)
+    /// when upstream URLs come from someone else.
+    #[cfg(feature = "http")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+    pub fn network_policy(mut self, policy: turbomcp_auth::NetworkPolicy) -> Self {
+        self.network = Some(policy);
+        self
     }
 
     /// Authenticate upstream with `auth`.
@@ -235,12 +252,17 @@ impl RemoteServerBuilder {
                 let by_stream = matches!(upstream, Upstream::Http { .. });
                 #[cfg(not(feature = "http"))]
                 let by_stream = false;
-                let (auth, grace) = (self.auth, self.shutdown_grace);
+                let options = Arc::new(crate::connect::ConnectOptions {
+                    auth: self.auth,
+                    grace: self.shutdown_grace,
+                    #[cfg(feature = "http")]
+                    network: self.network,
+                });
                 let dial: Dial = Arc::new(move |client| {
-                    let (upstream, auth) = (upstream.clone(), auth.clone());
-                    Box::pin(async move {
-                        crate::connect::upstream(&upstream, &auth, client, grace).await
-                    })
+                    let (upstream, options) = (upstream.clone(), Arc::clone(&options));
+                    Box::pin(
+                        async move { crate::connect::upstream(&upstream, &options, client).await },
+                    )
                 });
                 (label, dial, by_stream)
             }

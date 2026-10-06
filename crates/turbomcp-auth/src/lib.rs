@@ -46,27 +46,12 @@ pub mod client;
 #[cfg(feature = "introspection")]
 #[cfg_attr(docsrs, doc(cfg(feature = "introspection")))]
 pub mod introspection;
-#[cfg(any(
-    feature = "http-jwks",
-    feature = "oauth-client",
-    feature = "introspection"
-))]
-#[cfg_attr(
-    docsrs,
-    doc(cfg(any(
-        feature = "http-jwks",
-        feature = "oauth-client",
-        feature = "introspection"
-    )))
-)]
+#[cfg(feature = "network")]
+#[cfg_attr(docsrs, doc(cfg(feature = "network")))]
 pub mod network;
 #[cfg(feature = "introspection")]
 pub use introspection::{ClientAuth, IntrospectionValidator};
-#[cfg(any(
-    feature = "http-jwks",
-    feature = "oauth-client",
-    feature = "introspection"
-))]
+#[cfg(feature = "network")]
 pub use network::NetworkPolicy;
 /// The wrapper secrets travel in (tokens, client secrets, the PKCE verifier):
 /// wiped from memory when dropped.

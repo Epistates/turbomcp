@@ -15,7 +15,10 @@ categories = ["network-programming", "asynchronous"]
 [features]
 default = ["http"]
 # Upstreams over Streamable HTTP.
-http = ["dep:turbomcp-transport-http", "turbomcp-transport-http/client"]
+http = [
+  "dep:turbomcp-transport-http", "turbomcp-transport-http/client",
+  "dep:turbomcp-auth", "turbomcp-auth/network",
+]
 # Upstreams over WebSocket.
 websocket = ["http", "dep:http", "turbomcp-transport-http/websocket"]
 
@@ -26,6 +29,7 @@ turbomcp-service = { workspace = true }
 turbomcp-server = { workspace = true }
 turbomcp-client = { workspace = true }
 turbomcp-transport-http = { workspace = true, optional = true }
+turbomcp-auth = { workspace = true, optional = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true, optional = true }
@@ -33,7 +37,7 @@ moka = { workspace = true, features = ["sync"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 tracing = { workspace = true }
 zeroize = { workspace = true }
 
