@@ -593,17 +593,26 @@ jobs:
       timeout-minutes: 10
       run: timeout -k 20s 8m cargo test --test rmcp_interop -- --nocapture
 
-    # Node's heap is capped so a runaway peer fails with its log instead of
-    # swapping the runner to a standstill.
+    # No swap, and a memory ceiling on the whole step: a runaway process is
+    # killed with its log instead of swapping the runner to a standstill
+    # (which also stops the runner enforcing any timeout).
     - name: Interop with the TypeScript SDK
       working-directory: crates/turbomcp-interop
       timeout-minutes: 10
       env:
         TURBOMCP_INTEROP_REQUIRE: '1'
-        NODE_OPTIONS: --max-old-space-size=1024
       run: |
-        node --version; npm --version; free -m | head -2
-        timeout -k 20s 8m cargo test --test sdk_matrix typescript -- --nocapture --test-threads=1
+        node --version; npm --version; nproc; free -m | head -3
+        sudo swapoff -a
+        set +e
+        sudo systemd-run --scope --quiet -p MemoryMax=4G -p MemorySwapMax=0 \
+          --uid="$(id -u)" --gid="$(id -g)" --setenv=PATH="$PATH" \
+          --setenv=HOME="$HOME" --setenv=TURBOMCP_INTEROP_REQUIRE=1 \
+          --working-directory="$PWD" \
+          timeout -k 20s 8m cargo test --test sdk_matrix typescript -- --nocapture --test-threads=1
+        status=$?
+        sudo dmesg | grep -iE "oom|killed process" | tail -5 || true
+        exit $status
 
     - name: Interop with the Python SDK
       working-directory: crates/turbomcp-interop
