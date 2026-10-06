@@ -16,7 +16,7 @@ categories = ["network-programming", "asynchronous", "api-bindings"]
 # stdio is the default transport and is always linked; http is opt-in.
 default = []
 # Also lights up the client's Streamable HTTP transport when `client` is on.
-http = ["dep:turbomcp-transport-http", "turbomcp-transport-http/server"]
+http = ["dep:turbomcp-transport-http", "turbomcp-transport-http/server", "turbomcp-proxy?/http"]
 # OAuth 2.1 resource-server auth (bearer validation, RFC 9728). Most useful
 # with `http`; the metadata endpoint + challenges are HTTP-level.
 auth = ["dep:turbomcp-auth"]
@@ -28,13 +28,17 @@ client-oauth = ["auth", "client", "http", "turbomcp-auth/oauth-client", "turbomc
 telemetry = ["dep:turbomcp-telemetry"]
 # WebSocket (bidirectional, non-spec): a route on the HTTP endpoint
 # (`HttpConfig::with_websocket`), and with `client` the client transport.
-websocket = ["http", "turbomcp-transport-http/websocket"]
+websocket = ["http", "turbomcp-transport-http/websocket", "turbomcp-proxy?/websocket"]
 # The MCP client (ClientBuilder, ConnectMode probe, typed neutral API). The
 # other half of the protocol; opt-in for server-only users.
 client = ["dep:turbomcp-client", "dep:tokio", "turbomcp-transport-http?/client", "turbomcp-telemetry?/client"]
 # The draft Tasks extension (io.modelcontextprotocol/tasks, SEP-2663):
 # resultType:"task" augmentation, tasks/get|update|cancel, notifications/tasks.
 ext-tasks = ["dep:turbomcp-ext-tasks"]
+# The gateway: remote MCP servers as mountable, version-translating servers
+# (`turbomcp::proxy::RemoteServer`). Upstreams over stdio, plus HTTP and
+# WebSocket when `http` / `websocket` are on.
+proxy = ["client", "dep:turbomcp-proxy"]
 # SIMD-accelerated JSON (sonic-rs) as the DefaultCodec on native
 # x86_64/aarch64. Off by default: serde_json is the portable baseline.
 simd = ["turbomcp-core/simd"]
@@ -49,6 +53,7 @@ turbomcp-auth = { workspace = true, optional = true }
 turbomcp-telemetry = { workspace = true, optional = true }
 turbomcp-client = { workspace = true, optional = true }
 turbomcp-ext-tasks = { workspace = true, optional = true }
+turbomcp-proxy = { workspace = true, optional = true }
 turbomcp-macros = { workspace = true }
 # Re-exported as `turbomcp::tower`: `McpService` *is* a `tower::Service`, so
 # users writing RPC middleware need the same tower, not a second copy.

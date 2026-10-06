@@ -470,6 +470,14 @@ pub mod client {
 #[cfg_attr(docsrs, doc(cfg(feature = "ext-tasks")))]
 pub use turbomcp_ext_tasks as ext_tasks;
 
+/// The gateway: [`proxy::RemoteServer`] serves an upstream MCP server (a
+/// command over stdio; with `http`/`websocket`, an endpoint) as if it were
+/// local, to bridge it across transports and revisions or mount it in a
+/// [`Composite`] beside your own tools. Enable with the `proxy` feature.
+#[cfg(feature = "proxy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "proxy")))]
+pub use turbomcp_proxy as proxy;
+
 // ---- macros -----------------------------------------------------------------
 
 pub use turbomcp_macros::{completion, mcp_header, prompt, resource, server, tool};

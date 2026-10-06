@@ -13,6 +13,7 @@ members = [
     "crates/turbomcp-auth",
     "crates/turbomcp-telemetry",
     "crates/turbomcp-ext-tasks",
+    "crates/turbomcp-proxy",
     "crates/turbomcp",
 ]
 # Excluded, separately-run test surfaces. Each carries its own lockfile and stays
@@ -165,6 +166,7 @@ turbomcp-macros = { version = "4.0.0-alpha.5", path = "crates/turbomcp-macros" }
 turbomcp-auth = { version = "4.0.0-alpha.5", path = "crates/turbomcp-auth" }
 turbomcp-telemetry = { version = "4.0.0-alpha.5", path = "crates/turbomcp-telemetry" }
 turbomcp-ext-tasks = { version = "4.0.0-alpha.5", path = "crates/turbomcp-ext-tasks" }
+turbomcp-proxy = { version = "4.0.0-alpha.5", path = "crates/turbomcp-proxy", default-features = false }
 
 [profile.dev]
 opt-level = 1

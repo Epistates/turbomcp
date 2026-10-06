@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aud`, within `exp`/`nbf`, and from a required issuer when one is set;
   caches answers under a SHA-256 of the token for a minute by default, never
   past `exp`; and fails closed.
+- The gateway: `turbomcp-proxy` (facade feature `proxy`). A `RemoteServer`
+  connects to an upstream MCP server (a command over stdio; a Streamable HTTP
+  or WebSocket endpoint) and serves it as if it were local, implementing the
+  capability traits by forwarding, so it bridges transports and revisions on
+  its own and mounts in a `Composite` beside local tools, under the
+  composite's authentication, visibility and interceptors. It advertises
+  exactly what the upstream did; lookups resolve against a catalogue cached
+  per upstream and refreshed on change notifications (a miss refetches at
+  most once a second); progress, cancellation and change notifications
+  (`forward_changes_to`) cross the hop; the proxy authenticates upstream as
+  itself (`OutboundAuth::Static`), never passing the caller's token through;
+  and a stdio upstream's stderr goes to `tracing` and it gets the
+  specification's shutdown (stdin, then `SIGTERM`, then `SIGKILL`, to its
+  whole process group). Replaces v3's frame-level proxy crate.
 - Enterprise-Managed Authorization (ID-JAG, SEP-990) on the client.
   `auth::client::EnterpriseAuthorization` discovers the MCP server's
   authorization server, refuses one that doesn't advertise the ID-JAG

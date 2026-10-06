@@ -3652,6 +3652,7 @@ dependencies = [
  "turbomcp-ext-tasks",
  "turbomcp-macros",
  "turbomcp-protocol",
+ "turbomcp-proxy",
  "turbomcp-server",
  "turbomcp-service",
  "turbomcp-telemetry",
@@ -3764,6 +3765,28 @@ dependencies = [
  "serde",
  "serde_json",
  "turbomcp-core",
+]
+
+[[package]]
+name = "turbomcp-proxy"
+version = "4.0.0-alpha.5"
+dependencies = [
+ "async-trait",
+ "futures",
+ "http",
+ "rustix",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "turbomcp-client",
+ "turbomcp-core",
+ "turbomcp-protocol",
+ "turbomcp-server",
+ "turbomcp-service",
+ "turbomcp-transport-http",
+ "zeroize",
 ]
 
 [[package]]

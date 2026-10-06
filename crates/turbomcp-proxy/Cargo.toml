@@ -1,0 +1,51 @@
+[package]
+name = "turbomcp-proxy"
+version = "4.0.0-alpha.5"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "TurboMCP v4 gateway: remote MCP servers as mountable, version-translating capability servers."
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "proxy", "gateway", "aggregation", "llm"]
+categories = ["network-programming", "asynchronous"]
+
+[features]
+default = ["http"]
+# Upstreams over Streamable HTTP.
+http = ["dep:turbomcp-transport-http", "turbomcp-transport-http/client"]
+# Upstreams over WebSocket.
+websocket = ["http", "dep:http", "turbomcp-transport-http/websocket"]
+
+[dependencies]
+turbomcp-core = { workspace = true, features = ["std"] }
+turbomcp-protocol = { workspace = true }
+turbomcp-service = { workspace = true }
+turbomcp-server = { workspace = true }
+turbomcp-client = { workspace = true }
+turbomcp-transport-http = { workspace = true, optional = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+tracing = { workspace = true }
+zeroize = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# Signals the upstream child's whole process group at shutdown (safe API).
+rustix = { version = "1", default-features = false, features = ["process", "std"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

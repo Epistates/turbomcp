@@ -110,6 +110,7 @@ users need, so a typical dependency is just `turbomcp`.
 | `turbomcp-auth` | OAuth 2.1 resource-server auth (bearer validation, RFC 9728) |
 | `turbomcp-telemetry` | OpenTelemetry tracing (W3C `_meta` propagation, PII-safe spans) |
 | `turbomcp-ext-tasks` | Draft Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663) |
+| `turbomcp-proxy` | The embeddable gateway: remote MCP servers as mountable, version-translating servers |
 
 ## Verification
 
