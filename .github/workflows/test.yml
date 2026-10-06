@@ -575,8 +575,11 @@ jobs:
       run: npm ci
 
     # A missing toolchain skips its peers locally; here it is a failure.
+    # Bounded inside the job, so a hang fails this step with its log (a job
+    # that hits its own timeout is cancelled, and its log is lost).
     - name: Run the interop suite
       working-directory: crates/turbomcp-interop
+      timeout-minutes: 15
       env:
         TURBOMCP_INTEROP_REQUIRE: '1'
       run: cargo test -- --nocapture
