@@ -104,7 +104,9 @@ async fn connect(mode: ConnectMode, request_timeout: Duration) -> (Client, Arc<M
 /// a duplex pipe actually needs, because the assertions below require the tool
 /// to have *started* — under a loaded or instrumented CI runner a tight budget
 /// races the dispatch itself, and the margin costs nothing when things pass.
-const GIVE_UP_AFTER: Duration = Duration::from_millis(500);
+/// The client-wide timeout also bounds the handshake, which a loaded macOS
+/// runner has taken more than 500 ms to finish.
+const GIVE_UP_AFTER: Duration = Duration::from_secs(2);
 
 /// Give the cancellation time to cross the wire and unwind the handler.
 /// Returns as soon as it has, so the budget is only ever paid by a failure.
