@@ -580,6 +580,12 @@ jobs:
     # step timeout needs a runner responsive enough to enforce it). The
     # watchdog prints memory and the largest processes each minute, for the
     # hang that takes the machine with it.
+    # Built on its own first, so a hang says which half it is in.
+    - name: Build the interop suite
+      working-directory: crates/turbomcp-interop
+      timeout-minutes: 15
+      run: timeout -k 20s 12m cargo test --no-run
+
     - name: Run the interop suite
       working-directory: crates/turbomcp-interop
       timeout-minutes: 15
