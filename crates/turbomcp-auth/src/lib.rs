@@ -57,20 +57,30 @@ pub use network::NetworkPolicy;
 /// wiped from memory when dropped.
 pub use zeroize::Zeroizing;
 mod error;
+#[cfg(feature = "jwt")]
 mod jwks;
+#[cfg(feature = "jwt")]
+mod jwt;
 mod metadata;
 mod resource_server;
 mod validator;
 
 pub use error::AuthError;
+#[cfg(feature = "jwt")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwt")))]
 pub use jwks::{JwkSource, StaticJwks};
+#[cfg(feature = "jwt")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwt")))]
+pub use jwt::{IssuerValidators, JwtValidator};
 pub use metadata::ResourceMetadata;
 pub use resource_server::ResourceServer;
-pub use validator::{AuthPrincipal, BearerValidator, IssuerValidators, JwtValidator};
+pub use validator::{AuthPrincipal, BearerValidator};
 
 #[cfg(feature = "http-jwks")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http-jwks")))]
 pub use jwks::HttpJwks;
 
 /// Re-exported from `jsonwebtoken` for configuring [`JwtValidator`].
+#[cfg(feature = "jwt")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwt")))]
 pub use jsonwebtoken::Algorithm;

@@ -19,7 +19,7 @@ default = []
 http = ["dep:turbomcp-transport-http", "turbomcp-transport-http/server", "turbomcp-proxy?/http"]
 # OAuth 2.1 resource-server auth (bearer validation, RFC 9728). Most useful
 # with `http`; the metadata endpoint + challenges are HTTP-level.
-auth = ["dep:turbomcp-auth"]
+auth = ["dep:turbomcp-auth", "turbomcp-auth/jwt"]
 # The OAuth 2.1 *client* flow (authorization-code + PKCE, discovery,
 # registration, refresh) under `turbomcp::auth::client`. Implies `auth`.
 client-oauth = [

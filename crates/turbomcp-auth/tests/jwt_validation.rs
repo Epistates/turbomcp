@@ -7,6 +7,8 @@
 //! (header `kid` → JWK lookup → `decode` with `aud`/`iss`/`exp`/leeway) is
 //! identical to RS256, without needing RSA keygen in-test.
 
+#![cfg(feature = "jwt")]
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};

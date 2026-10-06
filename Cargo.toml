@@ -165,7 +165,7 @@ turbomcp-server = { version = "4.0.0-alpha.5", path = "crates/turbomcp-server" }
 turbomcp-client = { version = "4.0.0-alpha.5", path = "crates/turbomcp-client" }
 turbomcp-transport-http = { version = "4.0.0-alpha.5", path = "crates/turbomcp-transport-http", default-features = false }
 turbomcp-macros = { version = "4.0.0-alpha.5", path = "crates/turbomcp-macros" }
-turbomcp-auth = { version = "4.0.0-alpha.5", path = "crates/turbomcp-auth" }
+turbomcp-auth = { version = "4.0.0-alpha.5", path = "crates/turbomcp-auth", default-features = false }
 turbomcp-telemetry = { version = "4.0.0-alpha.5", path = "crates/turbomcp-telemetry" }
 turbomcp-ext-tasks = { version = "4.0.0-alpha.5", path = "crates/turbomcp-ext-tasks" }
 turbomcp-proxy = { version = "4.0.0-alpha.5", path = "crates/turbomcp-proxy", default-features = false }

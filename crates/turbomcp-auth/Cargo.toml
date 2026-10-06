@@ -13,14 +13,18 @@ keywords = ["mcp", "oauth2", "auth", "jwt", "pkce"]
 categories = ["authentication", "network-programming"]
 
 [features]
-default = []
+default = ["jwt"]
+# JWT access tokens: `JwtValidator`, `IssuerValidators`, JWKS sources. On by
+# default; off, `ResourceServer` takes any `BearerValidator` (introspection,
+# your own) without the JWT dependency tree.
+jwt = ["dep:jsonwebtoken"]
 # Outbound network policy (`NetworkPolicy`): SSRF and DNS-rebinding defences
 # for HTTP clients that reach URLs someone else chose. Every feature below
 # that makes outbound requests builds on it.
 network = ["dep:reqwest", "dep:tokio", "dep:ipnet"]
 # Live JWKS fetching over HTTP (pulls in reqwest + a tokio runtime). Without
 # it, supply keys via `StaticJwks` (or implement `JwkSource` yourself).
-http-jwks = ["network"]
+http-jwks = ["network", "jwt"]
 # The OAuth 2.1 *client* half: authorization-code + PKCE flows, RFC 9728/8414
 # discovery, client registration (CIMD / pre-registered / DCR), RFC 9207 iss
 # validation, issuer-keyed credential store.
@@ -36,7 +40,7 @@ subtle = { workspace = true }
 zeroize = { workspace = true, features = ["serde"] }
 turbomcp-core = { workspace = true }
 turbomcp-service = { workspace = true }
-jsonwebtoken = { workspace = true }
+jsonwebtoken = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

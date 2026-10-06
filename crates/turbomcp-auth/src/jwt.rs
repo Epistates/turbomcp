@@ -1,0 +1,164 @@
+//! JWT access tokens: [`JwtValidator`] verifies the signature against a
+//! [`JwkSource`](crate::JwkSource) and, per the MCP authorization spec's
+//! MUSTs, binds the `aud` claim to this resource and checks `iss` and `exp`.
+//! [`IssuerValidators`] routes among independent authorization servers.
+
+use futures::future::BoxFuture;
+use jsonwebtoken::{Algorithm, TokenData, Validation, decode, decode_header};
+use serde_json::{Map, Value};
+
+use crate::error::AuthError;
+use crate::jwks::JwkSource;
+use crate::validator::{AuthPrincipal, BearerValidator, extract_scopes};
+
+/// A JWT resource-server validator: signature (via JWKS) + `aud` binding +
+/// `iss` + `exp`, per the MCP authorization spec.
+#[derive(Debug)]
+pub struct JwtValidator<S> {
+    source: S,
+    audiences: Vec<String>,
+    issuers: Vec<String>,
+    algorithms: Vec<Algorithm>,
+    leeway: u64,
+}
+
+impl<S: JwkSource> JwtValidator<S> {
+    /// A validator keyed by `source`, requiring tokens whose `aud` includes
+    /// `audience` (this resource's canonical URI) and whose `iss` is `issuer`.
+    /// Defaults to RS256 with 60s clock-skew leeway.
+    #[must_use]
+    pub fn new(source: S, audience: impl Into<String>, issuer: impl Into<String>) -> Self {
+        Self {
+            source,
+            audiences: vec![audience.into()],
+            issuers: vec![issuer.into()],
+            algorithms: vec![Algorithm::RS256],
+            leeway: 60,
+        }
+    }
+
+    /// Accept additional audiences (e.g. a legacy URI alongside the canonical).
+    #[must_use]
+    pub fn add_audience(mut self, audience: impl Into<String>) -> Self {
+        self.audiences.push(audience.into());
+        self
+    }
+
+    /// Accept another issuer using the same trusted signing keys.
+    /// Every key in this validator is trusted to speak for every listed issuer.
+    /// Use [`IssuerValidators`] for independent authorization servers.
+    #[must_use]
+    pub fn add_issuer(mut self, issuer: impl Into<String>) -> Self {
+        self.issuers.push(issuer.into());
+        self
+    }
+
+    /// Set the accepted signature algorithms (default `[RS256]`).
+    #[must_use]
+    pub fn algorithms(mut self, algorithms: Vec<Algorithm>) -> Self {
+        self.algorithms = algorithms;
+        self
+    }
+
+    /// Set the clock-skew leeway in seconds (default 60).
+    #[must_use]
+    pub fn leeway(mut self, seconds: u64) -> Self {
+        self.leeway = seconds;
+        self
+    }
+
+    async fn validate_inner(&self, token: &str) -> Result<AuthPrincipal, AuthError> {
+        if token.len() > 64 * 1024 {
+            return Err(AuthError::InvalidToken("token exceeds byte limit".into()));
+        }
+        let header = decode_header(token)
+            .map_err(|e| AuthError::InvalidToken(format!("bad header: {e}")))?;
+        if !self.algorithms.contains(&header.alg) {
+            return Err(AuthError::InvalidToken(format!(
+                "algorithm {:?} not accepted",
+                header.alg
+            )));
+        }
+        let key = self.source.decoding_key(header.kid.as_deref()).await?;
+
+        let mut validation = Validation::new(header.alg);
+        validation.set_audience(&self.audiences);
+        validation.set_issuer(&self.issuers);
+        validation.leeway = self.leeway;
+        validation.validate_nbf = true;
+        // `exp` is required and validated by default; demand it explicitly so a
+        // token without it is rejected rather than treated as non-expiring.
+        validation.set_required_spec_claims(&["exp", "aud", "iss"]);
+
+        let data: TokenData<Map<String, Value>> = decode(token, &key, &validation)
+            .map_err(|e| AuthError::InvalidToken(format!("verification failed: {e}")))?;
+        principal_from_claims(data.claims)
+    }
+}
+
+impl<S: JwkSource> BearerValidator for JwtValidator<S> {
+    fn validate<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<AuthPrincipal, AuthError>> {
+        Box::pin(self.validate_inner(token))
+    }
+}
+
+/// Build a principal from a validated claim set: `sub` is required; scopes come
+/// from the space-delimited `scope` string (RFC 8693) or the `scp` array.
+fn principal_from_claims(claims: Map<String, Value>) -> Result<AuthPrincipal, AuthError> {
+    let subject = claims
+        .get("sub")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AuthError::InvalidToken("token has no `sub` claim".to_owned()))?
+        .to_owned();
+    let scopes = extract_scopes(&claims);
+    Ok(AuthPrincipal {
+        subject,
+        scopes,
+        claims,
+    })
+}
+
+/// Explicit issuer-to-validator routing for independent authorization servers.
+/// Unverified claims only select an already configured validator; they never
+/// supply a discovery URL or authorize a request.
+#[derive(Default)]
+pub struct IssuerValidators(
+    std::collections::BTreeMap<String, std::sync::Arc<dyn BearerValidator>>,
+);
+impl IssuerValidators {
+    /// Add a validator with its own key source, audience, and issuer validation.
+    #[must_use]
+    pub fn with_issuer(
+        mut self,
+        issuer: impl Into<String>,
+        validator: std::sync::Arc<dyn BearerValidator>,
+    ) -> Self {
+        self.0.insert(issuer.into(), validator);
+        self
+    }
+}
+impl BearerValidator for IssuerValidators {
+    fn validate<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<AuthPrincipal, AuthError>> {
+        Box::pin(async move {
+            if token.len() > 64 * 1024 {
+                return Err(AuthError::InvalidToken("token exceeds byte limit".into()));
+            }
+            let untrusted = jsonwebtoken::dangerous::insecure_decode::<Map<String, Value>>(token)
+                .map_err(|_| AuthError::InvalidToken("invalid JWT envelope".into()))?;
+            let issuer = untrusted
+                .claims
+                .get("iss")
+                .and_then(Value::as_str)
+                .ok_or_else(|| AuthError::InvalidToken("missing issuer".into()))?;
+            let validator = self
+                .0
+                .get(issuer)
+                .ok_or_else(|| AuthError::InvalidToken("untrusted issuer".into()))?;
+            let principal = validator.validate(token).await?;
+            if principal.claims.get("iss").and_then(Value::as_str) != Some(issuer) {
+                return Err(AuthError::InvalidToken("validated issuer mismatch".into()));
+            }
+            Ok(principal)
+        })
+    }
+}

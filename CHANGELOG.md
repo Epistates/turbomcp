@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `turbomcp-auth` feature `jwt` (on by default): `JwtValidator`,
+  `IssuerValidators`, the JWKS sources and `Algorithm`. Off, a
+  `ResourceServer` over introspection or your own `BearerValidator`, or
+  just the `network` policy, builds without the JWT dependency tree; the
+  gateway's HTTP upstreams no longer pull it in. The facade's `auth`
+  feature turns it on.
 - The `gateway` example (a remote server beside local tools, under one
   visibility policy, over HTTP) and a MIGRATION section mapping v3's
   `turbomcp-proxy` and `turbomcp-cli` onto v4.

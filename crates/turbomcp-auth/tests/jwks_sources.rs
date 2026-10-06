@@ -11,6 +11,8 @@
 //! Symmetric (`oct`) JWKs throughout: key *resolution* is what's under test,
 //! and it is identical for RSA without needing keygen in-test.
 
+#![cfg(feature = "jwt")]
+
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
