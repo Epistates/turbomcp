@@ -512,10 +512,7 @@ jobs:
 
   interop:
     name: Cross-SDK interop (rmcp, TypeScript, Python, Go)
-    # Diagnosis: on ubuntu-latest (24.04) the runner has gone dark at the first
-    # matrix step since 2026-10-06 ~17:05 UTC, for commits that passed hours
-    # before too; not reproducible locally or in a Linux container.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     # Excluded from the workspace for its rmcp dependency tree, which is how it
@@ -578,56 +575,14 @@ jobs:
       run: npm ci
 
     # A missing toolchain skips its peers locally; here it is a failure.
-    # Bounded by the command itself, so a hang fails this step with its log
-    # (a job that hits its own timeout is cancelled and its log lost, and a
-    # step timeout needs a runner responsive enough to enforce it). The
-    # watchdog prints memory and the largest processes each minute, for the
-    # hang that takes the machine with it.
-    # Built on its own first, so a hang says which half it is in.
-    - name: Build the interop suite
+    # Bounded by the command as well as the step, so a hang fails with its
+    # log rather than taking the job's timeout (which loses it).
+    - name: Run the interop suite
       working-directory: crates/turbomcp-interop
       timeout-minutes: 15
-      run: timeout -k 20s 12m cargo test --no-run
-
-    # One step per peer SDK: a hang that takes the runner with it still
-    # says, by which step it stopped in, whose it is.
-    - name: Interop with rmcp
-      working-directory: crates/turbomcp-interop
-      timeout-minutes: 10
-      run: timeout -k 20s 8m cargo test --test rmcp_interop -- --nocapture
-
-    - name: Interop with the Python SDK
-      working-directory: crates/turbomcp-interop
-      timeout-minutes: 10
       env:
         TURBOMCP_INTEROP_REQUIRE: '1'
-      # In a session of its own: nothing the tests do can signal the
-      # runner's process group.
-      run: setsid --wait timeout -k 20s 8m cargo test --test sdk_matrix python -- --nocapture
-
-    - name: Interop with the Go SDK
-      working-directory: crates/turbomcp-interop
-      timeout-minutes: 10
-      env:
-        TURBOMCP_INTEROP_REQUIRE: '1'
-      run: timeout -k 20s 8m cargo test --test sdk_matrix go_ -- --nocapture
-
-    # Output to a capped file, printed in part: if a peer floods its output,
-    # the step still ends with a readable log.
-    - name: Interop with the TypeScript SDK
-      working-directory: crates/turbomcp-interop
-      timeout-minutes: 10
-      env:
-        TURBOMCP_INTEROP_REQUIRE: '1'
-      run: |
-        node --version; npm --version; nproc; free -m | head -2
-        set +e
-        timeout -k 20s 8m cargo test --test sdk_matrix typescript -- --nocapture --test-threads=1 2>&1 \
-          | head -c 100000000 > ts.log
-        status=${PIPESTATUS[0]}
-        ls -la ts.log
-        head -c 20000 ts.log; echo; echo "[...]"; tail -c 20000 ts.log
-        exit $status
+      run: timeout -k 20s 12m cargo test -- --nocapture
 
     # turbomcp's client and server against rmcp's, same process, interleaved,
     # medians compared. Shared runners are noisy, hence a looser factor than

@@ -174,11 +174,16 @@ struct PeerServer(Child);
 
 impl Drop for PeerServer {
     fn drop(&mut self) {
+        // A syscall, not `kill(1)`: procps' `kill -KILL -<pgid>` signals the
+        // calling process's own group too (and on procps 3.x, not the target
+        // at all), which inside a CI step is the runner's.
         #[cfg(unix)]
-        if let Some(pid) = self.0.id() {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", &format!("-{pid}")])
-                .status();
+        if let Some(pid) = self
+            .0
+            .id()
+            .and_then(|pid| rustix::process::Pid::from_raw(pid as i32))
+        {
+            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
         }
         let _ = self.0.start_kill();
     }

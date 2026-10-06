@@ -3114,6 +3114,7 @@ dependencies = [
  "anyhow",
  "criterion",
  "rmcp",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",
