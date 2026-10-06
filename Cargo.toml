@@ -116,7 +116,7 @@ subtle = "2.6"  # Constant-time comparison for secret values
 # HMAC-SHA-256. The digest 0.10 generation, not 0.11: the WebSocket handshake
 # (sha1, via tungstenite) and oauth2 already link digest 0.10, so 0.11 would
 # put a second copy of the RustCrypto stack in every build that has either.
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 # MRTR requestState sealing. 0.10, the generation sha2/hmac share (0.11
 # moves to crypto-common 0.2; all of them move together).
