@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-call input handlers: `CallOptions::with_elicitation`, `with_sampling`
+  and `with_roots` answer the server requests that belong to one call
+  (SEP-2260), over the client's own handlers. On `2026-07-28` they are the
+  ones in the call's own `InputRequiredResult`; on Streamable HTTP, the ones
+  on the call's POST stream (the transport now reports it:
+  `Transport::recv_with`, `RelatedRequest`); for a `2025-11-25` task, the
+  ones naming it in `related-task`. Where nothing says (stdio, WebSocket),
+  a request is the only in-flight call's; with several in flight it goes to
+  the client's own handler, or is refused, and never to a guessed call.
+- The gateway bridges input: an upstream's `elicitation/create`,
+  `sampling/createMessage` and `roots/list` reach the downstream caller whose
+  call caused them, on every pairing of revisions. A `2025-*` caller is asked
+  inline; a `2026-07-28` caller gets an `InputRequiredResult` and the call
+  runs again with its answer. URL elicitations finish through
+  `notifications/elicitation/complete` to the caller that was asked. A
+  request the proxy can't attribute is refused. `RemoteServerBuilder::
+  forward_input(false)` declares none of these capabilities upstream.
+
 - Extensions on every revision (SEP-2133). `Extension::protocol_versions`
   (default `2026-07-28`) says which revisions an extension speaks: it is
   advertised under `capabilities.extensions` in `initialize` on the stateful

@@ -35,11 +35,14 @@
 //!
 //! The proxy authenticates upstream as itself ([`OutboundAuth`]); the
 //! downstream caller's token is never passed through. Cancellation, progress
-//! and the caller's trace context cross the hop.
+//! and the caller's trace context cross the hop, and so do the upstream's
+//! requests for input: its elicitation, sampling and roots requests reach the
+//! downstream caller whose call caused them, on any pair of revisions.
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
+mod bridge;
 mod connect;
 mod error;
 mod process;

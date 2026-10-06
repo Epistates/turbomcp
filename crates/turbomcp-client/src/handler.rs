@@ -189,6 +189,29 @@ impl core::fmt::Debug for ClientHandlers {
 }
 
 impl ClientHandlers {
+    /// These handlers, falling back to `global`'s for what they don't answer.
+    pub(crate) fn over(&self, global: &ClientHandlers) -> ClientHandlers {
+        ClientHandlers {
+            elicitation: self
+                .elicitation
+                .clone()
+                .or_else(|| global.elicitation.clone()),
+            sampling: self.sampling.clone().or_else(|| global.sampling.clone()),
+            roots: self.roots.clone().or_else(|| global.roots.clone()),
+            ..global.clone()
+        }
+    }
+
+    /// Whether these handlers answer the server→client request `method`.
+    pub(crate) fn answers(&self, method: &str) -> bool {
+        match method {
+            request::ELICITATION_CREATE => self.elicitation.is_some(),
+            request::SAMPLING_CREATE_MESSAGE => self.sampling.is_some(),
+            request::ROOTS_LIST => self.roots.is_some(),
+            _ => false,
+        }
+    }
+
     /// Whether any handler is registered (nothing answers server→client
     /// requests otherwise).
     #[must_use]

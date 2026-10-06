@@ -18,6 +18,7 @@ use turbomcp_server::{
 };
 use turbomcp_service::Transport;
 
+use crate::bridge::{Bridge, Completions, UpstreamHandlers};
 use crate::process::ChildProcess;
 use crate::{OutboundAuth, ProxyError, Upstream};
 
@@ -66,6 +67,9 @@ struct Inner {
     resources: Catalog<neutral::Resource>,
     templates: Catalog<neutral::ResourceTemplate>,
     changes: broadcast::Sender<Change>,
+    /// Bridge the upstream's requests for input to downstream callers.
+    forward_input: bool,
+    completions: Completions,
     child: tokio::sync::Mutex<Option<ChildProcess>>,
     listener: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -99,6 +103,7 @@ pub struct RemoteServerBuilder {
     client: ClientBuilder,
     catalog_ttl: Duration,
     shutdown_grace: Duration,
+    forward_input: bool,
 }
 
 impl RemoteServerBuilder {
@@ -137,6 +142,16 @@ impl RemoteServerBuilder {
         self
     }
 
+    /// Whether the upstream may ask downstream callers for input (default
+    /// `true`): its `elicitation/create`, `sampling/createMessage` and
+    /// `roots/list` reach the caller whose call caused them, on whatever
+    /// revision that caller speaks. Off, the proxy declares none of those
+    /// capabilities upstream, so the upstream knows not to ask.
+    pub fn forward_input(mut self, forward: bool) -> Self {
+        self.forward_input = forward;
+        self
+    }
+
     /// How long a stdio upstream gets to exit after its stdin closes, and
     /// again after `SIGTERM`, before it is killed (default 2 s each).
     pub fn shutdown_grace(mut self, grace: Duration) -> Self {
@@ -152,11 +167,23 @@ impl RemoteServerBuilder {
     pub async fn connect(self) -> Result<RemoteServer, ProxyError> {
         let label = self.upstream.label();
         let (tx, _) = broadcast::channel(CHANGE_BUFFER);
-        let client = self.client.with_notifications(ChangeTap(tx.clone()));
+        let completions = crate::bridge::completions();
+        let mut client = self.client.with_notifications(ChangeTap(tx.clone()));
+        if self.forward_input {
+            client = declare_input(client, &completions);
+        }
         let (client, child) =
             crate::connect::upstream(&self.upstream, &self.auth, client, self.shutdown_grace)
                 .await?;
-        Ok(RemoteServer::assemble(label, client, child, tx, self.catalog_ttl).await)
+        let parts = Parts {
+            label,
+            child,
+            changes: tx,
+            catalog_ttl: self.catalog_ttl,
+            forward_input: self.forward_input,
+            completions,
+        };
+        Ok(RemoteServer::assemble(client, parts).await)
     }
 }
 
@@ -169,6 +196,7 @@ impl RemoteServer {
             client: ClientBuilder::new("turbomcp-proxy", env!("CARGO_PKG_VERSION")),
             catalog_ttl: DEFAULT_CATALOG_TTL,
             shutdown_grace: Duration::from_secs(2),
+            forward_input: true,
         }
     }
 
@@ -181,7 +209,10 @@ impl RemoteServer {
     }
 
     /// Connect over a transport of your own (an in-memory pair, a socket the
-    /// embedding application opened), as `client` configures.
+    /// embedding application opened), as `client` configures. The upstream's
+    /// requests for input are bridged to downstream callers, as by default
+    /// with [`builder`](Self::builder); handlers set on `client` for them are
+    /// replaced.
     ///
     /// # Errors
     /// The handshake failing.
@@ -192,7 +223,8 @@ impl RemoteServer {
     ) -> Result<Self, ProxyError> {
         let label = label.into();
         let (tx, _) = broadcast::channel(CHANGE_BUFFER);
-        let client = client
+        let completions = crate::bridge::completions();
+        let client = declare_input(client, &completions)
             .with_notifications(ChangeTap(tx.clone()))
             .connect(transport)
             .await
@@ -200,16 +232,26 @@ impl RemoteServer {
                 upstream: label.clone(),
                 source: Box::new(source),
             })?;
-        Ok(Self::assemble(label, client, None, tx, DEFAULT_CATALOG_TTL).await)
+        let parts = Parts {
+            label,
+            child: None,
+            changes: tx,
+            catalog_ttl: DEFAULT_CATALOG_TTL,
+            forward_input: true,
+            completions,
+        };
+        Ok(Self::assemble(client, parts).await)
     }
 
-    async fn assemble(
-        label: String,
-        client: Client,
-        child: Option<ChildProcess>,
-        changes: broadcast::Sender<Change>,
-        catalog_ttl: Duration,
-    ) -> Self {
+    async fn assemble(client: Client, parts: Parts) -> Self {
+        let Parts {
+            label,
+            child,
+            changes,
+            catalog_ttl,
+            forward_input,
+            completions,
+        } = parts;
         let info = client
             .server_info()
             .cloned()
@@ -225,6 +267,8 @@ impl RemoteServer {
                 resources: Catalog::new(catalog_ttl),
                 templates: Catalog::new(catalog_ttl),
                 changes,
+                forward_input,
+                completions,
                 child: tokio::sync::Mutex::new(child),
                 listener: Mutex::new(None),
                 client,
@@ -402,25 +446,141 @@ impl RemoteServer {
         error.to_mcp_error(self.inner.client.protocol_version())
     }
 
-    /// The options a forwarded call carries: the downstream request's
-    /// cancellation, and progress relayed back to the downstream caller.
-    fn call_options(
+    /// What one downstream call carries upstream: its cancellation, its
+    /// progress relayed back, and (when input is forwarded) the upstream's
+    /// requests for input put to its caller.
+    fn forwarded(
         &self,
         base: &turbomcp_core::RequestContext,
         progress: &turbomcp_server::ProgressReporter,
-    ) -> CallOptions {
-        let relay = progress.clone();
-        CallOptions::new()
-            .cancel_on(base.cancellation.clone())
-            .on_progress(move |p: neutral::Progress| {
-                let relay = relay.clone();
-                tokio::spawn(async move {
-                    relay
-                        .report(p.progress, p.total, p.message.as_deref())
-                        .await;
-                });
-            })
+        handle: &turbomcp_server::ClientHandle,
+    ) -> Forwarded {
+        let mut options = CallOptions::new().cancel_on(base.cancellation.clone());
+        let bridge = self.inner.forward_input.then(|| {
+            Bridge::new(
+                handle.clone(),
+                base.protocol_version.clone(),
+                self.inner.completions.clone(),
+            )
+        });
+        if let Some(bridge) = &bridge {
+            options = options
+                .with_elicitation(bridge.clone())
+                .with_sampling(bridge.clone())
+                .with_roots(bridge.clone());
+        }
+        let relay = progress
+            .is_requested()
+            .then(|| ProgressRelay::new(progress.clone()));
+        if let Some(relay) = &relay {
+            let tx = relay.tx.clone();
+            options = options.on_progress(move |p: neutral::Progress| {
+                // Advisory: a caller that can't keep up misses some.
+                let _ = tx.try_send(Relayed::Progress(p));
+            });
+        }
+        Forwarded {
+            options,
+            bridge,
+            relay,
+        }
     }
+
+    /// Run a forwarded call, ending it (and the upstream request) with the
+    /// input-required abort if its bridge asked a `2026-07-28` caller a
+    /// question: the caller retries with the answer, and the call runs again.
+    /// Progress the upstream reported reaches the caller before the result:
+    /// after it, the caller would drop it.
+    async fn forward<T>(
+        &self,
+        forwarded: &Forwarded,
+        call: impl Future<Output = Result<T, turbomcp_client::ClientError>>,
+    ) -> McpResult<T> {
+        let aborted = async {
+            match &forwarded.bridge {
+                Some(bridge) => bridge.aborted().await,
+                None => std::future::pending().await,
+            }
+        };
+        let result = tokio::select! {
+            result = call => result.map_err(|e| self.upstream_error(&e)),
+            () = aborted => Err(McpError::InputRequired),
+        };
+        if let Some(relay) = &forwarded.relay {
+            relay.flush().await;
+        }
+        result
+    }
+}
+
+/// One forwarded call's options, input bridge, and progress relay.
+struct Forwarded {
+    options: CallOptions,
+    bridge: Option<Bridge>,
+    relay: Option<ProgressRelay>,
+}
+
+/// How many progress updates may wait to be relayed.
+const PROGRESS_BUFFER: usize = 64;
+
+enum Relayed {
+    Progress(neutral::Progress),
+    Flush(tokio::sync::oneshot::Sender<()>),
+}
+
+/// Relays an upstream call's progress to its downstream caller, in order.
+struct ProgressRelay {
+    tx: tokio::sync::mpsc::Sender<Relayed>,
+}
+
+impl ProgressRelay {
+    fn new(reporter: turbomcp_server::ProgressReporter) -> Self {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(PROGRESS_BUFFER);
+        tokio::spawn(async move {
+            while let Some(relayed) = rx.recv().await {
+                match relayed {
+                    Relayed::Progress(p) => {
+                        reporter
+                            .report(p.progress, p.total, p.message.as_deref())
+                            .await;
+                    }
+                    Relayed::Flush(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+        });
+        Self { tx }
+    }
+
+    /// Resolves once everything sent before it has been relayed.
+    async fn flush(&self) {
+        let (done, flushed) = tokio::sync::oneshot::channel();
+        if self.tx.send(Relayed::Flush(done)).await.is_ok() {
+            let _ = flushed.await;
+        }
+    }
+}
+
+/// The handlers the upstream client declares input capabilities with.
+fn declare_input(client: ClientBuilder, completions: &Completions) -> ClientBuilder {
+    let handlers = UpstreamHandlers {
+        completions: completions.clone(),
+    };
+    client
+        .with_elicitation(handlers.clone())
+        .with_sampling(handlers.clone())
+        .with_roots(handlers)
+}
+
+/// What [`RemoteServer::assemble`] puts together beside the client.
+struct Parts {
+    label: String,
+    child: Option<ChildProcess>,
+    changes: broadcast::Sender<Change>,
+    catalog_ttl: Duration,
+    forward_input: bool,
+    completions: Completions,
 }
 
 impl McpServerCore for RemoteServer {
@@ -475,12 +635,12 @@ impl WithTools for RemoteServer {
         ctx: &CallToolContext,
         params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
-        let options = self.call_options(&ctx.base, &ctx.progress);
-        self.inner
-            .client
-            .call_tool_with(params.name, params.arguments, &options)
-            .await
-            .map_err(|e| self.upstream_error(&e))
+        let forwarded = self.forwarded(&ctx.base, &ctx.progress, &ctx.client);
+        let call =
+            self.inner
+                .client
+                .call_tool_with(params.name, params.arguments, &forwarded.options);
+        self.forward(&forwarded, call).await
     }
 }
 
@@ -549,12 +709,12 @@ impl WithResources for RemoteServer {
         ctx: &ReadResourceContext,
         params: neutral::ReadResourceParams,
     ) -> McpResult<neutral::ReadResourceResult> {
-        let options = self.call_options(&ctx.base, &ctx.progress);
-        self.inner
+        let forwarded = self.forwarded(&ctx.base, &ctx.progress, &ctx.client);
+        let call = self
+            .inner
             .client
-            .read_resource_with(params.uri, &options)
-            .await
-            .map_err(|e| self.upstream_error(&e))
+            .read_resource_with(params.uri, &forwarded.options);
+        self.forward(&forwarded, call).await
     }
 
     async fn list_resource_templates(
@@ -606,12 +766,12 @@ impl WithPrompts for RemoteServer {
         ctx: &GetPromptContext,
         params: neutral::GetPromptParams,
     ) -> McpResult<neutral::GetPromptResult> {
-        let options = self.call_options(&ctx.base, &ctx.progress);
-        self.inner
-            .client
-            .get_prompt_with(params.name, params.arguments, &options)
-            .await
-            .map_err(|e| self.upstream_error(&e))
+        let forwarded = self.forwarded(&ctx.base, &ctx.progress, &ctx.client);
+        let call =
+            self.inner
+                .client
+                .get_prompt_with(params.name, params.arguments, &forwarded.options);
+        self.forward(&forwarded, call).await
     }
 }
 

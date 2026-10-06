@@ -46,4 +46,10 @@ itself. Cancellation, progress and trace context cross the hop, and a stdio
 upstream gets the specification's shutdown sequence (stdin closed, then
 `SIGTERM`, then `SIGKILL`, to its whole process group).
 
+An upstream that asks for input (elicitation, sampling, roots) asks the
+downstream caller whose call caused it, whatever revision each side speaks:
+a `2025-*` caller is asked inline, a `2026-07-28` caller gets an
+`InputRequiredResult` and retries. A request the proxy can't attribute to a
+caller is refused, never shown to someone it may not belong to.
+
 Use it through the facade: `turbomcp = { version = "4", features = ["proxy", "http"] }`.

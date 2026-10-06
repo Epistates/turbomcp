@@ -1071,7 +1071,10 @@ impl Client {
                     task_id,
                     Some(name.clone()),
                 )))),
-                None => Ok(Detached::Done(self.settle_tool_call(&name, v).await?)),
+                None => Ok(Detached::Done(
+                    self.settle_tool_call(&name, v, options.input.as_ref())
+                        .await?,
+                )),
             }
         })
         .await
@@ -1095,7 +1098,7 @@ impl Client {
         let v = self
             .call_tool_answer(name, arguments, options, options.task)
             .await?;
-        self.settle_tool_call(name, v).await
+        self.settle_tool_call(name, v, options.input.as_ref()).await
     }
 
     /// Send a `tools/call` and return its first answer: a result, or a task
@@ -1213,6 +1216,7 @@ impl Client {
         &self,
         name: &str,
         mut v: Value,
+        input: Option<&ClientHandlers>,
     ) -> ClientResult<neutral::CallToolResult> {
         // Draft: a server MAY answer with a task handle instead of the result
         // (`resultType: "task"`, SEP-2663 — only ever sent to clients that
@@ -1220,7 +1224,7 @@ impl Client {
         // fixed-shape APIs, drive the polling flow and surface only the final
         // result.
         if v.get("resultType").and_then(Value::as_str) == Some(RESULT_TYPE_TASK) {
-            v = self.drive_task(v, true).await?;
+            v = self.drive_task(v, true, input).await?;
         }
         // Legacy: a task-augmented call answers `CreateTaskResult { task }`
         // (core Tasks, `2025-11-25`). `content` is required on a real
@@ -1229,7 +1233,7 @@ impl Client {
             && let Some(handle) = v.get("task")
             && handle.get("taskId").is_some()
         {
-            v = self.drive_legacy_task(handle.clone(), true).await?;
+            v = self.drive_legacy_task(handle.clone(), true, input).await?;
         }
         let result: neutral::CallToolResult =
             self.decode::<v0728::CallToolResult, legacy::CallToolResult, _>(v)?;
@@ -1246,9 +1250,9 @@ impl Client {
     ) -> ClientResult<neutral::CallToolResult> {
         let current = self.task_get_raw(task_id).await?;
         let v = if self.version == ProtocolVersion::V2026_07_28 {
-            self.drive_task(current, false).await?
+            self.drive_task(current, false, None).await?
         } else {
-            self.drive_legacy_task(current, false).await?
+            self.drive_legacy_task(current, false, None).await?
         };
         let result: neutral::CallToolResult =
             self.decode::<v0728::CallToolResult, legacy::CallToolResult, _>(v)?;
@@ -1835,7 +1839,12 @@ impl Client {
     /// spec's polling backstop. With `cancel_on_drop`, giving up on it
     /// (dropping the future, a failing input handler, the TTL) sends
     /// `tasks/cancel`.
-    async fn drive_task(&self, mut current: Value, cancel_on_drop: bool) -> ClientResult<Value> {
+    async fn drive_task(
+        &self,
+        mut current: Value,
+        cancel_on_drop: bool,
+        input: Option<&ClientHandlers>,
+    ) -> ClientResult<Value> {
         let task_id = current
             .get("taskId")
             .and_then(Value::as_str)
@@ -1885,12 +1894,15 @@ impl Client {
                     )));
                 }
                 Some("input_required") => {
-                    if self.handler.is_empty() {
+                    let handler = &match input {
+                        Some(call) => call.over(&self.handler),
+                        None => self.handler.clone(),
+                    };
+                    if handler.is_empty() {
                         return Err(ClientError::Protocol(
                             "task requires input but the client registered no handler".into(),
                         ));
                     }
-                    let handler = &self.handler;
                     // Answer each outstanding request exactly once (the spec
                     // has clients dedup keys across consecutive polls; keys
                     // are unique over the task's lifetime).
@@ -1961,6 +1973,7 @@ impl Client {
         &self,
         mut current: Value,
         cancel_on_drop: bool,
+        input: Option<&ClientHandlers>,
     ) -> ClientResult<Value> {
         let task_id = current
             .get("taskId")
@@ -1971,6 +1984,8 @@ impl Client {
         if !cancel_on_drop {
             guard.disarm();
         }
+        // Its input requests name it (`related-task`); they are this call's.
+        let _input = input.map(|handlers| self.conn.route_task_input(&task_id, handlers.clone()));
         // TTL backstop, measured from when we first saw it (at or after
         // `createdAt`, so never stricter than the spec allows), against each
         // poll's TTL. Legacy types it `ttl` (ms); `null` ⇒ poll indefinitely.
@@ -1985,7 +2000,7 @@ impl Client {
                     guard.disarm();
                     return match early {
                         Some(pending) => pending.await,
-                        None => self.task_result(&task_id).await,
+                        None => self.task_result(&task_id, input).await,
                     };
                 }
                 Some("cancelled") => {
@@ -1995,7 +2010,7 @@ impl Client {
                     )));
                 }
                 Some("input_required") if early.is_none() => {
-                    early = Some(Box::pin(self.task_result(&task_id)));
+                    early = Some(Box::pin(self.task_result(&task_id, input)));
                 }
                 // `working`, or a status from a newer revision → keep polling.
                 _ => {}
@@ -2031,11 +2046,22 @@ impl Client {
     }
 
     /// `tasks/result` (`2025-11-25`): blocks until the task is terminal, then
-    /// answers what the underlying request would have.
-    async fn task_result(&self, task_id: &str) -> ClientResult<Value> {
+    /// answers what the underlying request would have. The task's input
+    /// requests arrive on its stream, so the call's own handlers (`input`)
+    /// answer them.
+    async fn task_result(
+        &self,
+        task_id: &str,
+        input: Option<&ClientHandlers>,
+    ) -> ClientResult<Value> {
         let mut params = Map::new();
         params.insert("taskId".into(), json!(task_id));
-        self.versioned_request(request::TASKS_RESULT, params).await
+        let wait = Wait {
+            input: input.cloned(),
+            ..Wait::default()
+        };
+        self.versioned_request_waiting(request::TASKS_RESULT, params, Extensions::new(), wait)
+            .await
     }
 
     /// Issue an MRTR-capable request (`tools/call`, `resources/read`,
@@ -2080,7 +2106,13 @@ impl Client {
                 .and_then(Value::as_object)
                 .filter(|requests| !requests.is_empty());
             if let Some(requests) = requests {
-                if self.handler.is_empty() {
+                // The call's own handlers answer what it asks, over the
+                // client's.
+                let handlers = match &per.input {
+                    Some(call) => call.over(&self.handler),
+                    None => self.handler.clone(),
+                };
+                if handlers.is_empty() {
                     return Err(ClientError::Protocol(
                         "server requires input (MRTR) but the client registered no handler".into(),
                     ));
@@ -2088,7 +2120,7 @@ impl Client {
                 // Answered concurrently: they are independent by construction,
                 // and one slow human should not serialize the rest.
                 let answers = futures::future::try_join_all(requests.iter().map(|(key, req)| {
-                    let handler = &self.handler;
+                    let handler = &handlers;
                     let version = &self.version;
                     async move {
                         let req_method = req
@@ -2275,6 +2307,7 @@ impl Client {
             timeout: options.timeout,
             reset_on_progress: options.reset_timeout_on_progress,
             progress,
+            input: options.input.clone(),
         })
     }
 
@@ -2699,6 +2732,8 @@ struct Prepared {
     timeout: Option<Duration>,
     reset_on_progress: bool,
     progress: Option<Registration>,
+    /// The call's own input handlers, if it has any.
+    input: Option<ClientHandlers>,
 }
 
 impl Prepared {
@@ -2725,6 +2760,7 @@ impl Prepared {
                 .as_ref()
                 .filter(|_| self.reset_on_progress)
                 .map(|registration| registration.ticks.clone()),
+            input: self.input.clone(),
         }
     }
 }

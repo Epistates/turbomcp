@@ -22,6 +22,7 @@ mod connection;
 mod error;
 mod extension;
 mod handler;
+mod input;
 mod observe;
 mod options;
 mod progress;

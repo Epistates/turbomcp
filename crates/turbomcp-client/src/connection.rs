@@ -49,6 +49,7 @@ use turbomcp_service::Transport;
 use crate::cache::ResponseCache;
 use crate::error::{ClientError, ClientResult};
 use crate::handler::{ClientHandlers, dispatch_server_request};
+use crate::input::{Answerer, InputRoutes, RouteKey};
 use crate::progress::ProgressRoutes;
 use crate::subscription::SubscriptionRoutes;
 
@@ -65,6 +66,8 @@ type Frame = (JsonRpcMessage, Extensions);
 
 /// Shared connection state, held by every [`Connection`] clone.
 struct Inner {
+    /// Per-call input handlers (shared with the actor).
+    input: Arc<InputRoutes>,
     /// Frames the client wants to send (the actor owns the receiver). The actor
     /// holds only a `WeakSender`, so dropping all handles closes the channel.
     outbound: mpsc::Sender<Frame>,
@@ -206,6 +209,7 @@ impl Connection {
         let progress = Arc::new(ProgressRoutes::default());
         let subscriptions = Arc::new(SubscriptionRoutes::default());
         let (inbound_tx, inbound) = watch::channel(0);
+        let input = Arc::new(InputRoutes::default());
         tokio::spawn(actor(
             transport,
             rx,
@@ -218,6 +222,7 @@ impl Connection {
                 progress: Arc::clone(&progress),
                 subscriptions: Arc::clone(&subscriptions),
                 inbound: inbound_tx,
+                input: Arc::clone(&input),
             },
             (shutdown.clone(), done.clone()),
         ));
@@ -235,12 +240,25 @@ impl Connection {
                 progress,
                 subscriptions,
                 inbound,
+                input,
                 observer,
                 network,
                 opened: Instant::now(),
                 settled: AtomicBool::new(false),
             }),
         }
+    }
+
+    /// Route the input requests of task `task_id` to `handlers` until the
+    /// guard drops.
+    pub(crate) fn route_task_input(
+        &self,
+        task_id: &str,
+        handlers: ClientHandlers,
+    ) -> crate::input::InputGuard {
+        self.inner
+            .input
+            .register(RouteKey::Task(task_id.to_owned()), handlers)
     }
 
     /// Record the revision the handshake settled on, so replies to
@@ -374,6 +392,13 @@ impl Connection {
             .map_err(|_| ClientError::Timeout)?
             .map_err(|_| ClientError::Closed)?;
         let (reply_tx, reply_rx) = oneshot::channel();
+        // Routed before the request goes out: its server requests may arrive
+        // before anything else does.
+        let _input = wait.input.clone().map(|handlers| {
+            self.inner
+                .input
+                .register(RouteKey::Request(id.clone()), handlers)
+        });
         self.inner
             .pending
             .lock()
@@ -570,6 +595,8 @@ pub(crate) struct Wait {
     pub(crate) timeout: Option<Duration>,
     /// Ticks on each progress update; each restarts the timeout.
     pub(crate) progress: Option<watch::Receiver<()>>,
+    /// Who answers the server requests that belong to this one.
+    pub(crate) input: Option<ClientHandlers>,
 }
 
 /// The connection actor: owns the transport, multiplexes both directions.
@@ -594,6 +621,8 @@ struct SessionState {
     subscriptions: Arc<SubscriptionRoutes>,
     /// Published count of server→client requests in their handlers.
     inbound: watch::Sender<usize>,
+    /// Per-call input handlers.
+    input: Arc<InputRoutes>,
 }
 
 async fn actor<T>(
@@ -649,9 +678,12 @@ async fn actor<T>(
                 }
             }
             // Inbound: the next frame from the server.
-            frame = transport.recv() => {
+            frame = transport.recv_with() => {
                 match frame {
-                    Ok(Some(msg)) => {
+                    Ok(Some((msg, facts))) => {
+                        let related = facts
+                            .get::<turbomcp_service::RelatedRequest>()
+                            .map(|r| r.0.clone());
                         let failure = match &msg {
                             JsonRpcMessage::Response(r) => r
                                 .id
@@ -659,7 +691,9 @@ async fn actor<T>(
                                 .and_then(|id| transport.take_failure(id)),
                             _ => None,
                         };
-                        if let Some(reply) = route_inbound(msg, failure, &state, &mut dispatch) {
+                        if let Some(reply) =
+                            route_inbound(msg, failure, related.as_ref(), &state, &mut dispatch)
+                        {
                             tokio::select! {
                                 () = shutdown.cancelled() => break,
                                 result = tokio::time::timeout(Duration::from_secs(30), transport.send(reply)) => {
@@ -792,6 +826,7 @@ async fn deliver_notifications(
 fn route_inbound(
     msg: JsonRpcMessage,
     failure: Option<turbomcp_service::TransportFailure>,
+    related: Option<&RequestId>,
     state: &SessionState,
     dispatch: &mut Dispatch,
 ) -> Option<JsonRpcMessage> {
@@ -804,9 +839,24 @@ fn route_inbound(
         progress,
         subscriptions,
         inbound: _,
+        input,
     } = state;
     match msg {
         JsonRpcMessage::Response(resp) => {
+            // A call with its own handlers that became a `2025-11-25` task:
+            // the task's requests are the call's from this frame on.
+            if !input.is_empty()
+                && let Some(id) = &resp.id
+                && let Some(task_id) = resp
+                    .result
+                    .as_ref()
+                    .filter(|r| r.get("content").is_none())
+                    .and_then(|r| r.get("task"))
+                    .and_then(|t| t.get("taskId"))
+                    .and_then(Value::as_str)
+            {
+                input.became_task(id, task_id);
+            }
             complete_pending(resp, pending, subscriptions, failure);
             None
         }
@@ -911,100 +961,142 @@ fn route_inbound(
                 },
             )))
         }
-        JsonRpcMessage::Request(req) => match handler.is_empty() {
-            // Dispatch on a task so a slow handler (user interaction) doesn't
-            // head-of-line-block inbound reads; reply via the WeakSender.
-            // `dispatch_server_request` answers `-32601` for a method whose own
-            // handler is unregistered, so an unrelated one being present cannot
-            // make this client look more capable than it declared.
-            false => {
-                // Claim the id before the dispatch task starts: a server that
-                // answers its own URL-mode elicitation immediately would
-                // otherwise race the registration and lose the completion.
-                let version = negotiated
-                    .lock()
-                    .expect("negotiated version mutex poisoned")
-                    .clone();
-                handler.expect_elicitation(&version, &req.method, req.params.as_ref());
-                let handlers = handler.clone();
-                let weak_out = weak_out.clone();
-                let request_id = req.id.clone();
-                // A request a task made answers with the task named too: "All
-                // requests, notifications, and responses related to a task
-                // MUST include the `io.modelcontextprotocol/related-task` key".
-                let related_task = req
-                    .params
-                    .as_ref()
-                    .and_then(|p| p.get("_meta"))
-                    .and_then(|m| m.get(turbomcp_core::meta::keys::RELATED_TASK))
-                    .cloned();
-                let task = dispatch.requests.spawn(async move {
-                    let id = req.id.clone();
-                    // A user handler that panics used to take the reply down
-                    // with it: the task unwound before the send below, and the
-                    // server sat out its own 120s timeout with no way to tell a
-                    // buggy client from a slow human. Every request gets an
-                    // answer, even a `-32603` one.
-                    let outcome = turbomcp_service::catch_panic(dispatch_server_request(
-                        &handlers,
-                        &version,
-                        &req.method,
-                        req.params,
-                    ))
-                    .await
-                    .unwrap_or_else(|detail| {
-                        tracing::error!(
-                            panic = detail,
-                            method = %req.method,
-                            "client handler panicked; answering -32603"
-                        );
-                        Err(JsonRpcError {
+        JsonRpcMessage::Request(req) => {
+            // SEP-2260: a request that belongs to a call made with its own
+            // handlers goes to them (see `crate::input`).
+            let in_flight = pending.lock().expect("pending mutex poisoned").len();
+            // The task a `2025-11-25` task's request names says whose it is
+            // where no stream does (stdio, WebSocket).
+            let task = req
+                .params
+                .as_ref()
+                .and_then(|p| p.get("_meta"))
+                .and_then(|m| m.get(turbomcp_core::meta::keys::RELATED_TASK))
+                .and_then(|t| t.get("taskId"))
+                .and_then(serde_json::Value::as_str)
+                .map(|id| RouteKey::Task(id.to_owned()));
+            let keys: Vec<RouteKey> = related
+                .cloned()
+                .map(RouteKey::Request)
+                .into_iter()
+                .chain(task)
+                .collect();
+            let handler = match input.answerer(&keys, handler, in_flight) {
+                Answerer::Handlers(handlers) => handlers,
+                Answerer::Ambiguous if handler.answers(&req.method) => handler.clone(),
+                Answerer::Ambiguous => {
+                    tracing::warn!(
+                        method = %req.method,
+                        "a server request with several calls in flight could belong to any; refused"
+                    );
+                    return Some(JsonRpcMessage::Response(JsonRpcResponse::error(
+                        req.id,
+                        JsonRpcError {
                             code: turbomcp_core::codes::INTERNAL_ERROR,
-                            message: "client handler panicked".to_owned(),
+                            message: format!(
+                                "cannot tell which of several calls in flight this {} belongs to",
+                                req.method
+                            ),
                             data: None,
-                        })
-                    });
-                    let reply = match outcome {
-                        Ok(mut value) => {
-                            if let (Some(task), Some(result)) =
-                                (related_task, value.as_object_mut())
-                                && let Some(meta) = result
-                                    .entry("_meta")
-                                    .or_insert_with(|| serde_json::json!({}))
-                                    .as_object_mut()
-                            {
-                                meta.insert(
-                                    turbomcp_core::meta::keys::RELATED_TASK.to_owned(),
-                                    task,
-                                );
+                        },
+                    )));
+                }
+            };
+            match handler.is_empty() {
+                // Dispatch on a task so a slow handler (user interaction) doesn't
+                // head-of-line-block inbound reads; reply via the WeakSender.
+                // `dispatch_server_request` answers `-32601` for a method whose own
+                // handler is unregistered, so an unrelated one being present cannot
+                // make this client look more capable than it declared.
+                false => {
+                    // Claim the id before the dispatch task starts: a server that
+                    // answers its own URL-mode elicitation immediately would
+                    // otherwise race the registration and lose the completion.
+                    let version = negotiated
+                        .lock()
+                        .expect("negotiated version mutex poisoned")
+                        .clone();
+                    handler.expect_elicitation(&version, &req.method, req.params.as_ref());
+                    let handlers = handler.clone();
+                    let weak_out = weak_out.clone();
+                    let request_id = req.id.clone();
+                    // A request a task made answers with the task named too: "All
+                    // requests, notifications, and responses related to a task
+                    // MUST include the `io.modelcontextprotocol/related-task` key".
+                    let related_task = req
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("_meta"))
+                        .and_then(|m| m.get(turbomcp_core::meta::keys::RELATED_TASK))
+                        .cloned();
+                    let task = dispatch.requests.spawn(async move {
+                        let id = req.id.clone();
+                        // A user handler that panics used to take the reply down
+                        // with it: the task unwound before the send below, and the
+                        // server sat out its own 120s timeout with no way to tell a
+                        // buggy client from a slow human. Every request gets an
+                        // answer, even a `-32603` one.
+                        let outcome = turbomcp_service::catch_panic(dispatch_server_request(
+                            &handlers,
+                            &version,
+                            &req.method,
+                            req.params,
+                        ))
+                        .await
+                        .unwrap_or_else(|detail| {
+                            tracing::error!(
+                                panic = detail,
+                                method = %req.method,
+                                "client handler panicked; answering -32603"
+                            );
+                            Err(JsonRpcError {
+                                code: turbomcp_core::codes::INTERNAL_ERROR,
+                                message: "client handler panicked".to_owned(),
+                                data: None,
+                            })
+                        });
+                        let reply = match outcome {
+                            Ok(mut value) => {
+                                if let (Some(task), Some(result)) =
+                                    (related_task, value.as_object_mut())
+                                    && let Some(meta) = result
+                                        .entry("_meta")
+                                        .or_insert_with(|| serde_json::json!({}))
+                                        .as_object_mut()
+                                {
+                                    meta.insert(
+                                        turbomcp_core::meta::keys::RELATED_TASK.to_owned(),
+                                        task,
+                                    );
+                                }
+                                JsonRpcResponse::success(id.clone(), value)
                             }
-                            JsonRpcResponse::success(id.clone(), value)
+                            Err(err) => JsonRpcResponse::error(id.clone(), err),
+                        };
+                        if let Some(tx) = weak_out.upgrade() {
+                            let _ = tx
+                                .send((JsonRpcMessage::Response(reply), Extensions::new()))
+                                .await;
                         }
-                        Err(err) => JsonRpcResponse::error(id.clone(), err),
-                    };
-                    if let Some(tx) = weak_out.upgrade() {
-                        let _ = tx
-                            .send((JsonRpcMessage::Response(reply), Extensions::new()))
-                            .await;
-                    }
-                    id
-                });
-                dispatch.inflight.insert(request_id, task);
-                None
+                        id
+                    });
+                    dispatch.inflight.insert(request_id, task);
+                    None
+                }
+                // No handler configured: refuse politely rather than hang the server.
+                true => {
+                    tracing::debug!(method = %req.method, "server→client request with no handler");
+                    Some(JsonRpcMessage::Response(JsonRpcResponse::error(
+                        req.id,
+                        JsonRpcError {
+                            code: turbomcp_core::codes::METHOD_NOT_FOUND,
+                            message: format!("method not found: {}", req.method),
+                            data: None,
+                        },
+                    )))
+                }
             }
-            // No handler configured: refuse politely rather than hang the server.
-            true => {
-                tracing::debug!(method = %req.method, "server→client request with no handler");
-                Some(JsonRpcMessage::Response(JsonRpcResponse::error(
-                    req.id,
-                    JsonRpcError {
-                        code: turbomcp_core::codes::METHOD_NOT_FOUND,
-                        message: format!("method not found: {}", req.method),
-                        data: None,
-                    },
-                )))
-            }
-        },
+        }
     }
 }
 

@@ -150,6 +150,18 @@ pub trait Transport: Send + 'static {
     /// Must be cancel safe — see the [trait docs](Transport#cancel-safety).
     fn recv(&mut self) -> impl Future<Output = Result<Option<JsonRpcMessage>, Self::Error>> + Send;
 
+    /// Receive the next frame with what the transport knows about it beside
+    /// the message: [`RelatedRequest`] when it arrived in response to one of
+    /// this side's requests. The default knows nothing extra.
+    ///
+    /// Must be cancel safe, as [`recv`](Self::recv).
+    fn recv_with(
+        &mut self,
+    ) -> impl Future<Output = Result<Option<(JsonRpcMessage, Extensions)>, Self::Error>> + Send
+    {
+        async move { Ok(self.recv().await?.map(|msg| (msg, Extensions::new()))) }
+    }
+
     /// Close the transport, flushing anything pending.
     fn close(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
@@ -170,6 +182,14 @@ pub trait Transport: Send + 'static {
         self.close()
     }
 }
+
+/// The request of this side's a message from the peer belongs to, as the
+/// transport saw it: on Streamable HTTP, the request whose POST stream
+/// carried it. SEP-2260 associates every server→client request (elicitation,
+/// sampling, roots) with an originating client request; this is how a client
+/// learns which.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelatedRequest(pub RequestId);
 
 /// The revision an outbound message goes out under, for transports that say
 /// so outside the message (Streamable HTTP's `MCP-Protocol-Version` header).

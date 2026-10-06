@@ -8,6 +8,7 @@ use turbomcp_core::{CancellationToken, LogLevel, meta::keys};
 use turbomcp_protocol::neutral;
 
 use crate::error::{ClientError, ClientResult};
+use crate::handler::{ClientHandlers, ElicitationHandler, RootsHandler, SamplingHandler};
 use crate::progress::ProgressCallback;
 
 /// Per-call options for [`Client::call_tool_with`](crate::Client::call_tool_with),
@@ -39,6 +40,7 @@ pub struct CallOptions {
     pub(crate) log_level: Option<LogLevel>,
     pub(crate) cancel: Option<CancellationToken>,
     pub(crate) task: Option<Option<i64>>,
+    pub(crate) input: Option<ClientHandlers>,
 }
 
 impl core::fmt::Debug for CallOptions {
@@ -52,6 +54,7 @@ impl core::fmt::Debug for CallOptions {
             .field("log_level", &self.log_level)
             .field("cancel", &self.cancel.is_some())
             .field("task", &self.task)
+            .field("input", &self.input)
             .finish()
     }
 }
@@ -149,6 +152,39 @@ impl CallOptions {
     #[must_use]
     pub fn task(mut self, ttl_ms: Option<i64>) -> Self {
         self.task = Some(ttl_ms);
+        self
+    }
+
+    /// Answer this call's `elicitation/create` requests with `handler`,
+    /// instead of the client's own: the ones that belong to this call (see
+    /// SEP-2260; on `2026-07-28` they come back in the call's own result, on
+    /// Streamable HTTP on its own stream). The server sends only what the
+    /// client declared at the handshake, so this answers for a capability
+    /// the client already declares (register a client-wide handler for
+    /// that); it doesn't add one.
+    #[must_use]
+    pub fn with_elicitation<H: ElicitationHandler>(mut self, handler: H) -> Self {
+        self.input
+            .get_or_insert_with(ClientHandlers::default)
+            .elicitation = Some(Arc::new(handler));
+        self
+    }
+
+    /// Answer this call's `sampling/createMessage` requests with `handler`.
+    /// See [`with_elicitation`](Self::with_elicitation).
+    #[must_use]
+    pub fn with_sampling<H: SamplingHandler>(mut self, handler: H) -> Self {
+        self.input
+            .get_or_insert_with(ClientHandlers::default)
+            .sampling = Some(Arc::new(handler));
+        self
+    }
+
+    /// Answer this call's `roots/list` requests with `handler`. See
+    /// [`with_elicitation`](Self::with_elicitation).
+    #[must_use]
+    pub fn with_roots<H: RootsHandler>(mut self, handler: H) -> Self {
+        self.input.get_or_insert_with(ClientHandlers::default).roots = Some(Arc::new(handler));
         self
     }
 

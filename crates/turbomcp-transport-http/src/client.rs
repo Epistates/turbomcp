@@ -255,6 +255,9 @@ impl BearerSource for Mutex<Option<Zeroizing<String>>> {
     }
 }
 
+/// A frame for the client and the request whose stream carried it.
+type Inbound = (JsonRpcMessage, Option<RequestId>);
+
 /// HTTP transport resource budgets. Applied before connecting the transport.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -302,7 +305,9 @@ struct Shared {
     /// the `MCP-Protocol-Version` header fallback for messages that carry no
     /// signal of their own (responses to server requests, notifications).
     version: Mutex<Option<String>>,
-    inbound_tx: mpsc::Sender<JsonRpcMessage>,
+    /// Frames for the client, each with the request whose stream carried
+    /// it (`None` for the standalone stream and synthesized answers).
+    inbound_tx: mpsc::Sender<Inbound>,
     /// Whether the standalone server→client stream ([`listen`]) has been
     /// started. One per connection, however many POSTs race to trigger it.
     listening: AtomicBool,
@@ -356,7 +361,7 @@ impl Shared {
 /// A Streamable HTTP transport to a single MCP endpoint URL.
 pub struct HttpClientTransport {
     shared: Arc<Shared>,
-    inbound_rx: mpsc::Receiver<JsonRpcMessage>,
+    inbound_rx: mpsc::Receiver<Inbound>,
 }
 
 impl Drop for HttpClientTransport {
@@ -686,7 +691,7 @@ impl Transport for HttpClientTransport {
                     );
                     let _ = shared
                         .inbound_tx
-                        .send(JsonRpcMessage::Response(refused))
+                        .send((JsonRpcMessage::Response(refused), None))
                         .await;
                     return Ok(());
                 }
@@ -705,7 +710,17 @@ impl Transport for HttpClientTransport {
     async fn recv(&mut self) -> Result<Option<JsonRpcMessage>, Self::Error> {
         // `None` here means every sender (the Shared in this transport + any
         // in-flight pump task) has dropped — a clean end-of-stream.
-        Ok(self.inbound_rx.recv().await)
+        Ok(self.inbound_rx.recv().await.map(|(msg, _)| msg))
+    }
+
+    async fn recv_with(&mut self) -> Result<Option<(JsonRpcMessage, Extensions)>, Self::Error> {
+        Ok(self.inbound_rx.recv().await.map(|(msg, related)| {
+            let mut facts = Extensions::new();
+            if let Some(id) = related {
+                facts.insert(turbomcp_service::RelatedRequest(id));
+            }
+            (msg, facts)
+        }))
     }
 
     async fn close(self) -> Result<(), Self::Error> {
@@ -804,7 +819,10 @@ async fn post_and_pump(
                         data: None,
                     },
                 );
-                let _ = shared.inbound_tx.send(JsonRpcMessage::Response(resp)).await;
+                let _ = shared
+                    .inbound_tx
+                    .send((JsonRpcMessage::Response(resp), None))
+                    .await;
             }
             // Notifications / responses have no waiter — just log.
             None => tracing::debug!(error = %message, "http client POST failed (no waiter)"),
@@ -1032,7 +1050,7 @@ async fn pump(
             ensure_listening(shared).await;
         }
         slot.take();
-        let _ = shared.inbound_tx.send(frame).await;
+        let _ = shared.inbound_tx.send((frame, None)).await;
     }
     Ok(())
 }
@@ -1111,7 +1129,12 @@ async fn pump_sse(
                 }
                 slot.take();
             }
-            if shared.inbound_tx.send(frame).await.is_err() || finished {
+            // SEP-2260: what arrives on a request's stream belongs to it.
+            let related = match request {
+                JsonRpcMessage::Request(q) => Some(q.id.clone()),
+                _ => None,
+            };
+            if shared.inbound_tx.send((frame, related)).await.is_err() || finished {
                 return Ok(());
             }
         }
@@ -1237,7 +1260,7 @@ async fn listen(shared: Arc<Shared>) {
                     match serde_json::from_str::<JsonRpcMessage>(&event.data) {
                         // Closed receiver: the connection is gone for good.
                         Ok(frame) => {
-                            if shared.inbound_tx.send(frame).await.is_err() {
+                            if shared.inbound_tx.send((frame, None)).await.is_err() {
                                 return;
                             }
                         }

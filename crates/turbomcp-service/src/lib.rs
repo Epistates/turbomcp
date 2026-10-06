@@ -56,7 +56,9 @@ pub use ratelimit::{RateKey, RateLimiter};
 pub use serve::{ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
 pub use session_observer::{EndedSession, SessionEndReason, SessionObserver};
-pub use transport::{HttpFailure, ParamHeaders, Transport, TransportFailure, WireVersion};
+pub use transport::{
+    HttpFailure, ParamHeaders, RelatedRequest, Transport, TransportFailure, WireVersion,
+};
 
 pub use turbomcp_core::CancellationToken;
 
