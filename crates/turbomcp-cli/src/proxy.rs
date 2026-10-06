@@ -36,6 +36,72 @@ pub struct ProxyArgs {
     /// Fail if any server can't be reached, instead of serving the others.
     #[arg(long)]
     pub strict: bool,
+
+    /// Require OAuth 2.1 bearer tokens on `--http`: JWTs issued by this
+    /// authorization server (its issuer identifier).
+    #[arg(long, value_name = "URL", requires_all = ["http", "auth_jwks"])]
+    pub auth_issuer: Option<String>,
+
+    /// Where the issuer publishes its signing keys (its `jwks_uri`).
+    #[arg(long, value_name = "URL", requires = "auth_issuer")]
+    pub auth_jwks: Option<String>,
+
+    /// The gateway's resource identifier, which tokens must name in `aud`
+    /// (default: the endpoint's URL on the bound address).
+    #[arg(long, value_name = "URL", requires = "auth_issuer")]
+    pub auth_audience: Option<String>,
+
+    /// Scopes every request's token must carry (comma-separated).
+    #[arg(
+        long,
+        value_delimiter = ',',
+        value_name = "SCOPES",
+        requires = "auth_issuer"
+    )]
+    pub auth_scopes: Vec<String>,
+}
+
+/// The front door for `--http`: bearer tokens checked against the issuer's
+/// keys, `aud`, `iss` and `exp`, with the RFC 9728 metadata a client needs
+/// to find the issuer.
+fn authenticator(
+    args: &ProxyArgs,
+    addr: SocketAddr,
+) -> Result<Option<std::sync::Arc<dyn turbomcp::HttpAuthenticator>>> {
+    let (Some(issuer), Some(jwks)) = (&args.auth_issuer, &args.auth_jwks) else {
+        return Ok(None);
+    };
+    let resource = args
+        .auth_audience
+        .clone()
+        .unwrap_or_else(|| format!("http://{addr}{}", args.path));
+    let parsed: http::Uri = resource
+        .parse()
+        .with_context(|| format!("--auth-audience `{resource}` is not a URL"))?;
+    let origin = format!(
+        "{}://{}",
+        parsed.scheme_str().unwrap_or("http"),
+        parsed
+            .authority()
+            .map(http::uri::Authority::as_str)
+            .unwrap_or_default()
+    );
+    // RFC 9728 §3.1: the well-known name goes between the origin and the path.
+    let metadata_url = format!(
+        "{origin}/.well-known/oauth-protected-resource{}",
+        parsed.path().trim_end_matches('/')
+    );
+    let keys = turbomcp_auth::HttpJwks::new(jwks.clone(), std::time::Duration::from_secs(3600));
+    let validator = turbomcp_auth::JwtValidator::new(keys, resource.clone(), issuer.clone());
+    let mut server = turbomcp_auth::ResourceServer::new(
+        validator,
+        turbomcp_auth::ResourceMetadata::new(resource, [issuer.clone()]),
+        metadata_url,
+    );
+    if !args.auth_scopes.is_empty() {
+        server = server.required_scopes(args.auth_scopes.clone());
+    }
+    Ok(Some(std::sync::Arc::new(server)))
 }
 
 pub async fn run(args: ProxyArgs) -> Result<()> {
@@ -107,25 +173,30 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
     let serving = async {
         match args.http {
             Some(addr) => {
-                if !addr.ip().is_loopback() {
+                let authenticator = authenticator(&args, addr)?;
+                if authenticator.is_none() && !addr.ip().is_loopback() {
                     tracing::warn!(
                         %addr,
                         "serving beyond loopback with no authentication: anyone who can reach \
-                         it can use every server behind it"
+                         it can use every server behind it (see --auth-issuer)"
                     );
                 }
-                let config = turbomcp::http::HttpConfig::new()
+                let mut config = turbomcp::http::HttpConfig::new()
                     .path(args.path.clone())
                     .with_shutdown(shutdown.clone());
+                if let Some(authenticator) = authenticator {
+                    config = config.with_authenticator(authenticator);
+                }
                 server
                     .serve(turbomcp::http::Http::bind(addr).config(config))
                     .await
+                    .context("serving")
             }
-            None => server.serve(turbomcp::stdio()).await,
+            None => server.serve(turbomcp::stdio()).await.context("serving"),
         }
     };
     let result = tokio::select! {
-        result = serving => result.context("serving"),
+        result = serving => result,
         _ = tokio::signal::ctrl_c() => {
             shutdown.cancel();
             Ok(())

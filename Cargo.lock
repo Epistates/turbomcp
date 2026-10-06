@@ -3781,6 +3781,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "turbomcp",
+ "turbomcp-auth",
  "turbomcp-protocol",
 ]
 

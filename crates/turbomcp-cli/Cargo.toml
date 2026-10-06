@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 turbomcp = { workspace = true, features = ["client", "http", "websocket", "proxy", "client-oauth"] }
 turbomcp-protocol = { workspace = true }
+turbomcp-auth = { workspace = true, features = ["http-jwks"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true }

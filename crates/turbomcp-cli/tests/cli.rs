@@ -184,3 +184,80 @@ fn a_configuration_the_proxy_cannot_serve_is_refused_with_a_reason() {
     assert!(stderr.contains("Streamable HTTP"), "{stderr}");
     let _ = std::fs::remove_file(path);
 }
+
+/// A raw HTTP/1.1 exchange with `addr`: the status line and the rest.
+fn http(addr: std::net::SocketAddr, request: &str) -> (String, String) {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(addr).expect("connect");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = String::new();
+    let _ = stream.read_to_string(&mut response);
+    let (status, rest) = response.split_once("\r\n").unwrap_or((&response, ""));
+    (status.to_owned(), rest.to_owned())
+}
+
+#[test]
+fn the_http_gateway_can_require_bearer_tokens() {
+    let hello = serde_json::to_string(&hello()).unwrap();
+    let path = config(
+        "auth",
+        &format!(r#"{{"mcpServers": {{"hi": {{"command": {hello}}}}}}}"#),
+    );
+    let addr = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        probe.local_addr().unwrap()
+    };
+    let mut gateway = Command::new(env!("CARGO_BIN_EXE_turbomcp"))
+        .args([
+            "proxy",
+            "--config",
+            &path.to_string_lossy(),
+            "--http",
+            &addr.to_string(),
+        ])
+        .args(["--auth-issuer", "https://auth.example.com"])
+        .args(["--auth-jwks", "https://auth.example.com/jwks.json"])
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::net::TcpStream::connect(addr).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the gateway never listened"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+    let (status, rest) = http(
+        addr,
+        &format!(
+            "POST /mcp HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n\
+             Accept: application/json, text/event-stream\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{body}",
+            body.len()
+        ),
+    );
+    assert!(status.contains("401"), "{status}");
+    let metadata_url = format!("http://{addr}/.well-known/oauth-protected-resource/mcp");
+    assert!(rest.contains(&metadata_url), "{rest}");
+
+    let (status, rest) = http(
+        addr,
+        &format!(
+            "GET /.well-known/oauth-protected-resource/mcp HTTP/1.1\r\nHost: {addr}\r\n\
+             Connection: close\r\n\r\n"
+        ),
+    );
+    assert!(status.contains("200"), "{status}");
+    assert!(rest.contains("https://auth.example.com"), "{rest}");
+    assert!(rest.contains(&format!("http://{addr}/mcp")), "{rest}");
+
+    let _ = gateway.kill();
+    let _ = gateway.wait();
+    let _ = std::fs::remove_file(path);
+}

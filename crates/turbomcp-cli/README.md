@@ -51,10 +51,22 @@ caused them.
   `"disabled": true` skips one; `--only a,b` serves a subset.
 - `type: "sse"` (the 2024-11-05 HTTP+SSE transport) is refused with a reason:
   the current revisions replaced it with Streamable HTTP.
-- `--http` serves with no authentication of its own, and warns when bound
-  beyond loopback. To put the gateway behind OAuth, rate limits, visibility
-  rules or your own tools, embed [`turbomcp-proxy`](../turbomcp-proxy) and
-  compose it with the rest of TurboMCP.
+- `--http` can require OAuth 2.1 bearer tokens: `--auth-issuer` and
+  `--auth-jwks` check each token's signature, `iss`, `exp` and `aud` (the
+  endpoint's URL, or `--auth-audience`), `--auth-scopes` adds a baseline,
+  and the RFC 9728 metadata clients need to find the issuer is served at
+  the well-known path. Without them it warns when bound beyond loopback.
+  For rate limits, per-caller visibility, token exchange upstream or your
+  own tools beside the remote ones, embed
+  [`turbomcp-proxy`](../turbomcp-proxy) and compose it with the rest of
+  TurboMCP.
+
+```sh
+turbomcp proxy --config servers.json --http 0.0.0.0:8080 \
+  --auth-issuer https://auth.example.com \
+  --auth-jwks https://auth.example.com/.well-known/jwks.json \
+  --auth-audience https://mcp.example.com/mcp
+```
 
 ## Protocol operations
 
