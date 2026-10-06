@@ -821,6 +821,21 @@ impl Client {
         self.conn.close().await;
     }
 
+    /// Whether the connection has ended: the server went away (a stdio
+    /// server exited, a stream closed for good), or it was
+    /// [closed](Self::close). Every request fails with
+    /// [`ClientError::Closed`] from then on.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.conn.is_closed()
+    }
+
+    /// Resolves once the connection has ended (see
+    /// [`is_closed`](Self::is_closed)).
+    pub async fn closed(&self) {
+        self.conn.closed().await;
+    }
+
     /// Drop every cached response (see
     /// [`ClientBuilder::with_response_cache`]). A no-op when the cache is
     /// disabled. Notifications already invalidate automatically; this is the

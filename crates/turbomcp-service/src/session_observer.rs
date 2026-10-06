@@ -21,6 +21,8 @@ pub enum SessionEndReason {
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct EndedSession<'a> {
+    /// The session's id (`Mcp-Session-Id` on HTTP).
+    pub id: &'a str,
     /// From `initialize` to the end.
     pub duration: Duration,
     /// The revision the session spoke.
@@ -30,15 +32,17 @@ pub struct EndedSession<'a> {
 }
 
 impl<'a> EndedSession<'a> {
-    /// A session on `protocol_version` that lived `duration` and ended for
-    /// `reason`.
+    /// Session `id` on `protocol_version`, which lived `duration` and ended
+    /// for `reason`.
     #[must_use]
     pub fn new(
+        id: &'a str,
         duration: Duration,
         protocol_version: &'a ProtocolVersion,
         reason: SessionEndReason,
     ) -> Self {
         Self {
+            id,
             duration,
             protocol_version,
             reason,

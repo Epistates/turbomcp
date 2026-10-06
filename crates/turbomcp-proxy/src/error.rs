@@ -22,6 +22,16 @@ pub enum ProxyError {
         #[source]
         source: Box<turbomcp_client::ClientError>,
     },
+    /// Opening a transport of the embedding application's own failed
+    /// ([`RemoteServer::dial`](crate::RemoteServer::dial)).
+    #[error("could not reach upstream {upstream}: {source}")]
+    Dial {
+        /// Which upstream.
+        upstream: String,
+        /// Why.
+        #[source]
+        source: std::io::Error,
+    },
     /// The upstream's configuration is invalid.
     #[error("invalid upstream configuration: {0}")]
     Config(String),

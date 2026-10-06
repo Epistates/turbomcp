@@ -1,14 +1,13 @@
 //! [`RemoteServer`]: an upstream MCP server, served as if it were local.
 
-use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use serde_json::Value;
 use tokio::sync::broadcast;
-use turbomcp_client::{CallOptions, Client, ClientBuilder, ConnectMode, NotificationHandler};
-use turbomcp_core::{Implementation, McpError, McpResult, ProtocolVersion};
-use turbomcp_protocol::{methods, neutral};
+use turbomcp_client::{CallOptions, ClientBuilder, ConnectMode};
+use turbomcp_core::{Implementation, McpError, McpResult, ProtocolVersion, RequestContext};
+use turbomcp_protocol::neutral;
 use turbomcp_server::bus::Change;
 use turbomcp_server::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext,
@@ -16,18 +15,16 @@ use turbomcp_server::{
     MethodRouter, ReadResourceContext, ServerBuilder, ServerNotifier, UriTemplate, WithCompletions,
     WithPrompts, WithResources, WithTools,
 };
-use turbomcp_service::Transport;
+use turbomcp_service::{EndedSession, SessionObserver, Transport};
 
-use crate::bridge::{Bridge, Completions, UpstreamHandlers};
-use crate::process::ChildProcess;
+use crate::bridge::Bridge;
+use crate::link::{Dial, Lease, Link, Linker};
+use crate::pool::{DEFAULT_IDLE, DEFAULT_MAX, Pool, UpstreamKey};
 use crate::{OutboundAuth, ProxyError, Upstream};
 
 /// How long a looked-up catalogue is trusted before it is fetched again,
 /// unless the upstream says it changed first.
 const DEFAULT_CATALOG_TTL: Duration = Duration::from_secs(30);
-
-/// How old a catalogue must be before a miss refetches it.
-const MISS_REFETCH_AFTER: Duration = Duration::from_secs(1);
 
 /// How many changes a slow [`RemoteServer::changes`] receiver may fall
 /// behind before it skips the oldest.
@@ -36,11 +33,12 @@ const CHANGE_BUFFER: usize = 64;
 /// An upstream MCP server, served as if it were local.
 ///
 /// It implements the same capability traits a `#[server]` does, by
-/// forwarding each call through a [`Client`] connected upstream, so it is the
-/// same kind of object as a local server: serve it on its own (a protocol
-/// bridge, stdio to HTTP, `2025-11-25` to `2026-07-28`), or mount it in a
-/// [`Composite`](turbomcp_server::Composite) beside local tools and other
-/// remotes, under the composite's authentication and visibility.
+/// forwarding each call through a [`Client`](turbomcp_client::Client)
+/// connected upstream, so it is the same kind of object as a local server:
+/// serve it on its own (a protocol bridge, stdio to HTTP, `2025-11-25` to
+/// `2026-07-28`), or mount it in a [`Composite`](turbomcp_server::Composite)
+/// beside local tools and other remotes, under the composite's
+/// authentication and visibility.
 ///
 /// What it advertises is what the upstream advertised in its handshake: a
 /// remote without prompts registers no prompts, so capabilities still can't
@@ -48,30 +46,27 @@ const CHANGE_BUFFER: usize = 64;
 ///
 /// The caller's identity and token never travel upstream (no token
 /// passthrough): the proxy authenticates as itself ([`OutboundAuth`]).
-/// Cancellation, progress and trace context do travel, both ways.
+/// Cancellation, progress, trace context and the upstream's requests for
+/// input do travel. Which upstream connection serves a call is its
+/// [`UpstreamKey`]; a connection that dies is replaced on the next call.
 ///
-/// Cheap to clone; clones share the upstream connection.
+/// Cheap to clone; clones share the upstream connections.
 #[derive(Clone)]
 pub struct RemoteServer {
-    inner: Arc<Inner>,
+    inner: Arc<Shared>,
 }
 
-struct Inner {
+struct Shared {
     label: String,
-    client: Client,
     info: Implementation,
     instructions: Option<String>,
     capabilities: neutral::ServerCapabilities,
-    tools: Catalog<neutral::Tool>,
-    prompts: Catalog<neutral::Prompt>,
-    resources: Catalog<neutral::Resource>,
-    templates: Catalog<neutral::ResourceTemplate>,
+    version: ProtocolVersion,
     changes: broadcast::Sender<Change>,
     /// Bridge the upstream's requests for input to downstream callers.
     forward_input: bool,
-    completions: Completions,
-    child: tokio::sync::Mutex<Option<ChildProcess>>,
-    listener: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    key: UpstreamKey,
+    pool: Pool,
 }
 
 impl core::fmt::Debug for RemoteServer {
@@ -79,34 +74,66 @@ impl core::fmt::Debug for RemoteServer {
         f.debug_struct("RemoteServer")
             .field("upstream", &self.inner.label)
             .field("server", &self.inner.info.name)
-            .field("protocol_version", self.inner.client.protocol_version())
+            .field("protocol_version", &self.inner.version)
+            .field("key", &self.inner.key)
             .finish_non_exhaustive()
     }
 }
 
-impl Drop for Inner {
-    fn drop(&mut self) {
-        if let Ok(mut listener) = self.listener.lock()
-            && let Some(task) = listener.take()
-        {
-            task.abort();
-        }
-    }
+/// How a builder reaches its upstream.
+enum Target {
+    Upstream(Upstream),
+    Dial { label: String, dial: Dial },
 }
 
-/// Configures and connects a [`RemoteServer`]; from [`RemoteServer::builder`].
-#[derive(Debug)]
+/// Configures and connects a [`RemoteServer`]; from [`RemoteServer::builder`]
+/// or [`RemoteServer::dial`].
 #[must_use = "a builder does nothing until connected"]
 pub struct RemoteServerBuilder {
-    upstream: Upstream,
+    target: Target,
     auth: OutboundAuth,
     client: ClientBuilder,
     catalog_ttl: Duration,
     shutdown_grace: Duration,
     forward_input: bool,
+    key: Option<UpstreamKey>,
+    serialize: bool,
+    idle: Duration,
+    max: u64,
+}
+
+impl core::fmt::Debug for RemoteServerBuilder {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let target = match &self.target {
+            Target::Upstream(upstream) => format!("{upstream:?}"),
+            Target::Dial { label, .. } => format!("Dial({label})"),
+        };
+        f.debug_struct("RemoteServerBuilder")
+            .field("target", &target)
+            .field("auth", &self.auth)
+            .field("key", &self.key)
+            .field("forward_input", &self.forward_input)
+            .field("serialize", &self.serialize)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RemoteServerBuilder {
+    fn new(target: Target) -> Self {
+        Self {
+            target,
+            auth: OutboundAuth::None,
+            client: ClientBuilder::new("turbomcp-proxy", env!("CARGO_PKG_VERSION")),
+            catalog_ttl: DEFAULT_CATALOG_TTL,
+            shutdown_grace: Duration::from_secs(2),
+            forward_input: true,
+            key: None,
+            serialize: false,
+            idle: DEFAULT_IDLE,
+            max: DEFAULT_MAX,
+        }
+    }
+
     /// Authenticate upstream with `auth`.
     pub fn auth(mut self, auth: OutboundAuth) -> Self {
         self.auth = auth;
@@ -128,7 +155,8 @@ impl RemoteServerBuilder {
     }
 
     /// Configure the upstream client further (its identity, observers such
-    /// as `ClientTelemetry`, extensions).
+    /// as `ClientTelemetry`, extensions). Every upstream connection is made
+    /// from it.
     pub fn client(mut self, configure: impl FnOnce(ClientBuilder) -> ClientBuilder) -> Self {
         self.client = configure(self.client);
         self
@@ -152,6 +180,40 @@ impl RemoteServerBuilder {
         self
     }
 
+    /// Which upstream connection serves a call. The default follows the
+    /// upstream: [`UpstreamKey::Global`] where it attributes its requests
+    /// for input itself (a `2026-07-28` upstream, or Streamable HTTP), and
+    /// [`UpstreamKey::Principal`] otherwise (a `2025-*` stdio or WebSocket
+    /// upstream, one connection per caller).
+    pub fn key(mut self, key: UpstreamKey) -> Self {
+        self.key = Some(key);
+        self
+    }
+
+    /// Run the calls that may ask for input (`tools/call`, `prompts/get`,
+    /// `resources/read`) one at a time per upstream connection (default
+    /// off), so a request for input always names its call, even on a
+    /// `2025-*` stdio upstream shared by concurrent callers. Costs those
+    /// calls their concurrency.
+    pub fn serialize_input(mut self, serialize: bool) -> Self {
+        self.serialize = serialize;
+        self
+    }
+
+    /// Close a keyed upstream connection no call has used for `idle`
+    /// (default ten minutes).
+    pub fn idle_timeout(mut self, idle: Duration) -> Self {
+        self.idle = idle;
+        self
+    }
+
+    /// Keep at most `max` upstream connections open (default 1000), closing
+    /// the least recently used past it.
+    pub fn max_connections(mut self, max: u64) -> Self {
+        self.max = max;
+        self
+    }
+
     /// How long a stdio upstream gets to exit after its stdin closes, and
     /// again after `SIGTERM`, before it is killed (default 2 s each).
     pub fn shutdown_grace(mut self, grace: Duration) -> Self {
@@ -159,45 +221,73 @@ impl RemoteServerBuilder {
         self
     }
 
-    /// Connect and run the handshake.
+    /// Connect and run the handshake. This first connection tells the proxy
+    /// what the upstream serves, and serves the first key that needs one.
     ///
     /// # Errors
     /// The upstream failing to start, to connect, or to complete the
     /// handshake.
     pub async fn connect(self) -> Result<RemoteServer, ProxyError> {
-        let label = self.upstream.label();
-        let (tx, _) = broadcast::channel(CHANGE_BUFFER);
-        let completions = crate::bridge::completions();
-        let mut client = self.client.with_notifications(ChangeTap(tx.clone()));
-        if self.forward_input {
-            client = declare_input(client, &completions);
-        }
-        let (client, child) =
-            crate::connect::upstream(&self.upstream, &self.auth, client, self.shutdown_grace)
-                .await?;
-        let parts = Parts {
-            label,
-            child,
-            changes: tx,
+        let (label, dial, by_stream) = match self.target {
+            Target::Upstream(upstream) => {
+                let label = upstream.label();
+                #[cfg(feature = "http")]
+                let by_stream = matches!(upstream, Upstream::Http { .. });
+                #[cfg(not(feature = "http"))]
+                let by_stream = false;
+                let (auth, grace) = (self.auth, self.shutdown_grace);
+                let dial: Dial = Arc::new(move |client| {
+                    let (upstream, auth) = (upstream.clone(), auth.clone());
+                    Box::pin(async move {
+                        crate::connect::upstream(&upstream, &auth, client, grace).await
+                    })
+                });
+                (label, dial, by_stream)
+            }
+            Target::Dial { label, dial } => (label, dial, false),
+        };
+        let (changes, _) = broadcast::channel(CHANGE_BUFFER);
+        let linker = Linker {
+            label: label.clone(),
+            dial,
+            client: self.client,
             catalog_ttl: self.catalog_ttl,
             forward_input: self.forward_input,
-            completions,
+            serialize: self.serialize,
+            changes: changes.clone(),
         };
-        Ok(RemoteServer::assemble(client, parts).await)
+        let probe = linker.link().await?;
+        let client = &probe.client;
+        let version = client.protocol_version().clone();
+        let key = self.key.unwrap_or(if by_stream || !version.is_stateful() {
+            UpstreamKey::Global
+        } else {
+            UpstreamKey::Principal
+        });
+        let shared = Shared {
+            info: client
+                .server_info()
+                .cloned()
+                .unwrap_or_else(|| Implementation::new(label.clone(), "unknown")),
+            instructions: client.instructions().map(str::to_owned),
+            capabilities: client.server_capabilities().clone(),
+            version,
+            changes,
+            forward_input: self.forward_input,
+            key,
+            pool: Pool::new(key, linker, probe, self.idle, self.max),
+            label,
+        };
+        Ok(RemoteServer {
+            inner: Arc::new(shared),
+        })
     }
 }
 
 impl RemoteServer {
     /// Configure a connection to `upstream`.
     pub fn builder(upstream: Upstream) -> RemoteServerBuilder {
-        RemoteServerBuilder {
-            upstream,
-            auth: OutboundAuth::None,
-            client: ClientBuilder::new("turbomcp-proxy", env!("CARGO_PKG_VERSION")),
-            catalog_ttl: DEFAULT_CATALOG_TTL,
-            shutdown_grace: Duration::from_secs(2),
-            forward_input: true,
-        }
+        RemoteServerBuilder::new(Target::Upstream(upstream))
     }
 
     /// Connect to `upstream` with the defaults.
@@ -208,159 +298,64 @@ impl RemoteServer {
         Self::builder(upstream).connect().await
     }
 
-    /// Connect over a transport of your own (an in-memory pair, a socket the
-    /// embedding application opened), as `client` configures. The upstream's
-    /// requests for input are bridged to downstream callers, as by default
-    /// with [`builder`](Self::builder); handlers set on `client` for them are
-    /// replaced.
+    /// Configure an upstream reached over transports of your own: `open`
+    /// opens one (an in-process pair, a socket the embedding application
+    /// dials) each time the proxy needs a connection.
+    pub fn dial<F, Fut, T>(label: impl Into<String>, open: F) -> RemoteServerBuilder
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = std::io::Result<T>> + Send + 'static,
+        T: Transport + 'static,
+    {
+        let label = label.into();
+        let name = label.clone();
+        let dial: Dial = Arc::new(move |client: ClientBuilder| {
+            let opening = open();
+            let upstream = name.clone();
+            Box::pin(async move {
+                let transport = opening.await.map_err(|source| ProxyError::Dial {
+                    upstream: upstream.clone(),
+                    source,
+                })?;
+                let client =
+                    client
+                        .connect(transport)
+                        .await
+                        .map_err(|source| ProxyError::Connect {
+                            upstream,
+                            source: Box::new(source),
+                        })?;
+                Ok((client, None))
+            })
+        });
+        RemoteServerBuilder::new(Target::Dial { label, dial })
+    }
+
+    /// Connect over one transport of your own, as `client` configures: one
+    /// connection for every caller ([`UpstreamKey::Global`]), not reopened if
+    /// it closes. The upstream's requests for input are bridged to
+    /// downstream callers; handlers set on `client` for them are replaced.
     ///
     /// # Errors
     /// The handshake failing.
-    pub async fn over<T: Transport>(
+    pub async fn over<T: Transport + 'static>(
         label: impl Into<String>,
         client: ClientBuilder,
         transport: T,
     ) -> Result<Self, ProxyError> {
-        let label = label.into();
-        let (tx, _) = broadcast::channel(CHANGE_BUFFER);
-        let completions = crate::bridge::completions();
-        let client = declare_input(client, &completions)
-            .with_notifications(ChangeTap(tx.clone()))
-            .connect(transport)
-            .await
-            .map_err(|source| ProxyError::Connect {
-                upstream: label.clone(),
-                source: Box::new(source),
-            })?;
-        let parts = Parts {
-            label,
-            child: None,
-            changes: tx,
-            catalog_ttl: DEFAULT_CATALOG_TTL,
-            forward_input: true,
-            completions,
-        };
-        Ok(Self::assemble(client, parts).await)
-    }
-
-    async fn assemble(client: Client, parts: Parts) -> Self {
-        let Parts {
-            label,
-            child,
-            changes,
-            catalog_ttl,
-            forward_input,
-            completions,
-        } = parts;
-        let info = client
-            .server_info()
-            .cloned()
-            .unwrap_or_else(|| Implementation::new(label.clone(), "unknown"));
-        let remote = Self {
-            inner: Arc::new(Inner {
-                instructions: client.instructions().map(str::to_owned),
-                capabilities: client.server_capabilities().clone(),
-                info,
-                label,
-                tools: Catalog::new(catalog_ttl),
-                prompts: Catalog::new(catalog_ttl),
-                resources: Catalog::new(catalog_ttl),
-                templates: Catalog::new(catalog_ttl),
-                changes,
-                forward_input,
-                completions,
-                child: tokio::sync::Mutex::new(child),
-                listener: Mutex::new(None),
-                client,
-            }),
-        };
-        remote.listen().await;
-        remote.invalidate_on_change();
-        remote
-    }
-
-    /// On `2026-07-28`, change notifications come only to a
-    /// `subscriptions/listen` stream; open one for whatever list changes the
-    /// upstream says it announces. (Older revisions send them unasked, and
-    /// [`ChangeTap`] already hears them.)
-    async fn listen(&self) {
-        let client = &self.inner.client;
-        if client.protocol_version().is_stateful() {
-            return;
-        }
-        let caps = &self.inner.capabilities;
-        let mut filter = neutral::SubscriptionFilter::new();
-        filter.tools_list_changed = caps.tools.as_ref().is_some_and(|c| c.list_changed);
-        filter.prompts_list_changed = caps.prompts.as_ref().is_some_and(|c| c.list_changed);
-        filter.resources_list_changed = caps.resources.as_ref().is_some_and(|c| c.list_changed);
-        if !(filter.tools_list_changed
-            || filter.prompts_list_changed
-            || filter.resources_list_changed)
-        {
-            return;
-        }
-        match client.listen(filter).await {
-            Ok(mut subscription) => {
-                let tx = self.inner.changes.clone();
-                let task = tokio::spawn(async move {
-                    use turbomcp_client::SubscriptionEvent as Event;
-                    while let Some(event) = subscription.next().await {
-                        let change = match event {
-                            Event::ToolsListChanged => Change::ToolsListChanged,
-                            Event::PromptsListChanged => Change::PromptsListChanged,
-                            Event::ResourcesListChanged => Change::ResourcesListChanged,
-                            Event::ResourceUpdated { uri } => Change::ResourceUpdated { uri },
-                            _ => continue,
-                        };
-                        let _ = tx.send(change);
-                    }
-                });
-                *self.inner.listener.lock().expect("listener lock") = Some(task);
+        let once = Mutex::new(Some(transport));
+        Self::dial(label, move || {
+            let transport = once.lock().ok().and_then(|mut slot| slot.take());
+            async move {
+                transport.ok_or_else(|| {
+                    std::io::Error::other("the transport given to `RemoteServer::over` closed")
+                })
             }
-            Err(e) => tracing::warn!(
-                upstream = %self.inner.label,
-                error = %e,
-                "could not subscribe to the upstream's change notifications"
-            ),
-        }
-    }
-
-    /// Drop a catalogue the moment the upstream says its list changed.
-    fn invalidate_on_change(&self) {
-        let mut rx = self.inner.changes.subscribe();
-        let weak = Arc::downgrade(&self.inner);
-        tokio::spawn(async move {
-            loop {
-                let change = match rx.recv().await {
-                    Ok(change) => Some(change),
-                    Err(broadcast::error::RecvError::Lagged(_)) => None,
-                    Err(broadcast::error::RecvError::Closed) => return,
-                };
-                let Some(inner) = weak.upgrade() else { return };
-                match change {
-                    Some(Change::ToolsListChanged) => inner.tools.invalidate(),
-                    Some(Change::PromptsListChanged) => inner.prompts.invalidate(),
-                    Some(Change::ResourcesListChanged) => {
-                        inner.resources.invalidate();
-                        inner.templates.invalidate();
-                    }
-                    // Missed some: anything may have changed.
-                    None => {
-                        inner.tools.invalidate();
-                        inner.prompts.invalidate();
-                        inner.resources.invalidate();
-                        inner.templates.invalidate();
-                    }
-                    Some(_) => {}
-                }
-            }
-        });
-    }
-
-    /// The upstream connection.
-    #[must_use]
-    pub fn client(&self) -> &Client {
-        &self.inner.client
+        })
+        .client(|_| client)
+        .key(UpstreamKey::Global)
+        .connect()
+        .await
     }
 
     /// What the upstream advertised in its handshake.
@@ -372,12 +367,18 @@ impl RemoteServer {
     /// The revision the upstream speaks (the downstream speaks any).
     #[must_use]
     pub fn protocol_version(&self) -> &ProtocolVersion {
-        self.inner.client.protocol_version()
+        &self.inner.version
+    }
+
+    /// Which upstream connection serves a call.
+    #[must_use]
+    pub fn key(&self) -> UpstreamKey {
+        self.inner.key
     }
 
     /// The upstream's change notifications (`*/list_changed`,
-    /// `resources/updated`), for wiring to a downstream server; see
-    /// [`forward_changes_to`](Self::forward_changes_to).
+    /// `resources/updated`), from every connection, for wiring to a
+    /// downstream server; see [`forward_changes_to`](Self::forward_changes_to).
     #[must_use]
     pub fn changes(&self) -> broadcast::Receiver<Change> {
         self.inner.changes.subscribe()
@@ -385,8 +386,8 @@ impl RemoteServer {
 
     /// Announce the upstream's changes through `notifier`, the downstream
     /// server's (`Server::notifier`), so clients connected to it refresh
-    /// their lists. Runs until the upstream connection or the notifier's
-    /// server goes away.
+    /// their lists. Runs until the remote or the notifier's server goes
+    /// away.
     pub fn forward_changes_to(&self, notifier: ServerNotifier) {
         let mut rx = self.changes();
         tokio::spawn(async move {
@@ -430,20 +431,22 @@ impl RemoteServer {
         ServerBuilder::from_parts(self, router)
     }
 
-    /// End the upstream connection. A stdio upstream gets the spec's
+    /// End every upstream connection. A stdio upstream gets the spec's
     /// shutdown: its stdin closes, then `SIGTERM` if it hasn't exited within
     /// the grace period, then `SIGKILL` (its whole process group, so a
     /// wrapper such as `npx` doesn't leave the real server running).
     pub async fn shutdown(&self) {
-        self.inner.client.close().await;
-        if let Some(child) = self.inner.child.lock().await.take() {
-            child.shutdown().await;
-        }
+        self.inner.pool.shutdown().await;
+    }
+
+    /// The connection that serves `base`.
+    async fn link(&self, base: &RequestContext) -> McpResult<Lease> {
+        self.inner.pool.get(base).await
     }
 
     /// The upstream error as the downstream should see it.
     fn upstream_error(&self, error: &turbomcp_client::ClientError) -> McpError {
-        error.to_mcp_error(self.inner.client.protocol_version())
+        error.to_mcp_error(&self.inner.version)
     }
 
     /// What one downstream call carries upstream: its cancellation, its
@@ -451,7 +454,8 @@ impl RemoteServer {
     /// requests for input put to its caller.
     fn forwarded(
         &self,
-        base: &turbomcp_core::RequestContext,
+        link: &Link,
+        base: &RequestContext,
         progress: &turbomcp_server::ProgressReporter,
         handle: &turbomcp_server::ClientHandle,
     ) -> Forwarded {
@@ -460,7 +464,7 @@ impl RemoteServer {
             Bridge::new(
                 handle.clone(),
                 base.protocol_version.clone(),
-                self.inner.completions.clone(),
+                link.completions.clone(),
             )
         });
         if let Some(bridge) = &bridge {
@@ -493,9 +497,11 @@ impl RemoteServer {
     /// after it, the caller would drop it.
     async fn forward<T>(
         &self,
+        link: &Link,
         forwarded: &Forwarded,
         call: impl Future<Output = Result<T, turbomcp_client::ClientError>>,
     ) -> McpResult<T> {
+        let _turn = link.turn().await;
         let aborted = async {
             match &forwarded.bridge {
                 Some(bridge) => bridge.aborted().await,
@@ -510,6 +516,16 @@ impl RemoteServer {
             relay.flush().await;
         }
         result
+    }
+}
+
+/// Ends a [`UpstreamKey::Session`] remote's upstream connection when its
+/// downstream session ends: register it with
+/// `ServerBuilder::observe_sessions`. (Unregistered, the connection closes
+/// once idle.)
+impl SessionObserver for RemoteServer {
+    fn session_ended(&self, session: &EndedSession<'_>) {
+        self.inner.pool.end_session(session.id);
     }
 }
 
@@ -562,27 +578,6 @@ impl ProgressRelay {
     }
 }
 
-/// The handlers the upstream client declares input capabilities with.
-fn declare_input(client: ClientBuilder, completions: &Completions) -> ClientBuilder {
-    let handlers = UpstreamHandlers {
-        completions: completions.clone(),
-    };
-    client
-        .with_elicitation(handlers.clone())
-        .with_sampling(handlers.clone())
-        .with_roots(handlers)
-}
-
-/// What [`RemoteServer::assemble`] puts together beside the client.
-struct Parts {
-    label: String,
-    child: Option<ChildProcess>,
-    changes: broadcast::Sender<Change>,
-    catalog_ttl: Duration,
-    forward_input: bool,
-    completions: Completions,
-}
-
 impl McpServerCore for RemoteServer {
     fn server_info(&self) -> Implementation {
         self.inner.info.clone()
@@ -596,12 +591,12 @@ impl McpServerCore for RemoteServer {
 impl WithTools for RemoteServer {
     async fn lookup_tool(
         &self,
-        _ctx: &ListToolsContext,
+        ctx: &ListToolsContext,
         name: String,
     ) -> McpResult<Option<neutral::Tool>> {
-        let client = &self.inner.client;
-        self.inner
-            .tools
+        let link = self.link(&ctx.base).await?;
+        let client = &link.client;
+        link.tools
             .find(&name, || async {
                 let tools = client
                     .list_all_tools()
@@ -617,11 +612,11 @@ impl WithTools for RemoteServer {
 
     async fn list_tools(
         &self,
-        _ctx: &ListToolsContext,
+        ctx: &ListToolsContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        let mut page = self
-            .inner
+        let link = self.link(&ctx.base).await?;
+        let mut page = link
             .client
             .list_tools(params.cursor.as_deref())
             .await
@@ -635,24 +630,24 @@ impl WithTools for RemoteServer {
         ctx: &CallToolContext,
         params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
-        let forwarded = self.forwarded(&ctx.base, &ctx.progress, &ctx.client);
-        let call =
-            self.inner
-                .client
-                .call_tool_with(params.name, params.arguments, &forwarded.options);
-        self.forward(&forwarded, call).await
+        let link = self.link(&ctx.base).await?;
+        let forwarded = self.forwarded(&link, &ctx.base, &ctx.progress, &ctx.client);
+        let call = link
+            .client
+            .call_tool_with(params.name, params.arguments, &forwarded.options);
+        self.forward(&link, &forwarded, call).await
     }
 }
 
 impl WithResources for RemoteServer {
     async fn lookup_resource(
         &self,
-        _ctx: &ListResourcesContext,
+        ctx: &ListResourcesContext,
         uri: String,
     ) -> McpResult<Option<neutral::Resource>> {
-        let client = &self.inner.client;
-        self.inner
-            .resources
+        let link = self.link(&ctx.base).await?;
+        let client = &link.client;
+        link.resources
             .find(&uri, || async {
                 let resources = client
                     .list_all_resources()
@@ -665,12 +660,12 @@ impl WithResources for RemoteServer {
 
     async fn lookup_resource_template(
         &self,
-        _ctx: &ListResourceTemplatesContext,
+        ctx: &ListResourceTemplatesContext,
         uri: String,
     ) -> McpResult<Option<neutral::ResourceTemplate>> {
-        let client = &self.inner.client;
-        let all = self
-            .inner
+        let link = self.link(&ctx.base).await?;
+        let client = &link.client;
+        let all = link
             .templates
             .all(|| async {
                 let templates = client
@@ -694,11 +689,11 @@ impl WithResources for RemoteServer {
 
     async fn list_resources(
         &self,
-        _ctx: &ListResourcesContext,
+        ctx: &ListResourcesContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListResourcesResult> {
-        self.inner
-            .client
+        let link = self.link(&ctx.base).await?;
+        link.client
             .list_resources(params.cursor.as_deref())
             .await
             .map_err(|e| self.upstream_error(&e))
@@ -709,21 +704,21 @@ impl WithResources for RemoteServer {
         ctx: &ReadResourceContext,
         params: neutral::ReadResourceParams,
     ) -> McpResult<neutral::ReadResourceResult> {
-        let forwarded = self.forwarded(&ctx.base, &ctx.progress, &ctx.client);
-        let call = self
-            .inner
+        let link = self.link(&ctx.base).await?;
+        let forwarded = self.forwarded(&link, &ctx.base, &ctx.progress, &ctx.client);
+        let call = link
             .client
             .read_resource_with(params.uri, &forwarded.options);
-        self.forward(&forwarded, call).await
+        self.forward(&link, &forwarded, call).await
     }
 
     async fn list_resource_templates(
         &self,
-        _ctx: &ListResourceTemplatesContext,
+        ctx: &ListResourceTemplatesContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListResourceTemplatesResult> {
-        self.inner
-            .client
+        let link = self.link(&ctx.base).await?;
+        link.client
             .list_resource_templates(params.cursor.as_deref())
             .await
             .map_err(|e| self.upstream_error(&e))
@@ -733,12 +728,12 @@ impl WithResources for RemoteServer {
 impl WithPrompts for RemoteServer {
     async fn lookup_prompt(
         &self,
-        _ctx: &ListPromptsContext,
+        ctx: &ListPromptsContext,
         name: String,
     ) -> McpResult<Option<neutral::Prompt>> {
-        let client = &self.inner.client;
-        self.inner
-            .prompts
+        let link = self.link(&ctx.base).await?;
+        let client = &link.client;
+        link.prompts
             .find(&name, || async {
                 let prompts = client
                     .list_all_prompts()
@@ -751,11 +746,11 @@ impl WithPrompts for RemoteServer {
 
     async fn list_prompts(
         &self,
-        _ctx: &ListPromptsContext,
+        ctx: &ListPromptsContext,
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListPromptsResult> {
-        self.inner
-            .client
+        let link = self.link(&ctx.base).await?;
+        link.client
             .list_prompts(params.cursor.as_deref())
             .await
             .map_err(|e| self.upstream_error(&e))
@@ -766,23 +761,23 @@ impl WithPrompts for RemoteServer {
         ctx: &GetPromptContext,
         params: neutral::GetPromptParams,
     ) -> McpResult<neutral::GetPromptResult> {
-        let forwarded = self.forwarded(&ctx.base, &ctx.progress, &ctx.client);
-        let call =
-            self.inner
-                .client
-                .get_prompt_with(params.name, params.arguments, &forwarded.options);
-        self.forward(&forwarded, call).await
+        let link = self.link(&ctx.base).await?;
+        let forwarded = self.forwarded(&link, &ctx.base, &ctx.progress, &ctx.client);
+        let call = link
+            .client
+            .get_prompt_with(params.name, params.arguments, &forwarded.options);
+        self.forward(&link, &forwarded, call).await
     }
 }
 
 impl WithCompletions for RemoteServer {
     async fn complete(
         &self,
-        _ctx: &CompleteContext,
+        ctx: &CompleteContext,
         params: neutral::CompleteParams,
     ) -> McpResult<neutral::CompleteResult> {
-        self.inner
-            .client
+        let link = self.link(&ctx.base).await?;
+        link.client
             .complete(params)
             .await
             .map_err(|e| self.upstream_error(&e))
@@ -796,112 +791,4 @@ impl WithCompletions for RemoteServer {
 fn downstream_tool(mut tool: neutral::Tool) -> neutral::Tool {
     tool.task_support = None;
     tool
-}
-
-/// Hears the upstream's change notifications on the stateful revisions.
-struct ChangeTap(broadcast::Sender<Change>);
-
-#[async_trait::async_trait]
-impl NotificationHandler for ChangeTap {
-    async fn on_notification(&self, method: String, params: Option<Value>) {
-        use methods::notification as n;
-        let change = match method.as_str() {
-            n::TOOLS_LIST_CHANGED => Change::ToolsListChanged,
-            n::PROMPTS_LIST_CHANGED => Change::PromptsListChanged,
-            n::RESOURCES_LIST_CHANGED => Change::ResourcesListChanged,
-            n::RESOURCES_UPDATED => match params
-                .as_ref()
-                .and_then(|p| p.get("uri"))
-                .and_then(Value::as_str)
-            {
-                Some(uri) => Change::ResourceUpdated {
-                    uri: uri.to_owned(),
-                },
-                None => return,
-            },
-            _ => return,
-        };
-        let _ = self.0.send(change);
-    }
-}
-
-/// A catalogue as fetched, and when.
-type Snapshot<T> = (Instant, Arc<HashMap<String, T>>);
-
-/// A looked-up catalogue: what resolves a call to its component without an
-/// upstream round trip per call. Refreshed when stale, when the upstream
-/// says it changed, and once on a miss (a component added upstream without
-/// a notification is found on first use).
-struct Catalog<T> {
-    ttl: Duration,
-    cached: Mutex<Option<Snapshot<T>>>,
-    refresh: tokio::sync::Mutex<()>,
-}
-
-impl<T: Clone> Catalog<T> {
-    fn new(ttl: Duration) -> Self {
-        Self {
-            ttl,
-            cached: Mutex::new(None),
-            refresh: tokio::sync::Mutex::new(()),
-        }
-    }
-
-    fn invalidate(&self) {
-        *self.cached.lock().expect("catalog lock") = None;
-    }
-
-    fn fresh(&self) -> Option<Arc<HashMap<String, T>>> {
-        self.cached
-            .lock()
-            .expect("catalog lock")
-            .as_ref()
-            .filter(|(at, _)| at.elapsed() < self.ttl)
-            .map(|(_, map)| Arc::clone(map))
-    }
-
-    /// The whole catalogue, fetched with `fetch` when it isn't fresh.
-    async fn all<F, Fut>(&self, fetch: F) -> McpResult<Arc<HashMap<String, T>>>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = McpResult<HashMap<String, T>>>,
-    {
-        if let Some(map) = self.fresh() {
-            return Ok(map);
-        }
-        // One fetch for a stampede of lookups.
-        let _refreshing = self.refresh.lock().await;
-        if let Some(map) = self.fresh() {
-            return Ok(map);
-        }
-        let map = Arc::new(fetch().await?);
-        *self.cached.lock().expect("catalog lock") = Some((Instant::now(), Arc::clone(&map)));
-        Ok(map)
-    }
-
-    /// The entry under `key`, refetching once if a fresh catalogue lacks it.
-    async fn find<F, Fut>(&self, key: &str, fetch: F) -> McpResult<Option<T>>
-    where
-        F: Fn() -> Fut,
-        Fut: Future<Output = McpResult<HashMap<String, T>>>,
-    {
-        let map = self.all(&fetch).await?;
-        if let Some(found) = map.get(key) {
-            return Ok(Some(found.clone()));
-        }
-        // A miss refetches only a catalogue older than a second, so a caller
-        // naming components that don't exist can't turn each request into an
-        // upstream listing.
-        let recent = self
-            .cached
-            .lock()
-            .expect("catalog lock")
-            .as_ref()
-            .is_some_and(|(at, _)| at.elapsed() < MISS_REFETCH_AFTER);
-        if recent {
-            return Ok(None);
-        }
-        self.invalidate();
-        Ok(self.all(&fetch).await?.get(key).cloned())
-    }
 }

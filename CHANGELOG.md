@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gateway connection keying: `UpstreamKey::{Global, Principal, Session}`
+  picks which upstream connection serves a call (one shared, one per
+  authenticated caller, one per downstream session). The default follows
+  the upstream: shared where it attributes its requests for input itself
+  (`2026-07-28`, Streamable HTTP), per caller for a `2025-*` stdio or
+  WebSocket upstream. Connections open on first use, close when idle
+  (`idle_timeout`, `max_connections`) and only once no call is using them,
+  and a dead one is replaced on the next call. A `Session`-keyed remote
+  registered with `observe_sessions` closes its upstream with the session.
+  `serialize_input` runs input-capable calls one at a time per connection
+  instead. `RemoteServer::dial` reaches an upstream over transports the
+  embedding application opens.
+- `Client::is_closed` and `Client::closed`: whether, and when, the
+  connection has ended.
+- `EndedSession::id`, and `ServerBuilder::observe_sessions` now accumulates
+  observers instead of keeping the last one.
 - Per-call input handlers: `CallOptions::with_elicitation`, `with_sampling`
   and `with_roots` answer the server requests that belong to one call
   (SEP-2260), over the client's own handlers. On `2026-07-28` they are the

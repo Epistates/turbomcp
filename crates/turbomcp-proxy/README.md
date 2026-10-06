@@ -52,4 +52,22 @@ a `2025-*` caller is asked inline, a `2026-07-28` caller gets an
 `InputRequiredResult` and retries. A request the proxy can't attribute to a
 caller is refused, never shown to someone it may not belong to.
 
+Which upstream connection serves a call is its `UpstreamKey`: one shared
+connection, one per authenticated caller, or one per downstream session.
+The default follows the upstream. A `2026-07-28` or Streamable HTTP upstream
+says whose each request for input is, so one connection serves everyone; a
+`2025-*` stdio upstream doesn't, so each caller gets its own (and its own
+child process, which also keeps per-user upstream state apart). Idle
+connections close, and a dead one is replaced on the next call.
+
+```rust,ignore
+let remote = RemoteServer::builder(Upstream::stdio("my-server", ["--stdio"]))
+    .key(UpstreamKey::Session)
+    .idle_timeout(Duration::from_secs(300))
+    .connect()
+    .await?;
+// Close each session's upstream when the session ends.
+let server = remote.clone().into_server().observe_sessions(Arc::new(remote));
+```
+
 Use it through the facade: `turbomcp = { version = "4", features = ["proxy", "http"] }`.

@@ -266,13 +266,17 @@ impl<S: McpServerCore> ServerBuilder<S> {
 
     /// Tell `observer` when each stateful session ends, and how long it
     /// lived: `turbomcp-telemetry`'s `MetricsLayer` records
-    /// `mcp.server.session.duration` from it.
+    /// `mcp.server.session.duration` from it, and a per-session proxy
+    /// upstream closes on it. Observers accumulate: each one added is told.
     #[must_use]
     pub fn observe_sessions(
         mut self,
         observer: Arc<dyn turbomcp_service::SessionObserver>,
     ) -> Self {
-        self.session_observer = Some(observer);
+        self.session_observer = Some(match self.session_observer.take() {
+            Some(earlier) => Arc::new(SessionObservers([earlier, observer])),
+            None => observer,
+        });
         self
     }
 
@@ -601,3 +605,14 @@ pub trait IntoServerBuilder: McpServerCore + Sized {
 }
 
 impl<S: McpServerCore> IntoServerBuilder for S {}
+
+/// Two session observers, told in the order they were added.
+struct SessionObservers([Arc<dyn turbomcp_service::SessionObserver>; 2]);
+
+impl turbomcp_service::SessionObserver for SessionObservers {
+    fn session_ended(&self, session: &turbomcp_service::EndedSession<'_>) {
+        for observer in &self.0 {
+            observer.session_ended(session);
+        }
+    }
+}

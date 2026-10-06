@@ -45,10 +45,13 @@
 mod bridge;
 mod connect;
 mod error;
+mod link;
+mod pool;
 mod process;
 mod remote;
 mod upstream;
 
 pub use error::ProxyError;
+pub use pool::UpstreamKey;
 pub use remote::{RemoteServer, RemoteServerBuilder};
 pub use upstream::{OutboundAuth, Upstream};

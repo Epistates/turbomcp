@@ -265,18 +265,20 @@ impl Shared {
                 tasks.end_session(id).await;
             }
             if let Some(state) = &expired.state {
-                self.session_ended(state, turbomcp_service::SessionEndReason::Expired);
+                self.session_ended(id, state, turbomcp_service::SessionEndReason::Expired);
             }
         }
     }
 
     fn session_ended(
         &self,
+        id: &str,
         state: &crate::SessionState,
         reason: turbomcp_service::SessionEndReason,
     ) {
         if let Some(observer) = &self.session_observer {
             observer.session_ended(&turbomcp_service::EndedSession::new(
+                id,
                 state.age(),
                 &state.version,
                 reason,
@@ -295,7 +297,7 @@ impl Shared {
     ) -> Result<bool, SessionError> {
         let ended = self.sessions.remove(id).await?;
         if let Some(state) = &ended {
-            self.session_ended(state, reason);
+            self.session_ended(id, state, reason);
         }
         let existed = ended.is_some();
         self.inflight.cancel_scope(id);

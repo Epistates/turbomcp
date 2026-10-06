@@ -278,6 +278,18 @@ impl Connection {
         self.inner.carries_headers
     }
 
+    /// Whether the connection has ended: the server went away, or it was
+    /// closed.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.inner.done.is_cancelled()
+    }
+
+    /// Resolves once the connection has ended.
+    pub async fn closed(&self) {
+        self.inner.done.cancelled().await;
+    }
+
     /// Cancel this connection and wait for its owned tasks and transport to
     /// close. Applies to all clones; transport cleanup is bounded to five seconds.
     pub async fn close(&self) {
