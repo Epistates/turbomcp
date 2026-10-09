@@ -32,3 +32,14 @@ tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true
+
+# `cargo binstall turbomcp-cli` downloads the archive the release workflow
+# attaches to each GitHub release (dist-workspace.toml) instead of compiling.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "txz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+bin-dir = "{ bin }{ binary-ext }"

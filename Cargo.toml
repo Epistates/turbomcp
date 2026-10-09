@@ -211,6 +211,10 @@ strip = false
 opt-level = 1
 debug = "line-tables-only"
 
+# Release binaries (dist-workspace.toml): exactly the release profile
+[profile.dist]
+inherits = "release"
+
 # Examples are in the individual crates
 # Note: Workspace-level benchmarks are in benches/ directory
 # Run with: ./scripts/run_benchmarks.sh

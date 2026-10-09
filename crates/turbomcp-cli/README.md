@@ -4,8 +4,16 @@ The `turbomcp` command: serve the servers in an `mcpServers` configuration as
 one MCP server, and run protocol operations against any MCP server.
 
 ```sh
-cargo install turbomcp-cli
+cargo binstall turbomcp-cli     # the prebuilt binary for your platform
+cargo install turbomcp-cli      # or build it
 ```
+
+Each [GitHub release](https://github.com/Epistates/turbomcp/releases) also
+carries the archives themselves (macOS, Linux glibc and static musl, Windows),
+their checksums, and shell and PowerShell installers; `gh attestation verify
+<file> --repo Epistates/turbomcp` checks that a download was built by this
+repository's release workflow. While 4.0 is in prerelease, name the version:
+`cargo binstall turbomcp-cli@<version>`.
 
 ## The gateway
 

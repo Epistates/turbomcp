@@ -1,0 +1,31 @@
+[workspace]
+members = ["cargo:."]
+
+# Release binaries for the `turbomcp` command (crates/turbomcp-cli), built by
+# `.github/workflows/release.yml` when a version tag is pushed. That workflow
+# is generated: change this file, then run `dist generate`.
+#
+# Crates are still published by hand with `cargo publish --workspace`, and the
+# GitHub release is still written by hand from the CHANGELOG: the workflow only
+# uploads binaries to it. Create the release (a draft is fine) before or with
+# the tag; if the tag lands first, the upload job fails and re-running it once
+# the release exists finishes the job.
+[dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.33.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "powershell"]
+# Target platforms to build apps for (Rust target-triple syntax). Linux ships
+# both libcs: glibc for performance where it exists, a static musl build for
+# everything else (Alpine, distroless, old distros).
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
+# Path that installers should place binaries in
+install-path = "CARGO_HOME"
+# Whether to install an updater program
+install-updater = false
+# Upload to the release written by hand rather than generating one
+create-release = false
+# Attest build provenance for every artifact (`gh attestation verify`)
+github-attestations = true

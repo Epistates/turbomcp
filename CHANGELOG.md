@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server; `--json` prints the protocol's own shapes. v3's scaffolding
   commands (`new`, `build`, `deploy`, `install`, `dev`) are not carried
   over.
+- Prebuilt `turbomcp` binaries on every release, for macOS (arm64, x86_64),
+  Linux (arm64, x86_64; glibc and a static musl build) and Windows (x86_64),
+  with checksums, GitHub build-provenance attestations, shell and PowerShell
+  installers, and `cargo binstall turbomcp-cli` support, so the gateway
+  installs without a Rust toolchain.
 - Gateway upstream headers: `Upstream::header` sends a header (an API key, a
   tenant) with every request to an HTTP upstream or with a WebSocket
   upstream's upgrade; `Debug` shows the names only.
