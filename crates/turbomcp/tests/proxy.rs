@@ -120,9 +120,9 @@ impl Upstairs {
 #[derive(Clone)]
 struct Pair {
     together: Arc<tokio::sync::Barrier>,
-    /// Hold each call after it asked, until both have: one call alone in
-    /// flight is unambiguous. (Not under MRTR, which re-executes a call
-    /// after it asked.)
+    /// Hold each call after its question is judged (answered or refused),
+    /// until both have been: one call alone in flight is unambiguous. (Not
+    /// under MRTR, which re-executes a call after it asked.)
     hold_after_asking: bool,
 }
 
@@ -147,10 +147,15 @@ impl Pair {
                 "who",
                 neutral::ElicitParams::new("Who is this?", who_schema()),
             )
-            .await?;
+            .await;
+        // Both calls stay in flight until both questions have been judged,
+        // answered or refused: one that finished first would leave the
+        // other's question unambiguous (one call in flight), and its
+        // caller rightly asked.
         if self.hold_after_asking {
             self.together.wait().await;
         }
+        let outcome = outcome?;
         Ok(match outcome.content.get("who").and_then(Value::as_str) {
             Some(who) if outcome.accepted() => who.to_owned(),
             _ => format!("{:?}", outcome.action),
