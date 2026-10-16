@@ -5,7 +5,7 @@
 //!
 //! Capability methods use native async-fn-in-trait (RPITIT) and speak
 //! [`turbomcp_protocol::neutral`] types, never wire types. That is what lets a
-//! second wire version (Phase 5) be added without touching a single handler.
+//! second wire version be added without touching a single handler.
 //!
 //! [`MethodRouter`]: crate::MethodRouter
 

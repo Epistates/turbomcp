@@ -5,12 +5,10 @@
 //! type, filling version-specific required fields (`resultType`, `cacheScope`,
 //! `ttlMs`, …) with spec defaults the handler shouldn't have to know about.
 //!
-//! This is the small, deliberately hand-curated subset the plan calls
-//! `neutral/` (§3) — distinct from the full per-version generated surface. It
-//! grows one method-family at a time as phases land; Phase 2 covers the
-//! `tools/*` family and discovery. Because the trait signatures in
-//! `turbomcp-server` are expressed in these types, wiring the second wire
-//! version (Phase 5) adds conversions here without changing any handler.
+//! This is a deliberately hand-curated surface, distinct from the full
+//! per-version generated one. Because the trait signatures in
+//! `turbomcp-server` are expressed in these types, a new wire revision adds
+//! conversions here without changing any handler.
 //!
 //! Conversions are intentionally one-directional (neutral → wire) and total
 //! (`From`, never failing): a handler can always be serialized to the wire.

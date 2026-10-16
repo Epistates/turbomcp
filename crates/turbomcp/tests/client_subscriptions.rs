@@ -182,10 +182,7 @@ async fn run_modern() -> Running {
         s_wr,
         SerdeJsonCodec,
     ))
-    .config(turbomcp::ServeConfig {
-        shutdown: shutdown.clone(),
-        ..turbomcp::ServeConfig::default()
-    });
+    .config(turbomcp::ServeConfig::new().with_shutdown(shutdown.clone()));
     let server = tokio::spawn(server.serve(pipe));
     let (c_rd, c_wr) = split(client_io);
     let client = ClientBuilder::new("subscriber", "1.0.0")

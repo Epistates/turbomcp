@@ -55,6 +55,7 @@ pub struct PeerClosed;
 
 /// How handing a broadcast message to one connection went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Delivery {
     /// Queued on the connection's writer.
     Queued,

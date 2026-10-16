@@ -1,6 +1,6 @@
 //! [`CancellationToken`] — per-request cancellation, always present.
 //!
-//! Every in-flight request carries a fresh token (PLAN.md §4.8). The dispatcher
+//! Every in-flight request carries a fresh token. The dispatcher
 //! triggers it when a matching `notifications/cancelled` arrives; the graceful
 //! shutdown path cancels a parent that cascades to all children.
 //!

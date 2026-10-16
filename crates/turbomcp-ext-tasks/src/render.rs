@@ -13,6 +13,9 @@ pub(crate) fn status(status: TaskStatus) -> wire::TaskStatus {
         TaskStatus::Completed => wire::TaskStatus::Completed,
         TaskStatus::Failed => wire::TaskStatus::Failed,
         TaskStatus::Cancelled => wire::TaskStatus::Cancelled,
+        // A status a later backend adds that this wire doesn't name is still
+        // running as far as this wire can say.
+        _ => wire::TaskStatus::Working,
     }
 }
 

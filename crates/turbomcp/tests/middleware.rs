@@ -332,3 +332,44 @@ async fn layer_state_survives_the_drivers_per_request_clone() {
         "one clone per frame must still accumulate into the shared state"
     );
 }
+
+// ---- layers from outside: tower's own, and the timeout ------------------------
+
+#[derive(Clone)]
+struct Slow;
+
+#[server(name = "slow", version = "1.0.0")]
+impl Slow {
+    /// Answers after `ms` milliseconds.
+    #[tool]
+    async fn wait(&self, ms: u64) -> String {
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+        "done".into()
+    }
+}
+
+/// A request past the deadline gets a timeout answer (its caller isn't left
+/// waiting), one within it gets its result; and a `tower` layer that keeps
+/// the seam's types (`ConcurrencyLimit`) composes onto a server unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_timeout_and_a_tower_layer_compose_onto_a_server() {
+    use turbomcp::client::ClientBuilder;
+    let server = Slow
+        .into_server()
+        .layer(turbomcp::TimeoutLayer::new(
+            std::time::Duration::from_millis(200),
+        ))
+        .layer(turbomcp::tower::limit::ConcurrencyLimitLayer::new(4));
+    let client = turbomcp::testing::connect(server, ClientBuilder::new("c", "1"))
+        .await
+        .unwrap();
+    let wait = |ms: u64| {
+        let mut args = serde_json::Map::new();
+        args.insert("ms".into(), json!(ms));
+        client.call_tool("wait", args)
+    };
+    let quick = wait(10).await.unwrap();
+    assert_eq!(quick.text_content().as_deref(), Some("done"));
+    let slow = wait(5_000).await.unwrap_err();
+    assert!(slow.to_string().contains("longer than"), "{slow}");
+}

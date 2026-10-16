@@ -14,7 +14,7 @@ use turbomcp_core::meta::keys::PROTOCOL_VERSION;
 ///
 /// Returns `None` when `params`, `_meta`, or the version key is absent — the
 /// dispatcher decides what an absent version means (see
-/// `VersionDispatcher`'s missing-version policy, PLAN §4.9).
+/// `VersionDispatcher`'s missing-version policy).
 #[must_use]
 pub fn request_protocol_version(params: Option<&Value>) -> Option<ProtocolVersion> {
     let meta = params?.get("_meta")?.as_object()?;

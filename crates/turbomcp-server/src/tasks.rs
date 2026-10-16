@@ -43,6 +43,7 @@ use turbomcp_core::{CancellationToken, JsonRpcError};
 
 /// A task's lifecycle status (rendered to the wire by each front-end).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TaskStatus {
     /// Created and not yet terminal; the underlying request is executing.
     Working,

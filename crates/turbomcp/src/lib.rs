@@ -58,7 +58,7 @@
 //!     /// `Image`/`Audio` become a single image/audio content block.
 //!     #[tool]
 //!     async fn chart(&self) -> Image {
-//!         Image { data: String::new(), mime_type: "image/png".into() }
+//!         Image::new(String::new(), "image/png")
 //!     }
 //!
 //!     /// A returned `McpError` is a tool-level error, not a transport error.
@@ -183,9 +183,19 @@ pub use turbomcp_service::TracingLayer;
 /// The service [`TracingLayer`] produces.
 pub use turbomcp_service::Tracing;
 
+/// Bound each request: one not answered in time gets a JSON-RPC timeout
+/// error. `tower`'s own `Timeout` changes the seam's error type, so it
+/// doesn't compose onto a server; this does.
+pub use turbomcp_service::{Timeout, TimeoutLayer};
+
 /// Re-export of [`tower`], version-matched to the one behind [`McpService`], so
 /// middleware written against it composes without a duplicate-crate mismatch.
 pub use tower;
+
+/// The attribute for implementing the framework's `dyn` seams
+/// ([`Interceptor`](intercept::Interceptor), `Extension`, `SessionBackend`,
+/// `TaskBackend`) and the client's handlers.
+pub use turbomcp_server::async_trait;
 
 // ---- server -----------------------------------------------------------------
 
@@ -303,8 +313,10 @@ pub use turbomcp_service::memory;
 /// assert_eq!(tools.tools[0].name, "add");
 /// # Ok(()) }
 /// ```
-#[cfg(feature = "client")]
-#[cfg_attr(docsrs, doc(cfg(feature = "client")))]
+///
+/// Without the `client` feature, [`serve`](testing::serve) gives you the
+/// other end as a [`MemoryTransport`](testing::MemoryTransport) to send and
+/// receive frames on yourself.
 pub mod testing {
     use turbomcp_service::{Serve as _, ServerHandle};
 
@@ -340,24 +352,37 @@ pub mod testing {
         }
     }
 
+    /// Serve `server` on one end of an in-memory pair, on a task of its own
+    /// until the other end closes, and return that end: a transport to send
+    /// the server frames on and read its answers from, as a client would.
+    #[must_use]
+    pub fn serve<S>(server: S) -> MemoryTransport
+    where
+        S: TestServer,
+        S::Handle: 'static,
+    {
+        let (server_end, client_end) = pair();
+        let handle = server.into_handle();
+        // The server's outcome is the other end's to observe: a server that
+        // fails closes its end, which reads as the connection ending.
+        tokio::spawn(async move {
+            let _ = server_end.serve(handle).await;
+        });
+        client_end
+    }
+
     /// Serve `server` in memory and connect `client` to it. The server runs
     /// on a task of its own until the client's end closes.
     ///
     /// # Errors
     /// The client's handshake failing.
+    #[cfg(feature = "client")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "client")))]
     pub async fn connect(
         server: impl TestServer,
         client: crate::client::ClientBuilder,
     ) -> crate::client::ClientResult<crate::client::Client> {
-        let (server_end, client_end) = pair();
-        let handle = server.into_handle();
-        // The server's outcome is the client's to observe: a server that
-        // fails closes its end, which the client sees as the connection
-        // ending.
-        tokio::spawn(async move {
-            let _ = server_end.serve(handle).await;
-        });
-        client.connect(client_end).await
+        client.connect(serve(server)).await
     }
 }
 

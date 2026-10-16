@@ -1183,8 +1183,10 @@ dependencies = [
  "pin-project-lite",
  "sync_wrapper",
  "tokio",
+ "tokio-util",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1237,6 +1239,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "tokio",
  "tower",
  "turbomcp-core",
  "turbomcp-macros",

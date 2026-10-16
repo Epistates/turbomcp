@@ -168,7 +168,7 @@ pub trait Transport: Send + 'static {
     fn close(self) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     /// Close the transport, having been given a `deadline` by which any drain of
-    /// pending writes should complete (PLAN §4.13).
+    /// pending writes should complete.
     ///
     /// The default flushes-and-closes via [`Transport::close`], ignoring the
     /// deadline; the driver bounds the whole call by it anyway. Override it

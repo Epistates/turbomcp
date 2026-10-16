@@ -4,7 +4,7 @@
 //! handlers and rate-limit key extractors, with a [`Identity::Custom`] escape
 //! hatch for patterns that don't fit (OAuth introspection, etc.).
 //!
-//! **Redaction (round-3 SC-9):** the [`core::fmt::Debug`] impl never prints
+//! **Redaction:** the [`core::fmt::Debug`] impl never prints
 //! claim *values* — only the subject and the set of claim keys — so identities
 //! flowing into `tracing` spans don't leak PII (emails, org ids) into telemetry
 //! by default.

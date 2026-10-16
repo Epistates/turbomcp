@@ -19,6 +19,15 @@ axum router you mount yourself; pass it the `Server` (or the builder's
 refused for want of a session terminator. Put TLS at the server or a trusted
 reverse proxy; configure allowed hosts/origins and trusted proxies explicitly.
 
+**Mask internal errors in production.** By default an internal error's text
+reaches the client, as a JSON-RPC `-32603` or a tool's `isError` text: handy
+while developing, and a leak in production, where that text is often a SQL
+statement, a hostname or a connection string (`?` on a library error builds
+one with its whole cause chain). `ServerBuilder::mask_internal_errors()`
+answers `internal error (ref: <id>)` instead and logs the original under the
+same `error_ref`. Errors meant for the model (`McpError::tool_execution_failed`,
+invalid arguments) are unchanged.
+
 A callable tool must resolve through `WithTools::lookup_tool`. Macro-generated
 tools have a direct lookup with process-lifetime cached metadata; custom schema
 derivation for those tools must be deterministic. Use a custom provider for

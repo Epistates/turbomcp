@@ -1,4 +1,4 @@
-//! `_meta` well-known keys and propagation policy (PLAN.md §13.2).
+//! `_meta` well-known keys and propagation policy.
 //!
 //! The framework consumes a fixed set of keys; everything else is preserved in
 //! [`crate::RequestContext::propagated_meta`] and echoed back on responses.

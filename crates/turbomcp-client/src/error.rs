@@ -1,4 +1,4 @@
-//! Client-side error model (`ClientCallError` in PLAN §4.10).
+//! Client-side error model.
 //!
 //! A client call fails in one of a few visible ways: the peer answered with a
 //! JSON-RPC error, the connection went away, the call timed out, or a

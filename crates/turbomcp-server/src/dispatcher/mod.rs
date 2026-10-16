@@ -19,9 +19,6 @@
 //!
 //! Every path converges on the same neutral handlers; only the wire family
 //! differs (selected via the private `WireFamily` trait).
-//!
-//! `_meta`→context extraction may still move to a `MetaExtractLayer` once
-//! Auth/RateLimit need to observe it between layers (Phase 6/7).
 
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -103,7 +100,7 @@ struct Shared {
     pending: Arc<PendingRequests>,
     /// Sends `2025-11-25` tasks' input requests to their clients.
     task_input: Arc<task_input::TaskInputRelay>,
-    /// Registered draft extensions (PLAN D10), consulted for `server/discover`
+    /// Registered draft extensions, consulted for `server/discover`
     /// advertisement and modern-path method routing. One `Arc` to keep the
     /// per-request `Shared` clone cheap.
     extensions: Arc<Vec<Arc<dyn Extension>>>,
@@ -790,8 +787,8 @@ impl<S: McpServerCore> Service<McpRequest> for VersionDispatcher<S> {
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Backpressure (bounded request queue) lands with the Phase 4
-        // writer-actor; today the dispatcher is always ready.
+        // Always ready: backpressure is the serving runtime's (its bounded
+        // in-flight window and the per-connection writer).
         Poll::Ready(Ok(()))
     }
 
@@ -1078,7 +1075,7 @@ async fn handle_request<S: McpServerCore>(
     let id = req.id.clone();
     let method = req.method.clone();
 
-    // Extension-owned methods (PLAN D10) go to the extension that speaks the
+    // Extension-owned methods go to the extension that speaks the
     // request's revision, once the client has declared it: per request on the
     // stateless wire, in `initialize` on a session. A revision no extension
     // speaks falls through to the built-ins below (`2025-11-25`'s core
@@ -1412,8 +1409,8 @@ async fn handle_request<S: McpServerCore>(
             }
         }
 
-        // Core Tasks methods (2025-11-25; the draft serves Tasks as an
-        // extension instead — Phase 8).
+        // Core Tasks methods (2025-11-25; `2026-07-28` serves Tasks as an
+        // extension instead).
         methods::request::TASKS_LIST
         | methods::request::TASKS_GET
         | methods::request::TASKS_CANCEL

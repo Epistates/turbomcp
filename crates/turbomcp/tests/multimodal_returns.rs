@@ -14,19 +14,13 @@ impl Media {
     /// Return a 1x1 PNG.
     #[tool(description = "Render an image")]
     async fn render(&self) -> Image {
-        Image {
-            data: "iVBORw0KGgo=".into(),
-            mime_type: "image/png".into(),
-        }
+        Image::new("iVBORw0KGgo=", "image/png").with_meta_entry("com.example/dpi", json!(144))
     }
 
     /// Return a short clip.
     #[tool(description = "Play a sound")]
     async fn sound(&self) -> McpResult<Audio> {
-        Ok(Audio {
-            data: "UklGRg==".into(),
-            mime_type: "audio/wav".into(),
-        })
+        Ok(Audio::new("UklGRg==", "audio/wav"))
     }
 }
 
@@ -72,6 +66,10 @@ async fn image_and_audio_tools_return_wire_content_blocks() {
     assert_eq!(block["type"], "image", "got {img}");
     assert_eq!(block["data"], "iVBORw0KGgo=");
     assert_eq!(block["mimeType"], "image/png");
+    assert_eq!(
+        block["_meta"]["com.example/dpi"], 144,
+        "an image keeps its _meta"
+    );
     assert_eq!(img["isError"], false);
 
     let audio = call(

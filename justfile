@@ -189,6 +189,21 @@ codes-check:
   fi
   echo "No numeric JSON-RPC codes outside turbomcp_core::codes."
 
+# Fail on a reference to the internal plans (`.strategy/`, gitignored) in
+# source: a docs.rs reader can't follow `PLAN §4.10` or `Phase 4`.
+[group: 'quality']
+plan-refs-check:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  hits=$(find crates -path '*/target' -prune -o -path '*/src/*' -name '*.rs' -print \
+    | xargs grep -nE 'PLAN(\.md)?[[:space:]]+(§|D[0-9]|MR-)|round-[0-9]+ [A-Z]|\(Phase [0-9]+' || true)
+  if [ -n "$hits" ]; then
+    echo "error: source cites the internal plans, which readers can't see:" >&2
+    echo "$hits" >&2
+    exit 1
+  fi
+  echo "No internal plan references in source."
+
 # Fail if a `--locked` lockfile has drifted; warn for the excluded crates.
 [group: 'quality']
 lock-check:
@@ -365,6 +380,7 @@ test:
   echo "Step 8/9: Checking generated artifacts still match their sources..."
   just lock-check
   just codes-check
+  just plan-refs-check
   just codegen-check
   echo "Step 9/9: Building the excluded crates against this tree..."
   just excluded-check

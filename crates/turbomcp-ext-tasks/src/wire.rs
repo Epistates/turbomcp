@@ -1,7 +1,7 @@
 //! Draft Tasks extension wire types (SEP-2663).
 //!
 //! The core `2026-07-28` schema defines none of these — the extension owns
-//! its wire types (PLAN §12). They are deliberately serde-(de)serializable on
+//! its wire types. They are deliberately serde-(de)serializable on
 //! both ends: the server serializes them into responses/notifications, and a
 //! client deserializes them while polling. Field renames follow the spec's
 //! `camelCase`; status strings are the spec's lowercase/`snake_case` set.
@@ -20,6 +20,7 @@ pub const RESULT_TYPE_COMPLETE: &str = "complete";
 /// (`completed`/`failed`/`cancelled`) never transition again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TaskStatus {
     /// The request is being processed.
     Working,

@@ -232,6 +232,26 @@ fn check_header_mirrors(
         // A `null` value has no header: "Client MUST omit the header … Server
         // MUST NOT expect the header", the same as an absent argument.
         let body = argument_at(&arguments, &param.path).filter(|v| !v.is_null());
+        // A value no header can carry (an integer past the safe range, a
+        // composite) breaks the annotation's own constraint: the arguments
+        // are invalid, and "header is missing" would blame the client's
+        // mirroring for it.
+        let unmirrorable = |v: &Value| match v {
+            Value::Array(_) | Value::Object(_) => true,
+            Value::Number(n) => n
+                .as_f64()
+                .is_some_and(|f| f.abs() > 9_007_199_254_740_991.0),
+            _ => false,
+        };
+        if let Some(body) = body
+            && unmirrorable(body)
+        {
+            return Err(McpError::invalid_params(format!(
+                "`{}` is a header parameter (Mcp-Param-{header}), so it must be a string, \
+                 a boolean, or an integer within ±(2^53−1)",
+                param.path.join(".")
+            )));
+        }
         match (body, observed.get(header)) {
             (None, None) => {}
             (Some(_), None) => return mismatch("header is missing"),

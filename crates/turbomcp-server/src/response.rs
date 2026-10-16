@@ -6,7 +6,7 @@
 //! enforcing the spec's differing error semantics per method family:
 //!
 //! - **Tools**: a handler error becomes a `CallToolResult { is_error: true }`
-//!   (the model sees and self-corrects — PLAN §4.11), *not* a JSON-RPC error.
+//!   (the model sees it and self-corrects), *not* a JSON-RPC error.
 //! - **Resources / prompts**: a handler error *propagates* as a JSON-RPC error,
 //!   since `resources/read` and `prompts/get` have no `is_error` channel.
 
@@ -108,48 +108,94 @@ scalar_tool_result!(
     i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64, bool,
 );
 
-/// Return an image from a `#[tool]`: base64-encoded `data` plus its `mime_type`
-/// (e.g. `image/png`) become a single image content block.
+/// Return an image from a `#[tool]`: base64-encoded `data` plus its
+/// `mime_type` (e.g. `image/png`) become a single image content block, with
+/// any annotations and `_meta` you attach.
 ///
 /// ```ignore
 /// #[tool(description = "Render a chart")]
-/// async fn chart(&self) -> Image { Image { data: png_base64, mime_type: "image/png".into() } }
+/// async fn chart(&self) -> Image {
+///     Image::new(png_base64, "image/png").with_meta_entry("com.example/dpi", json!(144))
+/// }
 /// ```
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Image {
     /// Base64-encoded image bytes.
     pub data: String,
     /// The image MIME type.
     pub mime_type: String,
+    /// Display annotations (audience, priority, last modified).
+    pub annotations: Option<neutral::Annotations>,
+    /// The block's `_meta`.
+    pub meta: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Return audio from a `#[tool]`: base64-encoded `data` plus its `mime_type`
-/// (e.g. `audio/wav`) become a single audio content block.
+/// Return audio from a `#[tool]`: base64-encoded `data` plus its
+/// `mime_type` (e.g. `audio/wav`) become a single audio content block, with
+/// any annotations and `_meta` you attach.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Audio {
     /// Base64-encoded audio bytes.
     pub data: String,
     /// The audio MIME type.
     pub mime_type: String,
+    /// Display annotations (audience, priority, last modified).
+    pub annotations: Option<neutral::Annotations>,
+    /// The block's `_meta`.
+    pub meta: serde_json::Map<String, serde_json::Value>,
 }
 
-impl IntoCallToolResult for Image {
-    fn into_call_tool_result(self) -> McpResult<neutral::CallToolResult> {
-        Ok(neutral::CallToolResult::new(vec![neutral::Content::image(
-            self.data,
-            self.mime_type,
-        )]))
-    }
-}
+macro_rules! media {
+    ($ty:ident, $what:literal, $content:ident) => {
+        impl $ty {
+            #[doc = concat!("A", $what, " block of base64 `data` with its `mime_type`.")]
+            #[must_use]
+            pub fn new(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+                Self {
+                    data: data.into(),
+                    mime_type: mime_type.into(),
+                    annotations: None,
+                    meta: serde_json::Map::new(),
+                }
+            }
 
-impl IntoCallToolResult for Audio {
-    fn into_call_tool_result(self) -> McpResult<neutral::CallToolResult> {
-        Ok(neutral::CallToolResult::new(vec![neutral::Content::audio(
-            self.data,
-            self.mime_type,
-        )]))
-    }
+            /// Set its display annotations.
+            #[must_use]
+            pub fn with_annotations(mut self, annotations: neutral::Annotations) -> Self {
+                self.annotations = Some(annotations);
+                self
+            }
+
+            /// Add one `_meta` entry.
+            #[must_use]
+            pub fn with_meta_entry(
+                mut self,
+                key: impl Into<String>,
+                value: serde_json::Value,
+            ) -> Self {
+                self.meta.insert(key.into(), value);
+                self
+            }
+        }
+
+        impl IntoCallToolResult for $ty {
+            fn into_call_tool_result(self) -> McpResult<neutral::CallToolResult> {
+                let mut block = neutral::Content::$content(self.data, self.mime_type);
+                if let Some(annotations) = self.annotations {
+                    block = block.with_annotations(annotations);
+                }
+                for (key, value) in self.meta {
+                    block = block.with_meta_entry(key, value);
+                }
+                Ok(neutral::CallToolResult::new(vec![block]))
+            }
+        }
+    };
 }
+media!(Image, "n image", image);
+media!(Audio, "n audio", audio);
 
 impl<T: Serialize> IntoCallToolResult for Json<T> {
     fn into_call_tool_result(self) -> McpResult<neutral::CallToolResult> {

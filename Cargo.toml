@@ -86,7 +86,7 @@ hyper-util = { version = "0.1.21", default-features = false }
 # The header types axum and reqwest share, for the HTTP transport's names.
 http = "1.4"
 mime = "0.3.17"
-tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
+tower = { version = "0.5.3", features = ["util", "retry", "timeout", "limit"] }
 # Only CORS is used; compression/trace/timeout/limit pulled brotli, flate2 and
 # async-compression into every HTTP server build for nothing.
 tower-http = { version = "0.7.1", default-features = false, features = ["cors"] }

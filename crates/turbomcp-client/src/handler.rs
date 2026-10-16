@@ -23,7 +23,7 @@
 //! Both paths funnel through [`dispatch_server_request`], so a handler answers
 //! identically regardless of version.
 //!
-//! `#[async_trait]` is used deliberately here (PLAN D5): the handler is a
+//! `#[async_trait]` is used deliberately here: the handler is a
 //! cold-path, user-provided trait object — exactly the case native AFIT can't
 //! store as `dyn`.
 

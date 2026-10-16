@@ -10,8 +10,8 @@
 //! Two consequences fall out for free:
 //! - Advertised capabilities are derived from what's registered ([`has_tools`]
 //!   et al.), so they cannot drift from the handlers.
-//! - A future macro (`#[server]`, Phase 3) registers exactly the capabilities
-//!   the user implemented, with no per-server boilerplate here.
+//! - `#[server]` registers exactly the capabilities the user implemented,
+//!   with no per-server boilerplate here.
 //!
 //! Every handler closure has the same shape — `Fn(S, Ctx, Params) -> BoxFuture`
 //! — so the slot type aliases and dispatch methods are generated from two small

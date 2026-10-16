@@ -36,11 +36,9 @@ mod tests {
     async fn saturated_driver_obeys_shutdown_deadline() {
         let (tx, rx) = mpsc::channel(8);
         let read = Arc::new(AtomicUsize::new(0));
-        let config = ServeConfig {
-            max_in_flight: 1,
-            drain_timeout: Duration::from_millis(10),
-            ..Default::default()
-        };
+        let config = ServeConfig::new()
+            .with_max_in_flight(1)
+            .with_drain_timeout(Duration::from_millis(10));
         let shutdown = config.shutdown.clone();
         let svc = tower::service_fn(|_: turbomcp::McpRequest| async {
             std::future::pending::<Result<Option<JsonRpcMessage>, ProtocolError>>().await

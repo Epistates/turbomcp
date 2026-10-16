@@ -1,4 +1,4 @@
-//! The [`Extension`] seam: a multi-method server plugin (PLAN D10).
+//! The [`Extension`] seam: a multi-method server plugin.
 //!
 //! An extension owns a set of request methods (e.g. the Tasks extension's
 //! `tasks/get`/`tasks/update`/`tasks/cancel`), advertises itself under
@@ -21,7 +21,7 @@
 //! The trait is the durable architectural asset; the D10 sketch's
 //! `intercept_response`/`notification_topics` are folded into the real seams an
 //! extension actually needs — [`dispatch`](Extension::dispatch) for its owned
-//! methods, and (Phase 9b) a task-augmentation hook for `tools/call` — rather
+//! methods, and a task-augmentation hook for `tools/call` — rather
 //! than modeled as standalone trait methods with no consumer.
 
 use std::sync::Arc;
@@ -148,6 +148,7 @@ pub struct CallAugmentRequest {
 /// The result of offering a `subscriptions/listen` request to an extension
 /// (SEP-2663 task-status notifications ride this stream).
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SubscribeOutcome {
     /// The listen request doesn't reference this extension's notifications.
     NotApplicable,
@@ -162,7 +163,7 @@ pub enum SubscribeOutcome {
     Subscribed(Value),
 }
 
-/// A multi-method server extension (PLAN D10).
+/// A multi-method server extension.
 ///
 /// An extension bundles a cohesive feature that lives outside the core protocol
 /// surface — owning its own wire types and request methods — and plugs into the

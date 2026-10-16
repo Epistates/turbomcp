@@ -96,19 +96,13 @@ impl Everything {
     /// A tool that returns a single image content block.
     #[tool(description = "Return image content")]
     async fn test_image_content(&self) -> McpResult<Image> {
-        Ok(Image {
-            data: PNG_1X1.to_string(),
-            mime_type: "image/png".to_string(),
-        })
+        Ok(Image::new(PNG_1X1, "image/png"))
     }
 
     /// A tool that returns a single audio content block.
     #[tool(description = "Return audio content")]
     async fn test_audio_content(&self) -> McpResult<Audio> {
-        Ok(Audio {
-            data: WAV_TINY.to_string(),
-            mime_type: "audio/wav".to_string(),
-        })
+        Ok(Audio::new(WAV_TINY, "audio/wav"))
     }
 
     /// A tool that returns structured output (generates an `outputSchema`).

@@ -228,10 +228,7 @@ async fn backpressure_caps_in_flight() {
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
     let transport = MockTransport::new(in_rx, out_tx);
-    let config = ServeConfig {
-        max_in_flight: 1,
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new().with_max_in_flight(1);
     let driver = tokio::spawn(serve_with(transport, service, config));
 
     in_tx.send(request(1, "a")).await.unwrap();
@@ -283,11 +280,9 @@ async fn graceful_shutdown_drains_in_flight() {
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
     let transport = MockTransport::new(in_rx, out_tx);
     let shutdown = CancellationToken::new();
-    let config = ServeConfig {
-        drain_timeout: Duration::from_secs(5),
-        shutdown: shutdown.clone(),
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new()
+        .with_drain_timeout(Duration::from_secs(5))
+        .with_shutdown(shutdown.clone());
     let driver = tokio::spawn(serve_with(transport, service, config));
 
     in_tx.send(request(1, "slow")).await.unwrap();
@@ -334,11 +329,9 @@ async fn a_reply_being_written_when_shutdown_fires_still_goes_out() {
     let writes = Arc::new(Semaphore::new(0));
     let transport = MockTransport::new(in_rx, out_tx).gated_writes(Arc::clone(&writes));
     let shutdown = CancellationToken::new();
-    let config = ServeConfig {
-        drain_timeout: Duration::from_secs(5),
-        shutdown: shutdown.clone(),
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new()
+        .with_drain_timeout(Duration::from_secs(5))
+        .with_shutdown(shutdown.clone());
     let driver = tokio::spawn(serve_with(transport, service, config));
 
     in_tx.send(request(1, "slow")).await.unwrap();
@@ -384,11 +377,9 @@ async fn a_shutdown_under_load_drains_every_reply() {
     let writes = Arc::new(Semaphore::new(0));
     let transport = MockTransport::new(in_rx, out_tx).gated_writes(Arc::clone(&writes));
     let shutdown = CancellationToken::new();
-    let config = ServeConfig {
-        drain_timeout: Duration::from_secs(10),
-        shutdown: shutdown.clone(),
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new()
+        .with_drain_timeout(Duration::from_secs(10))
+        .with_shutdown(shutdown.clone());
     let driver = tokio::spawn(serve_with(transport, service, config));
 
     for id in 1..=IN_FLIGHT {
@@ -443,11 +434,9 @@ async fn shutdown_aborts_stragglers_past_deadline() {
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
     let transport = MockTransport::new(in_rx, out_tx);
     let shutdown = CancellationToken::new();
-    let config = ServeConfig {
-        drain_timeout: Duration::from_millis(150),
-        shutdown: shutdown.clone(),
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new()
+        .with_drain_timeout(Duration::from_millis(150))
+        .with_shutdown(shutdown.clone());
     let driver = tokio::spawn(serve_with(transport, service, config));
 
     in_tx.send(request(1, "stuck")).await.unwrap();
@@ -514,10 +503,7 @@ async fn transport_send_error_surfaces_and_stuck_handlers_are_abandoned() {
         fail_sends: true,
         outbound: out_tx,
     };
-    let config = ServeConfig {
-        drain_timeout: Duration::from_millis(150),
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new().with_drain_timeout(Duration::from_millis(150));
     let err = tokio::time::timeout(
         Duration::from_secs(5),
         serve_with(transport, service, config),
@@ -834,10 +820,7 @@ async fn a_notification_flood_does_not_starve_the_reader() {
         Flooder {
             stop: Arc::clone(&stop),
         },
-        ServeConfig {
-            max_in_flight: 16,
-            ..ServeConfig::default()
-        },
+        ServeConfig::new().with_max_in_flight(16),
     ));
 
     in_tx.send(request(1, "flood")).await.unwrap();
@@ -916,10 +899,7 @@ async fn a_control_burst_backpressures_instead_of_disconnecting() {
             .unwrap();
     }
     in_tx.send(request(7, "after")).await.unwrap();
-    let config = ServeConfig {
-        max_control_in_flight: 2,
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new().with_max_control_in_flight(2);
     let driver = tokio::spawn(serve_with(
         MockTransport::new(in_rx, out_tx),
         SlowNotifications,
@@ -951,10 +931,7 @@ async fn ping_is_answered_at_capacity() {
     };
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-    let config = ServeConfig {
-        max_in_flight: 1,
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new().with_max_in_flight(1);
     let driver = tokio::spawn(serve_with(
         MockTransport::new(in_rx, out_tx),
         service,
@@ -1027,11 +1004,9 @@ async fn eof_cancels_what_is_in_flight() {
     let saw_close = Arc::new(AtomicUsize::new(0));
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, _out_rx) = mpsc::unbounded_channel();
-    let config = ServeConfig {
-        drain_timeout: Duration::from_secs(30),
-        eof_grace: Duration::from_millis(100),
-        ..ServeConfig::default()
-    };
+    let config = ServeConfig::new()
+        .with_drain_timeout(Duration::from_secs(30))
+        .with_eof_grace(Duration::from_millis(100));
     let driver = tokio::spawn(serve_with(
         MockTransport::new(in_rx, out_tx),
         WatchesClose {

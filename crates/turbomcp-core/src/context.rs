@@ -2,12 +2,12 @@
 //! cross-version-stable neutral types it carries.
 //!
 //! `RequestContext` is *pure metadata*. MRTR fields (`request_state`,
-//! `input_responses`) live in the typed request body, not here (round-1 C2.3).
+//! `input_responses`) live in the typed request body, not here.
 //! Version-specific negotiated capabilities are injected via [`Extensions`] by
 //! the service-layer negotiation/legacy adapter rather than typed into core —
 //! this keeps `turbomcp-core` the bottom layer with no dependency on
-//! `turbomcp-protocol` (a deliberate refinement of PLAN.md §4.2, which named a
-//! version-specific `ClientCapabilities` type that would invert the layering).
+//! `turbomcp-protocol` (a version-specific `ClientCapabilities` type here
+//! would invert the layering).
 
 use crate::{CancellationToken, Identity, ProtocolVersion};
 use alloc::string::String;
@@ -203,7 +203,7 @@ impl fmt::Debug for Extensions {
     }
 }
 
-/// Read-only metadata about a single request (PLAN.md §4.2).
+/// Read-only metadata about a single request.
 ///
 /// `#[non_exhaustive]`: construct via [`RequestContext::new`] + the `with_*`
 /// builders (the framework) or [`RequestContext::test_default`] (downstream
@@ -317,7 +317,7 @@ impl RequestContext {
             .is_some_and(|extensions| extensions.contains_key(id))
     }
 
-    /// A default context for downstream handler unit tests (round-3 SC-4).
+    /// A default context for downstream handler unit tests.
     ///
     /// Available behind the `test-util` feature so that `#[non_exhaustive]`
     /// doesn't make `RequestContext` impossible to construct in tests.

@@ -232,22 +232,17 @@ async fn connection<H: ServerHandle>(
         .with_network(network);
     let close_with = link.close_with();
     let expiry = identity.as_ref().and_then(expires_at);
-    let serving = turbomcp_service::serve_with(
-        link,
-        state.server.connection(),
-        ServeConfig {
-            shutdown: shutdown.clone(),
-            drain_timeout: state.drain,
-            identity,
-            subject_token,
-            scope_rules: state
-                .http
-                .authenticator
-                .as_ref()
-                .and_then(|authenticator| authenticator.scope_rules()),
-            ..ServeConfig::default()
-        },
-    );
+    let mut config = ServeConfig::new()
+        .with_shutdown(shutdown.clone())
+        .with_drain_timeout(state.drain);
+    config.identity = identity;
+    config.subject_token = subject_token;
+    config.scope_rules = state
+        .http
+        .authenticator
+        .as_ref()
+        .and_then(|authenticator| authenticator.scope_rules());
+    let serving = turbomcp_service::serve_with(link, state.server.connection(), config);
     tokio::pin!(serving);
     let result = match expiry {
         None => serving.await,

@@ -24,8 +24,8 @@
 //!
 //! ## Endpoint behavior (dual-stack)
 //!
-//! - **`POST {path}`** — body is one JSON-RPC message (batches are not supported,
-//!   per PLAN §13.1). The client MUST list both `application/json` and
+//! - **`POST {path}`** — body is one JSON-RPC message (batches are not
+//!   supported: no current revision has them). The client MUST list both `application/json` and
 //!   `text/event-stream` in `Accept` (`406` otherwise; RFC 9110 media ranges —
 //!   wildcards, `q=` parameters — are honored), and a `GET` MUST list
 //!   `text/event-stream`. A notification yields `202 Accepted` with no body. A
@@ -60,7 +60,7 @@
 //!   by store eviction / idle timeout). An endpoint serving only `2026-07-28`
 //!   answers `405`.
 //!
-//! ## Dual-stack request routing (PLAN §11)
+//! ## Dual-stack request routing
 //!
 //! Modern `2026-07-28` messages are stateless (version inside the body's
 //! `_meta`, or the `MCP-Protocol-Version` header) and pass through untouched;

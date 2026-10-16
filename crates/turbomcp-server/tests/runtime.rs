@@ -139,12 +139,10 @@ async fn into_server_registers_capabilities_in_generic_code() {
 async fn shutdown_answers_listen_before_the_connection_drains() {
     let (transport, in_tx, mut out_rx) = pipe();
     let shutdown = CancellationToken::new();
-    let serving = tokio::spawn(Echo.into_server().serve(Pipe::new(transport).config(
-        ServeConfig {
-            shutdown: shutdown.clone(),
-            ..ServeConfig::default()
-        },
-    )));
+    let serving = tokio::spawn(
+        Echo.into_server()
+            .serve(Pipe::new(transport).config(ServeConfig::new().with_shutdown(shutdown.clone()))),
+    );
     let listen: JsonRpcMessage = JsonRpcRequest::new(
         7,
         "subscriptions/listen",

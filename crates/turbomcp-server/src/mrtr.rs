@@ -1,4 +1,4 @@
-//! MRTR coordinator + [`ClientHandle`] (SEP-2322, PLAN §4.5.2).
+//! MRTR coordinator + [`ClientHandle`] (SEP-2322).
 //!
 //! On the draft, server→client interaction (elicitation, sampling, roots) is
 //! *not* a separate request: the handler records what it needs, aborts with
@@ -7,7 +7,7 @@
 //! original request from the top** with `inputResponses` (+ the echoed
 //! `requestState`); on re-execution the handle finds the cached response and
 //! returns it inline. Handlers must therefore keep elicit keys stable and any
-//! pre-elicit side effects idempotent (PLAN §4.5.1).
+//! pre-elicit side effects idempotent.
 //!
 //! `requestState` is the handler's opaque resume blob. It round-trips through
 //! the client, so it is attacker-controlled input (mrtr spec MUST) and
@@ -438,8 +438,7 @@ struct Inner {
 /// On the draft, `elicit` either returns the cached response from the retry
 /// request or aborts the handler (via `?`) so the dispatcher can answer
 /// `InputRequiredResult` — see the module docs for the re-execution contract.
-/// On `2025-11-25` the same calls go out as inline bidirectional requests
-/// (Phase 6f).
+/// On `2025-11-25` the same calls go out as inline bidirectional requests.
 #[derive(Clone)]
 pub struct ClientHandle {
     inner: Arc<Inner>,
@@ -729,7 +728,7 @@ impl ClientHandle {
         matches!(self.inner.version, ProtocolVersion::V2025_11_25)
     }
 
-    /// Ask for several inputs in **one** round trip (PLAN MR-4): all missing
+    /// Ask for several inputs in **one** round trip: all missing
     /// requests are packaged into a single `InputRequiredResult` instead of
     /// one abort per `elicit` call. Outcomes are returned in request order.
     /// (On the legacy inline-bidi path this degrades to sequential requests.)
@@ -844,7 +843,7 @@ impl ClientHandle {
     }
 
     /// Stash typed resume state for every later round of this request, until
-    /// it is replaced or [cleared](Self::clear_state) (PLAN MR-6). It is signed
+    /// it is replaced or [cleared](Self::clear_state). It is signed
     /// into the result's `requestState` — signed, not encrypted: the client
     /// can read it — and each retry's verified copy is readable via
     /// [`ClientHandle::load_state`].
@@ -970,7 +969,7 @@ impl ClientHandle {
 
     /// Record an input request under `key`. Reusing a key with a different
     /// request shape in one execution is a warning by default, or a hard error
-    /// when strict keys are enabled (PLAN §4.5.2 item 4).
+    /// when strict keys are enabled.
     fn record(&self, key: &str, request: Value) -> McpResult<()> {
         let mut collected = self.inner.collected.lock();
         if let Some(previous) = collected.get(key)
@@ -1889,7 +1888,7 @@ mod tests {
 
     // ---- MRTR batching -------------------------------------------------------
 
-    /// The point of `elicit_all` (PLAN MR-4): every missing input is recorded
+    /// The point of `elicit_all`: every missing input is recorded
     /// in **one** abort, so the client makes one round trip instead of N.
     #[tokio::test]
     async fn elicit_all_records_every_missing_request_in_one_abort() {

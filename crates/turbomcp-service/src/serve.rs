@@ -26,7 +26,7 @@
 //! pauses the reader until a control message finishes rather than ending the
 //! connection: control messages are the ones that free capacity.
 //!
-//! **Graceful shutdown** (PLAN §4.13): firing the configured
+//! **Graceful shutdown**: firing the configured
 //! [`CancellationToken`] stops the reader, then in-flight handlers are given
 //! `drain_timeout` to finish and flush their replies before the transport is
 //! closed; stragglers past the deadline are aborted.
@@ -76,8 +76,12 @@ impl ReplyQueued {
     }
 }
 
-/// Tuning for the [`serve_with`] driver.
+/// Tuning for the [`serve_with`] driver. Start from
+/// [`ServeConfig::new`] (or `default()`) and set what differs with the
+/// `with_*` methods: the type grows, and a struct literal would break when
+/// it does.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ServeConfig {
     /// Maximum concurrently in-flight application handlers; excess requests fail.
     /// Doubles as the outbound channel capacity. Default: 1024.
@@ -115,6 +119,77 @@ pub struct ServeConfig {
     /// ([`HttpAuthenticator::scope_rules`](crate::HttpAuthenticator::scope_rules)),
     /// attached to every request beside its identity. Default: `None`.
     pub scope_rules: Option<turbomcp_core::ScopeRules>,
+}
+
+impl ServeConfig {
+    /// The defaults (see each field).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set [`max_in_flight`](Self::max_in_flight).
+    #[must_use]
+    pub fn with_max_in_flight(mut self, max: usize) -> Self {
+        self.max_in_flight = max;
+        self
+    }
+
+    /// Set [`max_control_in_flight`](Self::max_control_in_flight).
+    #[must_use]
+    pub fn with_max_control_in_flight(mut self, max: usize) -> Self {
+        self.max_control_in_flight = max;
+        self
+    }
+
+    /// Set [`drain_timeout`](Self::drain_timeout).
+    #[must_use]
+    pub fn with_drain_timeout(mut self, timeout: Duration) -> Self {
+        self.drain_timeout = timeout;
+        self
+    }
+
+    /// Set [`eof_grace`](Self::eof_grace).
+    #[must_use]
+    pub fn with_eof_grace(mut self, grace: Duration) -> Self {
+        self.eof_grace = grace;
+        self
+    }
+
+    /// Set [`write_timeout`](Self::write_timeout).
+    #[must_use]
+    pub fn with_write_timeout(mut self, timeout: Duration) -> Self {
+        self.write_timeout = timeout;
+        self
+    }
+
+    /// Set [`shutdown`](Self::shutdown): firing it begins graceful shutdown.
+    #[must_use]
+    pub fn with_shutdown(mut self, shutdown: CancellationToken) -> Self {
+        self.shutdown = shutdown;
+        self
+    }
+
+    /// Set [`identity`](Self::identity), the connection's principal.
+    #[must_use]
+    pub fn with_identity(mut self, identity: Identity) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    /// Set [`subject_token`](Self::subject_token).
+    #[must_use]
+    pub fn with_subject_token(mut self, token: crate::SubjectToken) -> Self {
+        self.subject_token = Some(token);
+        self
+    }
+
+    /// Set [`scope_rules`](Self::scope_rules).
+    #[must_use]
+    pub fn with_scope_rules(mut self, rules: turbomcp_core::ScopeRules) -> Self {
+        self.scope_rules = Some(rules);
+        self
+    }
 }
 
 impl Default for ServeConfig {

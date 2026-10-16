@@ -1,5 +1,5 @@
 //! Legacy (`2025-11-25`) session state — the stateful half of the dual-stack
-//! server (PLAN §11, D9: sessions are a service-layer concern, not transport).
+//! server. Sessions are a service-layer concern, not a transport one.
 //!
 //! The store itself is transport-agnostic: it maps an opaque session id to the
 //! state negotiated at `initialize`. *Who mints the id* is the transport's

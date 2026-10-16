@@ -55,9 +55,11 @@ zero-boilerplate surface and strict spec compliance as a feature.
   derived from what the mounts actually have.
 - **Middleware is `tower`.** The dispatcher *is* a `tower::Service<McpRequest>`,
   so cross-cutting concerns are ordinary `Layer`s — one `call` for every method
-  under every transport, and `ServiceBuilder` / `timeout` / `ConcurrencyLimit`
-  compose onto an MCP server unchanged. No hook list to keep in sync with the
-  protocol. When a rule is about *content* rather than frames, typed
+  under every transport; `ServiceBuilder` and layers that keep the seam's
+  types (`ConcurrencyLimit`) compose onto an MCP server unchanged, and
+  `TimeoutLayer` bounds requests with a proper JSON-RPC timeout answer
+  (`tower`'s own `Timeout` changes the error type). No hook list to keep in
+  sync with the protocol. When a rule is about *content* rather than frames, typed
   interceptors (`ServerBuilder::intercept`, `intercept::on_call_tool(…)`) see
   the neutral params and result a handler sees, identical on every revision
   and on every path a call takes (plain, task, multi-round-trip), so a

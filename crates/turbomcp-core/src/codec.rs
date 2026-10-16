@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn batch_array_is_decode_error() {
-        // No `Batch` variant by design (PLAN.md §13.1): a received JSON-RPC
+        // No `Batch` variant by design: a received JSON-RPC
         // batch is a decode error here (`decode_message` answers it `-32600`).
         let batch = br#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#;
         assert!(matches!(

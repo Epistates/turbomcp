@@ -339,7 +339,7 @@ pub(super) fn invalid_frame_response(bad: &InvalidFrame) -> Response {
 }
 
 /// Map a service/transport [`ProtocolError`] to an HTTP status + JSON-RPC error
-/// body (PLAN §4.10). User `McpError`s never reach here — the dispatcher renders
+/// body. User `McpError`s never reach here — the dispatcher renders
 /// them as `Ok` error *responses*; this is for parse/version/shutdown conditions.
 /// The request's id is echoed whenever the caller has it: a multiplexing
 /// client can't correlate an error that doesn't name its request.

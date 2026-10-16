@@ -161,7 +161,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
-    /// Register a draft [`Extension`] (PLAN D10): advertised in
+    /// Register a draft [`Extension`]: advertised in
     /// `server/discover` under `capabilities.extensions[id]` and owning its
     /// declared methods on the modern (`2026-07-28`) path. The reference
     /// extension is the draft Tasks extension (`turbomcp-ext-tasks`).

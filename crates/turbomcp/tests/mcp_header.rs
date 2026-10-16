@@ -42,6 +42,12 @@ impl Geo {
             zone.unwrap_or_else(|| "anywhere".into())
         ))
     }
+
+    /// Any integer up to 64 bits can ride a header.
+    #[tool(description = "Find a shard")]
+    async fn shard(&self, #[mcp_header] id: u64) -> String {
+        format!("shard {id}")
+    }
 }
 
 async fn spawn_server() -> (String, CancellationToken) {
@@ -168,5 +174,46 @@ async fn an_optional_header_param_is_listed_and_mirrored() {
     assert!(
         matches!(&result.content[0], neutral::Content::Text { text, .. } if text == "SF@anywhere")
     );
+    shutdown.cancel();
+}
+
+/// A `u64` header parameter is mirrored and arrives intact up to the safe
+/// integer range a header can carry; past it the arguments are invalid (the
+/// schema says so), not a "missing header".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_64_bit_header_param_round_trips_within_the_safe_range() {
+    let (url, shutdown) = spawn_server().await;
+    let client = connect_http(
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Modern),
+        &url,
+    )
+    .await
+    .expect("connect");
+    let tools = client.list_tools(None).await.expect("list_tools");
+    let shard = tools.tools.iter().find(|t| t.name == "shard").unwrap();
+    let max_safe: u64 = (1 << 53) - 1;
+    assert_eq!(
+        shard.input_schema["properties"]["id"]["maximum"],
+        json!(max_safe)
+    );
+    let call = |id: u64| {
+        let mut args = Map::new();
+        args.insert("id".into(), json!(id));
+        client.call_tool("shard", args)
+    };
+    let result = call(max_safe).await.expect("call_tool");
+    assert_eq!(
+        result.text_content().as_deref(),
+        Some(format!("shard {max_safe}").as_str())
+    );
+    let refused = call(u64::MAX).await;
+    let text = match refused {
+        Ok(r) => {
+            assert!(r.is_error, "{r:?}");
+            r.text_content().unwrap_or_default()
+        }
+        Err(e) => e.to_string(),
+    };
+    assert!(text.contains("2^53"), "{text}");
     shutdown.cancel();
 }

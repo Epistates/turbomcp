@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `TimeoutLayer` (`turbomcp::TimeoutLayer`): bound each request, answering
+  one that overruns with a JSON-RPC timeout error in its caller's revision's
+  code. `tower`'s own `Timeout` changes the seam's error type and doesn't
+  compose onto a server; the README said it did.
+- `McpError::from_error` keeps a library error's whole cause chain, and
+  `From<std::io::Error>` lets a handler `?` on I/O (a timeout is
+  `McpError::Timeout`).
+- `Image::new`/`Audio::new` with `with_annotations` and `with_meta_entry`.
+- `testing::serve` serves a server in memory and hands back the other end,
+  without the `client` feature; `testing::connect` uses it.
+- `turbomcp::async_trait` (and `turbomcp_server::async_trait`), for the
+  `dyn` seams (`Interceptor`, `Extension`, `SessionBackend`, `TaskBackend`).
+- `ServeConfig::new` and `with_*` setters for every field.
+- `#[mcp_header]` takes any integer up to 64 bits (`u64`, `usize`,
+  `isize` were refused although the message said integers were allowed).
+
 - Capability flags follow the server: `WithTools::tools_list_changed`,
   `WithPrompts::prompts_list_changed`, `WithResources::resources_list_changed`
   and `resources_subscribe` (default `true`) decide what the handshake and
@@ -687,6 +703,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `#[mcp_header]` integer outside ±(2^53−1) was answered "header is
+  missing" (the client rightly doesn't mirror it); it is now invalid
+  params naming the limit, and the generated schema states the bounds.
+- Public docs no longer cite internal planning documents (`PLAN §4.10`,
+  `Phase 4`) a reader can't follow; `just test` checks for them.
+
 - Resource subscriptions through the gateway reach the upstream:
   `resources/subscribe` on `2025-*` and the listen filter on `2026-07-28`.
   The gateway answered subscriptions itself and subscribed to nothing
@@ -1221,6 +1243,11 @@ Earlier in this cycle:
   capability, because `2025-06-18` has no sub-capabilities to declare.
 
 ### Changed
+
+- **Breaking:** `ServeConfig`, `Image` and `Audio` are `#[non_exhaustive]`
+  (build them with `new` and the `with_*` setters), as are `TaskStatus`,
+  `RateKey`, `Delivery` and `SubscribeOutcome`: each will grow, and a literal
+  or an exhaustive match would break when it does.
 
 - **Breaking:** `RemoteServerBuilder::forward_input` covers elicitation;
   sampling and roots need `forward_sampling(true)` and `forward_roots(true)`.

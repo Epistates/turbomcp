@@ -2,7 +2,7 @@
 //!
 //! Each handler method receives a *typed* context that wraps the shared
 //! [`RequestContext`] and conditionally exposes capabilities only valid for that
-//! method. The load-bearing example (PLAN §4.4.1): `tools/call` may return an
+//! method. The load-bearing example: `tools/call` may return an
 //! `InputRequiredResult` (MRTR), so its context carries a [`ClientHandle`];
 //! `tools/list` may not, so its context never will — calling `ctx.client` from
 //! a `list_tools` handler is a *type error*, not a runtime check.

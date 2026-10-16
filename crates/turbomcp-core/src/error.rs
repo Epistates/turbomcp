@@ -2,7 +2,7 @@
 //!
 //! [`McpError`] is the single user-facing error type across the SDK
 //! (`McpResult<T> = Result<T, McpError>`). It carries the canonical
-//! `McpError → JSON-RPC code → HTTP status` mapping (PLAN.md §4.10) in one
+//! `McpError → JSON-RPC code → HTTP status` mapping in one
 //! place so handler authors never re-invent error policy.
 //!
 //! `no_std`: errors impl [`core::error::Error`] (stable since Rust 1.81), so no
@@ -474,7 +474,7 @@ impl McpError {
         }
     }
 
-    /// The HTTP status equivalent for this variant (PLAN.md §4.10).
+    /// The HTTP status equivalent for this variant.
     ///
     /// An embedder affordance: the bundled Streamable HTTP transport never
     /// calls this — a handler's `McpError` renders as a JSON-RPC error *body*
@@ -596,9 +596,77 @@ impl From<serde_json::Error> for McpError {
     }
 }
 
+impl McpError {
+    /// An [`McpError::Internal`] carrying `error` and every cause behind it
+    /// (`outer: cause: root`), so `?` on a library error keeps the chain the
+    /// operator needs. With `ServerBuilder::mask_internal_errors` the text
+    /// goes to the server's log, not the client.
+    #[must_use]
+    pub fn from_error(error: &(dyn core::error::Error + 'static)) -> Self {
+        use core::fmt::Write as _;
+        let mut text = alloc::string::ToString::to_string(error);
+        let mut cause = error.source();
+        while let Some(next) = cause {
+            let _ = write!(text, ": {next}");
+            cause = next.source();
+        }
+        Self::Internal(text)
+    }
+}
+
+/// An I/O failure in a handler (`std::fs::read(path)?`): a timeout is
+/// [`McpError::Timeout`], anything else [`McpError::Internal`] with its
+/// causes.
+#[cfg(feature = "std")]
+impl From<std::io::Error> for McpError {
+    fn from(e: std::io::Error) -> Self {
+        match e.kind() {
+            std::io::ErrorKind::TimedOut => Self::Timeout(e.to_string()),
+            _ => Self::from_error(&e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn an_io_error_keeps_its_causes() {
+        #[derive(Debug)]
+        struct Root;
+        impl core::fmt::Display for Root {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("disk on fire")
+            }
+        }
+        impl std::error::Error for Root {}
+        let io = std::io::Error::other(Root);
+        assert_eq!(
+            McpError::from(io),
+            McpError::Internal("disk on fire".into())
+        );
+
+        #[derive(Debug)]
+        struct Outer(Root);
+        impl core::fmt::Display for Outer {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("reading config")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        assert_eq!(
+            McpError::from_error(&Outer(Root)),
+            McpError::Internal("reading config: disk on fire".into())
+        );
+        let timed_out = std::io::Error::new(std::io::ErrorKind::TimedOut, "slow");
+        assert!(matches!(McpError::from(timed_out), McpError::Timeout(_)));
+    }
     use alloc::vec;
 
     #[test]
@@ -713,7 +781,7 @@ mod tests {
 
     #[test]
     fn http_status_covers_every_variant() {
-        // The full PLAN.md §4.10 table — a regression in any arm must fail here.
+        // The whole table: a regression in any arm must fail here.
         assert_eq!(McpError::internal("x").http_status(), 500);
         assert_eq!(McpError::InputRequired.http_status(), 500);
         assert_eq!(McpError::invalid_params("x").http_status(), 400);

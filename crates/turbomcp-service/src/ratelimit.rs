@@ -32,6 +32,7 @@ use governor::{DefaultKeyedRateLimiter, Quota};
 /// source IP; [`RateKey::Global`] is the fallback when neither is available
 /// (e.g. a test harness with no peer address) — a single shared bucket.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[non_exhaustive]
 pub enum RateKey {
     /// Per authenticated subject (`Identity::Bearer`/`Dpop`/`Custom` subject).
     Subject(String),

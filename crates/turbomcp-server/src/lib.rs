@@ -15,6 +15,17 @@
 //! Both protocol paths are live: the modern `2026-07-28` stateless path and
 //! the legacy `2025-11-25` stateful path (`initialize` handshake +
 //! [`SessionStore`]; see [`LegacySessionAdapter`] for byte-pipe transports).
+//!
+//! ## Two kinds of async trait
+//!
+//! The traits a server *is* ([`McpServerCore`], [`WithTools`], …) use native
+//! `async fn` in traits: they are implemented once per server type and
+//! monomorphized, so they cost no allocation per call. The seams the
+//! framework holds as `dyn` objects, several per server ([`Interceptor`],
+//! [`Extension`], [`SessionBackend`], [`TaskBackend`]), use
+//! [`async_trait`](https://docs.rs/async-trait), because a native async
+//! method can't be called through `dyn` yet. Implement those with
+//! [`macro@async_trait`], re-exported here and by the facade.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -45,6 +56,9 @@ mod uri_template;
 pub mod visibility;
 
 pub use adapter::LegacySessionAdapter;
+/// The attribute the `dyn` seams ([`Interceptor`], [`Extension`],
+/// [`SessionBackend`], [`TaskBackend`]) are implemented with.
+pub use async_trait::async_trait;
 pub use builder::{IntoServerBuilder, ServerBuilder};
 pub use bus::{BusError, Change, LocalBus, NotificationBus};
 pub use composite::{Composite, CompositeServer};
@@ -167,9 +181,9 @@ pub mod __macro_support {
     /// with type `number` are not permitted." `Option` of one is fine too;
     /// an absent value just omits the header.
     #[diagnostic::on_unimplemented(
-        message = "`#[mcp_header]` requires a string, integer or bool parameter (or an `Option` of one), not `{Self}`",
+        message = "`#[mcp_header]` requires a string, bool or integer of at most 64 bits (or an `Option` of one), not `{Self}`",
         label = "not a header-safe primitive",
-        note = "headers carry primitives only; `number` (f32/f64) and structured types are not permitted"
+        note = "headers carry primitives only; `number` (f32/f64), 128-bit integers (beyond JSON's) and structured types are not permitted"
     )]
     pub trait HeaderParam: sealed::Sealed {}
 
@@ -183,7 +197,9 @@ pub mod __macro_support {
             impl HeaderParam for $ty {}
         )*};
     }
-    header_params!(String, bool, i8, i16, i32, i64, u8, u16, u32);
+    header_params!(
+        String, bool, i8, i16, i32, i64, isize, u8, u16, u32, u64, usize
+    );
     impl<T: HeaderParam> sealed::Sealed for Option<T> {}
     impl<T: HeaderParam> HeaderParam for Option<T> {}
 
@@ -202,6 +218,10 @@ pub mod __macro_support {
     /// strict client reads as "not a primitive" and drops the tool over. The
     /// parameter is already optional by being absent from `required`, so the
     /// `null` is removed and the property is typed as the plain primitive.
+    ///
+    /// An integer is bounded to the range a header can carry: "Integer values
+    /// MUST be within the safe range for JavaScript (−2^53+1 to 2^53−1)", so
+    /// a `u64` or `i64` parameter states the limit its schema must hold to.
     pub fn mark_mcp_header(schema: &mut Value, property: &str) {
         if let Some(prop) = schema
             .get_mut("properties")
@@ -222,6 +242,13 @@ pub mod __macro_support {
                 ),
                 "#[mcp_header] on a non-primitive property: {prop:?}"
             );
+            if prop.get("type").and_then(Value::as_str) == Some("integer") {
+                const SAFE: i64 = (1 << 53) - 1;
+                let min = prop.get("minimum").and_then(Value::as_i64).unwrap_or(-SAFE);
+                let max = prop.get("maximum").and_then(Value::as_i64).unwrap_or(SAFE);
+                prop.insert("minimum".into(), Value::from(min.max(-SAFE)));
+                prop.insert("maximum".into(), Value::from(max.min(SAFE)));
+            }
             prop.insert("x-mcp-header".into(), Value::String(property.to_owned()));
         }
     }
