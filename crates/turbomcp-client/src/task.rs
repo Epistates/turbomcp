@@ -116,9 +116,14 @@ impl TaskInfo {
             result: value.get("result").cloned(),
             error: value
                 .get("error")
-                .map(|e| serde_json::from_value(e.clone()))
+                .map(|e| crate::error::decode(e.clone()))
                 .transpose()
-                .map_err(|e| ClientError::Decode(format!("a task's error: {e}")))?,
+                .map_err(|e| match e {
+                    ClientError::Decode(why) => {
+                        ClientError::Decode(format!("a task's error: {why}"))
+                    }
+                    other => other,
+                })?,
         })
     }
 }

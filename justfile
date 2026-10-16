@@ -144,7 +144,7 @@ refresh-locks:
   #!/usr/bin/env bash
   set -euo pipefail
   for dir in crates/turbomcp-conformance crates/turbomcp-interop fuzz \
-             crates/turbomcp/tests/renamed_dependency; do
+             crates/turbomcp/tests/renamed_dependency crates/turbomcp-protocol/tests/arbitrary_precision; do
     echo "Refreshing ${dir}/Cargo.lock"
     (cd "${dir}" && cargo update)
   done
@@ -216,13 +216,14 @@ lock-check:
     exit 1
   fi
   echo "Cargo.lock is in sync."
-  fixture=crates/turbomcp/tests/renamed_dependency
-  if ! (cd "${fixture}" && cargo metadata --locked --format-version 1 >/dev/null 2>&1); then
-    echo >&2
-    echo "${fixture}/Cargo.lock is out of date, and CI checks it with --locked." >&2
-    echo "Run 'just refresh-locks' and commit the lockfile." >&2
-    exit 1
-  fi
+  for fixture in crates/turbomcp/tests/renamed_dependency crates/turbomcp-protocol/tests/arbitrary_precision; do
+    if ! (cd "${fixture}" && cargo metadata --locked --format-version 1 >/dev/null 2>&1); then
+      echo >&2
+      echo "${fixture}/Cargo.lock is out of date, and CI checks it with --locked." >&2
+      echo "Run 'just refresh-locks' and commit the lockfile." >&2
+      exit 1
+    fi
+  done
   echo "${fixture}/Cargo.lock is in sync."
   for dir in crates/turbomcp-conformance crates/turbomcp-interop fuzz; do
     if (cd "${dir}" && cargo metadata --locked --format-version 1 >/dev/null 2>&1); then
@@ -250,6 +251,10 @@ excluded-check:
   (cd fuzz && cargo check --all-targets --quiet)
   echo "check: crates/turbomcp/tests/renamed_dependency"
   cargo check --locked --quiet --manifest-path crates/turbomcp/tests/renamed_dependency/Cargo.toml
+  # Its own workspace, so `arbitrary_precision` stays out of every other build.
+  echo "test: crates/turbomcp-protocol/tests/arbitrary_precision"
+  cargo clippy --locked --quiet --all-targets --manifest-path crates/turbomcp-protocol/tests/arbitrary_precision/Cargo.toml -- -D warnings
+  cargo test --locked --quiet --manifest-path crates/turbomcp-protocol/tests/arbitrary_precision/Cargo.toml
   stale=$(git diff --name-only -- crates/turbomcp-conformance/Cargo.lock \
     crates/turbomcp-interop/Cargo.lock fuzz/Cargo.lock)
   if [ -n "$stale" ]; then
@@ -372,6 +377,7 @@ test:
   cd crates/turbomcp-conformance && cargo fmt -- --check
   cd crates/turbomcp-interop && cargo fmt -- --check
   cd fuzz && cargo fmt -- --check
+  cd crates/turbomcp-protocol/tests/arbitrary_precision && cargo fmt -- --check
   echo "Step 6/9: Verifying wasm portability (no_std foundation, default + no-default)..."
   cargo build -p turbomcp-core -p turbomcp-protocol --target wasm32-unknown-unknown
   cargo build -p turbomcp-core -p turbomcp-protocol --no-default-features --target wasm32-unknown-unknown
@@ -501,6 +507,7 @@ fmt:
   cd crates/turbomcp-conformance && cargo fmt
   cd crates/turbomcp-interop && cargo fmt
   cd fuzz && cargo fmt
+  cd crates/turbomcp-protocol/tests/arbitrary_precision && cargo fmt
   @echo "Code formatting completed"
 
 # Check code formatting without making changes
@@ -511,6 +518,7 @@ fmt-check:
   cd crates/turbomcp-conformance && cargo fmt -- --check
   cd crates/turbomcp-interop && cargo fmt -- --check
   cd fuzz && cargo fmt -- --check
+  cd crates/turbomcp-protocol/tests/arbitrary_precision && cargo fmt -- --check
 
 # Run clippy linter
 [group: 'quality']

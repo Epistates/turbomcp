@@ -1920,9 +1920,9 @@ impl Client {
             )
             .await?;
         let accepted = match ack.get("notifications") {
-            Some(filter) => serde_json::from_value::<v0728::SubscriptionFilter>(filter.clone())
-                .map_err(|e| ClientError::Decode(e.to_string()))?
-                .into(),
+            Some(filter) => {
+                crate::error::decode::<v0728::SubscriptionFilter>(filter.clone())?.into()
+            }
             None => neutral::SubscriptionFilter::default(),
         };
         Ok(Subscription::new(id, accepted, route, self.conn.clone()))
@@ -2671,13 +2671,9 @@ impl Client {
         L: DeserializeOwned + Into<N>,
     {
         if self.version == ProtocolVersion::V2026_07_28 {
-            serde_json::from_value::<D>(value)
-                .map(Into::into)
-                .map_err(|e| ClientError::Decode(e.to_string()))
+            crate::error::decode::<D>(value).map(Into::into)
         } else {
-            serde_json::from_value::<L>(value)
-                .map(Into::into)
-                .map_err(|e| ClientError::Decode(e.to_string()))
+            crate::error::decode::<L>(value).map(Into::into)
         }
     }
 }

@@ -743,6 +743,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The wire types decode floats with `serde_json/arbitrary_precision` on.
+  Cargo unifies features, so any crate in a build can switch it on, and then
+  a decimal inside an untagged enum or a `flatten` (an annotation
+  `priority: 0.5`, a progress value, a sampling temperature, an elicited
+  `3.5`) failed the whole message when decoded from text. Every float field,
+  and `ttlMs`, now reads through `serde_json::Number`; a separate fixture
+  crate runs the cases with the feature on.
+- A present `null` is not an absent field for the values that may be any
+  JSON: `structuredContent` (`2026-07-28`) and an error's `data` decode as
+  `Some(Value::Null)` and re-encode as `null`. A tool whose `outputSchema`
+  allows `null` and returned it failed the client's output check with
+  "returned no structuredContent".
+- A result that fails to decode says where: `content[1]: data did not match
+  any variant of untagged enum ContentBlock`, not the message alone.
 - The generated wire types' docs render. Every paragraph after the first of
   a multi-line field doc was indented and showed on docs.rs as a Rust code
   block; TSDoc `{@link CallToolRequesttools/call}` markup (upstream's

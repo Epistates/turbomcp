@@ -20,6 +20,8 @@ turbomcp-protocol = { workspace = true }
 turbomcp-service = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Names where a result failed to decode (`content[1]: …`).
+serde_path_to_error = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }

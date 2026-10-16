@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 mod docs;
+mod lenient;
 mod normalize;
 
 use anyhow::{Context, Result, bail};
@@ -70,11 +71,9 @@ fn main() -> Result<()> {
     let no_std_prelude = "#[cfg(not(feature = \"std\"))]\n\
 use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, vec, vec::Vec};\n";
     let body = format!("{intro}\n{no_std_prelude}\n{}", type_space.to_stream());
-    let file = syn::parse_file(&body).context("parsing generated tokens as a Rust file")?;
-    let pretty = docs::scrub(
-        &lenient_fields(&to_no_std(&prettyplease::unparse(&file))),
-        &defs,
-    );
+    let mut file = syn::parse_file(&body).context("parsing generated tokens as a Rust file")?;
+    let lenient_fields = lenient::apply(&mut file);
+    let pretty = docs::scrub(&to_no_std(&prettyplease::unparse(&file)), &defs);
     // typify's shape for an `anyOf` it cannot discriminate: a struct with one
     // flattened `Option` per member, all filled by whatever fits. See
     // `normalize::drop_undiscriminated_unions`.
@@ -102,23 +101,10 @@ use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, v
         .with_context(|| format!("writing {output}"))?;
 
     eprintln!(
-        "turbomcp-codegen: wrote {output} ({} lines) from {input}\n  {report:?}",
+        "turbomcp-codegen: wrote {output} ({} lines) from {input}\n  {report:?}\n  lenient fields: {lenient_fields}",
         pretty.lines().count()
     );
     Ok(())
-}
-
-/// Point the fields the spec tells a receiver to tolerate at the protocol
-/// crate's lenient decoders (`turbomcp_protocol::lenient`). typify has no
-/// per-field `deserialize_with`, so this matches the exact attribute it emits
-/// for each and adds one.
-///
-/// - `ttlMs`: a negative value is `0` and `5000.0` is `5000` (caching).
-fn lenient_fields(src: &str) -> String {
-    src.replace(
-        "#[serde(rename = \"ttlMs\", default)]",
-        "#[serde(rename = \"ttlMs\", default, deserialize_with = \"crate::lenient::ttl_ms\")]",
-    )
 }
 
 /// Rewrite typify's `::std::` absolute paths to `::alloc::`/`::core::` so the

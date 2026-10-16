@@ -65,6 +65,12 @@ jobs:
       env:
         CARGO_TARGET_DIR: target
 
+    # Its own workspace: `arbitrary_precision` changes serde_json for a whole build.
+    - name: Wire types under serde_json/arbitrary_precision
+      run: cargo test --locked --manifest-path crates/turbomcp-protocol/tests/arbitrary_precision/Cargo.toml
+      env:
+        CARGO_TARGET_DIR: target
+
     # Same --all-features as clippy so cargo reuses compiled artifacts.
     - name: Unit tests
       run: cargo test --workspace --all-features --lib --bins

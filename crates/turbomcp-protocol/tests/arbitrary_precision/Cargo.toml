@@ -1,0 +1,14 @@
+[package]
+name = "arbitrary-precision-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace: `arbitrary_precision` changes serde_json for every crate
+# in a build, so it must not unify into the main workspace's tests.
+[workspace]
+
+[dependencies]
+turbomcp-protocol = { path = "../.." }
+serde = "1"
+serde_json = { version = "1", features = ["arbitrary_precision"] }

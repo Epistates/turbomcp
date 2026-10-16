@@ -6,10 +6,28 @@
 //! These are distinct enough to branch on, so they're separate variants rather
 //! than one stringly error.
 
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use turbomcp_core::{JsonRpcError, McpError, ProtocolVersion};
 
 /// The result of a client RPC.
 pub type ClientResult<T> = Result<T, ClientError>;
+
+/// Decode `value` as `T`, naming where it failed. serde_json's own message has
+/// no location for a value already parsed, and an untagged enum's has no field
+/// either, so a bad second content block read "data did not match any variant
+/// of untagged enum ContentBlock"; this reads `content[1]: …`.
+pub(crate) fn decode<T: DeserializeOwned>(value: Value) -> ClientResult<T> {
+    serde_path_to_error::deserialize(value).map_err(|e| {
+        let path = e.path().to_string();
+        let inner = e.into_inner();
+        ClientError::Decode(if path == "." {
+            inner.to_string()
+        } else {
+            format!("{path}: {inner}")
+        })
+    })
+}
 
 /// A failure issuing or completing a client request.
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +134,22 @@ impl ClientError {
 mod tests {
     use super::*;
     use turbomcp_core::codes;
+    use turbomcp_protocol::v2026_07_28::types as v0728;
+
+    #[test]
+    fn a_decode_failure_names_where_it_failed() {
+        let result = serde_json::json!({
+            "content": [
+                { "type": "text", "text": "fine" },
+                { "type": "image", "data": "AAAA" }
+            ],
+            "resultType": "complete"
+        });
+        let Err(ClientError::Decode(why)) = decode::<v0728::CallToolResult>(result) else {
+            panic!("an image block without a mimeType decoded");
+        };
+        assert!(why.starts_with("content[1]: "), "{why}");
+    }
 
     /// A gateway relaying a `2026-07-28` server's refusal to a `2025-11-25`
     /// client sends that client's code for it.

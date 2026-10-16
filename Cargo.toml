@@ -129,6 +129,7 @@ chacha20poly1305 = "0.10"
 zeroize = "1.8"
 # RFC 8785 canonical JSON, for the MRTR request binding.
 serde_json_canonicalizer = "0.3"
+serde_path_to_error = "0.1.20"
 # OS randomness for keys (uuid already links it).
 getrandom = "0.4"
 base64 = "0.23.1"

@@ -5760,6 +5760,21 @@ mod tests {
     }
 
     #[test]
+    fn draft_structured_content_null_decodes_as_present() {
+        let decode = |v: Value| -> CallToolResult {
+            serde_json::from_value::<v0728::CallToolResult>(v)
+                .unwrap()
+                .into()
+        };
+        let null = decode(json!({ "content": [], "structuredContent": null }));
+        assert_eq!(null.structured_content, Some(Value::Null));
+        let wire = serde_json::to_value(v0728::CallToolResult::from(null)).unwrap();
+        assert!(wire.get("structuredContent").is_some_and(Value::is_null));
+        let absent = decode(json!({ "content": [] }));
+        assert_eq!(absent.structured_content, None);
+    }
+
+    #[test]
     fn draft_structured_content_keeps_non_object_values() {
         // The draft (unlike legacy) allows any JSON value here — a future
         // narrowing to objects must fail this, mirroring the legacy-drop test.

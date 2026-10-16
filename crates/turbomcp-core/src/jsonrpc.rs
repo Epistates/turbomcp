@@ -106,9 +106,22 @@ pub struct JsonRpcError {
     pub code: i32,
     /// Human-readable message.
     pub message: String,
-    /// Optional structured error data.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Optional structured error data. A present `null` is `Some(Value::Null)`:
+    /// JSON-RPC allows any value here, and a forwarded error keeps what it said.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
     pub data: Option<Value>,
+}
+
+/// Any JSON value, keeping a present `null` distinct from an absent field
+/// (which the field's `default` makes `None`). The generated wire types use
+/// the same rule (`turbomcp_protocol`'s `lenient::present`).
+#[allow(clippy::unnecessary_wraps)] // the `deserialize_with` signature
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    <Value as serde::Deserialize>::deserialize(deserializer).map(Some)
 }
 
 /// A JSON-RPC response: an `id` plus exactly one of `result` / `error`.
@@ -397,6 +410,19 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
     use serde_json::json;
+
+    #[test]
+    fn error_data_keeps_null_distinct_from_absent() {
+        let code = crate::error::codes::INTERNAL_ERROR;
+        let decode = |v: Value| serde_json::from_value::<JsonRpcError>(v).unwrap();
+        let null = decode(json!({ "code": code, "message": "x", "data": null }));
+        assert_eq!(null.data, Some(Value::Null));
+        assert_eq!(serde_json::to_value(&null).unwrap()["data"], Value::Null);
+        assert!(serde_json::to_value(&null).unwrap().get("data").is_some());
+        let absent = decode(json!({ "code": code, "message": "x" }));
+        assert_eq!(absent.data, None);
+        assert!(serde_json::to_value(&absent).unwrap().get("data").is_none());
+    }
 
     #[test]
     fn untagged_discriminates_request_notification_response() {

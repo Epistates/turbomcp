@@ -3797,6 +3797,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
@@ -3814,6 +3815,7 @@ version = "4.0.0-alpha.5"
 dependencies = [
  "anyhow",
  "prettyplease",
+ "quote",
  "schemars 0.8.22",
  "serde_json",
  "syn 3.0.6",

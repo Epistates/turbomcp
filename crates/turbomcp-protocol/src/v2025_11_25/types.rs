@@ -41,6 +41,7 @@ pub struct Annotations {
     /// effectively required, while 0 means "least important," and indicates that
     /// the data is entirely optional.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub priority: ::core::option::Option<f64>,
 }
 ///Audio provided to or from an LLM.
@@ -1272,6 +1273,7 @@ pub struct CreateMessageRequestParams {
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub task: ::core::option::Option<TaskMetadata>,
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub temperature: ::core::option::Option<f64>,
     /// Controls how the model uses tools.
     /// The client MUST return an error if this field is provided but ClientCapabilities.sampling.tools is not declared.
@@ -1890,7 +1892,7 @@ impl ::core::convert::From<ElicitResultContentValueVariant1> for ElicitResultCon
 pub enum ElicitResultContentValueVariant1 {
     Boolean(bool),
     Integer(i64),
-    Number(f64),
+    Number(#[serde(deserialize_with = "crate::lenient::f64")] f64),
     String(::alloc::string::String),
 }
 impl ::core::fmt::Display for ElicitResultContentValueVariant1 {
@@ -2139,6 +2141,7 @@ pub struct Error {
     pub code: i64,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::present")]
     pub data: ::core::option::Option<::serde_json::Value>,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
@@ -4357,6 +4360,7 @@ pub struct ModelPreferences {
         rename = "costPriority",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub cost_priority: ::core::option::Option<f64>,
     /// Optional hints to use for model selection.
     ///
@@ -4374,6 +4378,7 @@ pub struct ModelPreferences {
         rename = "intelligencePriority",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub intelligence_priority: ::core::option::Option<f64>,
     /// How much to prioritize sampling speed (latency) when selecting a model. A
     /// value of 0 means speed is not important, while a value of 1 means speed is
@@ -4382,6 +4387,7 @@ pub struct ModelPreferences {
         rename = "speedPriority",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub speed_priority: ::core::option::Option<f64>,
 }
 ///`Notification`
@@ -4406,12 +4412,15 @@ pub struct NotificationParams {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct NumberSchema {
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub default: ::core::option::Option<f64>,
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub maximum: ::core::option::Option<f64>,
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub minimum: ::core::option::Option<f64>,
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
@@ -4786,12 +4795,14 @@ pub struct ProgressNotificationParams {
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
     ///The progress thus far. This should increase every time progress is made, even if the total is unknown.
+    #[serde(deserialize_with = "crate::lenient::f64")]
     pub progress: f64,
     ///The progress token which was given in the initial request, used to associate this notification with the request that is proceeding.
     #[serde(rename = "progressToken")]
     pub progress_token: ProgressToken,
     ///Total number of items to process (or total progress required), if known.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_f64")]
     pub total: ::core::option::Option<f64>,
 }
 ///A progress token, used to associate progress notifications with the original request.

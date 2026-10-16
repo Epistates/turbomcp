@@ -22,7 +22,8 @@ schemars = "0.8"
 # preserve_order keeps generated output stable/reviewable across runs.
 serde_json = { version = "1", features = ["preserve_order"] }
 prettyplease = "0.3"
-syn = { version = "3", features = ["full", "parsing"] }
+syn = { version = "3", features = ["full", "parsing", "visit-mut"] }
+quote = "1"
 anyhow = { workspace = true }
 
 [lints]
