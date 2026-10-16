@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
 use turbomcp_client::{Client, ClientBuilder, ClientError};
 use turbomcp_core::codec::SerdeJsonCodec;
 use turbomcp_service::io::LineTransport;
+use turbomcp_wire_check::CheckedTransport;
 
 /// Spawn a line-delimited scripted server (see `negotiation_and_recovery.rs`).
 fn spawn_scripted<F>(server_io: tokio::io::DuplexStream, mut respond: F)
@@ -77,7 +78,11 @@ where
         // The response cache keys on the cursor, but these tests want every
         // page to reach the scripted server verbatim.
         .with_response_cache(false)
-        .connect(LineTransport::new(BufReader::new(rd), wr, SerdeJsonCodec))
+        .connect(CheckedTransport::new(LineTransport::new(
+            BufReader::new(rd),
+            wr,
+            SerdeJsonCodec,
+        )))
         .await
         .expect("handshake")
 }

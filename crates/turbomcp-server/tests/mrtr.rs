@@ -14,6 +14,7 @@ use turbomcp_server::{
     ListResourcesContext, ListToolsContext, McpServerCore, MethodRouter, ReadResourceContext,
     VersionDispatcher, WithPrompts, WithResources, WithTools,
 };
+use turbomcp_wire_check::Checked;
 
 /// Every MRTR-capable handler elicits a `confirm` key before answering; the
 /// tool additionally stores resume state and proves the retry sees it.
@@ -159,8 +160,8 @@ impl WithResources for Asker {
     }
 }
 
-fn dispatcher() -> VersionDispatcher<Asker> {
-    dispatcher_with(turbomcp_server::ServerConfig::new())
+fn dispatcher() -> Checked<VersionDispatcher<Asker>> {
+    Checked::new(dispatcher_with(turbomcp_server::ServerConfig::new()))
 }
 
 fn dispatcher_with(config: turbomcp_server::ServerConfig) -> VersionDispatcher<Asker> {
@@ -186,8 +187,10 @@ fn meta() -> Value {
 /// A dispatcher past the `2025-11-25` handshake gate. Legacy requests carry a
 /// session id, which only the adapter mints — the dispatcher rejects a legacy
 /// capability request without one before it ever reaches dispatch.
-async fn legacy_dispatcher() -> LegacySessionAdapter<VersionDispatcher<Asker>> {
-    let mut svc = LegacySessionAdapter::new(dispatcher());
+async fn legacy_dispatcher() -> Checked<LegacySessionAdapter<VersionDispatcher<Asker>>> {
+    let mut svc = Checked::new(LegacySessionAdapter::new(dispatcher_with(
+        turbomcp_server::ServerConfig::new(),
+    )));
     let out = call(
         &mut svc,
         JsonRpcRequest::new(

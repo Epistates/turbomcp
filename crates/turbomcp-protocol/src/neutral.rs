@@ -3529,7 +3529,7 @@ fn outgoing_meta(mut meta: Map<String, Value>) -> Map<String, Value> {
 /// [`outgoing_meta`] in the `2026-07-28` result shape.
 fn result_meta(meta: Map<String, Value>) -> Option<v0728::ResultMetaObject> {
     let meta = outgoing_meta(meta);
-    (!meta.is_empty()).then(|| v0728::ResultMetaObject {
+    (!meta.is_empty()).then_some(v0728::ResultMetaObject {
         io_modelcontextprotocol_server_info: None,
         extra: meta,
     })

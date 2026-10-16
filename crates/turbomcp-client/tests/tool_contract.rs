@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, split};
 use turbomcp_client::{Client, ClientBuilder, ClientError, ConnectMode};
 use turbomcp_core::codec::DefaultCodec;
 use turbomcp_service::io::LineTransport;
+use turbomcp_wire_check::CheckedTransport;
 
 /// Answer each request with `respond(method, frame)`'s `{"result": …}` body;
 /// notifications are consumed silently.
@@ -50,11 +51,11 @@ where
     ClientBuilder::new("contract", "1.0.0")
         .with_connect_mode(mode)
         .with_response_cache(false)
-        .connect(LineTransport::new(
+        .connect(CheckedTransport::new(LineTransport::new(
             BufReader::new(rd),
             wr,
             DefaultCodec::default(),
-        ))
+        )))
         .await
         .expect("handshake")
 }

@@ -17,6 +17,7 @@ use turbomcp_server::{
     WithResources, WithTools,
 };
 use turbomcp_service::io::LineTransport;
+use turbomcp_wire_check::{Checked, CheckedTransport};
 
 #[derive(Clone)]
 struct Kitchen;
@@ -139,11 +140,15 @@ async fn connect(mode: ConnectMode) -> Client {
     let service = LegacySessionAdapter::new(VersionDispatcher::new(Kitchen, router));
     let server_transport = LineTransport::new(BufReader::new(s_rd), s_wr, DefaultCodec::default());
     tokio::spawn(async move {
-        let _ = turbomcp_service::serve(server_transport, service).await;
+        let _ = turbomcp_service::serve(server_transport, Checked::new(service)).await;
     });
 
     let (c_rd, c_wr) = split(client_io);
-    let transport = LineTransport::new(BufReader::new(c_rd), c_wr, DefaultCodec::default());
+    let transport = CheckedTransport::new(LineTransport::new(
+        BufReader::new(c_rd),
+        c_wr,
+        DefaultCodec::default(),
+    ));
     ClientBuilder::new("typed-surface", "1.0.0")
         .with_connect_mode(mode)
         .connect(transport)

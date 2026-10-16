@@ -3806,6 +3806,7 @@ dependencies = [
  "turbomcp-protocol",
  "turbomcp-server",
  "turbomcp-service",
+ "turbomcp-wire-check",
  "url",
 ]
 
@@ -3927,6 +3928,7 @@ dependencies = [
  "turbomcp-core",
  "turbomcp-protocol",
  "turbomcp-service",
+ "turbomcp-wire-check",
  "uuid",
 ]
 
@@ -4011,6 +4013,18 @@ dependencies = [
  "url",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "turbomcp-wire-check"
+version = "4.0.0-alpha.5"
+dependencies = [
+ "jsonschema",
+ "parking_lot",
+ "serde_json",
+ "tower",
+ "turbomcp-core",
+ "turbomcp-service",
 ]
 
 [[package]]

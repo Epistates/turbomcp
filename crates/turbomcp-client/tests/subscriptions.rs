@@ -7,6 +7,7 @@
 //! the waiting request or the call would sit until its timeout.
 
 use std::sync::{Arc, Mutex};
+use turbomcp_wire_check::CheckedTransport;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -147,7 +148,11 @@ async fn finish(
             .with_notifications(shared);
     }
     builder
-        .connect(LineTransport::new(BufReader::new(rd), wr, SerdeJsonCodec))
+        .connect(CheckedTransport::new(LineTransport::new(
+            BufReader::new(rd),
+            wr,
+            SerdeJsonCodec,
+        )))
         .await
         .expect("handshake")
 }

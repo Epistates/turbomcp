@@ -13,8 +13,9 @@
 //! are vendored from the same upstream tag as the generated types by
 //! `just codegen`, and drift-checked with them.
 
+mod common;
+
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -24,81 +25,16 @@ use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as v1125;
 use turbomcp_protocol::v2026_07_28::types as v0728;
 
-fn fixtures(rev: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/schema/{rev}"))
-}
+use common::{Oracle, changes, fixtures};
 
-struct Oracle {
-    rev: &'static str,
-    root: Value,
-    defs_key: &'static str,
-}
-
-impl Oracle {
-    fn load(rev: &'static str) -> Self {
-        let path = fixtures(rev).join("schema.json");
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("{}: {e} (run `just codegen`)", path.display()));
-        let root: Value = serde_json::from_str(&raw).expect("schema.json is JSON");
-        let defs_key = if root.get("$defs").is_some() {
-            "$defs"
-        } else {
-            "definitions"
-        };
-        Self {
-            rev,
-            root,
-            defs_key,
-        }
-    }
-
-    /// Validate `instance` against the named definition.
-    fn validate(&self, def: &str, instance: &Value) {
-        assert!(
-            self.root[self.defs_key].get(def).is_some(),
-            "{}: no definition named {def}",
-            self.rev
-        );
-        let mut schema = self.root.clone();
-        schema["$ref"] = Value::String(format!("#/{}/{def}", self.defs_key));
-        let validator = jsonschema::validator_for(&schema)
-            .unwrap_or_else(|e| panic!("{}: compiling {def}: {e}", self.rev));
-        let errors: Vec<String> = validator
-            .iter_errors(instance)
-            .map(|e| format!("{} at {}", e, e.instance_path()))
-            .collect();
-        assert!(
-            errors.is_empty(),
-            "{} {def} violates the schema:\n  {}\ninstance: {instance:#}",
-            self.rev,
-            errors.join("\n  ")
-        );
-    }
-
-    /// `doc` without the top-level keys `def` neither declares nor opens up
-    /// with `additionalProperties`. A typed struct drops those, and at least one
-    /// upstream example (`ListRootsRequest`, with an `id`) carries one.
-    fn declared_only(&self, def: &str, doc: &Value) -> Value {
-        let schema = &self.root[self.defs_key][def];
-        let (Some(props), Some(fields)) = (schema["properties"].as_object(), doc.as_object())
-        else {
-            return doc.clone();
-        };
-        if schema.get("additionalProperties").is_some() {
-            return doc.clone();
-        }
-        Value::Object(
-            fields
-                .iter()
-                .filter(|(k, _)| props.contains_key(*k))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        )
-    }
-
+trait Wire {
     /// Serialize, validate, decode from the bytes, and check the decode
     /// re-serializes to the same document. Returns the decoded value and the
     /// JSON that went over the wire.
+    fn wire<W: Serialize + DeserializeOwned>(&self, def: &str, wire: &W) -> (W, Value);
+}
+
+impl Wire for Oracle {
     fn wire<W: Serialize + DeserializeOwned>(&self, def: &str, wire: &W) -> (W, Value) {
         let bytes = serde_json::to_vec(wire).expect("serialize");
         let sent: Value = serde_json::from_slice(&bytes).expect("bytes are JSON");
@@ -353,6 +289,8 @@ fn every_2026_07_28_example_decodes_and_round_trips() {
     let oracle = Oracle::load("2026-07-28");
     let examples = fixtures("2026-07-28").join("examples");
     let mut seen = BTreeMap::new();
+    let mut matched = 0;
+    let mut unexpected = Vec::new();
 
     macro_rules! replay {
         ($(($dir:literal, $ty:ident)),* $(,)?) => {$(
@@ -368,13 +306,21 @@ fn every_2026_07_28_example_decodes_and_round_trips() {
                 oracle.validate($dir, &doc);
                 let typed: v0728::$ty = serde_json::from_value(doc.clone())
                     .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
-                let back = without_decode_defaults(serde_json::to_value(&typed).unwrap(), &doc);
-                let expected = oracle.declared_only($dir, &doc);
-                assert!(
-                    same_json(&back, &expected),
-                    "{} changed across a typed round trip\n  sent: {expected}\n  back: {back}",
-                    file.display()
-                );
+                let back = serde_json::to_value(&typed).unwrap();
+                oracle.validate($dir, &back);
+                let name = file.file_name().unwrap().to_str().unwrap();
+                let expected: Vec<&str> = EXPECTED_CHANGES
+                    .iter()
+                    .filter(|(dir, example, _)| *dir == $dir && *example == name)
+                    .map(|(_, _, change)| *change)
+                    .collect();
+                let actual = changes(&doc, &back);
+                for change in &actual {
+                    if !expected.contains(&change.as_str()) {
+                        unexpected.push(format!("(\"{}\", \"{name}\", \"{change}\")", $dir));
+                    }
+                }
+                matched += expected.iter().filter(|c| actual.iter().any(|a| a == *c)).count();
             }
             seen.insert($dir, files.len());
         )*};
@@ -510,53 +456,38 @@ fn every_2026_07_28_example_decodes_and_round_trips() {
         .filter(|entry| entry.as_ref().unwrap().path().is_dir())
         .count();
     assert_eq!(seen.len(), on_disk, "an examples directory is not replayed");
+    assert!(
+        unexpected.is_empty(),
+        "typed round trips changed these examples:\n{}",
+        unexpected.join("\n")
+    );
+    assert_eq!(
+        matched,
+        EXPECTED_CHANGES.len(),
+        "an expected change no longer happens"
+    );
 }
 
-/// JSON equality: `50` and `50.0` are the same number, which `Value`'s own
-/// `PartialEq` does not agree with once a field is typed `f64`.
-fn same_json(a: &Value, b: &Value) -> bool {
-    match (a, b) {
-        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
-        (Value::Array(x), Value::Array(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same_json(x, y))
-        }
-        (Value::Object(x), Value::Object(y)) => {
-            x.len() == y.len()
-                && x.iter()
-                    .all(|(k, v)| y.get(k).is_some_and(|w| same_json(v, w)))
-        }
-        _ => a == b,
-    }
-}
-
-/// `back` without the keys decoding filled in: those the sender left out
-/// whose value is the documented default (`resultType: "complete"`,
-/// `ttlMs: 0`, `cacheScope: "private"`).
-fn without_decode_defaults(mut back: Value, sent: &Value) -> Value {
-    let defaults = [
-        ("resultType", json!("complete")),
-        ("ttlMs", json!(0)),
-        ("cacheScope", json!("private")),
-    ];
-    match (&mut back, sent) {
-        (Value::Object(fields), Value::Object(original)) => {
-            for (key, default) in &defaults {
-                if !original.contains_key(*key) && fields.get(*key) == Some(default) {
-                    fields.remove(*key);
-                }
-            }
-            for (key, value) in fields.iter_mut() {
-                if let Some(original) = original.get(key) {
-                    *value = without_decode_defaults(value.take(), original);
-                }
-            }
-        }
-        (Value::Array(items), Value::Array(original)) => {
-            for (item, original) in items.iter_mut().zip(original) {
-                *item = without_decode_defaults(item.take(), original);
-            }
-        }
-        _ => {}
-    }
-    back
-}
+/// Every difference between an upstream example and its typed round trip,
+/// as `(definition, example file, change)`. Nothing is normalized away:
+/// a change not listed here fails, and so does a listed one that stopped
+/// happening.
+const EXPECTED_CHANGES: &[(&str, &str, &str)] = &[
+    // The example carries a JSON-RPC `id`, but in `2026-07-28` a
+    // `roots/list` request is an MRTR input request inside a result, which
+    // has none; the definition does not declare one.
+    ("ListRootsRequest", "list-roots-request.json", "-/id"),
+    // An older server's result without caching hints. The spec tells a client
+    // to assume `ttlMs: 0`, and `"private"` is the reading that never shares a
+    // response across authorization contexts; decoding writes both down.
+    (
+        "ReadResourceResultResponse",
+        "read-resource-result-response.json",
+        "+/result/cacheScope = \"private\"",
+    ),
+    (
+        "ReadResourceResultResponse",
+        "read-resource-result-response.json",
+        "+/result/ttlMs = 0",
+    ),
+];

@@ -3,11 +3,13 @@
 //! so this walks the generated syntax tree and adds one, keyed on the field's
 //! type (and, for `ttlMs`, its wire name).
 //!
-//! - `f64` / `Option<f64>`: read through `serde_json::Number`. With
-//!   `serde_json/arbitrary_precision` on anywhere in a build (feature
-//!   unification), serde replays a decimal it buffered for an untagged enum
-//!   or a `flatten` as serde_json's private number map, which a plain `f64`
-//!   rejects: `annotations.priority: 0.5` failed the whole content block.
+//! - `f64` / `Option<f64>`: read through `serde_json::Number`, and written
+//!   as an integer when whole. With `serde_json/arbitrary_precision` on
+//!   anywhere in a build (feature unification), serde replays a decimal it
+//!   buffered for an untagged enum or a `flatten` as serde_json's private
+//!   number map, which a plain `f64` rejects: `annotations.priority: 0.5`
+//!   failed the whole content block. And a progress of `50` was re-sent as
+//!   `50.0`.
 //! - `Option<serde_json::Value>`: present `null` is `Some(Null)`, not absent.
 //!   `structuredContent` and `error.data` may be any JSON value, `null`
 //!   included, and a proxy must re-send what it was sent.
@@ -28,17 +30,18 @@ struct Lenient(usize);
 
 impl VisitMut for Lenient {
     fn visit_field_mut(&mut self, field: &mut Field) {
-        if let Some(decoder) = decoder(field) {
-            let path = format!("crate::lenient::{decoder}");
+        if let Some((key, name)) = codec(field) {
+            let path = format!("crate::lenient::{name}");
+            let key = quote::format_ident!("{key}");
             // A decoder replaces serde's "absent `Option` is `None`" rule, so
             // an optional field needs `default` back.
             let optional = compact(&field.ty).starts_with("::std::option::Option<");
             field
                 .attrs
                 .push(if optional && !serde_has(field, "default") {
-                    parse_quote!(#[serde(default, deserialize_with = #path)])
+                    parse_quote!(#[serde(default, #key = #path)])
                 } else {
-                    parse_quote!(#[serde(deserialize_with = #path)])
+                    parse_quote!(#[serde(#key = #path)])
                 });
             self.0 += 1;
         }
@@ -46,12 +49,14 @@ impl VisitMut for Lenient {
     }
 }
 
-fn decoder(field: &Field) -> Option<&'static str> {
+/// The serde attribute (`with` for a module of both directions,
+/// `deserialize_with` for a decoder) and the `crate::lenient` item it names.
+fn codec(field: &Field) -> Option<(&'static str, &'static str)> {
     match compact(&field.ty).as_str() {
-        "f64" => Some("f64"),
-        "::std::option::Option<f64>" => Some("option_f64"),
-        "::std::option::Option<::serde_json::Value>" => Some("present"),
-        "u64" if renamed_to(field, "ttlMs") => Some("ttl_ms"),
+        "f64" => Some(("with", "float")),
+        "::std::option::Option<f64>" => Some(("with", "option_float")),
+        "::std::option::Option<::serde_json::Value>" => Some(("deserialize_with", "present")),
+        "u64" if renamed_to(field, "ttlMs") => Some(("deserialize_with", "ttl_ms")),
         _ => None,
     }
 }
@@ -126,18 +131,14 @@ mod tests {
             pub enum V { Number(f64), Integer(i64) }
             "#,
         );
-        assert!(out.contains(
-            "#[serde(deserialize_with = \"crate::lenient::f64\")]\n    pub progress: f64"
-        ));
-        assert!(
-            out.contains("#[serde(default, deserialize_with = \"crate::lenient::option_f64\")]")
-        );
+        assert!(out.contains("#[serde(with = \"crate::lenient::float\")]\n    pub progress: f64"));
+        assert!(out.contains("#[serde(default, with = \"crate::lenient::option_float\")]"));
         assert!(out.contains("#[serde(default, deserialize_with = \"crate::lenient::present\")]"));
         // `ttlMs` already has `default`; a second one would be a serde error.
         assert!(out.contains(
             "#[serde(rename = \"ttlMs\", default)]\n    #[serde(deserialize_with = \"crate::lenient::ttl_ms\")]"
         ));
-        assert!(out.contains("Number(#[serde(deserialize_with = \"crate::lenient::f64\")] f64)"));
-        assert_eq!(out.matches("deserialize_with").count(), 5);
+        assert!(out.contains("Number(#[serde(with = \"crate::lenient::float\")] f64)"));
+        assert_eq!(out.matches("crate::lenient::").count(), 5);
     }
 }

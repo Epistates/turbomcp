@@ -5,6 +5,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex};
+use turbomcp_wire_check::CheckedTransport;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -54,7 +55,11 @@ where
     });
     let (rd, wr) = split(client_io);
     let client = builder
-        .connect(LineTransport::new(BufReader::new(rd), wr, SerdeJsonCodec))
+        .connect(CheckedTransport::new(LineTransport::new(
+            BufReader::new(rd),
+            wr,
+            SerdeJsonCodec,
+        )))
         .await
         .expect("handshake");
     (client, answers)

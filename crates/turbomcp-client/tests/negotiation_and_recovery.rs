@@ -8,6 +8,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use turbomcp_wire_check::CheckedTransport;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -53,7 +54,7 @@ where
 
 fn transport_for(client_io: tokio::io::DuplexStream) -> impl turbomcp_service::Transport {
     let (rd, wr) = split(client_io);
-    LineTransport::new(BufReader::new(rd), wr, SerdeJsonCodec)
+    CheckedTransport::new(LineTransport::new(BufReader::new(rd), wr, SerdeJsonCodec))
 }
 
 fn discover_ok() -> Value {

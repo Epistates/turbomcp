@@ -1,7 +1,7 @@
 //! TurboMCP v4 codegen: MCP schema JSON → checked-in Rust wire types via typify.
 //!
 //! ```text
-//! turbomcp-codegen <input-schema.json> <output.rs> [label]
+//! turbomcp-codegen <input-schema.json> <output.rs> [label] [registry.rs]
 //! ```
 //!
 //! Runs the [`normalize`] passes over each revision's schema before typify, so
@@ -12,7 +12,9 @@
 
 mod docs;
 mod lenient;
+mod names;
 mod normalize;
+mod registry;
 
 use anyhow::{Context, Result, bail};
 use typify::{TypeSpace, TypeSpaceSettings};
@@ -20,7 +22,7 @@ use typify::{TypeSpace, TypeSpaceSettings};
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        bail!("usage: turbomcp-codegen <input-schema.json> <output.rs> [label]");
+        bail!("usage: turbomcp-codegen <input-schema.json> <output.rs> [label] [registry.rs]");
     }
     let input = &args[1];
     let output = &args[2];
@@ -99,6 +101,10 @@ use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, v
 
     std::fs::write(output, format!("{header}{pretty}"))
         .with_context(|| format!("writing {output}"))?;
+    if let Some(path) = args.get(4) {
+        std::fs::write(path, registry::render(&defs, &pretty, label))
+            .with_context(|| format!("writing {path}"))?;
+    }
 
     eprintln!(
         "turbomcp-codegen: wrote {output} ({} lines) from {input}\n  {report:?}\n  lenient fields: {lenient_fields}",

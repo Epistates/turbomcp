@@ -1,0 +1,21 @@
+[package]
+name = "turbomcp-wire-check"
+version = "4.0.0-alpha.5"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "Test support: validates the JSON-RPC TurboMCP emits against the official MCP schema. Not published."
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+publish = false
+
+[dependencies]
+turbomcp-core = { workspace = true, features = ["std"] }
+turbomcp-service = { workspace = true }
+jsonschema = { workspace = true }
+serde_json = { workspace = true }
+tower = { workspace = true }
+parking_lot = { workspace = true }
+
+[lints]
+workspace = true

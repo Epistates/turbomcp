@@ -41,6 +41,8 @@ regex = { workspace = true }
 percent-encoding = { workspace = true }
 
 [dev-dependencies]
+# Checks every response the server sends against the official schema.
+turbomcp-wire-check = { path = "../turbomcp-wire-check" }
 # `test-util` pauses the clock so the inline-bidi timeout is testable without
 # spending its two minutes of wall time.
 tokio = { workspace = true, features = [

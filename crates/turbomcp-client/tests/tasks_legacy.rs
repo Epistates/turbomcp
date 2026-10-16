@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use turbomcp_wire_check::{Checked, CheckedTransport};
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -153,11 +154,15 @@ async fn connect_real(tasks: Option<Arc<FastPoll>>) -> Client {
     let service = LegacySessionAdapter::new(dispatcher);
     let server_transport = LineTransport::new(BufReader::new(s_rd), s_wr, DefaultCodec::default());
     tokio::spawn(async move {
-        let _ = turbomcp_service::serve(server_transport, service).await;
+        let _ = turbomcp_service::serve(server_transport, Checked::new(service)).await;
     });
 
     let (c_rd, c_wr) = split(client_io);
-    let transport = LineTransport::new(BufReader::new(c_rd), c_wr, DefaultCodec::default());
+    let transport = CheckedTransport::new(LineTransport::new(
+        BufReader::new(c_rd),
+        c_wr,
+        DefaultCodec::default(),
+    ));
     ClientBuilder::new("tasks-legacy", "1.0.0")
         .with_connect_mode(ConnectMode::Legacy)
         .connect(transport)
@@ -320,7 +325,11 @@ where
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     spawn_scripted(server_io, respond);
     let (rd, wr) = split(client_io);
-    let transport = LineTransport::new(BufReader::new(rd), wr, DefaultCodec::default());
+    let transport = CheckedTransport::new(LineTransport::new(
+        BufReader::new(rd),
+        wr,
+        DefaultCodec::default(),
+    ));
     ClientBuilder::new("tasks-scripted", "1.0.0")
         .with_connect_mode(ConnectMode::Legacy)
         .connect(transport)

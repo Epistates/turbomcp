@@ -14,31 +14,82 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Number, Value};
 
-/// A JSON number as `f64`.
+/// An `f64` field: read from any JSON number, written as an integer when the
+/// value is whole.
 ///
-/// # Errors
-/// A value that is not a number, or a number beyond `f64` (which serde_json
-/// rejects without the feature, too).
-pub(crate) fn f64<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
-    to_f64(Number::deserialize(deserializer)?)
+/// A whole `f64` serializes as `50.0`, so a progress of `50` or a schema's
+/// `"minimum": 0` came back respelled, which a proxy must not do and the
+/// TypeScript SDK (where every number is a double) never does.
+pub(crate) mod float {
+    use serde::{Deserializer, Serializer};
+
+    /// # Errors
+    /// A value that is not a number, or a number beyond `f64` (which
+    /// serde_json rejects without the feature, too).
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        super::to_f64(<serde_json::Number as serde::Deserialize>::deserialize(
+            deserializer,
+        )?)
+    }
+
+    /// # Errors
+    /// The serializer's own.
+    #[allow(clippy::trivially_copy_pass_by_ref)] // the `serialize_with` signature
+    pub(crate) fn serialize<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        match super::whole(*value) {
+            Some(n) => serializer.serialize_i64(n),
+            None => serializer.serialize_f64(*value),
+        }
+    }
 }
 
-/// An optional JSON number as `f64`; `null` is absent.
-///
-/// # Errors
-/// As [`f64`].
-pub(crate) fn option_f64<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<f64>, D::Error> {
-    Option::<Number>::deserialize(deserializer)?
-        .map(to_f64)
-        .transpose()
+/// An `Option<f64>` field, as [`float`]; `null` is absent.
+pub(crate) mod option_float {
+    use serde::{Deserializer, Serializer};
+
+    /// # Errors
+    /// As [`super::float::deserialize`].
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<f64>, D::Error> {
+        <Option<serde_json::Number> as serde::Deserialize>::deserialize(deserializer)?
+            .map(super::to_f64)
+            .transpose()
+    }
+
+    /// # Errors
+    /// The serializer's own.
+    #[allow(clippy::ref_option)] // the `serialize_with` signature
+    pub(crate) fn serialize<S: Serializer>(
+        value: &Option<f64>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(value) => super::float::serialize(value, serializer),
+            None => serializer.serialize_none(),
+        }
+    }
 }
 
 fn to_f64<E: serde::de::Error>(number: Number) -> Result<f64, E> {
     number
         .as_f64()
         .ok_or_else(|| E::custom(format_args!("number out of range: {number}")))
+}
+
+/// `value` as an `i64` if it is whole and exactly representable (within
+/// ±2^53, past which a double is no longer an exact integer), keeping `-0.0`
+/// a float.
+fn whole(value: f64) -> Option<i64> {
+    const EXACT: f64 = 9_007_199_254_740_992.0; // 2^53
+    // `core` has no `f64::fract`; NaN fails the range check.
+    if !(-EXACT..=EXACT).contains(&value) || (value == 0.0 && value.is_sign_negative()) {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation)] // within 2^53
+    let n = value as i64;
+    #[allow(clippy::cast_precision_loss)] // within 2^53, exact
+    (n as f64 == value).then_some(n)
 }
 
 /// Any JSON value, with a present `null` kept as `Some(Value::Null)`.
@@ -108,11 +159,15 @@ mod tests {
         assert!(serde_json::from_str::<Hinted>(r#"{"ttlMs": "soon"}"#).is_err());
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, serde::Serialize)]
     struct Floats {
-        #[serde(deserialize_with = "super::f64")]
+        #[serde(with = "super::float")]
         progress: f64,
-        #[serde(default, deserialize_with = "super::option_f64")]
+        #[serde(
+            default,
+            with = "super::option_float",
+            skip_serializing_if = "Option::is_none"
+        )]
         total: Option<f64>,
     }
 
@@ -125,6 +180,16 @@ mod tests {
         let f: Floats = serde_json::from_str(r#"{"progress": 1.5}"#).unwrap();
         assert_eq!(f.total, None);
         assert!(serde_json::from_str::<Floats>(r#"{"progress": "1"}"#).is_err());
+    }
+
+    #[test]
+    fn whole_floats_are_written_as_integers() {
+        let text = |progress, total| serde_json::to_string(&Floats { progress, total }).unwrap();
+        assert_eq!(text(50.0, Some(100.0)), r#"{"progress":50,"total":100}"#);
+        assert_eq!(text(0.5, None), r#"{"progress":0.5}"#);
+        assert_eq!(text(-0.0, None), r#"{"progress":-0.0}"#);
+        assert_eq!(text(1e300, None), r#"{"progress":1e+300}"#);
+        assert_eq!(text(-3.0, None), r#"{"progress":-3}"#);
     }
 
     #[derive(Deserialize)]

@@ -743,6 +743,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A whole number in a float field is written as an integer: a progress of
+  `50`, a schema's `"minimum": 0` and a priority of `1` went back out as
+  `50.0`, `0.0` and `1.0`. The same number to JSON, but a proxy respelled
+  what it relayed, and the TypeScript SDK never writes them that way.
 - The wire types decode floats with `serde_json/arbitrary_precision` on.
   Cargo unifies features, so any crate in a build can switch it on, and then
   a decimal inside an untagged enum or a `flatten` (an annotation
@@ -1779,6 +1783,19 @@ Earlier in this cycle:
   `roots.listChanged`) come from the handler and default to off, because
   under-declaring costs a feature while over-declaring strands a user on an
   interaction the client never presents.
+
+### Internal
+
+- The official schema is the oracle for everything: every definition of
+  every revision gets the smallest and the largest instance the schema
+  allows, decoded into its generated type and re-encoded, with no
+  difference allowed (870 instances; the table of definitions is written by
+  `just codegen`, so a new definition is covered when it is generated). The
+  example replay names each difference it accepts instead of normalizing
+  them away, which is how the `50` → `50.0` respelling surfaced. A new
+  test-support crate, `turbomcp-wire-check`, checks every response the
+  server suites get and every message the client suites send against the
+  schema of the revision it goes out under.
 
 ## [4.0.0-alpha.5] - 2026-09-13
 

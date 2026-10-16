@@ -15,6 +15,7 @@ use turbomcp_server::{
     ListToolsContext, McpServerCore, MethodRouter, ReadResourceContext, VersionDispatcher,
     WithCompletions, WithPrompts, WithResources, WithTools,
 };
+use turbomcp_wire_check::Checked;
 
 /// A server advertising all four core capabilities; `list_tools` echoes the
 /// received cursor into a tool name so tests can observe the plumbing.
@@ -110,15 +111,15 @@ impl WithCompletions for Kitchen {
     }
 }
 
-fn kitchen() -> VersionDispatcher<Kitchen> {
-    VersionDispatcher::new(
+fn kitchen() -> Checked<VersionDispatcher<Kitchen>> {
+    Checked::new(VersionDispatcher::new(
         Kitchen,
         MethodRouter::new()
             .with_tools()
             .with_resources()
             .with_prompts()
             .with_completions(),
-    )
+    ))
 }
 
 /// A server advertising ONLY tools — everything else must be `-32601`.

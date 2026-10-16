@@ -16,6 +16,7 @@ use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
 use turbomcp_service::io::LineTransport;
+use turbomcp_wire_check::{Checked, CheckedTransport};
 
 #[derive(Clone)]
 struct Calculator;
@@ -81,10 +82,14 @@ fn connected_client() -> Connection {
     let dispatcher = VersionDispatcher::new(Calculator, MethodRouter::new().with_tools());
     let server_transport = LineTransport::new(BufReader::new(s_rd), s_wr, DefaultCodec::default());
     tokio::spawn(async move {
-        let _ = turbomcp_service::serve(server_transport, dispatcher).await;
+        let _ = turbomcp_service::serve(server_transport, Checked::new(dispatcher)).await;
     });
 
-    let client_transport = LineTransport::new(BufReader::new(c_rd), c_wr, DefaultCodec::default());
+    let client_transport = CheckedTransport::new(LineTransport::new(
+        BufReader::new(c_rd),
+        c_wr,
+        DefaultCodec::default(),
+    ));
     Connection::new(client_transport)
 }
 

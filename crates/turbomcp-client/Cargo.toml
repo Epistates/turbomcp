@@ -37,6 +37,8 @@ url = { workspace = true }
 rustix = { version = "1", default-features = false, features = ["process", "std"] }
 
 [dev-dependencies]
+# Checks every message the client sends against the official schema.
+turbomcp-wire-check = { path = "../turbomcp-wire-check" }
 turbomcp-server = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util"] }
 async-trait = { workspace = true }

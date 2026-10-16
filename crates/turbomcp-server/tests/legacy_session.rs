@@ -15,6 +15,7 @@ use turbomcp_server::{
     MethodRouter, ReadResourceContext, VersionDispatcher, WithResources, WithTools,
 };
 use turbomcp_service::ProtocolError;
+use turbomcp_wire_check::Checked;
 
 /// A tools-only server whose `whoami` tool echoes the context's client info —
 /// proving the session state actually reaches handlers.
@@ -77,11 +78,11 @@ impl WithResources for Echo {
     }
 }
 
-fn adapter() -> LegacySessionAdapter<VersionDispatcher<Echo>> {
-    LegacySessionAdapter::new(VersionDispatcher::new(
+fn adapter() -> Checked<LegacySessionAdapter<VersionDispatcher<Echo>>> {
+    Checked::new(LegacySessionAdapter::new(VersionDispatcher::new(
         Echo,
         MethodRouter::new().with_tools().with_resources(),
-    ))
+    )))
 }
 
 fn initialize_request(id: i64, version: &str) -> JsonRpcRequest {

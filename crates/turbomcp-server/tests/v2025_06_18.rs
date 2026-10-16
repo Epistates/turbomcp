@@ -16,6 +16,7 @@ use turbomcp_server::{
     ListResourcesContext, ListToolsContext, McpServerCore, ServerBuilder, VersionDispatcher,
     WithPrompts, WithResources, WithTools,
 };
+use turbomcp_wire_check::Checked;
 
 /// Everything on this server carries the fields `2025-11-25` added.
 #[derive(Clone)]
@@ -100,13 +101,13 @@ impl WithPrompts for Rich {
     }
 }
 
-type Svc = LegacySessionAdapter<VersionDispatcher<Rich>>;
+type Svc = Checked<LegacySessionAdapter<VersionDispatcher<Rich>>>;
 
 /// A fresh connection to a Tasks-enabled server. Tasks are on so the tests can
 /// show `2025-06-18` is gated by the *negotiated version*, not by the server
 /// simply not having them.
 fn connection() -> Svc {
-    LegacySessionAdapter::new(
+    Checked::new(LegacySessionAdapter::new(
         ServerBuilder::new(Rich)
             .with_tools()
             .with_resources()
@@ -114,7 +115,7 @@ fn connection() -> Svc {
             .with_logging()
             .with_tasks()
             .build(),
-    )
+    ))
 }
 
 async fn raw(svc: &mut Svc, req: JsonRpcRequest) -> turbomcp_core::JsonRpcResponse {

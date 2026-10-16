@@ -69,13 +69,16 @@ codegen:
   echo "Generating v4 protocol types from ${root}"
   cargo run -q -p turbomcp-codegen -- \
     "${root}/2025-06-18/schema.json" \
-    crates/turbomcp-protocol/src/v2025_06_18/types.rs "MCP 2025-06-18"
+    crates/turbomcp-protocol/src/v2025_06_18/types.rs "MCP 2025-06-18" \
+    crates/turbomcp-protocol/tests/registry/2025-06-18.rs
   cargo run -q -p turbomcp-codegen -- \
     "${root}/2025-11-25/schema.json" \
-    crates/turbomcp-protocol/src/v2025_11_25/types.rs "MCP 2025-11-25"
+    crates/turbomcp-protocol/src/v2025_11_25/types.rs "MCP 2025-11-25" \
+    crates/turbomcp-protocol/tests/registry/2025-11-25.rs
   cargo run -q -p turbomcp-codegen -- \
     "${root}/2026-07-28/schema.json" \
-    crates/turbomcp-protocol/src/v2026_07_28/types.rs "MCP 2026-07-28"
+    crates/turbomcp-protocol/src/v2026_07_28/types.rs "MCP 2026-07-28" \
+    crates/turbomcp-protocol/tests/registry/2026-07-28.rs
   cargo fmt -p turbomcp-protocol
   # The schema oracle test (crates/turbomcp-protocol/tests/schema_oracle.rs)
   # validates emitted wire JSON against these exact files, so they are vendored
@@ -107,6 +110,7 @@ codegen-check:
   generated="crates/turbomcp-protocol/src/v2025_06_18/types.rs \
              crates/turbomcp-protocol/src/v2025_11_25/types.rs \
              crates/turbomcp-protocol/src/v2026_07_28/types.rs \
+             crates/turbomcp-protocol/tests/registry \
              crates/turbomcp-protocol/tests/fixtures/schema"
   # Skipped rather than failed without the schema, so a contributor who hasn't
   # checked out the sibling repo can still run `just test`. CI always clones it

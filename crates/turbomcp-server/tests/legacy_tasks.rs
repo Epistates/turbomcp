@@ -4,6 +4,7 @@
 //! byte-pipe client would drive it.
 
 use std::sync::Arc;
+use turbomcp_wire_check::Checked;
 
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
@@ -84,15 +85,15 @@ impl WithTools for Gated {
     }
 }
 
-type Svc = LegacySessionAdapter<VersionDispatcher<Gated>>;
+type Svc = Checked<LegacySessionAdapter<VersionDispatcher<Gated>>>;
 
 fn tasked(server: &Gated) -> Svc {
-    LegacySessionAdapter::new(
+    Checked::new(LegacySessionAdapter::new(
         ServerBuilder::new(server.clone())
             .with_tools()
             .with_tasks()
             .build(),
-    )
+    ))
 }
 
 async fn raw(svc: &mut Svc, req: JsonRpcRequest) -> turbomcp_core::JsonRpcResponse {
@@ -321,8 +322,9 @@ async fn unknown_task_id_is_invalid_params() {
 async fn tasks_disabled_ignores_augmentation_and_hides_methods() {
     let server = Gated::new();
     // No `.with_tasks()`.
-    let mut svc =
-        LegacySessionAdapter::new(ServerBuilder::new(server.clone()).with_tools().build());
+    let mut svc = Checked::new(LegacySessionAdapter::new(
+        ServerBuilder::new(server.clone()).with_tools().build(),
+    ));
     let init = initialize(&mut svc).await;
     assert!(init["capabilities"].get("tasks").is_none());
 
@@ -699,8 +701,8 @@ async fn an_authenticated_callers_tasks_outlive_its_session() {
         .with_tools()
         .with_tasks()
         .build();
-    let mut first = LegacySessionAdapter::new(dispatcher.clone());
-    let mut second = LegacySessionAdapter::new(dispatcher);
+    let mut first = Checked::new(LegacySessionAdapter::new(dispatcher.clone()));
+    let mut second = Checked::new(LegacySessionAdapter::new(dispatcher));
     let init = || {
         JsonRpcRequest::new(
             0,
