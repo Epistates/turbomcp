@@ -109,13 +109,17 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // Resource URIs the policy hides: acknowledged like any other, but never
     // watched. See the comment on `resource_subscriptions` below.
     let mut unwatched = std::collections::HashSet::new();
+    // What the server announces, as its capabilities say (a gateway relays
+    // only what its upstream does).
+    let flags = router.capability_flags(server);
     let mut agreed = v0728::SubscriptionFilter {
-        tools_list_changed: (wanted.tools_list_changed == Some(true) && router.has_tools())
+        tools_list_changed: (wanted.tools_list_changed == Some(true) && flags.tools_list_changed)
             .then_some(true),
         resources_list_changed: (wanted.resources_list_changed == Some(true)
-            && router.has_resources())
-        .then_some(true),
-        prompts_list_changed: (wanted.prompts_list_changed == Some(true) && router.has_prompts())
+            && flags.resources_list_changed)
+            .then_some(true),
+        prompts_list_changed: (wanted.prompts_list_changed == Some(true)
+            && flags.prompts_list_changed)
             .then_some(true),
         // Each requested URI is judged the way a `resources/read` of it would
         // be: `notifications/resources/updated` names the URI, so watching one
@@ -124,7 +128,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         // back, since nothing checks existence — or the difference between the
         // requested and acknowledged lists enumerates what is hidden. So a
         // hidden URI is acknowledged and simply never watched.
-        resource_subscriptions: if router.has_resources() {
+        resource_subscriptions: if flags.resources_subscribe {
             let ctx = build_context(req, ext);
             for uri in &wanted.resource_subscriptions {
                 match resource_hidden(shared, router, server, &ctx, uri).await {

@@ -298,6 +298,24 @@ trait Grant: Send + Sync + 'static {
         challenge: Option<&BearerChallenge>,
         previous: Option<&TokenSet>,
     ) -> Result<TokenSet, String>;
+
+    /// A fingerprint of what the grant is made from (the user token it
+    /// exchanges, the assertion it presents), when it is made from something
+    /// that can change. A token granted from an older one is replaced: the
+    /// newest the user presented governs, so one narrowed or replaced
+    /// downstream doesn't keep working upstream until the grant expires.
+    async fn basis(&self) -> Option<u64> {
+        None
+    }
+}
+
+/// An in-process fingerprint of a credential, to tell when it changed.
+/// Never stored or sent anywhere.
+fn fingerprint(secret: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    secret.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// A bearer source over a repeatable [`Grant`]: an expiring token is
@@ -305,7 +323,8 @@ trait Grant: Send + Sync + 'static {
 /// `403 insufficient_scope` re-grants with the scopes the server named.
 struct Regranting<G> {
     grant: G,
-    tokens: tokio::sync::Mutex<Option<TokenSet>>,
+    /// The token set, and the [basis](Grant::basis) it was granted from.
+    tokens: tokio::sync::Mutex<Option<(TokenSet, Option<u64>)>>,
 }
 
 impl<G: Grant> Regranting<G> {
@@ -318,19 +337,21 @@ impl<G: Grant> Regranting<G> {
 
     async fn bearer(&self) -> Option<Zeroizing<String>> {
         let mut tokens = self.tokens.lock().await;
+        let basis = self.grant.basis().await;
         let live = tokens
             .as_ref()
-            .is_some_and(|t| !t.expires_within(EXPIRY_SKEW));
+            .is_some_and(|(t, from)| !t.expires_within(EXPIRY_SKEW) && *from == basis);
         if !live {
-            match self.grant.grant(None, tokens.as_ref()).await {
-                Ok(fresh) => *tokens = Some(fresh),
+            let previous = tokens.as_ref().map(|(t, _)| t);
+            match self.grant.grant(None, previous).await {
+                Ok(fresh) => *tokens = Some((fresh, basis)),
                 Err(e) => {
                     tracing::warn!(error = %e, "could not obtain an access token");
                     *tokens = None;
                 }
             }
         }
-        tokens.as_ref().map(|t| t.access_token.clone())
+        tokens.as_ref().map(|(t, _)| t.access_token.clone())
     }
 
     async fn on_challenge(
@@ -351,7 +372,7 @@ impl<G: Grant> Regranting<G> {
         let mut tokens = self.tokens.lock().await;
         // Another request already replaced the rejected token, with every
         // scope this challenge names.
-        if let Some(current) = tokens.as_ref()
+        if let Some((current, _)) = tokens.as_ref()
             && Some(current.access_token.as_str()) != rejected
             && !current.expires_within(EXPIRY_SKEW)
             && challenge
@@ -360,11 +381,12 @@ impl<G: Grant> Regranting<G> {
         {
             return Ok(true);
         }
+        let basis = self.grant.basis().await;
         let fresh = self
             .grant
-            .grant(challenge.as_ref(), tokens.as_ref())
+            .grant(challenge.as_ref(), tokens.as_ref().map(|(t, _)| t))
             .await?;
-        *tokens = Some(fresh);
+        *tokens = Some((fresh, basis));
         Ok(true)
     }
 }
@@ -428,6 +450,11 @@ impl Grant for EnterpriseGrant {
             .authorize(&assertion, challenge)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    async fn basis(&self) -> Option<u64> {
+        let assertion = self.assertions.identity_assertion().await?;
+        Some(fingerprint(assertion.secret()))
     }
 }
 
@@ -558,6 +585,13 @@ impl Grant for MachineGrant {
             }
         };
         granted.map_err(|e| e.to_string())
+    }
+
+    /// The user's token, when this exchanges one: a token the user replaced
+    /// (a narrower one, a re-login) is exchanged anew.
+    async fn basis(&self) -> Option<u64> {
+        let token = self.subject.as_ref()?.subject_token().await?;
+        Some(fingerprint(token.as_str()))
     }
 }
 

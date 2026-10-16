@@ -50,6 +50,7 @@ mod pool;
 mod remote;
 mod upstream;
 
+pub use connect::connect;
 pub use error::ProxyError;
 pub use pool::UpstreamKey;
 pub use remote::{RemoteServer, RemoteServerBuilder};

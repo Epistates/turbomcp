@@ -10,9 +10,7 @@ use turbomcp_client::{Client, ClientBuilder, ServerProcess};
 use turbomcp_core::codec::DefaultCodec;
 use turbomcp_service::io::LineTransport;
 
-#[cfg(feature = "http")]
-use crate::OutboundAuth;
-use crate::{Inherit, ProxyError, Upstream};
+use crate::{Inherit, OutboundAuth, ProxyError, Upstream};
 
 #[cfg(feature = "http")]
 type Bearer = Arc<dyn turbomcp_transport_http::BearerSource>;
@@ -140,6 +138,50 @@ impl turbomcp_transport_http::oauth::SubjectSource for SlotSource {
     }
 }
 
+/// Refuse credentials a stdio upstream has nowhere to put: it takes its
+/// own from its environment, and a token configured for it would otherwise
+/// be dropped without a word.
+pub(crate) fn check_auth(upstream: &Upstream, auth: &OutboundAuth) -> Result<(), ProxyError> {
+    if matches!(upstream, Upstream::Stdio { .. }) && !matches!(auth, OutboundAuth::None) {
+        return Err(ProxyError::Config(
+            "a stdio upstream gets credentials from its environment (`Upstream::env`), \
+             not `OutboundAuth`"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Connect `client` to `upstream` the way a
+/// [`RemoteServer`](crate::RemoteServer) does, for a client of your own: a
+/// stdio upstream starts with only the environment its
+/// [`Inherit`] policy passes on, in its own process group, with its stderr
+/// logged; an HTTP or WebSocket upstream gets its headers marked sensitive
+/// (and the protocol's own `Mcp-*` refused) and `auth`'s credential.
+///
+/// The [`ServerProcess`] is the stdio upstream's child: shut it down after
+/// closing the client (dropping it kills the server at once).
+///
+/// # Errors
+/// [`ProxyError`] when the configuration is invalid (credentials for a
+/// stdio upstream, a malformed header), the command can't start, or the
+/// connection or handshake fails.
+pub async fn connect(
+    upstream: &Upstream,
+    client: ClientBuilder,
+    auth: &OutboundAuth,
+) -> Result<(Client, Option<ServerProcess>), ProxyError> {
+    check_auth(upstream, auth)?;
+    let options = ConnectOptions {
+        grace: Duration::from_secs(2),
+        #[cfg(feature = "http")]
+        credential: Credential::of(upstream, auth, None)?,
+        #[cfg(feature = "http")]
+        network: None,
+    };
+    self::upstream(upstream, &options, client, None).await
+}
+
 /// How a connection to an upstream is made, beside where it goes.
 pub(crate) struct ConnectOptions {
     pub(crate) grace: Duration,
@@ -255,8 +297,10 @@ pub(crate) async fn upstream(
         Upstream::WebSocket { url, headers } => {
             use turbomcp_transport_http::WebSocketClientTransport;
             let mut request = http::Request::builder().uri(url.as_str());
-            for (name, value) in headers {
-                request = request.header(name.as_str(), value.as_str());
+            if let Some(map) = request.headers_mut() {
+                map.extend(
+                    header_map(headers).map_err(|e| ProxyError::Config(format!("{url}: {e}")))?,
+                );
             }
             // One token per upgrade: a connection outliving it is closed by
             // the server, and the next one gets a fresh token.

@@ -95,6 +95,12 @@ impl IdentityAssertion {
     pub fn id_token(token: impl Into<String>) -> Self {
         Self::new(token, AssertionKind::IdToken)
     }
+
+    /// The assertion itself: a credential, not for logs.
+    #[must_use]
+    pub fn secret(&self) -> &str {
+        &self.token
+    }
 }
 
 /// The organization's identity provider: its token endpoint, and the

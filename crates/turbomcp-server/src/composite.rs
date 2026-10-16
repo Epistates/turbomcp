@@ -138,6 +138,8 @@ trait Mounted: Send + Sync + 'static {
     fn has_resources(&self) -> bool;
     fn has_prompts(&self) -> bool;
     fn has_completions(&self) -> bool;
+    fn capability_flags(&self) -> crate::router::CapabilityFlags;
+    fn watch(&self, uri: String, start: bool) -> Option<BoxFuture<'static, ()>>;
 
     fn list_tools(
         &self,
@@ -232,6 +234,12 @@ impl<S: McpServerCore> Mounted for Erased<S> {
     }
     fn has_completions(&self) -> bool {
         self.router.has_completions()
+    }
+    fn capability_flags(&self) -> crate::router::CapabilityFlags {
+        self.router.capability_flags(&self.server)
+    }
+    fn watch(&self, uri: String, start: bool) -> Option<BoxFuture<'static, ()>> {
+        self.router.dispatch_watch(self.server.clone(), uri, start)
     }
 
     forward!(
@@ -984,7 +992,33 @@ impl McpServerCore for CompositeServer {
     }
 }
 
+impl CompositeServer {
+    /// Whether any mount's capabilities say `flag`.
+    fn any_flag(&self, flag: impl Fn(crate::router::CapabilityFlags) -> bool) -> bool {
+        self.inner
+            .mounts
+            .iter()
+            .any(|m| flag(m.server.capability_flags()))
+    }
+
+    /// Start or stop watching `uri` on every mount that serves resources.
+    /// URIs aren't prefixed, so which mount has it isn't known here; one
+    /// that doesn't simply has nothing to report.
+    async fn watch_everywhere(&self, uri: String, start: bool) {
+        let hooks = self
+            .inner
+            .mounts
+            .iter()
+            .filter_map(|m| m.server.watch(uri.clone(), start));
+        futures::future::join_all(hooks).await;
+    }
+}
+
 impl WithTools for CompositeServer {
+    fn tools_list_changed(&self) -> bool {
+        self.any_flag(|f| f.tools_list_changed)
+    }
+
     /// Routed, not listed: the flat mounts' own lookups, else the prefixed
     /// mount's. Every `tools/call` looks its tool up first, so a list walk
     /// here would cost each call the whole composed catalogue.
@@ -1124,6 +1158,22 @@ impl CompositeServer {
 }
 
 impl WithResources for CompositeServer {
+    fn resources_list_changed(&self) -> bool {
+        self.any_flag(|f| f.resources_list_changed)
+    }
+
+    fn resources_subscribe(&self) -> bool {
+        self.any_flag(|f| f.resources_subscribe)
+    }
+
+    async fn watch_resource(&self, uri: String) {
+        self.watch_everywhere(uri, true).await;
+    }
+
+    async fn unwatch_resource(&self, uri: String) {
+        self.watch_everywhere(uri, false).await;
+    }
+
     async fn list_resources(
         &self,
         ctx: &ListResourcesContext,
@@ -1231,6 +1281,10 @@ impl WithResources for CompositeServer {
 }
 
 impl WithPrompts for CompositeServer {
+    fn prompts_list_changed(&self) -> bool {
+        self.any_flag(|f| f.prompts_list_changed)
+    }
+
     /// Routed like [`lookup_tool`](WithTools::lookup_tool).
     async fn lookup_prompt(
         &self,

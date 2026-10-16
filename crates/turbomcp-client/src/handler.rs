@@ -103,13 +103,18 @@ pub trait ElicitationHandler: Send + Sync + 'static {
 
     /// [`elicit`](Self::elicit), with what is known about the request. The
     /// one the client calls; the default calls `elicit`.
+    ///
+    /// An `Err` answers the server with that JSON-RPC error rather than a
+    /// user's decision: for a client that can't put the question to anyone
+    /// right now (a gateway whose caller can't elicit), which is not the
+    /// same as the user cancelling.
     async fn elicit_with(
         &self,
         ctx: &HandlerContext,
         request: neutral::ElicitParams,
-    ) -> neutral::ElicitOutcome {
+    ) -> ClientResult<neutral::ElicitOutcome> {
         let _ = ctx;
-        self.elicit(request).await
+        Ok(self.elicit(request).await)
     }
 
     /// Whether this client can also send the user out of band to a URL
@@ -137,9 +142,9 @@ pub trait ElicitationHandler: Send + Sync + 'static {
         &self,
         ctx: &HandlerContext,
         request: neutral::ElicitUrlParams,
-    ) -> neutral::ElicitOutcome {
+    ) -> ClientResult<neutral::ElicitOutcome> {
         let _ = ctx;
-        self.elicit_url(request).await
+        Ok(self.elicit_url(request).await)
     }
 
     /// An out-of-band interaction started by a URL-mode `elicitation/create`
@@ -522,7 +527,10 @@ pub(crate) async fn dispatch_server_request(
                 None | Some(Some("form")) => {
                     let request = parse_elicit_params(params)?;
                     let schema = request.requested_schema.clone();
-                    let outcome = handler.elicit_with(ctx, request).await;
+                    let outcome = handler
+                        .elicit_with(ctx, request)
+                        .await
+                        .map_err(handler_error)?;
                     check_form_answer(&schema, &outcome)?;
                     Ok(elicit_outcome_value(&outcome, Mode::Form))
                 }
@@ -534,7 +542,8 @@ pub(crate) async fn dispatch_server_request(
                     }
                     let outcome = handler
                         .elicit_url_with(ctx, parse_elicit_url_params(params)?)
-                        .await;
+                        .await
+                        .map_err(handler_error)?;
                     Ok(elicit_outcome_value(&outcome, Mode::Url))
                 }
                 Some(other) => Err(invalid_params(&format!(

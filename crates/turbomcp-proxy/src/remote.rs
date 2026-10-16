@@ -21,7 +21,7 @@ use turbomcp_service::{EndedSession, SessionObserver, Transport};
 
 use crate::bridge::Bridge;
 use crate::link::{Dial, Lease, Link, Linker};
-use crate::pool::{DEFAULT_IDLE, DEFAULT_MAX, Pool, UpstreamKey};
+use crate::pool::{DEFAULT_IDLE, DEFAULT_MAX, DEFAULT_MAX_PER_CALLER, Pool, UpstreamKey};
 use crate::{OutboundAuth, ProxyError, Upstream};
 
 /// How long a looked-up catalogue is trusted before it is fetched again,
@@ -68,13 +68,26 @@ struct Shared {
     capabilities: neutral::ServerCapabilities,
     version: ProtocolVersion,
     changes: broadcast::Sender<Change>,
-    /// Bridge the upstream's requests for input to downstream callers.
-    forward_input: bool,
+    /// Which of the upstream's requests for input reach downstream callers.
+    inputs: crate::link::Inputs,
+    /// Name the upstream in the elicitations it forwards.
+    attribute_questions: bool,
     /// Keep the upstream tools' declared scopes, for the gateway to enforce.
     enforce_scopes: bool,
+    /// Upstream connections act for their callers (token exchange), so the
+    /// upstream's view of a token is the caller's, not the gateway's.
+    #[cfg_attr(not(feature = "oauth"), allow(dead_code))]
+    for_callers: bool,
+    /// Tags the gateway gives every component of this remote.
+    tags: Vec<String>,
+    /// Keep the upstream's own tags.
+    trust_tags: bool,
     /// The ceiling on one forwarded call.
     max_call: Duration,
     key: UpstreamKey,
+    /// The resource URIs downstream clients watch (shared with the linker,
+    /// so a connection opened later subscribes to them too).
+    watched: crate::link::Watched,
     pool: Pool,
 }
 
@@ -105,11 +118,17 @@ pub struct RemoteServerBuilder {
     catalog_ttl: Duration,
     shutdown_grace: Duration,
     forward_input: bool,
+    forward_sampling: bool,
+    forward_roots: bool,
+    attribute_questions: bool,
     enforce_scopes: Option<bool>,
+    tags: Vec<String>,
+    trust_tags: bool,
     key: Option<UpstreamKey>,
     serialize: bool,
     idle: Duration,
     max: u64,
+    max_per_caller: u64,
     max_call: Duration,
     #[cfg(feature = "http")]
     network: Option<turbomcp_auth::NetworkPolicy>,
@@ -140,11 +159,17 @@ impl RemoteServerBuilder {
             catalog_ttl: DEFAULT_CATALOG_TTL,
             shutdown_grace: Duration::from_secs(2),
             forward_input: true,
+            forward_sampling: false,
+            forward_roots: false,
+            attribute_questions: true,
             enforce_scopes: None,
+            tags: Vec::new(),
+            trust_tags: false,
             key: None,
             serialize: false,
             idle: DEFAULT_IDLE,
             max: DEFAULT_MAX,
+            max_per_caller: DEFAULT_MAX_PER_CALLER,
             max_call: DEFAULT_MAX_CALL,
             #[cfg(feature = "http")]
             network: None,
@@ -211,12 +236,42 @@ impl RemoteServerBuilder {
     }
 
     /// Whether the upstream may ask downstream callers for input (default
-    /// `true`): its `elicitation/create`, `sampling/createMessage` and
-    /// `roots/list` reach the caller whose call caused them, on whatever
-    /// revision that caller speaks. Off, the proxy declares none of those
-    /// capabilities upstream, so the upstream knows not to ask.
+    /// `true`): its `elicitation/create` reaches the caller whose call
+    /// caused it, on whatever revision that caller speaks, as do its
+    /// `sampling/createMessage` and `roots/list` where
+    /// [`forward_sampling`](Self::forward_sampling) and
+    /// [`forward_roots`](Self::forward_roots) allow them. Off, the proxy
+    /// declares none of those capabilities upstream, so the upstream knows
+    /// not to ask.
     pub fn forward_input(mut self, forward: bool) -> Self {
         self.forward_input = forward;
+        self
+    }
+
+    /// Whether the upstream's `sampling/createMessage` reaches the caller
+    /// (default `false`). Sampling runs the caller's model, at the caller's
+    /// cost, on a prompt the upstream wrote: the spec's prompt-injection
+    /// and cost warning. Turn it on for an upstream you trust with that.
+    pub fn forward_sampling(mut self, forward: bool) -> Self {
+        self.forward_sampling = forward;
+        self
+    }
+
+    /// Whether the upstream's `roots/list` reaches the caller (default
+    /// `false`): the caller's roots name its files and folders, which a
+    /// third-party upstream has no claim to.
+    pub fn forward_roots(mut self, forward: bool) -> Self {
+        self.forward_roots = forward;
+        self
+    }
+
+    /// Whether a forwarded elicitation names the upstream that asks (default
+    /// `true`): its message reaches the caller as `"{upstream}: {message}"`.
+    /// A user sent to a URL, or asked for something, by a gateway that
+    /// serves several upstreams can then tell which one is asking. Sampling
+    /// requests are never changed, since their text is the model's prompt.
+    pub fn attribute_questions(mut self, attribute: bool) -> Self {
+        self.attribute_questions = attribute;
         self
     }
 
@@ -232,6 +287,28 @@ impl RemoteServerBuilder {
     /// access policy is its visibility and its own tools' scopes.
     pub fn enforce_upstream_scopes(mut self, enforce: bool) -> Self {
         self.enforce_scopes = Some(enforce);
+        self
+    }
+
+    /// Tag every component this remote serves (`io.turbomcp/tags`), for the
+    /// gateway's visibility policy to judge (`Visibility::hiding_tagged`, a
+    /// policy of your own).
+    ///
+    /// Tags are the gateway's to give: whatever `io.turbomcp/*` metadata the
+    /// upstream sends is dropped, since a policy that showed components the
+    /// upstream tagged `public` (or didn't tag `admin`) would be deciding on
+    /// what the upstream wrote.
+    pub fn tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.tags = tags.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Keep the tags the upstream gives its components (`io.turbomcp/tags`),
+    /// beside the gateway's own: for an upstream you run, whose tags your
+    /// policy may rely on. Off by default, for the reason
+    /// [`tags`](Self::tags) gives.
+    pub fn trust_upstream_tags(mut self, trust: bool) -> Self {
+        self.trust_tags = trust;
         self
     }
 
@@ -262,10 +339,21 @@ impl RemoteServerBuilder {
         self
     }
 
-    /// Keep at most `max` upstream connections open (default 1000), closing
-    /// the least recently used past it.
+    /// Keep at most `max` upstream connections open (default 1000). A call
+    /// that would need another is refused as a retryable transport error
+    /// (HTTP `503`); no live connection is closed to make room, so a caller
+    /// opening sessions fast can't churn everyone else's.
     pub fn max_connections(mut self, max: u64) -> Self {
         self.max = max;
+        self
+    }
+
+    /// Let one caller (one principal, or every anonymous caller together)
+    /// hold at most `max` upstream connections (default 32): under
+    /// [`UpstreamKey::Session`], a cap on the sessions, and for a stdio
+    /// upstream the processes, any one caller can open.
+    pub fn max_connections_per_caller(mut self, max: u64) -> Self {
+        self.max_per_caller = max;
         self
     }
 
@@ -297,6 +385,7 @@ impl RemoteServerBuilder {
         let (label, dial, by_stream) = match self.target {
             Target::Upstream(upstream) => {
                 let label = upstream.label();
+                crate::connect::check_auth(&upstream, &self.auth)?;
                 #[cfg(feature = "http")]
                 let by_stream = matches!(upstream, Upstream::Http { .. });
                 #[cfg(not(feature = "http"))]
@@ -323,12 +412,22 @@ impl RemoteServerBuilder {
             Target::Dial { label, dial } => (label, dial, false),
         };
         let (changes, _) = broadcast::channel(CHANGE_BUFFER);
+        let (updates_tx, updates) = tokio::sync::mpsc::channel(crate::link::UPDATES_BUFFER);
+        let watched = crate::link::Watched::default();
         let linker = Linker {
+            watched: Arc::clone(&watched),
+            profile: Arc::default(),
+            siblings: Arc::default(),
+            updates: updates_tx,
             label: label.clone(),
             dial,
             client: self.client,
             catalog_ttl: self.catalog_ttl,
-            forward_input: self.forward_input,
+            inputs: crate::link::Inputs {
+                elicitation: self.forward_input,
+                sampling: self.forward_input && self.forward_sampling,
+                roots: self.forward_input && self.forward_roots,
+            },
             serialize: self.serialize,
             changes: changes.clone(),
         };
@@ -351,11 +450,20 @@ impl RemoteServerBuilder {
             capabilities: client.server_capabilities().clone(),
             version,
             changes,
-            forward_input: self.forward_input,
+            inputs: crate::link::Inputs {
+                elicitation: self.forward_input,
+                sampling: self.forward_input && self.forward_sampling,
+                roots: self.forward_input && self.forward_roots,
+            },
+            attribute_questions: self.attribute_questions,
             enforce_scopes: self.enforce_scopes.unwrap_or(for_callers),
+            for_callers,
+            tags: self.tags,
+            trust_tags: self.trust_tags,
             max_call: self.max_call,
             key,
             label,
+            watched,
             pool: {
                 // The startup connection is the gateway's own: under token
                 // exchange it must never serve a caller.
@@ -365,12 +473,20 @@ impl RemoteServerBuilder {
                 } else {
                     Some(probe)
                 };
-                Pool::new(key, linker, spare, (self.idle, self.max), for_callers)
+                Pool::new(
+                    key,
+                    linker,
+                    spare,
+                    (self.idle, self.max, self.max_per_caller),
+                    for_callers,
+                )
             },
         };
-        Ok(RemoteServer {
+        let remote = RemoteServer {
             inner: Arc::new(shared),
-        })
+        };
+        remote.relay_owned_updates(updates);
+        Ok(remote)
     }
 }
 
@@ -478,22 +594,30 @@ impl RemoteServer {
     /// server's (`Server::notifier`), so clients connected to it refresh
     /// their lists. Runs until the remote or the notifier's server goes
     /// away.
+    ///
+    /// Changes are gathered for a moment and each announced once: with a
+    /// connection per caller, one upstream change arrives once per
+    /// connection, and every downstream client would otherwise re-list that
+    /// many times.
     pub fn forward_changes_to(&self, notifier: ServerNotifier) {
         let mut rx = self.changes();
         tokio::spawn(async move {
             loop {
-                match rx.recv().await {
-                    Ok(Change::ToolsListChanged) => notifier.tools_list_changed(),
-                    Ok(Change::PromptsListChanged) => notifier.prompts_list_changed(),
-                    Ok(Change::ResourcesListChanged) => notifier.resources_list_changed(),
-                    Ok(Change::ResourceUpdated { uri }) => notifier.resource_updated(&uri).await,
-                    Ok(_) => {}
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        notifier.tools_list_changed();
-                        notifier.prompts_list_changed();
-                        notifier.resources_list_changed();
+                let mut pending = Pending::default();
+                if !pending.add(rx.recv().await) {
+                    return;
+                }
+                let window = tokio::time::sleep(COALESCE_CHANGES);
+                tokio::pin!(window);
+                let open = loop {
+                    tokio::select! {
+                        () = &mut window => break true,
+                        next = rx.recv() => if !pending.add(next) { break false },
                     }
-                    Err(broadcast::error::RecvError::Closed) => return,
+                };
+                pending.announce(&notifier).await;
+                if !open {
+                    return;
                 }
             }
         });
@@ -535,8 +659,125 @@ impl RemoteServer {
     }
 
     /// The upstream error as the downstream should see it.
-    fn upstream_error(&self, error: &turbomcp_client::ClientError) -> McpError {
-        error.to_mcp_error(&self.inner.version)
+    ///
+    /// An upstream `401`/`403` refuses the *gateway's* credential (a static
+    /// token that expired, a service account revoked), not the caller's:
+    /// relayed as the caller's authentication failure it would send them to
+    /// re-authorize with the gateway over a fault they can't fix. It is a
+    /// transport failure here, with the detail logged for the operator. The
+    /// exception is a connection acting for its caller (token exchange),
+    /// where a `403 insufficient_scope` really is about the caller's grant
+    /// and becomes the gateway's own step-up challenge.
+    fn upstream_error(&self, link: &Link, error: &turbomcp_client::ClientError) -> McpError {
+        if let turbomcp_client::ClientError::Http(failure) = error
+            && matches!(failure.status, 401 | 403)
+            && failure.rpc.is_none()
+        {
+            #[cfg(feature = "oauth")]
+            if self.inner.for_callers
+                && failure.status == 403
+                && let Some(challenge) = failure
+                    .www_authenticate
+                    .as_deref()
+                    .and_then(turbomcp_auth::client::parse_bearer_challenge)
+                && challenge.is_insufficient_scope()
+            {
+                return McpError::insufficient_scope(challenge.scopes());
+            }
+            tracing::warn!(
+                upstream = %self.inner.label,
+                status = failure.status,
+                detail = %failure.message,
+                "the upstream refused the gateway's credentials"
+            );
+            return McpError::transport(format!(
+                "upstream {} refused the gateway's credentials (HTTP {})",
+                self.inner.label, failure.status
+            ));
+        }
+        // The codes are the serving connection's revision's, which a
+        // connection opened after an upstream upgrade may not share with the
+        // startup one.
+        error.to_mcp_error(link.client.protocol_version())
+    }
+
+    /// The resource `uri` as `link`'s upstream lists it.
+    async fn find_resource(&self, link: &Link, uri: &str) -> McpResult<Option<neutral::Resource>> {
+        let client = &link.client;
+        link.resources
+            .find(uri, || async {
+                let resources = client
+                    .list_all_resources()
+                    .await
+                    .map_err(|e| self.upstream_error(link, &e))?;
+                Ok(resources
+                    .into_iter()
+                    .map(|r| (r.uri.clone(), self.downstream_resource(r)))
+                    .collect())
+            })
+            .await
+    }
+
+    /// The template of `link`'s upstream that `uri` matches.
+    async fn find_template(
+        &self,
+        link: &Link,
+        uri: &str,
+    ) -> McpResult<Option<neutral::ResourceTemplate>> {
+        let client = &link.client;
+        let all = link
+            .templates
+            .all(|| async {
+                let templates = client
+                    .list_all_resource_templates()
+                    .await
+                    .map_err(|e| self.upstream_error(link, &e))?;
+                Ok(templates
+                    .into_iter()
+                    .map(|t| (t.uri_template.clone(), self.downstream_template(t)))
+                    .collect())
+            })
+            .await?;
+        // In a fixed order, so overlapping templates resolve the same way
+        // every time (the policy judges the one found).
+        let mut candidates: Vec<&neutral::ResourceTemplate> = all.values().collect();
+        candidates.sort_by(|a, b| a.uri_template.cmp(&b.uri_template));
+        Ok(candidates
+            .into_iter()
+            .find(|t| {
+                UriTemplate::parse(&t.uri_template)
+                    .is_ok_and(|parsed| parsed.matches(uri).is_some())
+            })
+            .cloned())
+    }
+
+    /// Relay the `resources/updated` the upstream's connections report, each
+    /// only for a resource that connection's upstream lists or templates.
+    /// URIs aren't prefixed in a composite: unchecked, one upstream could
+    /// announce changes to another's (or a local) resource, sending every
+    /// subscriber to re-read it.
+    fn relay_owned_updates(
+        &self,
+        mut updates: tokio::sync::mpsc::Receiver<(std::sync::Weak<Link>, String)>,
+    ) {
+        let weak = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            while let Some((link, uri)) = updates.recv().await {
+                let Some(inner) = weak.upgrade() else { return };
+                let Some(link) = link.upgrade() else { continue };
+                let remote = RemoteServer { inner };
+                let owned = matches!(remote.find_resource(&link, &uri).await, Ok(Some(_)))
+                    || matches!(remote.find_template(&link, &uri).await, Ok(Some(_)));
+                if owned {
+                    let _ = remote.inner.changes.send(Change::ResourceUpdated { uri });
+                } else {
+                    tracing::debug!(
+                        upstream = %remote.inner.label,
+                        "dropped an update for a resource the upstream doesn't serve"
+                    );
+                }
+            }
+        });
     }
 
     /// What one downstream call carries upstream: its cancellation, its
@@ -556,18 +797,27 @@ impl RemoteServer {
             .cancel_on(base.cancellation.clone())
             .reset_timeout_on_progress(true)
             .max_total_timeout(self.inner.max_call);
-        let bridge = self.inner.forward_input.then(|| {
+        let inputs = self.inner.inputs;
+        let bridge = inputs.any().then(|| {
             Bridge::new(
                 handle.clone(),
                 base.protocol_version.clone(),
                 link.completions.clone(),
+                self.inner
+                    .attribute_questions
+                    .then(|| Arc::from(self.inner.label.as_str())),
             )
         });
         if let Some(bridge) = &bridge {
-            options = options
-                .with_elicitation(bridge.clone())
-                .with_sampling(bridge.clone())
-                .with_roots(bridge.clone());
+            if inputs.elicitation {
+                options = options.with_elicitation(bridge.clone());
+            }
+            if inputs.sampling {
+                options = options.with_sampling(bridge.clone());
+            }
+            if inputs.roots {
+                options = options.with_roots(bridge.clone());
+            }
         }
         let relay = progress
             .is_requested()
@@ -581,6 +831,7 @@ impl RemoteServer {
         }
         Forwarded {
             options,
+            cancel: base.cancellation.clone(),
             bridge,
             relay,
         }
@@ -597,7 +848,15 @@ impl RemoteServer {
         forwarded: &Forwarded,
         call: impl Future<Output = Result<T, turbomcp_client::ClientError>>,
     ) -> McpResult<T> {
-        let _turn = link.turn().await;
+        // Queued behind a long call, a caller that gives up must not then
+        // run anyway once the turn comes.
+        let _turn = tokio::select! {
+            biased;
+            () = forwarded.cancel.cancelled() => {
+                return Err(self.upstream_error(link, &turbomcp_client::ClientError::Cancelled));
+            }
+            turn = link.turn() => turn,
+        };
         let aborted = async {
             match &forwarded.bridge {
                 Some(bridge) => bridge.aborted().await,
@@ -605,7 +864,7 @@ impl RemoteServer {
             }
         };
         let result = tokio::select! {
-            result = call => result.map_err(|e| self.upstream_error(&e)),
+            result = call => result.map_err(|e| self.upstream_error(link, &e)),
             () = aborted => Err(McpError::InputRequired),
         };
         if let Some(relay) = &forwarded.relay {
@@ -628,8 +887,61 @@ impl SessionObserver for RemoteServer {
 /// One forwarded call's options, input bridge, and progress relay.
 struct Forwarded {
     options: CallOptions,
+    /// The caller's cancellation, which also ends the wait for a turn.
+    cancel: turbomcp_core::CancellationToken,
     bridge: Option<Bridge>,
     relay: Option<ProgressRelay>,
+}
+
+/// How long [`RemoteServer::forward_changes_to`] gathers changes before
+/// announcing them.
+const COALESCE_CHANGES: Duration = Duration::from_millis(50);
+
+/// The changes gathered to announce, each once.
+#[derive(Default)]
+struct Pending {
+    tools: bool,
+    prompts: bool,
+    resources: bool,
+    updated: std::collections::BTreeSet<String>,
+}
+
+impl Pending {
+    /// Gather one received change; `false` once the channel closed.
+    fn add(&mut self, received: Result<Change, broadcast::error::RecvError>) -> bool {
+        match received {
+            Ok(Change::ToolsListChanged) => self.tools = true,
+            Ok(Change::PromptsListChanged) => self.prompts = true,
+            Ok(Change::ResourcesListChanged) => self.resources = true,
+            Ok(Change::ResourceUpdated { uri }) => {
+                self.updated.insert(uri);
+            }
+            Ok(_) => {}
+            // Missed some: any list may have changed.
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                self.tools = true;
+                self.prompts = true;
+                self.resources = true;
+            }
+            Err(broadcast::error::RecvError::Closed) => return false,
+        }
+        true
+    }
+
+    async fn announce(self, notifier: &ServerNotifier) {
+        if self.tools {
+            notifier.tools_list_changed();
+        }
+        if self.prompts {
+            notifier.prompts_list_changed();
+        }
+        if self.resources {
+            notifier.resources_list_changed();
+        }
+        for uri in &self.updated {
+            notifier.resource_updated(uri).await;
+        }
+    }
 }
 
 /// How many progress updates may wait to be relayed.
@@ -684,7 +996,32 @@ impl McpServerCore for RemoteServer {
     }
 }
 
+impl RemoteServer {
+    /// Bring every open connection's upstream subscriptions in line with
+    /// what downstream clients watch now.
+    async fn sync_watches(&self) {
+        let target = self.inner.watched.lock().clone();
+        let links = self.inner.pool.live_links();
+        futures::future::join_all(
+            links
+                .iter()
+                .map(|link| link.sync_watches(target.clone(), false)),
+        )
+        .await;
+    }
+}
+
 impl WithTools for RemoteServer {
+    /// What the upstream announces: the gateway relays its notifications and
+    /// has none of its own.
+    fn tools_list_changed(&self) -> bool {
+        self.inner
+            .capabilities
+            .tools
+            .as_ref()
+            .is_some_and(|t| t.list_changed)
+    }
+
     async fn lookup_tool(
         &self,
         ctx: &ListToolsContext,
@@ -697,7 +1034,7 @@ impl WithTools for RemoteServer {
                 let tools = client
                     .list_all_tools()
                     .await
-                    .map_err(|e| self.upstream_error(&e))?;
+                    .map_err(|e| self.upstream_error(&link, &e))?;
                 Ok(tools
                     .into_iter()
                     .map(|t| (t.name.clone(), self.downstream_tool(t)))
@@ -716,7 +1053,7 @@ impl WithTools for RemoteServer {
             .client
             .list_tools(params.cursor.as_deref())
             .await
-            .map_err(|e| self.upstream_error(&e))?;
+            .map_err(|e| self.upstream_error(&link, &e))?;
         page.tools = page
             .tools
             .into_iter()
@@ -740,22 +1077,44 @@ impl WithTools for RemoteServer {
 }
 
 impl WithResources for RemoteServer {
+    fn resources_list_changed(&self) -> bool {
+        self.inner
+            .capabilities
+            .resources
+            .as_ref()
+            .is_some_and(|r| r.list_changed)
+    }
+
+    /// Subscriptions are offered exactly when the upstream offers them: the
+    /// gateway subscribes upstream for its watchers, and relays the
+    /// upstream's `resources/updated`.
+    fn resources_subscribe(&self) -> bool {
+        self.inner
+            .capabilities
+            .resources
+            .as_ref()
+            .is_some_and(|r| r.subscribe)
+    }
+
+    async fn watch_resource(&self, uri: String) {
+        if self.inner.watched.lock().insert(uri) {
+            self.sync_watches().await;
+        }
+    }
+
+    async fn unwatch_resource(&self, uri: String) {
+        if self.inner.watched.lock().remove(&uri) {
+            self.sync_watches().await;
+        }
+    }
+
     async fn lookup_resource(
         &self,
         ctx: &ListResourcesContext,
         uri: String,
     ) -> McpResult<Option<neutral::Resource>> {
         let link = self.link(&ctx.base).await?;
-        let client = &link.client;
-        link.resources
-            .find(&uri, || async {
-                let resources = client
-                    .list_all_resources()
-                    .await
-                    .map_err(|e| self.upstream_error(&e))?;
-                Ok(resources.into_iter().map(|r| (r.uri.clone(), r)).collect())
-            })
-            .await
+        self.find_resource(&link, &uri).await
     }
 
     async fn lookup_resource_template(
@@ -764,27 +1123,7 @@ impl WithResources for RemoteServer {
         uri: String,
     ) -> McpResult<Option<neutral::ResourceTemplate>> {
         let link = self.link(&ctx.base).await?;
-        let client = &link.client;
-        let all = link
-            .templates
-            .all(|| async {
-                let templates = client
-                    .list_all_resource_templates()
-                    .await
-                    .map_err(|e| self.upstream_error(&e))?;
-                Ok(templates
-                    .into_iter()
-                    .map(|t| (t.uri_template.clone(), t))
-                    .collect())
-            })
-            .await?;
-        Ok(all
-            .values()
-            .find(|t| {
-                UriTemplate::parse(&t.uri_template)
-                    .is_ok_and(|parsed| parsed.matches(&uri).is_some())
-            })
-            .cloned())
+        self.find_template(&link, &uri).await
     }
 
     async fn list_resources(
@@ -793,10 +1132,17 @@ impl WithResources for RemoteServer {
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListResourcesResult> {
         let link = self.link(&ctx.base).await?;
-        link.client
+        let mut page = link
+            .client
             .list_resources(params.cursor.as_deref())
             .await
-            .map_err(|e| self.upstream_error(&e))
+            .map_err(|e| self.upstream_error(&link, &e))?;
+        page.resources = page
+            .resources
+            .into_iter()
+            .map(|r| self.downstream_resource(r))
+            .collect();
+        Ok(page)
     }
 
     async fn read_resource(
@@ -818,14 +1164,29 @@ impl WithResources for RemoteServer {
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListResourceTemplatesResult> {
         let link = self.link(&ctx.base).await?;
-        link.client
+        let mut page = link
+            .client
             .list_resource_templates(params.cursor.as_deref())
             .await
-            .map_err(|e| self.upstream_error(&e))
+            .map_err(|e| self.upstream_error(&link, &e))?;
+        page.resource_templates = page
+            .resource_templates
+            .into_iter()
+            .map(|t| self.downstream_template(t))
+            .collect();
+        Ok(page)
     }
 }
 
 impl WithPrompts for RemoteServer {
+    fn prompts_list_changed(&self) -> bool {
+        self.inner
+            .capabilities
+            .prompts
+            .as_ref()
+            .is_some_and(|p| p.list_changed)
+    }
+
     async fn lookup_prompt(
         &self,
         ctx: &ListPromptsContext,
@@ -838,8 +1199,11 @@ impl WithPrompts for RemoteServer {
                 let prompts = client
                     .list_all_prompts()
                     .await
-                    .map_err(|e| self.upstream_error(&e))?;
-                Ok(prompts.into_iter().map(|p| (p.name.clone(), p)).collect())
+                    .map_err(|e| self.upstream_error(&link, &e))?;
+                Ok(prompts
+                    .into_iter()
+                    .map(|p| (p.name.clone(), self.downstream_prompt(p)))
+                    .collect())
             })
             .await
     }
@@ -850,10 +1214,17 @@ impl WithPrompts for RemoteServer {
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListPromptsResult> {
         let link = self.link(&ctx.base).await?;
-        link.client
+        let mut page = link
+            .client
             .list_prompts(params.cursor.as_deref())
             .await
-            .map_err(|e| self.upstream_error(&e))
+            .map_err(|e| self.upstream_error(&link, &e))?;
+        page.prompts = page
+            .prompts
+            .into_iter()
+            .map(|p| self.downstream_prompt(p))
+            .collect();
+        Ok(page)
     }
 
     async fn get_prompt(
@@ -880,7 +1251,7 @@ impl WithCompletions for RemoteServer {
         link.client
             .complete(params)
             .await
-            .map_err(|e| self.upstream_error(&e))
+            .map_err(|e| self.upstream_error(&link, &e))
     }
 }
 
@@ -892,9 +1263,49 @@ impl RemoteServer {
     /// upstream's too, unless the gateway enforces them.
     fn downstream_tool(&self, mut tool: neutral::Tool) -> neutral::Tool {
         tool.task_support = None;
-        if !self.inner.enforce_scopes {
-            tool.meta.remove(turbomcp_core::meta::keys::SCOPES);
-        }
+        self.gateway_meta(&mut tool.meta);
         tool
+    }
+
+    fn downstream_prompt(&self, mut prompt: neutral::Prompt) -> neutral::Prompt {
+        self.gateway_meta(&mut prompt.meta);
+        prompt
+    }
+
+    fn downstream_resource(&self, mut resource: neutral::Resource) -> neutral::Resource {
+        self.gateway_meta(&mut resource.meta);
+        resource
+    }
+
+    fn downstream_template(
+        &self,
+        mut template: neutral::ResourceTemplate,
+    ) -> neutral::ResourceTemplate {
+        self.gateway_meta(&mut template.meta);
+        template
+    }
+
+    /// The `io.turbomcp/*` metadata the gateway's own policies read, as the
+    /// gateway says, not the upstream: everything the upstream sent under the
+    /// prefix is dropped (declared scopes survive only when the gateway
+    /// enforces them), then the gateway's [tags](RemoteServerBuilder::tags)
+    /// are added.
+    fn gateway_meta(&self, meta: &mut serde_json::Map<String, serde_json::Value>) {
+        use turbomcp_core::meta::keys::{SCOPES, TAGS};
+        let (keep_scopes, keep_tags) = (self.inner.enforce_scopes, self.inner.trust_tags);
+        meta.retain(|key, _| {
+            !key.starts_with("io.turbomcp/")
+                || (keep_scopes && key == SCOPES)
+                || (keep_tags && key == TAGS)
+        });
+        if !self.inner.tags.is_empty() {
+            let mut tags: Vec<serde_json::Value> = meta
+                .get(TAGS)
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            tags.extend(self.inner.tags.iter().cloned().map(serde_json::Value::from));
+            meta.insert(TAGS.to_owned(), serde_json::Value::from(tags));
+        }
     }
 }

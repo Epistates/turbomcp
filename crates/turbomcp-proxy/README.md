@@ -54,11 +54,16 @@ at every connect). Cancellation, progress and trace context cross the hop, and a
 upstream gets the specification's shutdown sequence (stdin closed, then
 `SIGTERM`, then `SIGKILL`, to its whole process group).
 
-An upstream that asks for input (elicitation, sampling, roots) asks the
-downstream caller whose call caused it, whatever revision each side speaks:
-a `2025-*` caller is asked inline, a `2026-07-28` caller gets an
-`InputRequiredResult` and retries. A request the proxy can't attribute to a
-caller is refused, never shown to someone it may not belong to.
+An upstream that asks for input asks the downstream caller whose call
+caused it, whatever revision each side speaks: a `2025-*` caller is asked
+inline, a `2026-07-28` caller gets an `InputRequiredResult` and retries. A
+request the proxy can't attribute to a caller is refused, never shown to
+someone it may not belong to. Elicitation is forwarded by default, named
+after the upstream that asks; sampling (the caller's model, on the
+upstream's prompt) and roots (the caller's files) only with
+`forward_sampling` and `forward_roots`. An upstream announces changes only
+to resources it lists or templates, so in a composite one upstream can't
+send another's subscribers to re-read.
 
 Which upstream connection serves a call is its `UpstreamKey`: one shared
 connection, one per authenticated caller, or one per downstream session.
@@ -66,7 +71,10 @@ The default follows the upstream. A `2026-07-28` or Streamable HTTP upstream
 says whose each request for input is, so one connection serves everyone; a
 `2025-*` stdio upstream doesn't, so each caller gets its own (and its own
 child process, which also keeps per-user upstream state apart). Idle
-connections close, and a dead one is replaced on the next call.
+connections close, and a dead one is replaced on the next call. Connections
+are capped in all (`max_connections`) and per caller
+(`max_connections_per_caller`); past a cap a call is refused, never another
+caller's connection closed.
 
 ```rust,ignore
 let remote = RemoteServer::builder(Upstream::stdio("my-server", ["--stdio"]))

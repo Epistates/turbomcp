@@ -113,7 +113,11 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     }
 
     let result = legacy::InitializeResult {
-        capabilities: build_legacy_capabilities(router, tasks_enabled),
+        capabilities: build_legacy_capabilities(
+            router,
+            router.capability_flags(server),
+            tasks_enabled,
+        ),
         instructions: server.instructions(),
         meta: Map::new(),
         protocol_version: negotiated.as_str().to_owned(),
@@ -173,12 +177,13 @@ fn negotiate_initialize_version(
 
 fn build_legacy_capabilities<S: McpServerCore>(
     router: &MethodRouter<S>,
+    flags: crate::router::CapabilityFlags,
     tasks_enabled: bool,
 ) -> legacy::ServerCapabilities {
     let marker = || legacy::JsonObject(Map::new());
-    // `listChanged`/`subscribe` are true: the subscription registry delivers
-    // them for every registered capability (`resources/subscribe` + the
-    // session's notification stream).
+    // `listChanged`/`subscribe` are what the server says of itself
+    // (`WithTools::tools_list_changed`, …), not assumed: a gateway relays an
+    // upstream that may announce nothing.
     legacy::ServerCapabilities {
         completions: router.has_completions().then(marker),
         experimental: BTreeMap::new(),
@@ -186,13 +191,13 @@ fn build_legacy_capabilities<S: McpServerCore>(
         prompts: router
             .has_prompts()
             .then_some(legacy::ServerCapabilitiesPrompts {
-                list_changed: Some(true),
+                list_changed: flags.prompts_list_changed.then_some(true),
             }),
         resources: router
             .has_resources()
             .then_some(legacy::ServerCapabilitiesResources {
-                list_changed: Some(true),
-                subscribe: Some(true),
+                list_changed: flags.resources_list_changed.then_some(true),
+                subscribe: flags.resources_subscribe.then_some(true),
             }),
         // `2025-06-18` has no Tasks; its step-down conversion drops this.
         tasks: tasks_enabled.then(|| legacy::ServerCapabilitiesTasks {
@@ -207,7 +212,7 @@ fn build_legacy_capabilities<S: McpServerCore>(
         tools: router
             .has_tools()
             .then_some(legacy::ServerCapabilitiesTools {
-                list_changed: Some(true),
+                list_changed: flags.tools_list_changed.then_some(true),
             }),
     }
 }
@@ -308,8 +313,9 @@ fn build_discover_result<S: McpServerCore>(
     supported: &[ProtocolVersion],
     cache: neutral::CachePolicy,
 ) -> v0728::DiscoverResult {
-    // `listChanged`/`subscribe` are true: the subscription registry delivers
-    // these for every registered capability (`subscriptions/listen`).
+    // `listChanged`/`subscribe` are what the server says of itself, as for
+    // `initialize`.
+    let flags = router.capability_flags(server);
     let capabilities = v0728::ServerCapabilities {
         // `completions` is an opaque presence marker (an empty object when the
         // server supports argument autocompletion).
@@ -322,18 +328,18 @@ fn build_discover_result<S: McpServerCore>(
         prompts: router
             .has_prompts()
             .then_some(v0728::ServerCapabilitiesPrompts {
-                list_changed: Some(true),
+                list_changed: flags.prompts_list_changed.then_some(true),
             }),
         resources: router
             .has_resources()
             .then_some(v0728::ServerCapabilitiesResources {
-                list_changed: Some(true),
-                subscribe: Some(true),
+                list_changed: flags.resources_list_changed.then_some(true),
+                subscribe: flags.resources_subscribe.then_some(true),
             }),
         tools: router
             .has_tools()
             .then_some(v0728::ServerCapabilitiesTools {
-                list_changed: Some(true),
+                list_changed: flags.tools_list_changed.then_some(true),
             }),
     };
     v0728::DiscoverResult {

@@ -103,6 +103,28 @@ fn a_failed_call_fails_the_command_and_says_why() {
     assert!(stderr.contains("nope"), "{stderr}");
 }
 
+/// The exit status says what kind of failure it was: `2` usage, `3` a
+/// server that can't be reached or started, `1` or `4` a server that said
+/// no (a tool error, a protocol error).
+#[test]
+fn the_exit_status_tells_failures_apart() {
+    let code = |args: &[&str]| turbomcp(args).status.code();
+    assert_eq!(code(&["tools", "/nonexistent/mcp-server"]), Some(3));
+    assert_eq!(code(&["call", "hello", "--args", "[1]", &hello()]), Some(2));
+    let nope = code(&["call", "nope", &hello()]);
+    assert!(matches!(nope, Some(1 | 4)), "{nope:?}");
+}
+
+/// Credentials for a command server have nowhere to go: refused, not
+/// silently dropped.
+#[test]
+fn a_bearer_for_a_command_is_refused() {
+    let output = turbomcp(&["tools", "--bearer", "t", &hello()]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("environment"), "{stderr}");
+}
+
 #[test]
 fn a_probe_reports_every_revision_the_server_speaks() {
     let json: Value =
@@ -185,6 +207,20 @@ fn a_configuration_the_proxy_cannot_serve_is_refused_with_a_reason() {
     let _ = std::fs::remove_file(path);
 }
 
+/// Held by a test while its gateway owns a port it found free: two found
+/// at once can be the same port (one is released before the gateway binds
+/// it), and a test would then talk to the other's gateway.
+static PORT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A loopback port free now, and the guard that keeps other tests off it.
+fn free_port() -> (std::net::SocketAddr, std::sync::MutexGuard<'static, ()>) {
+    let guard = PORT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    (probe.local_addr().unwrap(), guard)
+}
+
 /// A raw HTTP/1.1 exchange with `addr`: the status line and the rest.
 fn http(addr: std::net::SocketAddr, request: &str) -> (String, String) {
     use std::io::{Read, Write};
@@ -206,10 +242,7 @@ fn the_http_gateway_can_require_bearer_tokens() {
         "auth",
         &format!(r#"{{"mcpServers": {{"hi": {{"command": {hello}}}}}}}"#),
     );
-    let addr = {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        probe.local_addr().unwrap()
-    };
+    let (addr, _port) = free_port();
     let mut gateway = Command::new(env!("CARGO_BIN_EXE_turbomcp"))
         .args([
             "proxy",
@@ -259,5 +292,77 @@ fn the_http_gateway_can_require_bearer_tokens() {
 
     let _ = gateway.kill();
     let _ = gateway.wait();
+    let _ = std::fs::remove_file(path);
+}
+
+/// Beyond loopback with nobody checking who calls, every server behind the
+/// gateway (commands included) would be anyone's: refused unless asked for.
+#[test]
+fn an_open_gateway_beyond_loopback_is_refused() {
+    let hello = serde_json::to_string(&hello()).unwrap();
+    let path = config(
+        "open",
+        &format!(r#"{{"mcpServers": {{"hi": {{"command": {hello}}}}}}}"#),
+    );
+    let output = turbomcp(&[
+        "proxy",
+        "--config",
+        &path.to_string_lossy(),
+        "--http",
+        "0.0.0.0:1",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--insecure"), "{stderr}");
+    let _ = std::fs::remove_file(path);
+}
+
+/// `SIGTERM` (what `docker stop` and systemd send) ends the gateway
+/// cleanly: it stops serving, shuts its upstreams down, and exits `0`.
+#[cfg(unix)]
+#[test]
+fn the_gateway_shuts_down_on_sigterm() {
+    let hello = serde_json::to_string(&hello()).unwrap();
+    let path = config(
+        "sigterm",
+        &format!(r#"{{"mcpServers": {{"hi": {{"command": {hello}}}}}}}"#),
+    );
+    let (addr, _port) = free_port();
+    let mut gateway = Command::new(env!("CARGO_BIN_EXE_turbomcp"))
+        .args([
+            "proxy",
+            "--config",
+            &path.to_string_lossy(),
+            "--http",
+            &addr.to_string(),
+        ])
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::net::TcpStream::connect(addr).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the gateway never listened"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let sent = Command::new("kill")
+        .args(["-TERM", &gateway.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(sent.success());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) = gateway.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = gateway.kill();
+            panic!("the gateway ignored SIGTERM");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(status.success(), "{status:?}");
     let _ = std::fs::remove_file(path);
 }

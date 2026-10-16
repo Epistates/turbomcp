@@ -14,6 +14,44 @@ mod target;
 
 use target::Target;
 
+/// What ended a command, for its exit status: `1` a tool that reported an
+/// error (or anything unclassified), `2` a usage error, `3` a server that
+/// couldn't be reached or started, `4` a server that answered with an
+/// error. Attached as context, so the message keeps its detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Failure {
+    /// The arguments or the configuration don't describe a usable command.
+    Usage,
+    /// The connection, the process or the handshake failed.
+    Connect,
+    /// A request was answered with an error.
+    Protocol,
+    /// The tool ran and reported an error.
+    Tool,
+}
+
+impl Failure {
+    fn code(self) -> u8 {
+        match self {
+            Self::Tool => 1,
+            Self::Usage => 2,
+            Self::Connect => 3,
+            Self::Protocol => 4,
+        }
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Usage => "usage",
+            Self::Connect => "could not connect",
+            Self::Protocol => "the server answered with an error",
+            Self::Tool => "the tool reported an error",
+        })
+    }
+}
+
 /// MCP from the command line: a gateway over an mcpServers configuration,
 /// and protocol operations against any server (a URL, or a command to run
 /// over stdio).
@@ -109,7 +147,8 @@ fn prompt_arguments(pairs: &[String]) -> Result<BTreeMap<String, String>> {
         .map(|pair| {
             let (key, value) = pair
                 .split_once('=')
-                .with_context(|| format!("argument `{pair}` is not `key=value`"))?;
+                .with_context(|| format!("argument `{pair}` is not `key=value`"))
+                .context(Failure::Usage)?;
             Ok((key.to_owned(), value.to_owned()))
         })
         .collect()
@@ -128,7 +167,7 @@ async fn run(cli: Cli) -> Result<()> {
             json,
             target,
         } => {
-            let args = ops::arguments(json_args.as_deref(), &args)?;
+            let args = ops::arguments(json_args.as_deref(), &args).context(Failure::Usage)?;
             ops::call(&target, &tool, args, json).await
         }
         Command::Read { uri, json, target } => ops::read(&target, &uri, json).await,
@@ -156,8 +195,11 @@ async fn main() -> ExitCode {
     match run(Cli::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e:#}");
-            ExitCode::FAILURE
+            // Server text can reach the message; a terminal escape in it
+            // must not reach the terminal as one.
+            eprintln!("error: {}", ops::shown(&format!("{e:#}")));
+            // anyhow finds a context value through every layer above it.
+            ExitCode::from(e.downcast_ref::<Failure>().map_or(1, |f| f.code()))
         }
     }
 }

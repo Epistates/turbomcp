@@ -90,7 +90,7 @@ async fn spawn_authority(forms: Forms) -> String {
         forms.lock().unwrap().push(form.clone());
         let (token, typed) = match form.get("subject_token").map(String::as_str) {
             None => ("gateway-own", false),
-            Some("alice-token") => ("upstream-alice", true),
+            Some("alice-token" | "alice-token-rotated") => ("upstream-alice", true),
             Some("bob-token") => ("upstream-bob", true),
             Some(_) => return axum::http::StatusCode::BAD_REQUEST.into_response(),
         };
@@ -196,7 +196,11 @@ async fn gateway(
     let gateway = serve_protected(
         remote.into_server(),
         Table {
-            tokens: &[("alice-token", "alice"), ("bob-token", "bob")],
+            tokens: &[
+                ("alice-token", "alice"),
+                ("alice-token-rotated", "alice"),
+                ("bob-token", "bob"),
+            ],
             seen: Arc::default(),
         },
         // The gateway's callers authenticate elsewhere; any issuer will do.
@@ -240,6 +244,31 @@ async fn each_caller_reaches_the_upstream_as_themselves() {
     assert!(
         !seen.iter().any(|t| t.ends_with("-token")),
         "a caller's token reached the upstream: {seen:?}"
+    );
+    shutdown.cancel();
+}
+
+/// A caller whose token rotates is exchanged again: the upstream token the
+/// gateway holds for them was issued for the old one, and keeping it would
+/// outlive a revocation of what it was exchanged from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rotated_caller_token_is_exchanged_again() {
+    let shutdown = CancellationToken::new();
+    let (gateway, _, forms) = gateway(true, &shutdown).await;
+    for token in ["alice-token", "alice-token-rotated"] {
+        let alice = as_caller(&gateway, token).await;
+        let whoami = alice.call_tool("whoami", Map::new()).await.unwrap();
+        assert_eq!(whoami.text_content().as_deref(), Some("alice"));
+    }
+    let subjects: Vec<String> = forms
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f.get("subject_token").cloned())
+        .collect();
+    assert!(
+        subjects.contains(&"alice-token-rotated".to_owned()),
+        "the rotated token was never exchanged: {subjects:?}"
     );
     shutdown.cancel();
 }

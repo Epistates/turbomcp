@@ -179,8 +179,49 @@ pub struct MethodRouter<S> {
     get_prompt: Option<GetPromptHandler<S>>,
     complete: Option<CompleteHandler<S>>,
     logging: bool,
+    /// What each registered capability says of its notifications.
+    flags: Flags<S>,
+    /// Starts and stops watching a resource ([`WithResources::watch_resource`]).
+    watch: Option<WatchHandler<S>>,
     /// Typed interceptors, outermost first ([`crate::intercept`]).
     interceptors: Arc<[Arc<dyn Interceptor>]>,
+}
+
+/// Starts (`true`) or stops (`false`) watching a resource URI.
+type WatchHandler<S> = Arc<dyn Fn(S, String, bool) -> BoxFuture<'static, ()> + Send + Sync>;
+
+/// Per capability, how to ask the server whether it announces changes.
+struct Flags<S> {
+    tools_list_changed: Option<fn(&S) -> bool>,
+    prompts_list_changed: Option<fn(&S) -> bool>,
+    resources_list_changed: Option<fn(&S) -> bool>,
+    resources_subscribe: Option<fn(&S) -> bool>,
+}
+
+impl<S> Default for Flags<S> {
+    fn default() -> Self {
+        Self {
+            tools_list_changed: None,
+            prompts_list_changed: None,
+            resources_list_changed: None,
+            resources_subscribe: None,
+        }
+    }
+}
+
+/// What a server's capabilities say about notifications: the `listChanged`
+/// and `subscribe` flags it advertises.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CapabilityFlags {
+    /// `tools.listChanged`.
+    pub tools_list_changed: bool,
+    /// `prompts.listChanged`.
+    pub prompts_list_changed: bool,
+    /// `resources.listChanged`.
+    pub resources_list_changed: bool,
+    /// `resources.subscribe`.
+    pub resources_subscribe: bool,
 }
 
 impl<S> Default for MethodRouter<S> {
@@ -199,6 +240,8 @@ impl<S> Default for MethodRouter<S> {
             get_prompt: None,
             complete: None,
             logging: false,
+            flags: Flags::default(),
+            watch: None,
             interceptors: Arc::from([]),
         }
     }
@@ -326,6 +369,7 @@ impl<S: McpServerCore> MethodRouter<S> {
         self.call_tool = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.call_tool(&ctx, params).await })
         }));
+        self.flags.tools_list_changed = Some(|server: &S| server.tools_list_changed());
         self
     }
 
@@ -350,6 +394,17 @@ impl<S: McpServerCore> MethodRouter<S> {
         self.list_resource_templates = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.list_resource_templates(&ctx, params).await })
         }));
+        self.flags.resources_list_changed = Some(|server: &S| server.resources_list_changed());
+        self.flags.resources_subscribe = Some(|server: &S| server.resources_subscribe());
+        self.watch = Some(Arc::new(|server: S, uri, start| {
+            Box::pin(async move {
+                if start {
+                    server.watch_resource(uri).await;
+                } else {
+                    server.unwatch_resource(uri).await;
+                }
+            })
+        }));
         self
     }
 
@@ -368,6 +423,7 @@ impl<S: McpServerCore> MethodRouter<S> {
         self.get_prompt = Some(Arc::new(|server: S, ctx, params| {
             Box::pin(async move { server.get_prompt(&ctx, params).await })
         }));
+        self.flags.prompts_list_changed = Some(|server: &S| server.prompts_list_changed());
         self
     }
 
@@ -392,6 +448,30 @@ impl<S: McpServerCore> MethodRouter<S> {
     pub fn with_logging(mut self) -> Self {
         self.logging = true;
         self
+    }
+
+    /// The notification flags `server` advertises for the capabilities this
+    /// router serves (all `false` for one it doesn't).
+    #[must_use]
+    pub fn capability_flags(&self, server: &S) -> CapabilityFlags {
+        let ask = |flag: Option<fn(&S) -> bool>| flag.is_some_and(|f| f(server));
+        CapabilityFlags {
+            tools_list_changed: ask(self.flags.tools_list_changed),
+            prompts_list_changed: ask(self.flags.prompts_list_changed),
+            resources_list_changed: ask(self.flags.resources_list_changed),
+            resources_subscribe: ask(self.flags.resources_subscribe),
+        }
+    }
+
+    /// Start (`start`) or stop watching `uri` on `server`, when it serves
+    /// resources.
+    pub(crate) fn dispatch_watch(
+        &self,
+        server: S,
+        uri: String,
+        start: bool,
+    ) -> Option<BoxFuture<'static, ()>> {
+        self.watch.as_ref().map(|watch| watch(server, uri, start))
     }
 
     /// Whether `tools/*` is served (drives capability advertisement).

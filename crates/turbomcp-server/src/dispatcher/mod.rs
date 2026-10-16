@@ -439,16 +439,27 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     pub fn new(server: S, router: MethodRouter<S>) -> Self {
         let supported = server.supported_versions().to_vec();
         let pending = Arc::new(PendingRequests::default());
+        let router = Arc::new(router);
+        // The server hears when a resource gains its first subscriber and
+        // loses its last (`WithResources::watch_resource`), however many
+        // sessions and listen streams come and go in between.
+        let subs = Arc::new(SubscriptionRegistry::default());
+        if router.has_resources() {
+            let (watching, hooks) = (server.clone(), Arc::clone(&router));
+            subs.set_watcher(crate::subscriptions::Watcher::new(Arc::new(
+                move |uri, start| hooks.dispatch_watch(watching.clone(), uri, start),
+            )));
+        }
         Self {
             server,
-            router: Arc::new(router),
+            router,
             supported,
             shared: Shared {
                 sessions: Arc::new(SessionStore::default()),
                 custom_sessions: false,
                 tasks: None,
                 inflight: Arc::new(InFlightRegistry::default()),
-                subs: Arc::new(SubscriptionRegistry::default()),
+                subs,
                 sealer: Arc::new(StateSealer::new()),
                 task_input: Arc::new(task_input::TaskInputRelay::new(Arc::clone(&pending))),
                 pending,
@@ -542,10 +553,11 @@ impl<S: McpServerCore> VersionDispatcher<S> {
 
     /// Which list capabilities this server has, by `ListChangedKind` slot.
     fn advertised_lists(&self) -> [bool; 3] {
+        let flags = self.router.capability_flags(&self.server);
         [
-            self.router.has_tools(),
-            self.router.has_resources(),
-            self.router.has_prompts(),
+            flags.tools_list_changed,
+            flags.resources_list_changed,
+            flags.prompts_list_changed,
         ]
     }
 
@@ -1326,7 +1338,8 @@ async fn handle_request<S: McpServerCore>(
                     if let Err(response) = legacy_context(sessions.as_ref(), &req, ext).await? {
                         return Ok(response);
                     }
-                    if !router.has_resources() {
+                    // Served exactly when `resources.subscribe` is advertised.
+                    if !router.capability_flags(&server).resources_subscribe {
                         return Ok(error_response_for(
                             id,
                             &version,

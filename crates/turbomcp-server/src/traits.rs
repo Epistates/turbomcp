@@ -59,6 +59,14 @@ pub trait McpServerCore: Clone + Send + Sync + 'static {
 
 /// Implement to serve tools (`tools/list`, `tools/call`).
 pub trait WithTools: McpServerCore {
+    /// Whether this server announces `notifications/tools/list_changed`
+    /// (advertised as `tools.listChanged`). `true` by default: the
+    /// [`ServerNotifier`](crate::ServerNotifier) sends it. A server relaying
+    /// another (a gateway) says what that one does.
+    fn tools_list_changed(&self) -> bool {
+        true
+    }
+
     /// The tool a `tools/call` names, as `tools/list` would describe it to
     /// this caller, or `None` for no such tool.
     ///
@@ -111,6 +119,38 @@ pub trait WithTools: McpServerCore {
 /// Implement to serve resources (`resources/list`, `resources/read`, and
 /// optionally `resources/templates/list`).
 pub trait WithResources: McpServerCore {
+    /// Whether this server announces `notifications/resources/list_changed`
+    /// (`resources.listChanged`). `true` by default, as for tools.
+    fn resources_list_changed(&self) -> bool {
+        true
+    }
+
+    /// Whether clients may subscribe to resources (`resources.subscribe`):
+    /// `resources/subscribe` on the stateful revisions, a URI in a
+    /// `subscriptions/listen` filter on `2026-07-28`. `true` by default: the
+    /// server delivers `notifications/resources/updated` to subscribers of
+    /// whatever URI the [`ServerNotifier`](crate::ServerNotifier) names.
+    fn resources_subscribe(&self) -> bool {
+        true
+    }
+
+    /// The first subscriber to `uri` arrived. Called once per URI however
+    /// many sessions and listen streams watch it, until
+    /// [`unwatch_resource`](Self::unwatch_resource): the place to start
+    /// watching the source (a file watcher, an upstream subscription). The
+    /// default does nothing.
+    fn watch_resource(&self, uri: String) -> impl Future<Output = ()> + Send {
+        let _ = uri;
+        core::future::ready(())
+    }
+
+    /// The last subscriber to `uri` left (unsubscribed, or its session or
+    /// stream ended). The default does nothing.
+    fn unwatch_resource(&self, uri: String) -> impl Future<Output = ()> + Send {
+        let _ = uri;
+        core::future::ready(())
+    }
+
     /// The resource template matching `uri`, or `None`. Consulted, after
     /// [`lookup_resource`](Self::lookup_resource), to find the component a
     /// visibility policy judges a read by. The default walks
@@ -184,6 +224,12 @@ pub trait WithResources: McpServerCore {
 
 /// Implement to serve prompts (`prompts/list`, `prompts/get`).
 pub trait WithPrompts: McpServerCore {
+    /// Whether this server announces `notifications/prompts/list_changed`
+    /// (`prompts.listChanged`). `true` by default, as for tools.
+    fn prompts_list_changed(&self) -> bool {
+        true
+    }
+
     /// The prompt a `prompts/get` names, as `prompts/list` would describe it
     /// to this caller, or `None` for no such prompt. The default walks
     /// `list_prompts`; `#[server]` generates an indexed override.

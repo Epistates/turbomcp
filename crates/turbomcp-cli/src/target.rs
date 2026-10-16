@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
-use turbomcp::client::{Client, ClientBuilder, ConnectMode, HttpClientTransport};
-use turbomcp::proxy::Upstream;
+use turbomcp::client::{Client, ClientBuilder, ConnectMode};
+use turbomcp::proxy::{Inherit, OutboundAuth, Upstream};
 
 /// Where to connect, and how.
 #[derive(Args, Debug, Clone)]
@@ -32,6 +32,12 @@ pub struct Target {
     /// (repeatable).
     #[arg(long = "header", value_name = "NAME: VALUE")]
     pub headers: Vec<String>,
+
+    /// What a command server inherits of this environment: the variables
+    /// a program needs to run (`safe`, the default, as MCP hosts do), all of
+    /// it, or nothing. Set more with the command's own environment.
+    #[arg(long, value_enum, default_value_t = InheritEnv::Safe)]
+    pub inherit_env: InheritEnv,
 
     /// Give up on a request after this many seconds.
     #[arg(long, value_name = "SECONDS", default_value_t = 30)]
@@ -68,6 +74,27 @@ impl From<Mode> for ConnectMode {
     }
 }
 
+/// What a command server inherits.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InheritEnv {
+    /// `HOME`, `PATH`, `USER` and the like.
+    Safe,
+    /// Everything.
+    All,
+    /// Nothing.
+    None,
+}
+
+impl From<InheritEnv> for Inherit {
+    fn from(what: InheritEnv) -> Self {
+        match what {
+            InheritEnv::Safe => Self::Safe,
+            InheritEnv::All => Self::All,
+            InheritEnv::None => Self::Nothing,
+        }
+    }
+}
+
 /// A live connection, and the child process behind it when there is one.
 pub struct Connected {
     pub client: Client,
@@ -86,9 +113,9 @@ impl Connected {
 }
 
 impl Target {
-    /// The upstream this target names.
-    pub fn upstream(&self) -> Result<Upstream> {
-        let mut upstream = match (&self.server, self.words.as_slice()) {
+    /// The upstream this target names, and what to authenticate there with.
+    pub fn upstream(&self) -> Result<(Upstream, OutboundAuth)> {
+        let (mut upstream, mut auth) = match (&self.server, self.words.as_slice()) {
             (Some(_), [_, ..]) => bail!("give either `--server` or a SERVER, not both"),
             (None, []) => bail!("no server: give a URL, a command, or `--config` and `--server`"),
             (Some(name), []) => {
@@ -96,20 +123,31 @@ impl Target {
                     .config
                     .as_ref()
                     .context("`--server` needs `--config`")?;
-                crate::config::load(path)?
-                    .into_iter()
-                    .find(|s| &s.name == name)
-                    .map(|s| s.upstream)
-                    .with_context(|| format!("no enabled server `{name}` in {}", path.display()))?
+                let server = crate::config::load(path, std::slice::from_ref(name))?
+                    .servers
+                    .pop()
+                    .with_context(|| format!("no enabled server `{name}` in {}", path.display()))?;
+                (server.upstream, server.settings.auth)
             }
             (None, [url]) if url.starts_with("http://") || url.starts_with("https://") => {
-                Upstream::http(url.clone())
+                (Upstream::http(url.clone()), OutboundAuth::None)
             }
             (None, [url]) if url.starts_with("ws://") || url.starts_with("wss://") => {
-                Upstream::websocket(url.clone())
+                (Upstream::websocket(url.clone()), OutboundAuth::None)
             }
-            (None, [command, args @ ..]) => Upstream::stdio(command.clone(), args.iter().cloned()),
+            (None, [command, args @ ..]) => (
+                Upstream::stdio(command.clone(), args.iter().cloned())
+                    .inherit_env(self.inherit_env.into()),
+                OutboundAuth::None,
+            ),
         };
+        let stdio = matches!(upstream, Upstream::Stdio { .. });
+        if stdio && (self.bearer.is_some() || !self.headers.is_empty()) {
+            bail!(
+                "`--bearer` and `--header` are for HTTP and WebSocket servers; a command \
+                 gets credentials from its environment"
+            );
+        }
         for header in &self.headers {
             let (name, value) = header
                 .split_once(':')
@@ -117,9 +155,9 @@ impl Target {
             upstream = upstream.header(name.trim(), value.trim());
         }
         if let Some(token) = &self.bearer {
-            upstream = upstream.header("Authorization", format!("Bearer {token}"));
+            auth = OutboundAuth::bearer(token.clone());
         }
-        Ok(upstream)
+        Ok((upstream, auth))
     }
 
     /// A client configured as this target says.
@@ -134,72 +172,14 @@ impl Target {
         self.connect_as(self.mode.into()).await
     }
 
-    /// Connect, negotiating with `mode`.
+    /// Connect, negotiating with `mode`: the gateway's own connect, so a
+    /// command starts with the same environment policy, and headers get the
+    /// same handling, as under `turbomcp proxy`.
     pub async fn connect_as(&self, mode: ConnectMode) -> Result<Connected> {
-        let builder = self.client(mode);
-        let connected = match self.upstream()? {
-            Upstream::Stdio {
-                command,
-                args,
-                env,
-                cwd,
-                ..
-            } => {
-                let mut cmd = tokio::process::Command::new(&command);
-                cmd.args(&args).envs(&env);
-                if let Some(cwd) = cwd {
-                    cmd.current_dir(cwd);
-                }
-                let (client, child) = turbomcp::client::connect_child(builder, cmd)
-                    .await
-                    .with_context(|| format!("starting `{command}`"))?;
-                Connected {
-                    client,
-                    child: Some(child),
-                }
-            }
-            Upstream::Http { url, headers } => {
-                let mut transport = HttpClientTransport::new(url.clone())
-                    .with_context(|| format!("endpoint {url}"))?;
-                if !headers.is_empty() {
-                    let mut map = http::HeaderMap::new();
-                    for (name, value) in &headers {
-                        map.insert(
-                            http::HeaderName::from_bytes(name.as_bytes())?,
-                            value.parse()?,
-                        );
-                    }
-                    transport = transport.with_headers(map)?;
-                }
-                let client = builder
-                    .connect(transport)
-                    .await
-                    .with_context(|| format!("connecting to {url}"))?;
-                Connected {
-                    client,
-                    child: None,
-                }
-            }
-            Upstream::WebSocket { url, headers } => {
-                let mut request = http::Request::builder().uri(url.as_str());
-                for (name, value) in &headers {
-                    request = request.header(name.as_str(), value.as_str());
-                }
-                let transport =
-                    turbomcp::client::WebSocketClientTransport::connect(request.body(())?)
-                        .await
-                        .with_context(|| format!("connecting to {url}"))?;
-                let client = builder
-                    .connect(transport)
-                    .await
-                    .with_context(|| format!("connecting to {url}"))?;
-                Connected {
-                    client,
-                    child: None,
-                }
-            }
-            other => bail!("unsupported server {other:?}"),
-        };
-        Ok(connected)
+        let (upstream, auth) = self.upstream().context(crate::Failure::Usage)?;
+        let (client, child) = turbomcp::proxy::connect(&upstream, self.client(mode), &auth)
+            .await
+            .map_err(|e| anyhow::Error::new(e).context(crate::Failure::Connect))?;
+        Ok(Connected { client, child })
     }
 }

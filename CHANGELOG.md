@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Capability flags follow the server: `WithTools::tools_list_changed`,
+  `WithPrompts::prompts_list_changed`, `WithResources::resources_list_changed`
+  and `resources_subscribe` (default `true`) decide what the handshake and
+  `subscriptions/listen` advertise, and `MethodRouter::capability_flags`
+  reports them (`CapabilityFlags`). `WithResources::watch_resource` and
+  `unwatch_resource` run when the first subscriber of a URI arrives and the
+  last leaves, on every revision; a `Composite` passes them to its mounts.
+- `turbomcp_proxy::connect`: a client of your own connects to an `Upstream`
+  the way a `RemoteServer` does (environment policy, process group,
+  sensitive headers, `OutboundAuth`). The CLI's operations use it.
+- `RemoteServerBuilder::{tags, trust_upstream_tags, forward_sampling,
+  forward_roots, attribute_questions, max_connections_per_caller}`.
+- The gateway relays an upstream's `notifications/message` to the
+  operator's log (target `turbomcp::upstream_log`, at its severity,
+  bounded and escaped). It does not relay them to callers: nothing in one
+  says whose call it is about.
+- `IdentityAssertion::secret`; `Grant::basis`, so a session re-grants when
+  the credential its token came from changes.
+- `turbomcp proxy`: per-entry `inherit`, `timeout`, `key`,
+  `forwardSampling`, `forwardRoots`, `tags` and `auth` (`bearer`,
+  `clientCredentials`, `tokenExchange`); `--retry-for`, `--insecure`,
+  `--allow-origin`, `--allow-host`, `--max-connections`,
+  `--max-connections-per-caller`, `--idle-timeout` and `--drain`. The
+  configuration also reads VS Code's `mcp.servers`, and `${VAR:-default}`,
+  `${workspaceFolder}`, `${userHome}` and `${pathSeparator}`. The
+  operations take `--inherit-env`.
+
 - `private_key_jwt` client authentication (RFC 7523):
   `MachineAuthorization::with_private_key_jwt(ClientAssertion)` signs a
   fresh one-minute assertion (`aud` = the issuer, random `jti`) per token
@@ -427,6 +454,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The gateway judges its visibility policy on tags it gave, not tags an
+  upstream wrote: `io.turbomcp/*` metadata from an upstream is dropped
+  unless `trust_upstream_tags(true)` (scopes are kept only when the
+  gateway enforces them). A hostile upstream could otherwise tag its own
+  tool `public`.
+- An upstream announces `resources/updated` only for resources it lists or
+  templates. URIs aren't prefixed in a composite, so one upstream could send
+  every subscriber of another's resource to re-read it.
+- Sampling and roots are no longer forwarded to callers by default:
+  sampling runs the caller's model on an upstream's prompt, at the caller's
+  cost, and roots name the caller's files. Elicitation, which a person
+  answers, still is, now named after the upstream that asks.
+- An upstream's `401`/`403` is a transport failure naming the upstream,
+  not the caller's authentication failure; under token exchange a
+  `403 insufficient_scope` becomes the gateway's own step-up challenge.
+- A token exchanged for a caller is re-exchanged when the caller's token
+  changes, so a revoked or narrowed token no longer keeps its broader
+  upstream token until that expires.
+- The gateway's connection pool refuses a new key past its cap (`503`,
+  retryable) instead of evicting a live connection, and holds each caller
+  to `max_connections_per_caller` (32): a caller opening sessions fast
+  could churn every other caller's upstream, spawning a process per key
+  for a stdio one.
+- `turbomcp proxy --http` beyond loopback without `--auth-issuer` is refused
+  unless `--insecure`; JWKS over plain HTTP (beyond loopback) likewise.
+  Text a server sends is printed with control characters escaped, and
+  configuration errors no longer quote the string around a variable.
+- An MRTR question key is FNV-1a (stable across Rust versions, so a retry
+  on another replica finds its answer), and an upstream that asks more than
+  16 distinct questions in one call is refused rather than retried forever.
+
 - The HTTP client refuses to send a bearer token over cleartext `http://`
   to anything but this machine ("Implementations MUST follow OAuth 2.1
   Section 1.5"), with `HttpClientError::CleartextBearer`;
@@ -628,6 +686,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line there dropped the client.
 
 ### Fixed
+
+- Resource subscriptions through the gateway reach the upstream:
+  `resources/subscribe` on `2025-*` and the listen filter on `2026-07-28`.
+  The gateway answered subscriptions itself and subscribed to nothing
+  upstream, so no update ever arrived; it also advertised `subscribe` and
+  `listChanged` the upstream hadn't.
+- A question the gateway can't attribute, or a caller can't be asked, is a
+  JSON-RPC error to the upstream, not a user who cancelled.
+  `elicit_with`/`elicit_url_with` return `ClientResult<ElicitOutcome>`.
+- A change one per-caller upstream connection reports refreshes every
+  connection's catalogue, and changes from many connections are announced
+  downstream once, not once per connection.
+- After a reconnect, an upstream that came back changed is announced
+  (`list_changed`) and upstream errors render with the serving
+  connection's revision, not the startup one's.
+- A call queued behind another for its turn (`serialize_input`) ends when
+  its caller cancels, instead of running once the turn comes; a connection
+  in use is not retired for idleness, and replacing a dead connection never
+  drops a replacement another call already made.
+- Overlapping upstream resource templates resolve the same way every time.
+- `turbomcp proxy`: one unusable entry (`type: sse`, a typo) is skipped with
+  its reason instead of failing the configuration, and `--only` never reads
+  the others; a server that isn't reachable at startup is retried; `SIGTERM`
+  shuts down cleanly, draining in-flight HTTP requests and running every
+  stdio upstream's shutdown sequence. The operations start a command with
+  the same environment policy as the gateway, and `--bearer`/`--header`
+  for a command are refused instead of ignored.
 
 - OAuth refresh: a refresh failure on the network is retried instead of
   treated as final; only `invalid_grant` (now `OAuthClientError::TokenRejected`,
@@ -1136,6 +1221,15 @@ Earlier in this cycle:
   capability, because `2025-06-18` has no sub-capabilities to declare.
 
 ### Changed
+
+- **Breaking:** `RemoteServerBuilder::forward_input` covers elicitation;
+  sampling and roots need `forward_sampling(true)` and `forward_roots(true)`.
+  `max_connections` refuses past the cap instead of closing the least
+  recently used connection. `OutboundAuth` other than `None` for a stdio
+  upstream is a configuration error, not ignored.
+- **Breaking:** `turbomcp` exits `2` for a usage or configuration error,
+  `3` for a server it couldn't reach or start and `4` for a server that
+  answered with an error (`1` remains a tool that reported one).
 
 - **Breaking:** `ClientCredentials` is `#[non_exhaustive]` with a
   `client_secret_expires_at` field; build it with `public` or

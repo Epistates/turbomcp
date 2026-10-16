@@ -12,7 +12,37 @@ use turbomcp::client::ConnectMode;
 use turbomcp::neutral;
 use turbomcp_protocol::v2026_07_28::types as wire;
 
+use crate::Failure;
 use crate::target::Target;
+
+/// `text` from a server, safe to print: control characters (a terminal
+/// escape among them) are escaped, line breaks and tabs kept.
+pub fn shown(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() && c != '\n' && c != '\t' {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A failed request, as `what` failing: a server that answered with an
+/// error is [`Failure::Protocol`], a connection that failed under it
+/// [`Failure::Connect`].
+fn failed(what: impl Into<String>) -> impl FnOnce(turbomcp::client::ClientError) -> anyhow::Error {
+    let what = what.into();
+    move |e| {
+        let failure = if e.as_rpc().is_some() {
+            Failure::Protocol
+        } else {
+            Failure::Connect
+        };
+        anyhow::Error::new(e).context(failure).context(what)
+    }
+}
 
 /// The protocol's own JSON for `value`.
 fn to_json<W: serde::Serialize>(value: W) -> Result<Value> {
@@ -28,6 +58,7 @@ fn print_json(value: &Value) -> Result<()> {
 fn print_rows(rows: &[(String, String)]) {
     let width = rows.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
     for (name, summary) in rows {
+        let (name, summary) = (shown(name), shown(summary));
         if summary.is_empty() {
             println!("{name}");
         } else {
@@ -47,7 +78,7 @@ pub async fn tools(target: &Target, json: bool) -> Result<()> {
     let connected = target.connect().await?;
     let tools = connected.client.list_all_tools().await;
     connected.close().await;
-    let tools = tools.context("listing tools")?;
+    let tools = tools.map_err(failed("listing tools"))?;
     if json {
         let wire: Vec<wire::Tool> = tools.into_iter().map(Into::into).collect();
         return print_json(&to_json(wire)?);
@@ -77,7 +108,7 @@ pub async fn resources(target: &Target, json: bool) -> Result<()> {
     }
     .await;
     connected.close().await;
-    let (resources, templates) = listed.context("listing resources")?;
+    let (resources, templates) = listed.map_err(failed("listing resources"))?;
     if json {
         let resources: Vec<wire::Resource> = resources.into_iter().map(Into::into).collect();
         let templates: Vec<wire::ResourceTemplate> =
@@ -116,7 +147,7 @@ pub async fn prompts(target: &Target, json: bool) -> Result<()> {
     let connected = target.connect().await?;
     let prompts = connected.client.list_all_prompts().await;
     connected.close().await;
-    let prompts = prompts.context("listing prompts")?;
+    let prompts = prompts.map_err(failed("listing prompts"))?;
     if json {
         let wire: Vec<wire::Prompt> = prompts.into_iter().map(Into::into).collect();
         return print_json(&to_json(wire)?);
@@ -172,25 +203,26 @@ pub fn arguments(json_args: Option<&str>, pairs: &[String]) -> Result<Map<String
 /// `content`) for reading: text as is, anything else summarized.
 fn print_content(block: &Value) {
     match block.get("type").and_then(Value::as_str) {
-        Some("text") => println!("{}", block["text"].as_str().unwrap_or_default()),
+        Some("text") => println!("{}", shown(block["text"].as_str().unwrap_or_default())),
         Some(kind @ ("image" | "audio")) => println!(
             "[{kind} {}, {} base64 bytes]",
-            block["mimeType"].as_str().unwrap_or("?"),
+            shown(block["mimeType"].as_str().unwrap_or("?")),
             block["data"].as_str().map_or(0, str::len)
         ),
-        Some("resource_link") => println!("[link {}]", block["uri"].as_str().unwrap_or("?")),
+        Some("resource_link") => println!("[link {}]", shown(block["uri"].as_str().unwrap_or("?"))),
         Some("resource") => print_resource_contents(&block["resource"]),
+        // JSON escapes control characters itself.
         _ => println!("{block}"),
     }
 }
 
 fn print_resource_contents(contents: &Value) {
     match (contents.get("text"), contents.get("blob")) {
-        (Some(text), _) => println!("{}", text.as_str().unwrap_or_default()),
+        (Some(text), _) => println!("{}", shown(text.as_str().unwrap_or_default())),
         (None, Some(blob)) => println!(
             "[{} {}, {} base64 bytes]",
-            contents["uri"].as_str().unwrap_or("?"),
-            contents["mimeType"].as_str().unwrap_or("binary"),
+            shown(contents["uri"].as_str().unwrap_or("?")),
+            shown(contents["mimeType"].as_str().unwrap_or("binary")),
             blob.as_str().map_or(0, str::len)
         ),
         _ => println!("{contents}"),
@@ -202,8 +234,8 @@ pub async fn call(target: &Target, tool: &str, args: Map<String, Value>, json: b
     let connected = target.connect().await?;
     let result = connected.client.call_tool(tool, args).await;
     connected.close().await;
-    let result = result.with_context(|| format!("calling `{tool}`"))?;
-    let failed = result.is_error;
+    let result = result.map_err(failed(format!("calling `{tool}`")))?;
+    let tool_failed = result.is_error;
     let wire = to_json(wire::CallToolResult::from(result))?;
     if json {
         print_json(&wire)?;
@@ -215,8 +247,8 @@ pub async fn call(target: &Target, tool: &str, args: Map<String, Value>, json: b
             println!("{}", serde_json::to_string_pretty(structured)?);
         }
     }
-    if failed {
-        bail!("`{tool}` reported an error");
+    if tool_failed {
+        return Err(anyhow::Error::msg(Failure::Tool).context(format!("`{tool}`")));
     }
     Ok(())
 }
@@ -226,7 +258,7 @@ pub async fn read(target: &Target, uri: &str, json: bool) -> Result<()> {
     let result = connected.client.read_resource(uri).await;
     connected.close().await;
     let wire = to_json(wire::ReadResourceResult::from(
-        result.with_context(|| format!("reading {uri}"))?,
+        result.map_err(failed(format!("reading {uri}")))?,
     ))?;
     if json {
         return print_json(&wire);
@@ -247,13 +279,13 @@ pub async fn prompt(
     let result = connected.client.get_prompt(name, args).await;
     connected.close().await;
     let wire = to_json(wire::GetPromptResult::from(
-        result.with_context(|| format!("getting prompt `{name}`"))?,
+        result.map_err(failed(format!("getting prompt `{name}`")))?,
     ))?;
     if json {
         return print_json(&wire);
     }
     for message in wire["messages"].as_array().into_iter().flatten() {
-        print!("{}: ", message["role"].as_str().unwrap_or("?"));
+        print!("{}: ", shown(message["role"].as_str().unwrap_or("?")));
         print_content(&message["content"]);
     }
     Ok(())
@@ -306,7 +338,7 @@ pub async fn probe(target: &Target, json: bool) -> Result<()> {
     }
     .await;
     connected.close().await;
-    let (tools, resources, prompts) = counts.context("listing what the server offers")?;
+    let (tools, resources, prompts) = counts.map_err(failed("listing what the server offers"))?;
 
     if json {
         let revisions: Map<String, Value> = revisions
@@ -342,7 +374,10 @@ pub async fn probe(target: &Target, json: bool) -> Result<()> {
             .as_deref()
             .map(|t| format!(" ({t})"))
             .unwrap_or_default();
-        println!("server        {} {}{title}", info.name, info.version);
+        println!(
+            "server        {}",
+            shown(&format!("{} {}{title}", info.name, info.version))
+        );
     }
     println!(
         "negotiated    {} ({})",
@@ -356,7 +391,7 @@ pub async fn probe(target: &Target, json: bool) -> Result<()> {
     for (label, outcome) in &revisions {
         match outcome {
             Ok(version) => println!("  {label:<11} yes: {}", version.as_str()),
-            Err(e) => println!("  {label:<11} no: {}", first_line(Some(e))),
+            Err(e) => println!("  {label:<11} no: {}", shown(&first_line(Some(e)))),
         }
     }
     let declared = capabilities(&caps);
@@ -368,7 +403,7 @@ pub async fn probe(target: &Target, json: bool) -> Result<()> {
     println!("capabilities  {}", names.join(", "));
     if !caps.extensions.is_empty() {
         let ids: Vec<&str> = caps.extensions.keys().map(String::as_str).collect();
-        println!("extensions    {}", ids.join(", "));
+        println!("extensions    {}", shown(&ids.join(", ")));
     }
     let count =
         |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
@@ -387,7 +422,7 @@ pub async fn probe(target: &Target, json: bool) -> Result<()> {
         println!("offers        {}", offered.join(", "));
     }
     if let Some(instructions) = instructions {
-        println!("instructions  {}", first_line(Some(&instructions)));
+        println!("instructions  {}", shown(&first_line(Some(&instructions))));
     }
     Ok(())
 }

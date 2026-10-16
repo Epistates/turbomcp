@@ -144,9 +144,90 @@ pub(crate) struct SubscriptionRegistry {
     ///
     /// [`SessionStore::DEFAULT_CAPACITY`]: crate::SessionStore::DEFAULT_CAPACITY
     route_capacity: AtomicUsize,
+    /// How many subscriptions (sessions and listen filters) watch each URI.
+    watched: Mutex<HashMap<String, usize>>,
+    /// Told when a URI gains its first watcher or loses its last.
+    watcher: std::sync::OnceLock<Watcher>,
+}
+
+/// Runs the server's watch hooks, in the order the registry saw the events,
+/// on one task of its own (started with the first event, which always comes
+/// from inside the runtime).
+pub(crate) struct Watcher {
+    tx: tokio::sync::mpsc::UnboundedSender<(String, bool)>,
+    rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<(String, bool)>>>,
+    run: Arc<dyn Fn(String, bool) -> Option<futures::future::BoxFuture<'static, ()>> + Send + Sync>,
+}
+
+impl Watcher {
+    pub(crate) fn new(
+        run: Arc<
+            dyn Fn(String, bool) -> Option<futures::future::BoxFuture<'static, ()>> + Send + Sync,
+        >,
+    ) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        Self {
+            tx,
+            rx: Mutex::new(Some(rx)),
+            run,
+        }
+    }
+
+    fn send(&self, uri: String, start: bool) {
+        if let Some(mut rx) = self.rx.lock().take() {
+            let run = Arc::clone(&self.run);
+            tokio::spawn(async move {
+                while let Some((uri, start)) = rx.recv().await {
+                    if let Some(hook) = run(uri, start) {
+                        hook.await;
+                    }
+                }
+            });
+        }
+        let _ = self.tx.send((uri, start));
+    }
 }
 
 impl SubscriptionRegistry {
+    /// Tell `watcher` when a URI gains its first watcher or loses its last.
+    pub(crate) fn set_watcher(&self, watcher: Watcher) {
+        let _ = self.watcher.set(watcher);
+    }
+
+    /// Count `more` URIs watched once more and `less` once less, telling the
+    /// watcher of each first watcher and last departure.
+    fn watch(
+        &self,
+        more: impl IntoIterator<Item = String>,
+        less: impl IntoIterator<Item = String>,
+    ) {
+        let mut events = Vec::new();
+        {
+            let mut watched = self.watched.lock();
+            for uri in more {
+                let count = watched.entry(uri.clone()).or_default();
+                *count += 1;
+                if *count == 1 {
+                    events.push((uri, true));
+                }
+            }
+            for uri in less {
+                if let Some(count) = watched.get_mut(&uri) {
+                    *count -= 1;
+                    if *count == 0 {
+                        watched.remove(&uri);
+                        events.push((uri, false));
+                    }
+                }
+            }
+        }
+        if let Some(watcher) = self.watcher.get() {
+            for (uri, start) in events {
+                watcher.send(uri, start);
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn insert(&self, peer: &Peer, id: &RequestId, filter: v0728::SubscriptionFilter) {
         self.insert_with(peer, id, filter, || {});
@@ -181,6 +262,7 @@ impl SubscriptionRegistry {
     ) {
         let mut live = self.lock();
         under_lock();
+        let mut gone = Vec::new();
         // Reclaim subscriptions whose connection has since closed. `publish`
         // does this too, but a server whose data never changes never publishes,
         // and would otherwise accumulate one entry per client that ever
@@ -188,22 +270,38 @@ impl SubscriptionRegistry {
         // is also where it shrinks; a closed peer *is* what dead means, so
         // this can never disturb a live subscription. O(n) under a lock, but n
         // is the number of open subscriptions and a listen is a rare event.
-        live.retain(|_, sub| sub.peer.is_open());
-        live.insert(
+        live.retain(|_, sub| {
+            let open = sub.peer.is_open();
+            if !open {
+                gone.extend(sub.filter.resource_subscriptions.iter().cloned());
+            }
+            open
+        });
+        let watching = filter.resource_subscriptions.clone();
+        if let Some(replaced) = live.insert(
             (peer.id().as_str().to_owned(), id.clone()),
             Subscription {
                 peer: peer.clone(),
                 filter,
             },
-        );
+        ) {
+            gone.extend(replaced.filter.resource_subscriptions);
+        }
+        drop(live);
+        self.watch(watching, gone);
     }
 
     /// Drop the subscription opened by `(connection, id)`, if any. Wired to
     /// `notifications/cancelled` referencing the listen request id.
     pub(crate) fn remove(&self, connection: &str, id: &RequestId) -> bool {
-        self.lock()
-            .remove(&(connection.to_owned(), id.clone()))
-            .is_some()
+        let removed = self.lock().remove(&(connection.to_owned(), id.clone()));
+        match removed {
+            Some(sub) => {
+                self.watch([], sub.filter.resource_subscriptions);
+                true
+            }
+            None => false,
+        }
     }
 
     // ---- legacy (2025-11-25) session routes -----------------------------------
@@ -251,8 +349,15 @@ impl SubscriptionRegistry {
             // route would otherwise deliver every notification twice and keep
             // sending updates for URIs the new session never subscribed to.
             if let Some(peer) = peer {
-                routes
-                    .retain(|_, route| route.connection.as_ref().map(Peer::id) != Some(peer.id()));
+                let mut gone = Vec::new();
+                routes.retain(|_, route| {
+                    let keep = route.connection.as_ref().map(Peer::id) != Some(peer.id());
+                    if !keep {
+                        gone.extend(route.uris.drain());
+                    }
+                    keep
+                });
+                self.watch([], gone);
             }
             if routes.len() >= self.route_capacity() {
                 tracing::warn!(
@@ -298,14 +403,20 @@ impl SubscriptionRegistry {
                  unsubscribe from one first"
             )));
         }
-        route.uris.insert(uri);
+        if route.uris.insert(uri.clone()) {
+            self.watch([uri], []);
+        }
         Ok(())
     }
 
     /// Legacy `resources/unsubscribe` (idempotent — unknown URIs are a no-op).
     pub(crate) fn legacy_unsubscribe(&self, session: &str, uri: &str) {
-        if let Some(route) = self.lock_legacy().get_mut(session) {
-            route.uris.remove(uri);
+        let removed = self
+            .lock_legacy()
+            .get_mut(session)
+            .is_some_and(|route| route.uris.remove(uri));
+        if removed {
+            self.watch([], [uri.to_owned()]);
         }
     }
 
@@ -315,9 +426,10 @@ impl SubscriptionRegistry {
     /// receiving `*_list_changed`/`resources/updated`. Returns whether a route
     /// existed.
     pub(crate) fn legacy_remove(&self, session: &str) -> bool {
-        let Some(route) = self.lock_legacy().remove(session) else {
+        let Some(mut route) = self.lock_legacy().remove(session) else {
             return false;
         };
+        self.watch([], route.uris.drain());
         // The session is over, so its `GET` stream has nothing more to
         // carry; left open, it held its connection and a stream slot until
         // the client happened to hang up.
@@ -431,10 +543,17 @@ impl SubscriptionRegistry {
         // Take the targets and clear under the lock — it must not be held
         // across an await, and a subscription being torn down must stop
         // receiving notifications either way.
+        let mut gone = Vec::new();
         let targets: Vec<(RequestId, Peer)> = {
             let mut live = self.lock();
-            live.drain().map(|((_, id), sub)| (id, sub.peer)).collect()
+            live.drain()
+                .map(|((_, id), sub)| {
+                    gone.extend(sub.filter.resource_subscriptions);
+                    (id, sub.peer)
+                })
+                .collect()
         };
+        self.watch([], gone);
         for (id, peer) in targets {
             let result = json!({
                 "resultType": turbomcp_protocol::neutral::result_type::COMPLETE,
@@ -925,6 +1044,34 @@ mod tests {
             );
         }
         assert_eq!(reg.lock().len(), 2, "a slow reader is not unsubscribed");
+    }
+
+    /// The server hears of a URI's first watcher and its last, however many
+    /// sessions and listen streams watch it in between.
+    #[tokio::test]
+    async fn a_uri_is_watched_once_and_unwatched_when_the_last_watcher_leaves() {
+        let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let reg = SubscriptionRegistry::default();
+        let seen = Arc::clone(&events);
+        reg.set_watcher(Watcher::new(Arc::new(move |uri: String, start: bool| {
+            seen.lock().push((uri, start));
+            None
+        })));
+        let ext = Extensions::new();
+        reg.legacy_subscribe("a", &ext, "mem://x".into()).unwrap();
+        reg.legacy_subscribe("b", &ext, "mem://x".into()).unwrap();
+        reg.legacy_subscribe("a", &ext, "mem://x".into()).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let peer = Peer::new("listener", &tx);
+        reg.insert(&peer, &RequestId::from(1i64), filter(false, &["mem://x"]));
+        reg.legacy_unsubscribe("a", "mem://x");
+        assert!(reg.legacy_remove("b"));
+        assert!(reg.remove("listener", &RequestId::from(1i64)));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            *events.lock(),
+            vec![("mem://x".to_owned(), true), ("mem://x".to_owned(), false)]
+        );
     }
 
     /// A full route table turns a new session away instead of evicting a

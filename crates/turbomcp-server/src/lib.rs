@@ -65,7 +65,7 @@ pub use progress::ProgressReporter;
 pub use response::{
     Audio, Image, IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult, Json,
 };
-pub use router::MethodRouter;
+pub use router::{CapabilityFlags, MethodRouter};
 pub use runtime::Server;
 pub use session::{ExpiredSession, SessionBackend, SessionError, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
