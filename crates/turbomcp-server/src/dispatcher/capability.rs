@@ -211,7 +211,7 @@ enum Component<'a> {
 /// Skipped entirely unless the transport reported the mirrors it saw: only
 /// Streamable HTTP has headers, and elsewhere the annotation is inert (the
 /// spec lets non-HTTP transports ignore it).
-fn check_header_mirrors(
+pub(crate) fn check_header_mirrors(
     observed: Option<&ObservedHeaders>,
     params: &neutral::CallToolParams,
     tool: &neutral::Tool,
@@ -901,7 +901,7 @@ static EMPTY_ARGUMENTS: std::sync::LazyLock<Value> =
 /// so a retry an intermediary or a client re-encoded (keys reordered, `1`
 /// written back as `1.0`, a string escaped differently) still matches; sorting
 /// keys alone left a retry carrying `1.0` failing verification forever.
-fn request_binding(req: &JsonRpcRequest) -> String {
+pub(crate) fn request_binding(req: &JsonRpcRequest) -> String {
     let mut params = req.params.clone().unwrap_or(Value::Null);
     if let Some(map) = params.as_object_mut() {
         for key in ["_meta", "requestState", "inputResponses"] {

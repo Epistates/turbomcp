@@ -1,6 +1,8 @@
 //! The server half: an axum endpoint that drives an [`McpService`].
 
 mod config;
+#[cfg(fuzzing)]
+pub(crate) mod fuzzing;
 mod guards;
 mod reject;
 mod resume;

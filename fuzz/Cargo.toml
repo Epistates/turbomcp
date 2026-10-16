@@ -19,6 +19,10 @@ turbomcp-core = { path = "../crates/turbomcp-core", features = ["std", "simd"] }
 
 turbomcp-service = { path = "../crates/turbomcp-service" }
 turbomcp-server = { path = "../crates/turbomcp-server" }
+turbomcp-protocol = { path = "../crates/turbomcp-protocol", features = ["std"] }
+turbomcp-transport-http = { path = "../crates/turbomcp-transport-http", features = ["server", "client"] }
+tokio = { version = "1", features = ["rt", "io-util"] }
+futures = { version = "0.3", features = ["executor"] }
 
 [[bin]]
 name = "codec_decode"
@@ -44,6 +48,76 @@ bench = false
 [[bin]]
 name = "sonic_decode"
 path = "fuzz_targets/sonic_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "request_state"
+path = "fuzz_targets/request_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "request_binding"
+path = "fuzz_targets/request_binding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "composite_cursor"
+path = "fuzz_targets/composite_cursor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "header_mirrors"
+path = "fuzz_targets/header_mirrors.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_frame"
+path = "fuzz_targets/decode_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "line_framer"
+path = "fuzz_targets/line_framer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_headers"
+path = "fuzz_targets/http_headers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_ip"
+path = "fuzz_targets/client_ip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sse_stream"
+path = "fuzz_targets/sse_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wire_convert"
+path = "fuzz_targets/wire_convert.rs"
 test = false
 doc = false
 bench = false

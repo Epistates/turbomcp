@@ -1796,6 +1796,17 @@ Earlier in this cycle:
   test-support crate, `turbomcp-wire-check`, checks every response the
   server suites get and every message the client suites send against the
   schema of the revision it goes out under.
+- Fuzz targets for every parser a peer reaches that had none (14, from
+  4): `requestState` opening and the seal/open round trip, the request
+  binding (RFC 8785 canonicalization, stable across a re-encoded retry), a
+  composite's pagination cursor, the `Mcp-Param-*` mirror check, frame
+  classification (the error a bad frame is owed must itself decode), the
+  stdio line framer, the HTTP header checks (`Accept`, `Origin`, `Host`,
+  `Last-Event-ID`, the version header against the body), `X-Forwarded-For`
+  behind trusted proxies, the client's SSE reader, and the per-revision
+  conversions. Crate internals are reached through `cfg(fuzzing)` entry
+  points, which `cargo fuzz` sets and nothing else compiles; `just fuzz`
+  runs all of them.
 
 ## [4.0.0-alpha.5] - 2026-09-13
 

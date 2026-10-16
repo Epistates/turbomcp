@@ -26,6 +26,10 @@ members = [
 exclude = ["crates/turbomcp-interop", "crates/turbomcp-conformance"]
 resolver = "2"
 
+[workspace.lints.rust]
+# `cargo fuzz` sets `--cfg fuzzing`; the crates expose fuzz entry points under it.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
 [workspace.lints.clippy]
 # Quality enforcement - warn on missing documentation for error conditions
 # This helps users understand what can go wrong when calling fallible functions

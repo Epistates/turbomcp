@@ -252,7 +252,8 @@ excluded-check:
     (cd "${dir}" && cargo clippy --all-targets --quiet -- -D warnings)
   done
   echo "check: fuzz"
-  (cd fuzz && cargo check --all-targets --quiet)
+  # `cargo fuzz` sets `--cfg fuzzing`, which the crates' fuzz entry points need.
+  (cd fuzz && RUSTFLAGS="--cfg fuzzing" cargo check --all-targets --quiet)
   echo "check: crates/turbomcp/tests/renamed_dependency"
   cargo check --locked --quiet --manifest-path crates/turbomcp/tests/renamed_dependency/Cargo.toml
   # Its own workspace, so `arbitrary_precision` stays out of every other build.
@@ -607,7 +608,9 @@ fuzz secs='30':
   # unsupported. Pin to the actual host triple.
   host="$(rustc +nightly -vV | sed -n 's/^host: //p')"
   cd fuzz
-  for target in codec_decode mcp_header_codec uri_template sonic_decode; do
+  for target in codec_decode mcp_header_codec uri_template sonic_decode \
+                decode_frame line_framer request_state request_binding composite_cursor \
+                header_mirrors http_headers client_ip sse_stream wire_convert; do
     echo "==> fuzzing $target for {{secs}}s"
     cargo +nightly fuzz run "$target" --target "$host" -- \
       -max_total_time={{secs}} -rss_limit_mb=4096

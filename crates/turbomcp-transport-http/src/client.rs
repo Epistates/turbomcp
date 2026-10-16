@@ -534,10 +534,25 @@ fn bounded_sse(
     response: reqwest::Response,
     max_bytes: usize,
 ) -> impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> {
+    bounded_events(
+        response
+            .bytes_stream()
+            .map(|chunk| chunk.map_err(std::io::Error::other)),
+        max_bytes,
+    )
+}
+
+/// Cap each SSE event at `max_bytes`: the count restarts at every blank line
+/// (an event boundary), so a long stream of small events is fine and one
+/// endless event is not.
+fn bounded_events(
+    stream: impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>>,
+    max_bytes: usize,
+) -> impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> {
     let mut size = 0usize;
     let mut line_has_data = false;
-    response.bytes_stream().map(move |chunk| {
-        let chunk = chunk.map_err(std::io::Error::other)?;
+    stream.map(move |chunk| {
+        let chunk = chunk?;
         for &b in &chunk {
             size += 1;
             if size > max_bytes {
@@ -554,6 +569,30 @@ fn bounded_sse(
         }
         Ok(chunk)
     })
+}
+
+/// Entry point for `fuzz/`: peer bytes, split into chunks as the network
+/// would, through the event limit and the SSE parser to JSON-RPC frames.
+/// Compiled only under `cfg(fuzzing)`; not API.
+#[cfg(fuzzing)]
+pub async fn fuzz_sse(chunks: Vec<Vec<u8>>, max_bytes: usize) -> Vec<String> {
+    let stream = futures::stream::iter(
+        chunks
+            .into_iter()
+            .map(|c| Ok::<_, std::io::Error>(bytes::Bytes::from(c))),
+    );
+    let events = bounded_events(stream, max_bytes).eventsource();
+    events
+        .take_while(|e| futures::future::ready(e.is_ok()))
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .filter_map(Result::ok)
+        .map(|event| {
+            let _ = serde_json::from_str::<JsonRpcMessage>(&event.data);
+            event.data
+        })
+        .collect()
 }
 
 impl fmt::Debug for HttpClientTransport {

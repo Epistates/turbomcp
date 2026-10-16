@@ -50,6 +50,8 @@ use crate::traits::McpServerCore;
 
 mod augment;
 mod capability;
+#[cfg(fuzzing)]
+pub(crate) use capability::{check_header_mirrors, request_binding};
 mod handshake;
 mod legacy_tasks;
 mod listen;

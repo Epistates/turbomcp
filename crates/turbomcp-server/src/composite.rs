@@ -913,15 +913,18 @@ fn qualify(prefix: &str, separator: &str, name: &str) -> String {
 /// mount that no longer exists, is a client error: cursors do not survive a
 /// change to the composite's shape, and continuing from the beginning would
 /// silently repeat a page the caller already has.
-fn resume_at(mounts: &[Mount], cursor: Option<&str>) -> McpResult<(usize, Option<String>)> {
+pub(crate) fn resume_at<'a>(
+    cursor_ids: impl IntoIterator<Item = &'a str>,
+    cursor: Option<&str>,
+) -> McpResult<(usize, Option<String>)> {
     let Some(cursor) = cursor else {
         return Ok((0, None));
     };
     let bad = || McpError::invalid_params(format!("not a cursor this server issued: `{cursor}`"));
     let (id, own) = cursor.split_once(CURSOR_SEP).ok_or_else(bad)?;
-    let at = mounts
-        .iter()
-        .position(|m| m.cursor_id == id)
+    let at = cursor_ids
+        .into_iter()
+        .position(|mount| mount == id)
         .ok_or_else(bad)?;
     Ok((at, (!own.is_empty()).then(|| own.to_owned())))
 }
@@ -951,7 +954,10 @@ macro_rules! page_through {
     ($self:ident, $ctx:ident, $params:ident, $dispatch:ident, $field:ident, $result:ty,
      |$mount:ident, $item:ident| $adapt:block) => {{
         let mounts = &$self.inner.mounts;
-        let (start, mut own) = resume_at(mounts, $params.cursor.as_deref())?;
+        let (start, mut own) = resume_at(
+            mounts.iter().map(|m| m.cursor_id.as_str()),
+            $params.cursor.as_deref(),
+        )?;
         let mut items = Vec::new();
         let mut next = None;
         for $mount in &mounts[start..] {

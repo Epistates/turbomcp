@@ -38,6 +38,9 @@ mod config;
 mod context;
 mod dispatcher;
 mod extension;
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzzing;
 mod inflight;
 pub mod intercept;
 mod logging;

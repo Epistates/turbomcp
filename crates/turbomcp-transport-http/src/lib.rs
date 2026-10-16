@@ -126,6 +126,16 @@ pub use server::{
 
 #[cfg(feature = "client")]
 mod client;
+
+/// Entry points for `fuzz/`; compiled only under `cfg(fuzzing)`. Not API.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzzing {
+    #[cfg(feature = "client")]
+    pub use crate::client::fuzz_sse;
+    #[cfg(feature = "server")]
+    pub use crate::server::fuzzing::{client_ip, request_headers};
+}
 #[cfg(feature = "client")]
 #[cfg_attr(docsrs, doc(cfg(feature = "client")))]
 pub use client::{
