@@ -50,7 +50,7 @@ pub trait McpServerCore: Clone + Send + Sync + 'static {
     /// `2026-07-28` has no handshake: each request carries the client's
     /// identity and capabilities itself, so gate those per request (a
     /// `tower` layer or an interceptor). To set up state for a session,
-    /// observe its start with `ServerBuilder::observe_sessions`.
+    /// observe its start with `ServerBuilder::with_session_observer`.
     fn on_initialize(
         &self,
         ctx: &crate::InitializeContext,

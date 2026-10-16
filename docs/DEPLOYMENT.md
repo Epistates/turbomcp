@@ -23,7 +23,7 @@ reverse proxy; configure allowed hosts/origins and trusted proxies explicitly.
 reaches the client, as a JSON-RPC `-32603` or a tool's `isError` text: handy
 while developing, and a leak in production, where that text is often a SQL
 statement, a hostname or a connection string (`?` on a library error builds
-one with its whole cause chain). `ServerBuilder::mask_internal_errors()`
+one with its whole cause chain). `ServerBuilder::with_masked_internal_errors()`
 answers `internal error (ref: <id>)` instead and logs the original under the
 same `error_ref`. Errors meant for the model (`McpError::tool_execution_failed`,
 invalid arguments) are unchanged.

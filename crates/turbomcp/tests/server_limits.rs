@@ -32,7 +32,8 @@ impl Slow {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_call_past_the_limit_is_answered_with_a_timeout() {
     let client = turbomcp::testing::connect(
-        Slow.into_server().call_timeout(Duration::from_millis(100)),
+        Slow.into_server()
+            .with_call_timeout(Duration::from_millis(100)),
         ClientBuilder::new("limits", "1.0.0"),
     )
     .await

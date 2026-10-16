@@ -462,7 +462,7 @@ async fn declared() -> DeclaredSvc {
         ServerBuilder::new(Declared)
             .with_tools()
             .with_tasks()
-            .undeclared_task_support(turbomcp_protocol::neutral::TaskSupport::Forbidden)
+            .with_undeclared_task_support(turbomcp_protocol::neutral::TaskSupport::Forbidden)
             .build(),
     );
     let init = svc

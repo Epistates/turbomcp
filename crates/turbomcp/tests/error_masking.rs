@@ -23,7 +23,7 @@ impl Store {
 async fn lookup(masked: bool) -> Value {
     let builder = Store.into_server();
     let builder = if masked {
-        builder.mask_internal_errors()
+        builder.with_masked_internal_errors()
     } else {
         builder
     };

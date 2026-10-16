@@ -212,7 +212,7 @@ async fn session_keying_closes_the_upstream_with_its_session() {
         let server = remote
             .clone()
             .into_server()
-            .observe_sessions(Arc::new(remote.clone()));
+            .with_session_observer(Arc::new(remote.clone()));
         turbomcp::testing::connect(
             server,
             ClientBuilder::new(name, "1.0.0").with_connect_mode(ConnectMode::Legacy),

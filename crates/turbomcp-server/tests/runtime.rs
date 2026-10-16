@@ -329,7 +329,9 @@ async fn the_session_observer_hears_how_sessions_end() {
     let (transport, in_tx, mut out_rx) = pipe();
     let serving = tokio::spawn(
         Echo.into_server()
-            .observe_sessions(Arc::clone(&endings) as Arc<dyn turbomcp_service::SessionObserver>)
+            .with_session_observer(
+                Arc::clone(&endings) as Arc<dyn turbomcp_service::SessionObserver>
+            )
             .serve(transport),
     );
     in_tx.send(initialize()).await.unwrap();
@@ -346,8 +348,8 @@ async fn the_session_observer_hears_how_sessions_end() {
     let endings = Arc::new(Endings::default());
     let dispatcher = Echo
         .into_server()
-        .session_idle_timeout(Duration::from_millis(100))
-        .observe_sessions(Arc::clone(&endings) as Arc<dyn turbomcp_service::SessionObserver>)
+        .with_session_idle_timeout(Duration::from_millis(100))
+        .with_session_observer(Arc::clone(&endings) as Arc<dyn turbomcp_service::SessionObserver>)
         .build();
     for _ in 0..2 {
         let mut adapter = turbomcp_server::LegacySessionAdapter::new(dispatcher.clone());

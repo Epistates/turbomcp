@@ -599,7 +599,7 @@ impl From<serde_json::Error> for McpError {
 impl McpError {
     /// An [`McpError::Internal`] carrying `error` and every cause behind it
     /// (`outer: cause: root`), so `?` on a library error keeps the chain the
-    /// operator needs. With `ServerBuilder::mask_internal_errors` the text
+    /// operator needs. With `ServerBuilder::with_masked_internal_errors` the text
     /// goes to the server's log, not the client.
     #[must_use]
     pub fn from_error(error: &(dyn core::error::Error + 'static)) -> Self {

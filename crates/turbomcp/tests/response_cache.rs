@@ -38,7 +38,7 @@ async fn connect(policy: Option<CachePolicy>, mode: ConnectMode, cache_enabled: 
     let transport = LineTransport::new(BufReader::new(s_rd), s_wr, SerdeJsonCodec);
     let mut builder = Demo.into_server();
     if let Some(policy) = policy {
-        builder = builder.cache_policy(policy);
+        builder = builder.with_cache_policy(policy);
     }
     let service = LegacySessionAdapter::new(builder.build());
     tokio::spawn(serve(transport, service));

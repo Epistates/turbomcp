@@ -1,4 +1,4 @@
-//! `ServerBuilder::mask_internal_errors`: an internal error's text reaches the
+//! `ServerBuilder::with_masked_internal_errors`: an internal error's text reaches the
 //! log, not the client, on both paths an error can take out of a handler.
 
 use serde_json::{Value, json};
@@ -78,7 +78,7 @@ impl WithResources for Leaky {
 async fn call(masked: bool, method: &str, params: Value) -> Value {
     let builder = Leaky.into_server();
     let builder = if masked {
-        builder.mask_internal_errors()
+        builder.with_masked_internal_errors()
     } else {
         builder
     };

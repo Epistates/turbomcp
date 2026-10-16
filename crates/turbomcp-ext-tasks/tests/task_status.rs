@@ -75,13 +75,14 @@ impl WithTools for Reporter {
 }
 
 fn dispatcher(gate: &Arc<Semaphore>) -> VersionDispatcher<Reporter> {
-    VersionDispatcher::new(
+    VersionDispatcher::with_config(
         Reporter {
             gate: Arc::clone(gate),
         },
         MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new()
+            .with_extension(Arc::new(TasksExtension::new().poll_interval_ms(Some(10)))),
     )
-    .with_extension(Arc::new(TasksExtension::new().poll_interval_ms(Some(10))))
 }
 
 fn meta(declares: bool) -> Value {

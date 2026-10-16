@@ -779,7 +779,7 @@ pub enum CacheScope {
 /// result); the `2025-11-25` wire has no cache fields, so the policy is
 /// dropped there.
 ///
-/// Servers configure a default per capability via `ServerBuilder::cache_policy`
+/// Servers configure a default per capability via `ServerBuilder::with_cache_policy`
 /// (in `turbomcp-server`); a handler-set policy on a result wins over that
 /// default. Complements — never replaces — the `*_list_changed` notifications.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

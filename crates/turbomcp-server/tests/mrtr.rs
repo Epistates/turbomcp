@@ -160,12 +160,17 @@ impl WithResources for Asker {
 }
 
 fn dispatcher() -> VersionDispatcher<Asker> {
-    VersionDispatcher::new(
+    dispatcher_with(turbomcp_server::ServerConfig::new())
+}
+
+fn dispatcher_with(config: turbomcp_server::ServerConfig) -> VersionDispatcher<Asker> {
+    VersionDispatcher::with_config(
         Asker,
         MethodRouter::new()
             .with_tools()
             .with_prompts()
             .with_resources(),
+        config,
     )
 }
 
@@ -454,7 +459,8 @@ async fn an_oversized_resume_state_fails_the_turn_cleanly() {
             Some(json!({ "name": "hoard", "arguments": {}, "_meta": meta() })),
         )
     };
-    let mut tight = dispatcher().request_state_limit(32 * 1024);
+    let mut tight =
+        dispatcher_with(turbomcp_server::ServerConfig::new().with_request_state_limit(32 * 1024));
     let out = call(&mut tight, hoard()).await;
     assert_eq!(out["error"]["code"], -32603, "{out}");
     assert!(

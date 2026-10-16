@@ -144,10 +144,12 @@ impl TaskBackend for FastPoll {
 async fn connect_real(tasks: Option<Arc<FastPoll>>) -> Client {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let (s_rd, s_wr) = split(server_io);
-    let mut dispatcher = VersionDispatcher::new(Sleeper, MethodRouter::new().with_tools());
+    let mut config = turbomcp_server::ServerConfig::new();
     if let Some(backend) = tasks {
-        dispatcher = dispatcher.with_task_backend(backend);
+        config = config.with_task_backend(backend);
     }
+    let dispatcher =
+        VersionDispatcher::with_config(Sleeper, MethodRouter::new().with_tools(), config);
     let service = LegacySessionAdapter::new(dispatcher);
     let server_transport = LineTransport::new(BufReader::new(s_rd), s_wr, DefaultCodec::default());
     tokio::spawn(async move {

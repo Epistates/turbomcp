@@ -65,8 +65,12 @@ impl WithTools for Guarded {
 }
 
 fn dispatcher(extension: TasksExtension) -> VersionDispatcher<Guarded> {
-    VersionDispatcher::new(Guarded, MethodRouter::new().with_tools())
-        .with_extension(Arc::new(extension.task_tools(["guarded"])))
+    VersionDispatcher::with_config(
+        Guarded,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new()
+            .with_extension(Arc::new(extension.task_tools(["guarded"]))),
+    )
 }
 
 /// The client declares the tasks extension AND the elicitation capability —

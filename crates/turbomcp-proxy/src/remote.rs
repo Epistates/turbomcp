@@ -876,7 +876,7 @@ impl RemoteServer {
 
 /// Ends a [`UpstreamKey::Session`] remote's upstream connection when its
 /// downstream session ends: register it with
-/// `ServerBuilder::observe_sessions`. (Unregistered, the connection closes
+/// `ServerBuilder::with_session_observer`. (Unregistered, the connection closes
 /// once idle.)
 impl SessionObserver for RemoteServer {
     fn session_ended(&self, session: &EndedSession<'_>) {

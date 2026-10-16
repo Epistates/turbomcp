@@ -644,7 +644,7 @@ async fn roots_list_changed_reaches_a_registered_observer() {
     let seen = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&seen);
     let mut svc = turbomcp_server::ServerBuilder::from_parts(Kitchen, MethodRouter::new())
-        .on_roots_changed(move |_ctx| {
+        .with_roots_changed_handler(move |_ctx| {
             counter.fetch_add(1, Ordering::SeqCst);
         })
         .build();

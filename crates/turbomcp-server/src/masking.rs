@@ -1,11 +1,11 @@
-//! Internal-error masking ([`ServerBuilder::mask_internal_errors`]).
+//! Internal-error masking ([`ServerBuilder::with_masked_internal_errors`]).
 //!
 //! An internal error's text is written for the operator: it wraps a database
 //! driver's message, an upstream response, a path. Masked, the client gets
 //! `internal error (ref: <id>)` and the full text goes to `tracing` under the
 //! same id, so a user's report can be matched to the log line.
 //!
-//! [`ServerBuilder::mask_internal_errors`]: crate::ServerBuilder::mask_internal_errors
+//! [`ServerBuilder::with_masked_internal_errors`]: crate::ServerBuilder::with_masked_internal_errors
 
 use turbomcp_core::{Extensions, JsonRpcMessage, codes};
 

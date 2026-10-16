@@ -80,8 +80,12 @@ async fn read(svc: &mut VersionDispatcher<HandRolled>, uri: &str) -> Value {
 
 #[tokio::test]
 async fn uris_under_a_hidden_malformed_template_stay_hidden() {
-    let mut svc = VersionDispatcher::new(HandRolled, MethodRouter::new().with_resources())
-        .with_visibility(Arc::new(Visibility::new().hiding_tagged(["internal"])));
+    let mut svc = VersionDispatcher::with_config(
+        HandRolled,
+        MethodRouter::new().with_resources(),
+        turbomcp_server::ServerConfig::new()
+            .with_visibility(Arc::new(Visibility::new().hiding_tagged(["internal"]))),
+    );
 
     let under = read(&mut svc, "vault://keys/root").await;
     assert_eq!(under["error"]["code"], -32602, "{under}");
@@ -171,8 +175,12 @@ async fn read_dynamic(svc: &mut VersionDispatcher<Dynamic>, uri: &str) -> Value 
 /// component for them, and the policy judges it like any other.
 #[tokio::test]
 async fn an_overridden_lookup_lets_the_policy_judge_unlisted_uris() {
-    let mut svc = VersionDispatcher::new(Dynamic, MethodRouter::new().with_resources())
-        .with_visibility(Arc::new(Visibility::new().hiding_tagged(["internal"])));
+    let mut svc = VersionDispatcher::with_config(
+        Dynamic,
+        MethodRouter::new().with_resources(),
+        turbomcp_server::ServerConfig::new()
+            .with_visibility(Arc::new(Visibility::new().hiding_tagged(["internal"]))),
+    );
     let public = read_dynamic(&mut svc, "note://public/1").await;
     assert_eq!(
         public["result"]["contents"][0]["text"], "note body",

@@ -356,10 +356,13 @@ impl WithResources for Guarded {
 /// since under a policy a URI it can't judge is treated as hidden.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_hidden_uri_is_acknowledged_like_an_unknown_one_but_never_watched() {
-    let service = VersionDispatcher::new(Guarded, MethodRouter::new().with_resources())
-        .with_visibility(std::sync::Arc::new(
+    let service = VersionDispatcher::with_config(
+        Guarded,
+        MethodRouter::new().with_resources(),
+        turbomcp_server::ServerConfig::new().with_visibility(std::sync::Arc::new(
             turbomcp_server::Visibility::new().hiding_tagged(["internal"]),
-        ));
+        )),
+    );
     let notifier = service.notifier();
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();

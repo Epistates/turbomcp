@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ServerConfig`: every server setting in one value, built once and shared
+  (`ServerBuilder::with_config`, `VersionDispatcher::with_config`).
+  `with_inline_request_timeout` bounds a handler's inline question to a
+  `2025-*` client (fixed at two minutes before). `ServerBuilder::into_runtime`
+  builds the `Server` without serving it, for its `notifier()`.
+
 - Lifecycle hooks: `McpServerCore::on_initialize(&InitializeContext)`
   (`#[on_initialize]`) sees a stateful client's handshake and may refuse
   it; `McpServerCore::on_cancelled` (`#[on_cancelled]`) hears each
@@ -1293,6 +1299,23 @@ Earlier in this cycle:
   capability, because `2025-06-18` has no sub-capabilities to declare.
 
 ### Changed
+
+- **Breaking:** one configuration surface. `ServerBuilder`'s settings write a
+  `ServerConfig` and the dispatcher is built from it; `VersionDispatcher`'s
+  own setters are gone (`VersionDispatcher::new` keeps the defaults,
+  `with_config` takes a `ServerConfig`). Every setting is `with_*`:
+  `cache_policy` → `with_cache_policy`, `session_idle_timeout` →
+  `with_session_idle_timeout`, `strict_elicitation_keys` →
+  `with_strict_elicitation_keys`, `on_roots_changed` →
+  `with_roots_changed_handler`, `observe_sessions` →
+  `with_session_observer`, `intercept` → `with_interceptor`,
+  `undeclared_task_support` → `with_undeclared_task_support`,
+  `call_timeout` → `with_call_timeout`, `schema_cache_capacity` →
+  `with_schema_cache_capacity`, `mask_internal_errors` →
+  `with_masked_internal_errors`, `request_state_limit` /
+  `request_state_ttl` → `with_request_state_limit` /
+  `with_request_state_ttl`, and the dispatcher's `with_task_support` is
+  `with_tasks`.
 
 - **Breaking:** cancellation is cooperative by default
   (`Cancellation::Cooperative`): a cancelled or abandoned call fires the

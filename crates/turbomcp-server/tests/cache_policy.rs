@@ -120,10 +120,11 @@ async fn run(server: Catalog, cache: Option<CachePolicies>, frames: Vec<Value>) 
         .with_tools()
         .with_resources()
         .with_prompts();
-    let mut dispatcher = VersionDispatcher::new(server, router);
+    let mut config = turbomcp_server::ServerConfig::new();
     if let Some(cache) = cache {
-        dispatcher = dispatcher.with_cache_policy(cache);
+        config = config.with_cache_policy(cache);
     }
+    let dispatcher = VersionDispatcher::with_config(server, router, config);
     let service = turbomcp_server::LegacySessionAdapter::new(dispatcher);
     let transport = MockTransport {
         inbound: in_rx,

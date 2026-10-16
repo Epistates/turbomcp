@@ -34,6 +34,7 @@ mod builder;
 pub mod bus;
 mod catalog;
 mod composite;
+mod config;
 mod context;
 mod dispatcher;
 mod extension;
@@ -62,6 +63,7 @@ pub use async_trait::async_trait;
 pub use builder::{IntoServerBuilder, ServerBuilder};
 pub use bus::{BusError, Change, LocalBus, NotificationBus};
 pub use composite::{Composite, CompositeServer};
+pub use config::ServerConfig;
 pub use context::{
     CallToolContext, CompleteContext, GetPromptContext, InitializeContext, ListPromptsContext,
     ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, ReadResourceContext,

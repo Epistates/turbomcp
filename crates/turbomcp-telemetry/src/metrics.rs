@@ -120,13 +120,13 @@ impl Default for MetricsLayer {
 }
 
 /// `mcp.server.session.duration`, for each stateful session that ends:
-/// register the layer with `ServerBuilder::observe_sessions` as well as
+/// register the layer with `ServerBuilder::with_session_observer` as well as
 /// composing it.
 ///
 /// ```ignore
 /// let metrics = MetricsLayer::new();
 /// MyServer.into_server()
-///     .observe_sessions(Arc::new(metrics.clone()))
+///     .with_session_observer(Arc::new(metrics.clone()))
 ///     .layer(metrics)
 /// ```
 impl turbomcp_service::SessionObserver for MetricsLayer {

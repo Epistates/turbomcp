@@ -66,7 +66,7 @@ async fn a_server_admits_watches_and_hears_cancellations() {
         server
             .clone()
             .into_server()
-            .observe_sessions(Arc::clone(&sessions) as Arc<dyn SessionObserver>)
+            .with_session_observer(Arc::clone(&sessions) as Arc<dyn SessionObserver>)
     };
 
     let refused = turbomcp::testing::connect(

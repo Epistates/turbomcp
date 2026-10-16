@@ -36,7 +36,7 @@
 //! ```ignore
 //! let metrics = MetricsLayer::new();
 //! MyServer.into_server()
-//!     .observe_sessions(Arc::new(metrics.clone()))
+//!     .with_session_observer(Arc::new(metrics.clone()))
 //!     .layer(metrics)
 //!     .serve(target)
 //! ```

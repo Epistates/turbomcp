@@ -230,8 +230,12 @@ async fn a_refused_origin_answers_a_json_rpc_body() {
 /// out every real one.
 #[tokio::test]
 async fn a_full_session_table_refuses_initialize_and_keeps_its_sessions() {
-    let dispatcher = VersionDispatcher::new(Plain, MethodRouter::new().with_tools())
-        .with_session_backend(Arc::new(turbomcp_server::SessionStore::with_capacity(1)));
+    let dispatcher = VersionDispatcher::with_config(
+        Plain,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new()
+            .with_session_backend(Arc::new(turbomcp_server::SessionStore::with_capacity(1))),
+    );
     let terminator = dispatcher.session_terminator();
     let app = router(
         dispatcher,

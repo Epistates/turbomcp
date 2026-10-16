@@ -79,11 +79,15 @@ impl WithTools for Tools {
 }
 
 fn dispatcher() -> VersionDispatcher<Tools> {
-    VersionDispatcher::new(Tools, MethodRouter::new().with_tools()).with_extension(Arc::new(
-        TasksExtension::new()
-            .task_tools(["echo", "slow", "boom", "held"])
-            .poll_interval_ms(Some(10)),
-    ))
+    VersionDispatcher::with_config(
+        Tools,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new().with_extension(Arc::new(
+            TasksExtension::new()
+                .task_tools(["echo", "slow", "boom", "held"])
+                .poll_interval_ms(Some(10)),
+        )),
+    )
 }
 
 fn draft_meta() -> Value {
@@ -251,8 +255,12 @@ async fn cancel_drops_the_handler() {
 #[tokio::test]
 async fn untasked_tool_runs_synchronously() {
     // Only `echo`/`slow`/`boom` are taskified; an unlisted tool runs normally.
-    let mut svc = VersionDispatcher::new(Tools, MethodRouter::new().with_tools())
-        .with_extension(Arc::new(TasksExtension::new().task_tools(["slow"])));
+    let mut svc = VersionDispatcher::with_config(
+        Tools,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new()
+            .with_extension(Arc::new(TasksExtension::new().task_tools(["slow"]))),
+    );
     let out = call_tool(&mut svc, 1, "echo").await;
     // A normal synchronous CallToolResult — not a task handle.
     assert_eq!(out["result"]["resultType"], "complete");
@@ -286,13 +294,16 @@ async fn non_declaring_client_never_gets_a_task() {
 /// synchronously — no error, no task handle — until a slot frees up.
 #[tokio::test]
 async fn at_capacity_the_augmented_call_runs_synchronously() {
-    let mut svc =
-        VersionDispatcher::new(Tools, MethodRouter::new().with_tools()).with_extension(Arc::new(
+    let mut svc = VersionDispatcher::with_config(
+        Tools,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new().with_extension(Arc::new(
             TasksExtension::new()
                 .task_tools(["echo", "slow"])
                 .capacity(1)
                 .poll_interval_ms(Some(10)),
-        ));
+        )),
+    );
 
     // Fill the single slot with a long-running task…
     let created = call_tool(&mut svc, 1, "slow").await;
@@ -380,12 +391,15 @@ async fn another_issuer_cannot_read_update_or_cancel_a_task() {
 #[tokio::test]
 async fn a_supplied_backend_holds_the_tasks() {
     let store = Arc::new(TaskStore::default());
-    let mut svc =
-        VersionDispatcher::new(Tools, MethodRouter::new().with_tools()).with_extension(Arc::new(
+    let mut svc = VersionDispatcher::with_config(
+        Tools,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new().with_extension(Arc::new(
             TasksExtension::new()
                 .task_tools(["echo"])
                 .backend(Arc::clone(&store) as Arc<dyn TaskBackend>),
-        ));
+        )),
+    );
     let created = call_tool(&mut svc, 1, "echo").await;
     let task_id = created["result"]["taskId"].as_str().expect("a task");
     assert!(store.get(&TaskOwner::Anonymous, task_id).await.is_ok());

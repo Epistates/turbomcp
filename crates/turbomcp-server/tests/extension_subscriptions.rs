@@ -111,9 +111,13 @@ async fn listen(
     eager: Arc<Eager>,
     notifications: Value,
 ) -> (Option<JsonRpcMessage>, mpsc::Receiver<JsonRpcMessage>) {
-    let mut svc = VersionDispatcher::new(Plain, MethodRouter::new())
-        .with_extension(eager)
-        .with_extension(Arc::new(Refuser));
+    let mut svc = VersionDispatcher::with_config(
+        Plain,
+        MethodRouter::new(),
+        turbomcp_server::ServerConfig::new()
+            .with_extension(eager)
+            .with_extension(Arc::new(Refuser)),
+    );
     let (tx, rx) = mpsc::channel(16);
     let peer = Peer::new("ext-subs", &tx);
     let request = JsonRpcRequest::new(

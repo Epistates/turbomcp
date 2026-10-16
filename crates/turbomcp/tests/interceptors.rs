@@ -79,7 +79,7 @@ async fn text_of(client: &turbomcp::client::Client, tool: &str) -> String {
 async fn a_result_rule_holds_on_every_revision_and_through_mrtr() {
     for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
         let client = turbomcp::testing::connect(
-            Vault.into_server().intercept(redactor()),
+            Vault.into_server().with_interceptor(redactor()),
             ClientBuilder::new("t", "1.0.0")
                 .with_connect_mode(mode)
                 .with_elicitation(Agree),
@@ -119,8 +119,8 @@ async fn interceptors_nest_in_the_order_added() {
     let client = turbomcp::testing::connect(
         Vault
             .into_server()
-            .intercept(tracer("outer"))
-            .intercept(tracer("inner")),
+            .with_interceptor(tracer("outer"))
+            .with_interceptor(tracer("inner")),
         ClientBuilder::new("t", "1.0.0"),
     )
     .await
@@ -154,7 +154,7 @@ impl Interceptor for Deny {
 #[tokio::test]
 async fn an_interceptor_can_answer_without_the_handler() {
     let client = turbomcp::testing::connect(
-        Vault.into_server().intercept(Arc::new(Deny)),
+        Vault.into_server().with_interceptor(Arc::new(Deny)),
         ClientBuilder::new("t", "1.0.0"),
     )
     .await
@@ -172,7 +172,7 @@ async fn a_list_rule_shapes_every_page() {
     let client = turbomcp::testing::connect(
         Vault
             .into_server()
-            .intercept(on_list_tools(|ctx, params, next| async move {
+            .with_interceptor(on_list_tools(|ctx, params, next| async move {
                 let mut page = next.run(ctx, params).await?;
                 page.tools.retain(|t| t.name != "reveal_after_asking");
                 for tool in &mut page.tools {
@@ -205,7 +205,7 @@ async fn a_task_result_is_intercepted_too() {
                     .task_tools(["reveal"])
                     .poll_interval_ms(Some(5)),
             ))
-            .intercept(redactor()),
+            .with_interceptor(redactor()),
         ClientBuilder::new("t", "1.0.0")
             .with_connect_mode(ConnectMode::Modern)
             .with_extension(EXTENSION_ID, json!({})),

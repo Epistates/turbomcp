@@ -58,7 +58,7 @@
 //! McpResult<()>`, run when a stateful (`2025-*`) client starts a session; an
 //! error turns it away. `#[on_cancelled]` marks a plain `fn(&self, id:
 //! &RequestId, reason: Option<&str>)`, told of each cancelled request. Session
-//! start and end reach a `SessionObserver` (`ServerBuilder::observe_sessions`).
+//! start and end reach a `SessionObserver` (`ServerBuilder::with_session_observer`).
 //!
 //! # Metadata
 //!

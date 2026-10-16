@@ -158,14 +158,6 @@ impl StateSealer {
         self
     }
 
-    pub(crate) fn limit(&self) -> usize {
-        self.limit
-    }
-
-    pub(crate) fn ttl(&self) -> Duration {
-        self.ttl
-    }
-
     /// Seal handler `data` into the opaque wire string. The sealed payload
     /// binds the originating `method` (a request binding), the authenticated
     /// `subject` (a state minted for one principal can't be replayed by
@@ -190,7 +182,7 @@ impl StateSealer {
         if payload.len() > self.limit {
             return Err(McpError::internal(format!(
                 "request state is {} bytes, over this server's {}-byte limit; raise it with \
-                 `ServerBuilder::request_state_limit`",
+                 `ServerBuilder::with_request_state_limit`",
                 payload.len(),
                 self.limit
             )));
@@ -284,23 +276,34 @@ impl StateSealer {
 
 // ---- pending server→client requests (legacy inline bidi) -----------------------
 
-/// How long an inline bidi request waits for the client's response before the
-/// handler fails with a timeout.
-const BIDI_TIMEOUT: Duration = Duration::from_secs(120);
-
 /// Routes inbound client→server *responses* back to the handler awaiting
 /// them. Keys are server-minted uuid request ids, so entries are unguessable
 /// and can't collide with client-issued ids; the guard removes its entry when
 /// the awaiting handler finishes (or is dropped by cancellation).
-#[derive(Default)]
 pub(crate) struct PendingRequests {
     map: Mutex<HashMap<RequestId, PendingEntry>>,
+    /// How long an inline request waits for the client's response before the
+    /// handler fails with a timeout (`ServerConfig::with_inline_request_timeout`).
+    timeout: Duration,
+}
+
+impl Default for PendingRequests {
+    fn default() -> Self {
+        Self::with_timeout(crate::config::DEFAULT_INLINE_REQUEST_TIMEOUT)
+    }
 }
 
 /// A pending request's answer scope and the handler awaiting its response.
 type PendingEntry = (Option<String>, oneshot::Sender<JsonRpcResponse>);
 
 impl PendingRequests {
+    pub(crate) fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            map: Mutex::new(HashMap::new()),
+            timeout,
+        }
+    }
+
     /// Await the response to server→client request `id`, sent to `scope`
     /// (the session, else the connection, it went out on; `None` for one any
     /// of the owner's streams may answer, as a task's can); the guard forgets
@@ -1217,7 +1220,7 @@ impl StateEnvelope {
 /// Send one inline bidi request on the originating request's server→client
 /// channel (the request's own stream first, then the session `GET` stream;
 /// see [`Route`]) and block until the client's response routes back (or
-/// [`BIDI_TIMEOUT`]).
+/// `ServerConfig::with_inline_request_timeout`).
 async fn send_and_await(
     route: &Route,
     pending: &Arc<PendingRequests>,
@@ -1245,7 +1248,7 @@ async fn send_and_await(
         .await
         .map_err(|_| McpError::transport("server→client channel closed"))?;
 
-    let response = tokio::time::timeout(BIDI_TIMEOUT, rx)
+    let response = tokio::time::timeout(pending.timeout, rx)
         .await
         .map_err(|_| McpError::timeout("client did not answer the input request in time"))?
         .map_err(|_| McpError::transport("server→client request dropped"))?;
@@ -2011,7 +2014,7 @@ mod tests {
         });
         let _req = next_request(&mut rx).await;
         // Paused time auto-advances once nothing is runnable, so this is
-        // instant rather than BIDI_TIMEOUT of wall clock.
+        // instant rather than the inline-request timeout of wall clock.
         let err = task.await.unwrap().expect_err("the client never answered");
         assert!(matches!(err, McpError::Timeout(_)), "{err:?}");
     }

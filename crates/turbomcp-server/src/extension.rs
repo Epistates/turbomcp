@@ -16,7 +16,7 @@
 //! dispatched behind `Arc<dyn Extension>`, so extensions live in their own
 //! crates (e.g. `turbomcp-ext-tasks`) and register via
 //! [`ServerBuilder::with_extension`](crate::ServerBuilder::with_extension) /
-//! [`VersionDispatcher::with_extension`](crate::VersionDispatcher::with_extension).
+//! [`ServerConfig::with_extension`](crate::ServerConfig::with_extension).
 //!
 //! The trait is the durable architectural asset; the D10 sketch's
 //! `intercept_response`/`notification_topics` are folded into the real seams an

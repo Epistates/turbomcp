@@ -91,14 +91,19 @@ impl WithTools for Probe {
     }
 }
 
-fn dispatcher() -> VersionDispatcher<Probe> {
-    VersionDispatcher::new(Probe, MethodRouter::new().with_tools())
+/// The two extensions every dispatcher here has.
+fn config() -> turbomcp_server::ServerConfig {
+    turbomcp_server::ServerConfig::new()
         .with_extension(echo("com.example/apps", EVERYWHERE))
         .with_extension(Arc::new(Echo {
             id: "com.example/modern",
             methods: &["modern/ping"],
             versions: &[ProtocolVersion::V2026_07_28],
         }))
+}
+
+fn dispatcher() -> VersionDispatcher<Probe> {
+    VersionDispatcher::with_config(Probe, MethodRouter::new().with_tools(), config())
 }
 
 type Svc = LegacySessionAdapter<VersionDispatcher<Probe>>;
@@ -219,32 +224,40 @@ async fn a_revision_the_extension_does_not_speak_does_not_route_to_it() {
 #[test]
 #[should_panic(expected = "registered twice")]
 fn a_second_extension_with_the_same_id_is_refused() {
-    let _ = dispatcher().with_extension(echo("com.example/apps", EVERYWHERE));
+    let _ = config().with_extension(echo("com.example/apps", EVERYWHERE));
 }
 
 #[test]
 #[should_panic(expected = "which the core protocol defines")]
 fn an_extension_claiming_a_core_method_is_refused() {
-    let _ = VersionDispatcher::new(Probe, MethodRouter::new()).with_extension(Arc::new(Echo {
-        id: "com.example/hijack",
-        methods: &["tools/call"],
-        versions: EVERYWHERE,
-    }));
+    let _ = VersionDispatcher::with_config(
+        Probe,
+        MethodRouter::new(),
+        turbomcp_server::ServerConfig::new().with_extension(Arc::new(Echo {
+            id: "com.example/hijack",
+            methods: &["tools/call"],
+            versions: EVERYWHERE,
+        })),
+    );
 }
 
 #[test]
 #[should_panic(expected = "both claim `echo/ping`")]
 fn two_extensions_claiming_one_method_on_one_revision_are_refused() {
-    let _ = dispatcher().with_extension(echo("com.example/other", &[ProtocolVersion::V2025_11_25]));
+    let _ = config().with_extension(echo("com.example/other", &[ProtocolVersion::V2025_11_25]));
 }
 
 /// The Tasks extension's shape: `tasks/get` is core on `2025-11-25`, so an
 /// extension may claim it only on the revision where it isn't.
 #[test]
 fn a_method_core_on_another_revision_may_be_claimed_where_it_is_not() {
-    let _ = VersionDispatcher::new(Probe, MethodRouter::new()).with_extension(Arc::new(Echo {
-        id: "com.example/tasks",
-        methods: &["tasks/get"],
-        versions: &[ProtocolVersion::V2026_07_28],
-    }));
+    let _ = VersionDispatcher::with_config(
+        Probe,
+        MethodRouter::new(),
+        turbomcp_server::ServerConfig::new().with_extension(Arc::new(Echo {
+            id: "com.example/tasks",
+            methods: &["tasks/get"],
+            versions: &[ProtocolVersion::V2026_07_28],
+        })),
+    );
 }

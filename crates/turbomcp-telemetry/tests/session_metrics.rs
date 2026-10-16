@@ -89,7 +89,7 @@ async fn both_ends_measure_a_session() {
     let serving = tokio::spawn(
         Empty
             .into_server()
-            .observe_sessions(Arc::new(metrics.clone()))
+            .with_session_observer(Arc::new(metrics.clone()))
             .layer(metrics)
             .serve(LineTransport::new(
                 BufReader::new(s_rd),

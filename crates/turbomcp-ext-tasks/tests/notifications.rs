@@ -52,8 +52,12 @@ impl WithTools for Slow {
 }
 
 fn dispatcher() -> VersionDispatcher<Slow> {
-    VersionDispatcher::new(Slow, MethodRouter::new().with_tools())
-        .with_extension(Arc::new(TasksExtension::new().task_tools(["slow"])))
+    VersionDispatcher::with_config(
+        Slow,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new()
+            .with_extension(Arc::new(TasksExtension::new().task_tools(["slow"]))),
+    )
 }
 
 /// Draft `_meta`: the protocol version, optionally declaring the tasks

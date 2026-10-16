@@ -54,8 +54,12 @@ impl WithTools for Tools {
 }
 
 fn dispatcher(extension: TasksExtension) -> VersionDispatcher<Tools> {
-    VersionDispatcher::new(Tools, MethodRouter::new().with_tools())
-        .with_extension(Arc::new(extension.poll_interval_ms(Some(10))))
+    VersionDispatcher::with_config(
+        Tools,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new()
+            .with_extension(Arc::new(extension.poll_interval_ms(Some(10)))),
+    )
 }
 
 async fn call_tool(svc: &mut VersionDispatcher<Tools>, name: &str, declares: bool) -> Value {

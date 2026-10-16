@@ -229,7 +229,7 @@ pub use turbomcp_server::{Composite, CompositeServer};
 pub use turbomcp_server::bus;
 
 /// Typed interceptors over each operation's neutral request and result: see
-/// [`ServerBuilder::intercept`].
+/// [`ServerBuilder::with_interceptor`].
 pub use turbomcp_server::intercept;
 
 /// The server half of an extension (SEP-2133): its own methods, call
@@ -245,9 +245,9 @@ pub use turbomcp_server::{
     IntoGetPromptResult, IntoReadResourceResult, IntoServerBuilder, Json, LegacySessionAdapter,
     ListPromptsContext, ListResourceTemplatesContext, ListResourcesContext, ListToolsContext,
     LocalBus, LogSender, McpServerCore, MethodRouter, NewTask, NotificationBus, Params,
-    ProgressReporter, ReadResourceContext, Server, ServerBuilder, ServerNotifier, SessionBackend,
-    SessionError, SessionState, SessionStore, TaskBackend, TaskError, TaskHandle, TaskLink,
-    TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate,
+    ProgressReporter, ReadResourceContext, Server, ServerBuilder, ServerConfig, ServerNotifier,
+    SessionBackend, SessionError, SessionState, SessionStore, TaskBackend, TaskError, TaskHandle,
+    TaskLink, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate,
     UriTemplateError, VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
 };
 

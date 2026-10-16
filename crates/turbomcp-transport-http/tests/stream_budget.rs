@@ -258,7 +258,11 @@ async fn shutdown_ends_get_streams() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_expired_session_ends_its_get_stream() {
     // Wide margins: the GET has to land before the session idles out.
-    let dispatcher = dispatcher().with_session_idle_timeout(Duration::from_millis(400));
+    let dispatcher = VersionDispatcher::with_config(
+        Quiet,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new().with_session_idle_timeout(Duration::from_millis(400)),
+    );
     let app = router(dispatcher, HttpConfig::new());
     let sid = initialize(&app).await;
     let stream = app.clone().oneshot(get(&sid)).await.unwrap();

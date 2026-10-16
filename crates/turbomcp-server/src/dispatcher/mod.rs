@@ -21,6 +21,8 @@
 //! differs (selected via the private `WireFamily` trait).
 
 use std::sync::Arc;
+
+use crate::config::ServerConfig;
 use std::task::{Context, Poll};
 
 use futures::future::BoxFuture;
@@ -110,8 +112,6 @@ impl<S> core::fmt::Debug for VersionDispatcher<S> {
 #[derive(Clone)]
 struct Shared {
     sessions: Arc<dyn SessionBackend>,
-    /// `sessions` is a custom backend, which keeps its own eviction policy.
-    custom_sessions: bool,
     tasks: Option<Arc<dyn TaskBackend>>,
     inflight: Arc<InFlightRegistry>,
     subs: Arc<SubscriptionRegistry>,
@@ -150,7 +150,7 @@ struct Shared {
 }
 
 /// What a server runs when a client's roots change. See
-/// [`ServerBuilder::on_roots_changed`](crate::ServerBuilder::on_roots_changed).
+/// [`ServerBuilder::with_roots_changed_handler`](crate::ServerBuilder::with_roots_changed_handler).
 pub type RootsChangedHandler = dyn Fn(&RequestContext) + Send + Sync;
 
 /// One `x-mcp-header` annotation: the `{name}` portion of the
@@ -183,8 +183,8 @@ struct HeaderParam {
 /// uniform `CachePolicies`; chain the per-surface setters for granularity:
 ///
 /// ```ignore
-/// builder.cache_policy(CachePolicy::public(Duration::from_secs(60)));
-/// builder.cache_policy(
+/// builder.with_cache_policy(CachePolicy::public(Duration::from_secs(60)));
+/// builder.with_cache_policy(
 ///     CachePolicies::default().tools_list(CachePolicy::private(Duration::from_secs(30))),
 /// );
 /// ```
@@ -461,12 +461,21 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         &self.supported
     }
 
-    /// Build a dispatcher for `server` with `router`'s registered capabilities.
-    /// The accepted version set is taken from [`McpServerCore::supported_versions`].
+    /// A dispatcher for `server` with `router`'s registered capabilities and
+    /// the default [`ServerConfig`]. The accepted versions are
+    /// [`McpServerCore::supported_versions`].
     #[must_use]
     pub fn new(server: S, router: MethodRouter<S>) -> Self {
+        Self::with_config(server, router, ServerConfig::default())
+    }
+
+    /// A dispatcher for `server` with `router`'s registered capabilities,
+    /// set up as `config` says. (`ServerBuilder` makes one of these; this is
+    /// for assembling a dispatcher by hand.)
+    #[must_use]
+    pub fn with_config(server: S, router: MethodRouter<S>, config: ServerConfig) -> Self {
         let supported = server.supported_versions().to_vec();
-        let pending = Arc::new(PendingRequests::default());
+        let pending = Arc::new(PendingRequests::with_timeout(config.inline_request_timeout));
         let router = Arc::new(router);
         // The server hears when a resource gains its first subscriber and
         // loses its last (`WithResources::watch_resource`), however many
@@ -478,49 +487,80 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 move |uri, start| hooks.dispatch_watch(watching.clone(), uri, start),
             )));
         }
-        Self {
+        // A custom backend keeps its own eviction policy, so the idle timeout
+        // configures only the bundled store.
+        let sessions: Arc<dyn SessionBackend> = match config.session_backend {
+            Some(backend) => {
+                subs.set_route_capacity(backend.capacity().unwrap_or(0));
+                backend
+            }
+            None => Arc::new(match config.session_idle_timeout {
+                Some(timeout) => SessionStore::with_capacity(SessionStore::DEFAULT_CAPACITY)
+                    .with_idle_timeout(Some(timeout)),
+                None => SessionStore::default(),
+            }),
+        };
+        let tasks = match (config.task_backend, config.tasks) {
+            (Some(backend), _) => Some(backend),
+            (None, true) => Some(Arc::new(TaskStore::default()) as Arc<dyn TaskBackend>),
+            (None, false) => None,
+        };
+        let mut sealer = match &config.state_keys {
+            Some((current, previous)) => StateSealer::from_keys(*current, previous.iter().copied()),
+            None => StateSealer::new(),
+        };
+        if let Some(limit) = config.request_state_limit {
+            sealer = sealer.with_limit(limit);
+        }
+        if let Some(ttl) = config.request_state_ttl {
+            sealer = sealer.with_ttl(ttl);
+        }
+        let validators = match config.schema_cache_capacity {
+            Some(capacity) => crate::catalog::Validators::with_capacity(capacity),
+            None => crate::catalog::Validators::default(),
+        };
+        // Observers accumulate: each one added is told.
+        let session_observer = match config.session_observers.len() {
+            0 => None,
+            1 => config.session_observers.into_iter().next(),
+            _ => Some(
+                Arc::new(crate::builder::SessionObservers(config.session_observers))
+                    as Arc<dyn turbomcp_service::SessionObserver>,
+            ),
+        };
+        let dispatcher = Self {
             server,
             router,
             supported,
             shared: Shared {
-                sessions: Arc::new(SessionStore::default()),
-                custom_sessions: false,
-                tasks: None,
+                sessions,
+                tasks,
                 inflight: Arc::new(InFlightRegistry::default()),
                 subs,
-                sealer: Arc::new(StateSealer::new()),
+                sealer: Arc::new(sealer),
                 task_input: Arc::new(task_input::TaskInputRelay::new(Arc::clone(&pending))),
                 pending,
-                extensions: Arc::new(Vec::new()),
-                strict_elicitation_keys: false,
-                cache: CachePolicies::default(),
-                visibility: None,
-                validators: Arc::new(crate::catalog::Validators::default()),
-                roots_changed: None,
-                session_observer: None,
-                bus: None,
-                mask_internal_errors: false,
-                call_timeout: None,
-                cancellation: Cancellation::default(),
-                undeclared_tasks: TaskSupport::Optional,
+                extensions: Arc::new(config.extensions),
+                strict_elicitation_keys: config.strict_elicitation_keys,
+                cache: config.cache,
+                visibility: config.visibility,
+                validators: Arc::new(validators),
+                roots_changed: config.roots_changed,
+                session_observer,
+                bus: config.bus.map(crate::bus::Installed::new),
+                mask_internal_errors: config.mask_internal_errors,
+                call_timeout: config.call_timeout,
+                cancellation: config.cancellation,
+                undeclared_tasks: config.undeclared_tasks,
             },
-        }
-    }
-
-    /// Install a [`VisibilityPolicy`](crate::VisibilityPolicy): the components
-    /// it hides are dropped from every list *and* answered as though they did
-    /// not exist. See [the module docs](crate::visibility).
-    #[must_use]
-    pub fn with_visibility(mut self, policy: Arc<dyn crate::VisibilityPolicy>) -> Self {
-        self.shared.visibility = Some(policy);
-        self.warn_on_public_per_caller_results();
-        self
+        };
+        dispatcher.warn_on_public_per_caller_results();
+        dispatcher
     }
 
     /// A visibility policy makes lists and reads a function of the caller,
     /// and a `public` cache scope lets a shared cache hand one caller's
-    /// answer to another ("Servers MUST NOT rely on cacheScope alone"). Said
-    /// once, whichever of the two settings comes second.
+    /// answer to another ("Servers MUST NOT rely on cacheScope alone").
     fn warn_on_public_per_caller_results(&self) {
         if self.shared.visibility.is_none() {
             return;
@@ -546,29 +586,6 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         }
     }
 
-    /// Observe `notifications/roots/list_changed`. See
-    /// [`ServerBuilder::on_roots_changed`](crate::ServerBuilder::on_roots_changed).
-    #[must_use]
-    pub fn on_roots_changed(mut self, handler: Arc<RootsChangedHandler>) -> Self {
-        self.shared.roots_changed = Some(handler);
-        self
-    }
-
-    /// Tell `observer` when each stateful session ends. See
-    /// [`ServerBuilder::observe_sessions`](crate::ServerBuilder::observe_sessions).
-    #[must_use]
-    pub fn observe_sessions(
-        mut self,
-        observer: Arc<dyn turbomcp_service::SessionObserver>,
-    ) -> Self {
-        // Observers accumulate: each one added is told.
-        self.shared.session_observer = Some(match self.shared.session_observer.take() {
-            Some(earlier) => Arc::new(crate::builder::SessionObservers([earlier, observer])),
-            None => observer,
-        });
-        self
-    }
-
     /// A cloneable handle for publishing change notifications
     /// (`*_list_changed`, `resources/updated`) to every live subscription.
     #[must_use]
@@ -590,14 +607,6 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         ]
     }
 
-    /// Carry change notifications between replicas over `bus`. See
-    /// [`ServerBuilder::with_notification_bus`](crate::ServerBuilder::with_notification_bus).
-    #[must_use]
-    pub fn with_notification_bus(mut self, bus: Arc<dyn crate::NotificationBus>) -> Self {
-        self.shared.bus = Some(crate::bus::Installed::new(bus));
-        self
-    }
-
     /// A [`SessionTerminator`](turbomcp_service::SessionTerminator) handle for
     /// the HTTP transport: hand it to `HttpConfig::with_session_terminator` so a
     /// client `DELETE` ends its `2025-11-25` session (dropping the session state
@@ -608,49 +617,6 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         DispatcherSessionTerminator {
             shared: self.shared.clone(),
         }
-    }
-
-    /// The `2025-11-25` `execution.taskSupport` of a tool that declares none
-    /// (default `optional`: Tasks on means every tool may run as one). Set
-    /// [`TaskSupport::Forbidden`] to make tasks opt-in per tool
-    /// (`#[tool(task)]`), the spec's own default.
-    #[must_use]
-    pub fn undeclared_task_support(mut self, support: TaskSupport) -> Self {
-        self.shared.undeclared_tasks = support;
-        self
-    }
-
-    /// Cancel a call that runs longer than `limit`, and answer it with a
-    /// timeout error (`-32000`), freeing the slot it held. See
-    /// [`ServerBuilder::call_timeout`](crate::ServerBuilder::call_timeout).
-    #[must_use]
-    pub fn call_timeout(mut self, limit: std::time::Duration) -> Self {
-        self.shared.call_timeout = Some(limit);
-        self
-    }
-
-    /// What a client's cancellation does to the handler serving it. See
-    /// [`ServerBuilder::with_cancellation`](crate::ServerBuilder::with_cancellation).
-    #[must_use]
-    pub fn with_cancellation(mut self, cancellation: Cancellation) -> Self {
-        self.shared.cancellation = cancellation;
-        self
-    }
-
-    /// Keep up to `capacity` compiled tool schemas. See
-    /// [`ServerBuilder::schema_cache_capacity`](crate::ServerBuilder::schema_cache_capacity).
-    #[must_use]
-    pub fn schema_cache_capacity(mut self, capacity: u64) -> Self {
-        self.shared.validators = Arc::new(crate::catalog::Validators::with_capacity(capacity));
-        self
-    }
-
-    /// Mask internal errors. See
-    /// [`ServerBuilder::mask_internal_errors`](crate::ServerBuilder::mask_internal_errors).
-    #[must_use]
-    pub(crate) fn mask_internal_errors(mut self) -> Self {
-        self.shared.mask_internal_errors = true;
-        self
     }
 
     /// What ends a connection's session when the connection closes.
@@ -669,155 +635,6 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// any transport drains.
     pub async fn close_subscriptions(&self) {
         self.shared.subs.close_all().await;
-    }
-
-    /// Opt in to strict elicitation keys: reusing an `elicit` key with a
-    /// different request shape within one handler execution becomes an error
-    /// (an idempotency lint) instead of a warning.
-    #[must_use]
-    pub fn strict_elicitation_keys(mut self) -> Self {
-        self.shared.strict_elicitation_keys = true;
-        self
-    }
-
-    /// Set the per-capability cache defaults (SEP-2549) advertised on draft
-    /// cacheable results (`server/discover`, the four `*/list`s, and
-    /// `resources/read`). Accepts a bare [`CachePolicy`] for a uniform policy
-    /// or a [`CachePolicies`] for per-capability control. A handler-set policy
-    /// on a neutral result wins over these defaults. Without this, every
-    /// cacheable result advertises `ttlMs: 0` / `cacheScope: "private"`
-    /// (immediately stale).
-    #[must_use]
-    pub fn with_cache_policy(mut self, cache: impl Into<CachePolicies>) -> Self {
-        self.shared.cache = cache.into();
-        self.warn_on_public_per_caller_results();
-        self
-    }
-
-    /// Seal MRTR `requestState` with `key` instead of a per-process random
-    /// secret. See [`ServerBuilder::with_state_keys`](crate::ServerBuilder::with_state_keys)
-    /// for when this is required, how to source keys, and how to rotate them.
-    #[must_use]
-    pub fn with_state_key(self, key: [u8; 32]) -> Self {
-        self.with_state_keys(key, [])
-    }
-
-    /// Seal with `current` and also accept states sealed with any of
-    /// `previous`. See
-    /// [`ServerBuilder::with_state_keys`](crate::ServerBuilder::with_state_keys).
-    #[must_use]
-    pub fn with_state_keys(
-        mut self,
-        current: [u8; 32],
-        previous: impl IntoIterator<Item = [u8; 32]>,
-    ) -> Self {
-        let existing = self.shared.sealer.as_ref().clone();
-        self.shared.sealer = Arc::new(
-            StateSealer::from_keys(current, previous)
-                .with_limit(existing.limit())
-                .with_ttl(existing.ttl()),
-        );
-        self
-    }
-
-    /// Cap the serialized `requestState` at `bytes` (default 256 KiB). Every
-    /// answer a multi-round handler has collected rides the state into the next
-    /// round, so a flow with large sampling answers may need more.
-    #[must_use]
-    pub fn request_state_limit(mut self, bytes: usize) -> Self {
-        self.shared.sealer = Arc::new(self.shared.sealer.as_ref().clone().with_limit(bytes));
-        self
-    }
-
-    /// How long an issued `requestState` stays redeemable (default ten
-    /// minutes): the bound on how long a client may take to answer, and on how
-    /// long a captured state can be replayed.
-    #[must_use]
-    pub fn request_state_ttl(mut self, ttl: std::time::Duration) -> Self {
-        self.shared.sealer = Arc::new(self.shared.sealer.as_ref().clone().with_ttl(ttl));
-        self
-    }
-
-    /// Enable core Tasks (`2025-11-25`): task-augmented `tools/call` plus
-    /// `tasks/list|get|cancel|result`, advertised via the `tasks` capability
-    /// at `initialize`. Tools then default to `execution.taskSupport:
-    /// "optional"` in `tools/list`.
-    ///
-    /// Task-augmented calls run on spawned tasks, so the dispatcher must be
-    /// driven inside a tokio runtime (all bundled transports do this).
-    #[must_use]
-    pub fn with_task_support(mut self) -> Self {
-        // A backend set already (`with_task_backend`) is the store; this
-        // only turns Tasks on, whichever of the two came first.
-        if self.shared.tasks.is_none() {
-            self.shared.tasks = Some(Arc::new(TaskStore::default()));
-        }
-        self
-    }
-
-    /// Register an [`Extension`] (SEP-2133): it is advertised under
-    /// `capabilities.extensions[id]` to clients on the revisions it speaks
-    /// ([`Extension::protocol_versions`]), in `initialize` or
-    /// `server/discover`, and owns its methods there.
-    ///
-    /// # Panics
-    /// When it would collide: an id already registered, a method the core
-    /// protocol defines on a revision it speaks, or a method another
-    /// extension claims on a revision both speak. Registration is
-    /// configuration, so a conflict is a bug to fix rather than a request to
-    /// answer.
-    #[must_use]
-    pub fn with_extension(mut self, extension: Arc<dyn Extension>) -> Self {
-        crate::extension::check_registration(&self.shared.extensions, extension.as_ref());
-        // `with_extension` runs at build time (rare); rebuild the shared `Arc`
-        // so per-request `Shared` clones stay a single `Arc` bump.
-        let mut extensions = Vec::clone(&self.shared.extensions);
-        extensions.push(extension);
-        self.shared.extensions = Arc::new(extensions);
-        self
-    }
-
-    /// Expire a legacy session not used within `timeout` (and tear down its
-    /// subscription routes and `GET` stream), instead of the bundled store's
-    /// default of an hour. Call at build time, before serving.
-    #[must_use]
-    pub fn with_session_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
-        // A custom backend owns its own eviction policy, whichever of the two
-        // was set first.
-        if self.shared.custom_sessions {
-            return self;
-        }
-        self.shared.sessions = Arc::new(
-            SessionStore::with_capacity(SessionStore::DEFAULT_CAPACITY)
-                .with_idle_timeout(Some(timeout)),
-        );
-        self
-    }
-
-    /// Store legacy session state in `backend` instead of the bundled
-    /// in-memory [`SessionStore`] — the seam for external session storage
-    /// (e.g. Redis): sessions outlive a restart, and whichever replica a
-    /// session is routed to can find it (the legacy wire still needs sticky
-    /// routing; see [`SessionBackend`]).
-    /// Replaces any prior store configuration
-    /// ([`with_session_idle_timeout`](Self::with_session_idle_timeout) applies
-    /// only to the bundled store).
-    #[must_use]
-    pub fn with_session_backend(mut self, backend: Arc<dyn SessionBackend>) -> Self {
-        self.shared
-            .subs
-            .set_route_capacity(backend.capacity().unwrap_or(0));
-        self.shared.sessions = backend;
-        self.shared.custom_sessions = true;
-        self
-    }
-
-    /// Enable core Tasks (`2025-11-25`) backed by `backend` instead of the
-    /// bundled in-memory [`TaskStore`] — the seam for external task storage.
-    #[must_use]
-    pub fn with_task_backend(mut self, backend: Arc<dyn TaskBackend>) -> Self {
-        self.shared.tasks = Some(backend);
-        self
     }
 }
 

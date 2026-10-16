@@ -83,7 +83,7 @@ let remote = RemoteServer::builder(Upstream::stdio("my-server", ["--stdio"]))
     .connect()
     .await?;
 // Close each session's upstream when the session ends.
-let server = remote.clone().into_server().observe_sessions(Arc::new(remote));
+let server = remote.clone().into_server().with_session_observer(Arc::new(remote));
 ```
 
 Use it through the facade: `turbomcp = { version = "4", features = ["proxy", "http"] }`.

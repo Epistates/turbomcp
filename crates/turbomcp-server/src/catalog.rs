@@ -63,7 +63,7 @@ const MAX_SCHEMA_DEPTH: usize = 64;
 /// The most JSON values a compiled schema may contain.
 const MAX_SCHEMA_NODES: usize = 20_000;
 /// Compiled validators kept by default; see
-/// [`ServerBuilder::schema_cache_capacity`](crate::ServerBuilder::schema_cache_capacity).
+/// [`ServerBuilder::with_schema_cache_capacity`](crate::ServerBuilder::with_schema_cache_capacity).
 pub(crate) const DEFAULT_SCHEMA_CACHE: u64 = 256;
 
 /// Whether `schema` stays within the compile budget (basic/index.mdx,

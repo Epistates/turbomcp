@@ -266,13 +266,13 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
 
 /// The task support `tool` actually has on a server with Tasks enabled: its
 /// own declaration, else the server's default for undeclared tools
-/// ([`VersionDispatcher::undeclared_task_support`]). A fixed default, never
+/// ([`ServerConfig::with_undeclared_task_support`]). A fixed default, never
 /// inferred from the rest of the catalogue: that made one tool's declaration
 /// change every other tool's, cost a full catalogue listing per call, and
 /// let a caller tell from an undeclared tool whether a tool hidden from it
 /// declared support.
 ///
-/// [`VersionDispatcher::undeclared_task_support`]: crate::VersionDispatcher::undeclared_task_support
+/// [`ServerConfig::with_undeclared_task_support`]: crate::ServerConfig::with_undeclared_task_support
 pub(super) fn effective_task_support(tool: &neutral::Tool, undeclared: TaskSupport) -> TaskSupport {
     tool.task_support.unwrap_or(undeclared)
 }

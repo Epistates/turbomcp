@@ -44,8 +44,11 @@ impl WithTools for Adder {
 }
 
 fn dispatcher() -> VersionDispatcher<Adder> {
-    VersionDispatcher::new(Adder, MethodRouter::new().with_tools())
-        .with_extension(Arc::new(TasksExtension::new()))
+    VersionDispatcher::with_config(
+        Adder,
+        MethodRouter::new().with_tools(),
+        turbomcp_server::ServerConfig::new().with_extension(Arc::new(TasksExtension::new())),
+    )
 }
 
 /// Draft `_meta` with the protocol version and, optionally, a declared tasks

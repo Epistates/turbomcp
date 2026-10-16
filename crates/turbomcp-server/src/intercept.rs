@@ -21,7 +21,7 @@
 //! use turbomcp::intercept::on_call_tool;
 //!
 //! // Redact every tool result, whichever tool and revision produced it.
-//! MyServer.into_server().intercept(on_call_tool(|ctx, params, next| async move {
+//! MyServer.into_server().with_interceptor(on_call_tool(|ctx, params, next| async move {
 //!     let mut result = next.run(ctx, params).await?;
 //!     redact(&mut result);
 //!     Ok(result)
