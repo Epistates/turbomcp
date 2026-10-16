@@ -558,7 +558,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed at 60 s through the gateway even while reporting progress.
 - `cargo test -p turbomcp-transport-http --all-features` compiles again.
 - Conformance is pinned to `@modelcontextprotocol/conformance@0.2.0-alpha.12`
-  (server 232 passed of 237, client 511 distinct passing pairs, zero
+  (server 232 passed of 237, client 534 distinct passing pairs, zero
   failures either way, and the unmodified upstream client run passes too).
   Client fixture corrections v2 drop the SSE-retry one, which upstream
   fixed. `TURBOMCP_CONFORMANCE_BLESS=1` rewrites the exact inventories from

@@ -12,7 +12,7 @@ zero-boilerplate surface and strict spec compliance as a feature.
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
 > MSRV 1.88. It interoperates with the official Rust, TypeScript, Python and Go
 > SDKs in both directions, on both revisions, and both halves are scored against the official MCP conformance
-> suite: 232 successful server assertions and 511 distinct successful client
+> suite: 232 successful server assertions and 534 distinct successful client
 > scenario/check pairs using pinned client fixture corrections, with zero failures, skips, or warnings. All three advertised revisions (`2025-06-18`, `2025-11-25`,
 > `2026-07-28`) are dated and frozen; `2026-07-28` is generated from the
 > released `schema/2026-07-28/`, not the RC.
@@ -122,7 +122,7 @@ Compliance is tested, not asserted:
   scored revisions. As the *server*, it drives a full-featured TurboMCP server
   over Streamable HTTP: **237 checks, 232 pass, 0 fail, 5 informational**. As the
   *client*, it stands up a deliberately awkward mock server per scenario and
-  referees what our client did on the wire: **511 distinct successful scenario/check pairs, 0 failures**, including the
+  referees what our client did on the wire: **534 distinct successful scenario/check pairs, 0 failures**, including the
   OAuth scenarios through the public `OAuthSession` coordinator. The client gate
   uses [hash-pinned fixture corrections](crates/turbomcp-conformance/fixtures/README.md)
   and reports zero failures, skips, or warnings. The unmodified upstream mode

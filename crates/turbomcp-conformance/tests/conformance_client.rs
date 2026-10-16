@@ -127,7 +127,7 @@ async fn conformance_client_suite() {
             );
         }
         eprintln!(
-            "Client fixture corrections v1 active; unmodified upstream mode: TURBOMCP_CONFORMANCE_UPSTREAM=1"
+            "Client fixture corrections v2 active; unmodified upstream mode: TURBOMCP_CONFORMANCE_UPSTREAM=1"
         );
     }
     for version in SPEC_VERSIONS {

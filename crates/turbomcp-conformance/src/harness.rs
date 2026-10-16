@@ -434,7 +434,7 @@ pub fn assert_inventory(suite: &str, version: &str, checks: &[CheckResult]) {
     };
     let inventory: serde_json::Value = serde_json::from_str(raw).expect("inventory JSON");
     if std::env::var("TURBOMCP_CONFORMANCE_BLESS").as_deref() == Ok("1") {
-        bless_inventory(suite, version, inventory, checks);
+        bless_inventory(suite, version, checks);
         return;
     }
     assert_eq!(
@@ -469,17 +469,19 @@ pub fn assert_inventory(suite: &str, version: &str, checks: &[CheckResult]) {
 /// inventory from what this run observed, under the current package pin, and
 /// leave the other versions' entries alone. For a harness update only; the
 /// diff is what gets reviewed.
-fn bless_inventory(
-    suite: &str,
-    version: &str,
-    mut inventory: serde_json::Value,
-    checks: &[CheckResult],
-) {
+fn bless_inventory(suite: &str, version: &str, checks: &[CheckResult]) {
     let file = match suite {
         "client" if raw_upstream() => "conformance-inventory-client-upstream.json",
         "client" => "conformance-inventory-client.json",
         _ => "conformance-inventory-server.json",
     };
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
+    // From disk, not the inventory compiled into this test: an earlier
+    // version blessed in the same run has already rewritten the file, and
+    // starting from the compiled copy put that version's old entries back.
+    let mut inventory: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read inventory"))
+            .expect("inventory JSON");
     inventory["package"] = serde_json::Value::from(CONFORMANCE_PKG);
     let prefix = format!("{version}::");
     for (key, disposition) in [
@@ -503,7 +505,6 @@ fn bless_inventory(
         );
         inventory[key] = entries.into_iter().collect();
     }
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
     let mut text = serde_json::to_string_pretty(&inventory).expect("inventory JSON");
     text.push('\n');
     std::fs::write(&path, text).expect("write inventory");

@@ -35,7 +35,7 @@ and rejection of retry delays over the recovery limit rather than reconnecting e
 
 Both corrected client and unmodified server gates require a successful harness
 exit, exact inventories, and a completion summary. Corrected client results:
-701 passed checks, 511 distinct scenario/check pairs, zero failures/skips/warnings.
+701 passed checks, 534 distinct scenario/check pairs, zero failures/skips/warnings.
 Server results: 232 passed checks, 216 distinct pairs, zero failures/skips/warnings.
 After a harness update, `TURBOMCP_CONFORMANCE_BLESS=1` rewrites the inventories
 from a passing run; review that diff like any other.
@@ -46,8 +46,8 @@ For reproducibility, run the unmodified upstream client:
 TURBOMCP_CONFORMANCE_STRICT=1 TURBOMCP_CONFORMANCE_UPSTREAM=1 cargo test --manifest-path crates/turbomcp-conformance/Cargo.toml --test conformance_client -- --nocapture
 ```
 
-That mode uses its own exact inventory and passes with zero failures; it still
-exposes two inapplicable modern header skips plus two legacy SSE warnings. It is never reported as a
+That mode uses its own exact inventory and passes with zero failures and zero
+warnings; it still exposes two inapplicable modern header skips. It is never reported as a
 clean corrected run. Remove these corrections only after a reviewed upstream
 package update supplies equivalent fixtures. Do not broaden SDK revision support,
 weaken assertions, or manufacture obsolete RPCs merely to satisfy an old fixture.
