@@ -139,6 +139,8 @@ benchmark_results.md
 !DEPENDENCY_POLICY.md
 !docs/**/*.md
 !**/MIGRATION.md
+# Files a test reads (`include_str!` in a doc comment).
+!**/tests/fixtures/*.md
 
 site
 
