@@ -147,7 +147,7 @@ pub use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
 pub use turbomcp_service::{
     CancellationToken, Delivery, EndedSession, McpService, NetworkFacts, Peer, PeerClosed, Pipe,
     ProtocolError, Serve, ServeConfig, ServerHandle, SessionEndReason, SessionObserver,
-    SessionStreams, Transport, serve, serve_with,
+    SessionStreams, StartedSession, Transport, serve, serve_with,
 };
 
 /// RPC middleware: [`tower::Layer`]s over the `Service<McpRequest>` seam,
@@ -240,15 +240,15 @@ pub use turbomcp_server::{
 };
 
 pub use turbomcp_server::{
-    Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, Elicited, ExpiredSession,
-    GetPromptContext, Image, InputWaiter, IntoCallToolResult, IntoGetPromptResult,
-    IntoReadResourceResult, IntoServerBuilder, Json, LegacySessionAdapter, ListPromptsContext,
-    ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, LocalBus, LogSender,
-    McpServerCore, MethodRouter, NewTask, NotificationBus, Params, ProgressReporter,
-    ReadResourceContext, Server, ServerBuilder, ServerNotifier, SessionBackend, SessionError,
-    SessionState, SessionStore, TaskBackend, TaskError, TaskHandle, TaskLink, TaskOutcome,
-    TaskOwner, TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate, UriTemplateError,
-    VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
+    Audio, CachePolicies, CallToolContext, Cancellation, ClientHandle, CompleteContext, Elicited,
+    ExpiredSession, GetPromptContext, Image, InitializeContext, InputWaiter, IntoCallToolResult,
+    IntoGetPromptResult, IntoReadResourceResult, IntoServerBuilder, Json, LegacySessionAdapter,
+    ListPromptsContext, ListResourceTemplatesContext, ListResourcesContext, ListToolsContext,
+    LocalBus, LogSender, McpServerCore, MethodRouter, NewTask, NotificationBus, Params,
+    ProgressReporter, ReadResourceContext, Server, ServerBuilder, ServerNotifier, SessionBackend,
+    SessionError, SessionState, SessionStore, TaskBackend, TaskError, TaskHandle, TaskLink,
+    TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate,
+    UriTemplateError, VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
 };
 
 /// Re-export of [`schemars`] for deriving `JsonSchema` on `#[tool]` argument
@@ -513,7 +513,9 @@ pub use turbomcp_proxy as proxy;
 
 // ---- macros -----------------------------------------------------------------
 
-pub use turbomcp_macros::{completion, mcp_header, prompt, resource, server, tool};
+pub use turbomcp_macros::{
+    completion, mcp_header, on_cancelled, on_initialize, prompt, resource, server, tool,
+};
 
 /// Support items referenced by `#[server]`-generated code. **Not** a stable API
 /// — do not depend on it directly; it exists only so generated code has a single
@@ -538,12 +540,15 @@ pub mod __macros {
 /// The common imports for building a server.
 pub mod prelude {
     pub use crate::neutral;
-    pub use turbomcp_core::{Implementation, LogLevel, McpError, McpResult, RequestContext};
+    pub use turbomcp_core::{
+        Implementation, LogLevel, McpError, McpResult, RequestContext, RequestId,
+    };
     pub use turbomcp_server::{
         Audio, CallToolContext, CompleteContext, Elicited, GetPromptContext, Image,
-        IntoServerBuilder, Json, ListPromptsContext, ListResourceTemplatesContext,
-        ListResourcesContext, ListToolsContext, McpServerCore, Params, ReadResourceContext,
-        ServerBuilder, WithCompletions, WithPrompts, WithResources, WithTools,
+        InitializeContext, IntoServerBuilder, Json, ListPromptsContext,
+        ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, McpServerCore,
+        Params, ReadResourceContext, ServerBuilder, WithCompletions, WithPrompts, WithResources,
+        WithTools,
     };
     pub use turbomcp_service::io::stdio;
 
@@ -552,5 +557,7 @@ pub mod prelude {
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
     pub use crate::http::{Http, HttpConfig};
 
-    pub use turbomcp_macros::{completion, mcp_header, prompt, resource, server, tool};
+    pub use turbomcp_macros::{
+        completion, mcp_header, on_cancelled, on_initialize, prompt, resource, server, tool,
+    };
 }

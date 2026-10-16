@@ -127,3 +127,11 @@ mrtr_context!(ReadResourceContext, "resources/read");
 plain_context!(ListPromptsContext, "prompts/list");
 mrtr_context!(GetPromptContext, "prompts/get");
 plain_context!(CompleteContext, "completion/complete");
+plain_context!(
+    /// Seen by [`McpServerCore::on_initialize`](crate::McpServerCore::on_initialize):
+    /// `base.client_info` and `base.client_capabilities` are what the client
+    /// said in its handshake, `base.protocol_version` the revision
+    /// negotiated, and `base.identity` who it authenticated as.
+    InitializeContext,
+    "initialize"
+);

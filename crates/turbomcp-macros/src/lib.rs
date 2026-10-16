@@ -41,6 +41,25 @@
 //! names no resource, so the read is not found. A context parameter is the
 //! one its marker gets (`&CallToolContext` on a `#[tool]`, …).
 //!
+//! # Cancellation
+//!
+//! When a client cancels a call (or abandons it: a timeout, an HTTP
+//! disconnect), no answer is sent, and the handler is told through its
+//! context's `ctx.base.cancellation` token. By default
+//! (`Cancellation::Cooperative`) it then runs on to stop its own way, so its
+//! cleanup runs; a handler that never looks at the token runs to completion,
+//! its result discarded. `ServerBuilder::with_cancellation(Cancellation::Abort)`
+//! drops handlers at their next `.await` instead, for servers whose handlers
+//! are safe to stop anywhere.
+//!
+//! # Lifecycle
+//!
+//! `#[on_initialize]` marks `async fn(&self, ctx: &InitializeContext) ->
+//! McpResult<()>`, run when a stateful (`2025-*`) client starts a session; an
+//! error turns it away. `#[on_cancelled]` marks a plain `fn(&self, id:
+//! &RequestId, reason: Option<&str>)`, told of each cancelled request. Session
+//! start and end reach a `SessionObserver` (`ServerBuilder::observe_sessions`).
+//!
 //! # Metadata
 //!
 //! Every marker takes `icon("https://…")` (or `icon(src = …, mime_type = …,
@@ -208,6 +227,23 @@ pub fn mcp_header(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn completion(_attr: TokenStream, item: TokenStream) -> TokenStream {
     unconsumed("completion", item)
+}
+
+/// Marker: the server's `McpServerCore::on_initialize` hook, run when a
+/// stateful (`2025-*`) client starts a session; an error refuses it.
+/// `async fn(&self, ctx: &InitializeContext) -> McpResult<()>`. Consumed by
+/// [`macro@server`].
+#[proc_macro_attribute]
+pub fn on_initialize(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    unconsumed("on_initialize", item)
+}
+
+/// Marker: the server's `McpServerCore::on_cancelled` hook, told when a
+/// client cancels a request. A plain `fn(&self, id: &RequestId, reason:
+/// Option<&str>)`. Consumed by [`macro@server`].
+#[proc_macro_attribute]
+pub fn on_cancelled(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    unconsumed("on_cancelled", item)
 }
 
 /// A marker that expanded on its own: `#[server]` would have removed it, so

@@ -69,47 +69,54 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         ));
     };
 
+    // Keep what the client sent, not a re-serialization of the typed parse:
+    // the typed form exists to validate, and anything it doesn't model
+    // (`extensions`, a future sub-capability) would not survive the trip.
+    let client_capabilities = req
+        .params
+        .as_ref()
+        .and_then(|p| p.get("capabilities"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    // Kept for the session's whole life, so bounded: a frame of nested
+    // capabilities otherwise pinned megabytes per session, and an
+    // unauthenticated `initialize` loop multiplied that by the store.
+    let size = serde_json::to_vec(&client_capabilities).map_or(usize::MAX, |b| b.len());
+    if size > MAX_CLIENT_CAPABILITIES_BYTES {
+        return Ok(error_response(
+            id,
+            &McpError::invalid_params(format!(
+                "client capabilities exceed {MAX_CLIENT_CAPABILITIES_BYTES} bytes"
+            )),
+        ));
+    }
+    let client_info = from_legacy_impl(params.client_info);
+
+    // The server's say, before any session exists: an error here is the
+    // handshake's answer.
+    let mut base = super::params::build_context(req, ext);
+    base.protocol_version = negotiated.clone();
+    base.client_capabilities = Some(client_capabilities.clone());
+    let base = base.with_client_info(client_info.clone());
+    if let Err(refused) = server
+        .on_initialize(&crate::InitializeContext::new(base))
+        .await
+    {
+        return Ok(error_response(id, &refused));
+    }
+
     if let Some(sid) = session_id(ext) {
-        // Keep what the client sent, not a re-serialization of the typed parse:
-        // the typed form exists to validate, and anything it doesn't model
-        // (`extensions`, a future sub-capability) would not survive the trip.
-        let client_capabilities = req
-            .params
-            .as_ref()
-            .and_then(|p| p.get("capabilities"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        // Kept for the session's whole life, so bounded: a frame of nested
-        // capabilities otherwise pinned megabytes per session, and an
-        // unauthenticated `initialize` loop multiplied that by the store.
-        let size = serde_json::to_vec(&client_capabilities).map_or(usize::MAX, |b| b.len());
-        if size > MAX_CLIENT_CAPABILITIES_BYTES {
-            return Ok(error_response(
-                id,
-                &McpError::invalid_params(format!(
-                    "client capabilities exceed {MAX_CLIENT_CAPABILITIES_BYTES} bytes"
-                )),
-            ));
-        }
+        let state = SessionState::new(negotiated.clone(), client_info, client_capabilities)
+            .with_owner(ext.get::<Identity>().and_then(Identity::principal_key))
+            .with_peer_address(
+                ext.get::<turbomcp_service::NetworkFacts>()
+                    .and_then(|facts| facts.peer_address.clone()),
+            );
         // A store that can't take the session (down, or full) fails the
         // handshake with `503`: answering success would hand the client a
         // session id that every later request finds unknown.
-        shared
-            .sessions
-            .insert(
-                sid,
-                SessionState::new(
-                    negotiated.clone(),
-                    from_legacy_impl(params.client_info),
-                    client_capabilities,
-                )
-                .with_owner(ext.get::<Identity>().and_then(Identity::principal_key))
-                .with_peer_address(
-                    ext.get::<turbomcp_service::NetworkFacts>()
-                        .and_then(|facts| facts.peer_address.clone()),
-                ),
-            )
-            .await?;
+        shared.sessions.insert(sid, state.clone()).await?;
+        shared.session_started(sid, &state);
     }
 
     let result = legacy::InitializeResult {

@@ -63,11 +63,12 @@ pub use builder::{IntoServerBuilder, ServerBuilder};
 pub use bus::{BusError, Change, LocalBus, NotificationBus};
 pub use composite::{Composite, CompositeServer};
 pub use context::{
-    CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext,
+    CallToolContext, CompleteContext, GetPromptContext, InitializeContext, ListPromptsContext,
     ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, ReadResourceContext,
 };
 pub use dispatcher::{
-    CachePolicies, DispatcherSessionTerminator, RootsChangedHandler, VersionDispatcher,
+    CachePolicies, Cancellation, DispatcherSessionTerminator, RootsChangedHandler,
+    VersionDispatcher,
 };
 pub use extension::{
     CallAugmentRequest, CallRunner, Extension, ExtensionRequest, SubscribeOutcome,

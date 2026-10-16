@@ -57,7 +57,7 @@ pub use ratelimit::GovernorRateLimiter;
 pub use ratelimit::{RateKey, RateLimiter};
 pub use serve::{ReplyQueued, ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
-pub use session_observer::{EndedSession, SessionEndReason, SessionObserver};
+pub use session_observer::{EndedSession, SessionEndReason, SessionObserver, StartedSession};
 pub use transport::{
     HttpFailure, ParamHeaders, RelatedRequest, Transport, TransportFailure, WireVersion,
 };

@@ -276,6 +276,17 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self.setting("call_timeout", move |d| d.call_timeout(limit))
     }
 
+    /// What a client's cancellation does to the handler serving the
+    /// request. [`Cancellation::Cooperative`] (the default) fires the
+    /// request's token and lets the handler finish its own way, its result
+    /// discarded; [`Cancellation::Abort`] drops it at its next `.await`.
+    #[must_use]
+    pub fn with_cancellation(self, cancellation: crate::Cancellation) -> Self {
+        self.setting("with_cancellation", move |d| {
+            d.with_cancellation(cancellation)
+        })
+    }
+
     /// How many compiled tool schemas to keep (default 256). Every
     /// `tools/call` validates its arguments, and a structured result its
     /// output, against a validator compiled once per distinct schema; a
@@ -502,6 +513,12 @@ impl<S: McpServerCore> IntoServerBuilder for S {}
 pub(crate) struct SessionObservers(pub(crate) [Arc<dyn turbomcp_service::SessionObserver>; 2]);
 
 impl turbomcp_service::SessionObserver for SessionObservers {
+    fn session_started(&self, session: &turbomcp_service::StartedSession<'_>) {
+        for observer in &self.0 {
+            observer.session_started(session);
+        }
+    }
+
     fn session_ended(&self, session: &turbomcp_service::EndedSession<'_>) {
         for observer in &self.0 {
             observer.session_ended(session);

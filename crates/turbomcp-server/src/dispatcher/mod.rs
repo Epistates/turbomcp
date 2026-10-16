@@ -63,6 +63,25 @@ use params::{
     build_context, extract_log_level, legacy_context, parse_set_level_params, parse_uri_param,
 };
 
+/// What a client's cancellation (`notifications/cancelled`, or its
+/// connection ending) does to the handler serving the request. Either way
+/// no response is sent for it, as the spec requires.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Cancellation {
+    /// The request's token fires (`ctx.base.cancellation`) and the handler
+    /// runs on, to stop however it chooses: its cleanup runs, a transaction
+    /// it opened can roll back, and what it returns is discarded. A handler
+    /// that never looks at the token runs to completion (bounded by
+    /// `call_timeout`). The default, as in the reference SDKs.
+    #[default]
+    Cooperative,
+    /// The handler is dropped at its next `.await` as the token fires:
+    /// nothing after that point runs. Frees the most at once, for handlers
+    /// whose every `.await` is a safe place to stop.
+    Abort,
+}
+
 /// The protocol seam for a server: `Service<McpRequest>`.
 ///
 /// Clone is cheap (the server clones per request; the router is shared behind an
@@ -124,6 +143,8 @@ struct Shared {
     /// The most a call may take before it is cancelled and answered with a
     /// timeout. `None`: no limit beyond the client's own.
     call_timeout: Option<std::time::Duration>,
+    /// What a client's cancellation does to the handler serving it.
+    cancellation: Cancellation,
     /// `2025-11-25` `execution.taskSupport` for a tool that declares none.
     undeclared_tasks: TaskSupport,
 }
@@ -271,6 +292,16 @@ impl Shared {
             if let Some(state) = &expired.state {
                 self.session_ended(id, state, turbomcp_service::SessionEndReason::Expired);
             }
+        }
+    }
+
+    fn session_started(&self, id: &str, state: &crate::SessionState) {
+        if let Some(observer) = &self.session_observer {
+            observer.session_started(&turbomcp_service::StartedSession::new(
+                id,
+                &state.version,
+                &state.client_info,
+            ));
         }
     }
 
@@ -470,6 +501,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 bus: None,
                 mask_internal_errors: false,
                 call_timeout: None,
+                cancellation: Cancellation::default(),
                 undeclared_tasks: TaskSupport::Optional,
             },
         }
@@ -594,6 +626,14 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn call_timeout(mut self, limit: std::time::Duration) -> Self {
         self.shared.call_timeout = Some(limit);
+        self
+    }
+
+    /// What a client's cancellation does to the handler serving it. See
+    /// [`ServerBuilder::with_cancellation`](crate::ServerBuilder::with_cancellation).
+    #[must_use]
+    pub fn with_cancellation(mut self, cancellation: Cancellation) -> Self {
+        self.shared.cancellation = cancellation;
         self
     }
 
@@ -907,22 +947,64 @@ async fn handle<S: McpServerCore>(
             let (lifetime, _ended) = crate::subscriptions::RequestLifetime::start();
             let ext = ext.with(lifetime);
             let call_timeout = shared.call_timeout;
+            let abort_on_cancel = shared.cancellation == Cancellation::Abort;
             let id = req.id.clone();
-            let dispatch = handle_request(
-                server,
-                &router,
-                &supported,
-                &shared,
-                req,
-                &ext,
-                cancel.clone(),
-            );
-            // Cancelled mid-flight: drop the handler future and send nothing
-            // (cancellation spec: "stop processing … not send a response for
-            // the cancelled request"). Biased, and checked again after the
-            // handler: one that notices `ctx.cancellation` returns in the very
-            // poll the token fires, and an unbiased pick would answer it about
-            // half the time.
+            let call = {
+                let cancel = cancel.clone();
+                async move {
+                    handle_request(server, &router, &supported, &shared, req, &ext, cancel).await
+                }
+            };
+            let dispatch: futures::future::BoxFuture<'static, _> = if abort_on_cancel {
+                Box::pin(call)
+            } else {
+                // Cooperatively, the handler runs on a task of its own: a
+                // request abandoned by dropping this future (an HTTP client
+                // disconnecting, the call limit) fires its token, as a
+                // `notifications/cancelled` does, instead of cutting the
+                // handler off at whatever `.await` it had reached.
+                // The request's span goes with it, so its logs and
+                // telemetry stay the request's.
+                let mut call = Box::pin(tracing::Instrument::instrument(
+                    call,
+                    tracing::Span::current(),
+                ));
+                let abandoned = cancel.inner().clone().drop_guard();
+                let id = id.clone();
+                Box::pin(async move {
+                    // Polled once here first: the request starts as it
+                    // arrives (reading its session as it stands, before a
+                    // later `logging/setLevel`), and one that finishes
+                    // without waiting never pays for a task.
+                    if let std::task::Poll::Ready(out) = futures::poll!(call.as_mut()) {
+                        abandoned.disarm();
+                        return out;
+                    }
+                    let task = tokio::spawn(call);
+                    let out = task.await;
+                    abandoned.disarm();
+                    match out {
+                        Ok(out) => out,
+                        // A panicking handler reaches the transport's panic
+                        // guard, as it does unspawned.
+                        Err(e) => match e.try_into_panic() {
+                            Ok(panic) => std::panic::resume_unwind(panic),
+                            Err(_) => Ok(error_response(
+                                id,
+                                &McpError::internal("the handler's task was stopped"),
+                            )),
+                        },
+                    }
+                })
+            };
+            // Cancelled mid-flight: send nothing (cancellation spec: "stop
+            // processing … not send a response for the cancelled request").
+            // Cooperatively, the token has fired and the handler runs on to
+            // stop however it chooses; under `Cancellation::Abort` it is
+            // dropped here. Biased, and checked again after the handler: one
+            // that notices `ctx.cancellation` returns in the very poll the
+            // token fires, and an unbiased pick would answer it about half
+            // the time.
             let limit = async {
                 match call_timeout {
                     Some(limit) => tokio::time::sleep(limit).await,
@@ -931,7 +1013,7 @@ async fn handle<S: McpServerCore>(
             };
             let out = tokio::select! {
                 biased;
-                () = cancel.cancelled() => return Ok(None),
+                () = cancel.cancelled(), if abort_on_cancel => return Ok(None),
                 out = dispatch => out,
                 () = limit => {
                     // The handler is dropped here; firing the token tells
@@ -953,7 +1035,7 @@ async fn handle<S: McpServerCore>(
             Ok(Some(out))
         }
         JsonRpcMessage::Notification(n) => {
-            handle_notification(&shared, &n, &ext);
+            handle_notification(&server, &shared, &n, &ext);
             Ok(None)
         }
         JsonRpcMessage::Response(resp) => {
@@ -980,7 +1062,12 @@ struct RawCancelledParams {
     reason: Option<String>,
 }
 
-fn handle_notification(shared: &Shared, n: &JsonRpcNotification, ext: &Extensions) {
+fn handle_notification<S: McpServerCore>(
+    server: &S,
+    shared: &Shared,
+    n: &JsonRpcNotification,
+    ext: &Extensions,
+) {
     let (inflight, subs) = (&shared.inflight, &shared.subs);
     match n.method.as_str() {
         methods::notification::CANCELLED => {
@@ -1002,6 +1089,9 @@ fn handle_notification(shared: &Shared, n: &JsonRpcNotification, ext: &Extension
             // (cancelling the `subscriptions/listen` request id is how a
             // stdio client closes its stream).
             let fired = inflight.cancel(scope, &parsed.request_id);
+            if fired {
+                server.on_cancelled(&parsed.request_id, parsed.reason.as_deref());
+            }
             // Subscriptions stay connection-scoped: a `subscriptions/listen`
             // stream belongs to the connection it was opened on, and the draft
             // has no session to widen to.

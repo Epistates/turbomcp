@@ -1,9 +1,38 @@
-//! Watching stateful sessions end: the seam a session-duration metric
+//! Watching stateful sessions start and end: where per-session state is set
+//! up and torn down, and the seam a session-duration metric
 //! (`turbomcp-telemetry`'s `mcp.server.session.duration`) plugs into.
 
 use std::time::Duration;
 
-use turbomcp_core::ProtocolVersion;
+use turbomcp_core::{Implementation, ProtocolVersion};
+
+/// A stateful session that has just started (its `initialize` answered).
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct StartedSession<'a> {
+    /// The session's id (`Mcp-Session-Id` on HTTP).
+    pub id: &'a str,
+    /// The revision negotiated.
+    pub protocol_version: &'a ProtocolVersion,
+    /// Who the client said it is.
+    pub client_info: &'a Implementation,
+}
+
+impl<'a> StartedSession<'a> {
+    /// Session `id` on `protocol_version`, with `client_info`.
+    #[must_use]
+    pub fn new(
+        id: &'a str,
+        protocol_version: &'a ProtocolVersion,
+        client_info: &'a Implementation,
+    ) -> Self {
+        Self {
+            id,
+            protocol_version,
+            client_info,
+        }
+    }
+}
 
 /// How a stateful session ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,9 +79,15 @@ impl<'a> EndedSession<'a> {
     }
 }
 
-/// Told when each stateful (`2025-06-18`/`2025-11-25`) session ends.
-/// `2026-07-28` is stateless: it has no sessions to end.
+/// Told when each stateful (`2025-06-18`/`2025-11-25`) session starts and
+/// ends. `2026-07-28` is stateless: it has no sessions.
 pub trait SessionObserver: Send + Sync + 'static {
+    /// `session` started. Called on the task that answered its handshake:
+    /// keep it quick. The default does nothing.
+    fn session_started(&self, session: &StartedSession<'_>) {
+        let _ = session;
+    }
+
     /// `session` ended. Called on the task that ended it: keep it quick.
     fn session_ended(&self, session: &EndedSession<'_>);
 }

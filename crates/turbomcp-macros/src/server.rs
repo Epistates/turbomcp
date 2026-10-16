@@ -43,6 +43,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     let mut resources = Vec::new();
     let mut prompts = Vec::new();
     let mut completion: Option<CompletionHandler> = None;
+    let mut hooks = Hooks::default();
 
     for item in &mut block.items {
         let ImplItem::Fn(f) = item else { continue };
@@ -69,6 +70,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
                 }
                 completion = Some(CompletionHandler::parse(f)?);
             }
+            Marker::Hook(hook) => hooks.add(hook, f)?,
         }
         // Strip per-parameter helper attributes from the re-emitted method.
         strip_param_attrs(f);
@@ -108,7 +110,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     if completion.is_some() {
         registrations.extend(quote!(.with_completions()));
     }
-    let core_impl = gen_core_impl(&target, &args, &registrations)?;
+    let core_impl = gen_core_impl(&target, &args, &registrations, &hooks)?;
     let entry_head = target.head(None);
 
     let entry_impl = quote! {
@@ -368,6 +370,51 @@ enum Marker {
         args: Box<MarkerArgs>,
     },
     Completion,
+    /// `#[on_initialize]` / `#[on_cancelled]`: a lifecycle hook.
+    Hook(Hook),
+}
+
+/// A lifecycle hook a method implements.
+#[derive(Clone, Copy)]
+enum Hook {
+    /// `McpServerCore::on_initialize`: `async fn(&self, &InitializeContext)
+    /// -> McpResult<()>`.
+    Initialize,
+    /// `McpServerCore::on_cancelled`: `fn(&self, &RequestId, Option<&str>)`.
+    Cancelled,
+}
+
+/// The methods implementing each hook, at most one each.
+#[derive(Default)]
+struct Hooks {
+    initialize: Option<Ident>,
+    cancelled: Option<Ident>,
+}
+
+impl Hooks {
+    fn add(&mut self, hook: Hook, f: &ImplItemFn) -> syn::Result<()> {
+        let (slot, name, wants_async) = match hook {
+            Hook::Initialize => (&mut self.initialize, "#[on_initialize]", true),
+            Hook::Cancelled => (&mut self.cancelled, "#[on_cancelled]", false),
+        };
+        if slot.is_some() {
+            return Err(syn::Error::new(
+                f.sig.ident.span(),
+                format!("a #[server] takes at most one {name} method"),
+            ));
+        }
+        if f.sig.asyncness.is_some() != wants_async {
+            let shape = if wants_async {
+                "`async fn(&self, ctx: &InitializeContext) -> McpResult<()>`"
+            } else {
+                "a plain (not `async`) `fn(&self, id: &RequestId, reason: Option<&str>)`: \
+                 it runs as the notification is read"
+            };
+            return Err(syn::Error::new(f.sig.span(), format!("{name} is {shape}")));
+        }
+        *slot = Some(f.sig.ident.clone());
+        Ok(())
+    }
 }
 
 /// Behavior-hint flags from `#[tool(read_only, destructive = false, …)]` —
@@ -1021,7 +1068,14 @@ fn attr_named(attr: &Attribute, name: &str) -> bool {
     attr.path().segments.last().is_some_and(|s| s.ident == name)
 }
 
-const MARKERS: [&str; 4] = ["tool", "prompt", "resource", "completion"];
+const MARKERS: [&str; 6] = [
+    "tool",
+    "prompt",
+    "resource",
+    "completion",
+    "on_initialize",
+    "on_cancelled",
+];
 
 /// Find and remove a `#[tool]` / `#[prompt]` / `#[resource(...)]` / `#[completion]`
 /// marker from a method's attributes, returning its parsed form (and `None` for
@@ -1037,12 +1091,19 @@ fn take_marker(attrs: &mut Vec<Attribute>) -> syn::Result<Option<Marker>> {
     if let Some(extra) = attrs.iter().find(|a| is_marker(a)) {
         return Err(syn::Error::new(
             extra.span(),
-            "a method takes one of #[tool], #[resource], #[prompt] or #[completion], not several",
+            "a method takes one of #[tool], #[resource], #[prompt], #[completion], \
+             #[on_initialize] or #[on_cancelled], not several",
         ));
     }
     let doc = doc_comment(attrs);
     if attr_named(&attr, "completion") {
         return Ok(Some(Marker::Completion));
+    }
+    if attr_named(&attr, "on_initialize") {
+        return Ok(Some(Marker::Hook(Hook::Initialize)));
+    }
+    if attr_named(&attr, "on_cancelled") {
+        return Ok(Some(Marker::Hook(Hook::Cancelled)));
     }
     let marker = if attr_named(&attr, "tool") {
         MarkerKind::Tool
@@ -1425,7 +1486,29 @@ fn gen_core_impl(
     target: &Target,
     args: &ServerArgs,
     registrations: &TokenStream,
+    hooks: &Hooks,
 ) -> syn::Result<TokenStream> {
+    let on_initialize = hooks.initialize.as_ref().map(|m| {
+        quote! {
+            fn on_initialize(
+                &self,
+                ctx: &::turbomcp::InitializeContext,
+            ) -> impl ::core::future::Future<Output = ::turbomcp::McpResult<()>> + ::core::marker::Send {
+                self.#m(ctx)
+            }
+        }
+    });
+    let on_cancelled = hooks.cancelled.as_ref().map(|m| {
+        quote! {
+            fn on_cancelled(
+                &self,
+                request_id: &::turbomcp::RequestId,
+                reason: ::core::option::Option<&str>,
+            ) {
+                self.#m(request_id, reason)
+            }
+        }
+    });
     // Unset, the server is the crate: its `Cargo.toml` name and version,
     // so a release bump can't leave the advertised version behind.
     let name = args.name.as_ref().map_or_else(
@@ -1490,6 +1573,8 @@ fn gen_core_impl(
             }
             #instructions_fn
             #protocols_fn
+            #on_initialize
+            #on_cancelled
             fn register(
                 router: ::turbomcp::MethodRouter<Self>,
             ) -> ::turbomcp::MethodRouter<Self> {

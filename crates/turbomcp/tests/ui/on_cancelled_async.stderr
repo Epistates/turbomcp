@@ -1,0 +1,5 @@
+error: #[on_cancelled] is a plain (not `async`) `fn(&self, id: &RequestId, reason: Option<&str>)`: it runs as the notification is read
+  --> tests/ui/on_cancelled_async.rs:11:5
+   |
+11 |     async fn note(&self, id: &RequestId, reason: Option<&str>) {
+   |     ^^^^^

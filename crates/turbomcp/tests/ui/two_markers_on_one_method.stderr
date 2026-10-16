@@ -1,4 +1,4 @@
-error: a method takes one of #[tool], #[resource], #[prompt] or #[completion], not several
+error: a method takes one of #[tool], #[resource], #[prompt], #[completion], #[on_initialize] or #[on_cancelled], not several
   --> tests/ui/two_markers_on_one_method.rs:10:5
    |
 10 |     #[prompt]

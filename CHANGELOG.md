@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Lifecycle hooks: `McpServerCore::on_initialize(&InitializeContext)`
+  (`#[on_initialize]`) sees a stateful client's handshake and may refuse
+  it; `McpServerCore::on_cancelled` (`#[on_cancelled]`) hears each
+  cancelled request; `SessionObserver::session_started` (`StartedSession`)
+  beside `session_ended`. `RequestId` is in the prelude.
+- `ServerBuilder::with_cancellation(Cancellation)` chooses what a client's
+  cancellation does to the handler (see Changed).
+
 - Results carry `_meta`: `CallToolResult`, `ReadResourceResult`,
   `GetPromptResult`, `CompleteResult` and the four list results have a
   `meta` map (`with_meta_entry`), sent on every revision and read back by
@@ -1285,6 +1293,15 @@ Earlier in this cycle:
   capability, because `2025-06-18` has no sub-capabilities to declare.
 
 ### Changed
+
+- **Breaking:** cancellation is cooperative by default
+  (`Cancellation::Cooperative`): a cancelled or abandoned call fires the
+  handler's `ctx.base.cancellation` and the handler runs on to stop its own
+  way, its result discarded, so cleanup and rollbacks run. It used to be
+  dropped at its next `.await`, which `Cancellation::Abort` keeps. The same
+  holds for every way a call is abandoned: `notifications/cancelled`, the
+  call limit, and an HTTP client disconnecting (the handler now runs on its
+  own task, carrying the request's span).
 
 - **Breaking:** `ServeConfig`, `Image` and `Audio` are `#[non_exhaustive]`
   (build them with `new` and the `with_*` setters), as are `TaskStatus`,

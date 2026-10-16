@@ -15,7 +15,9 @@ use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
-use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcNotification, McpRequest, McpResult};
+use turbomcp_core::{
+    Implementation, JsonRpcMessage, JsonRpcNotification, McpError, McpRequest, McpResult,
+};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
@@ -573,14 +575,22 @@ impl WithTools for Recorded {
         )]))
     }
 
+    /// Works for a second unless told to stop (cancellation is cooperative:
+    /// a cancelled call's token fires and the handler stops its own way).
     async fn call_tool(
         &self,
-        _ctx: &CallToolContext,
+        ctx: &CallToolContext,
         _params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        self.finished.store(true, Ordering::SeqCst);
-        Ok(neutral::CallToolResult::text("done"))
+        tokio::select! {
+            () = ctx.base.cancellation.cancelled() => {
+                Err(McpError::internal("cancelled"))
+            }
+            () = tokio::time::sleep(Duration::from_secs(1)) => {
+                self.finished.store(true, Ordering::SeqCst);
+                Ok(neutral::CallToolResult::text("done"))
+            }
+        }
     }
 }
 

@@ -1,15 +1,17 @@
 //! Cancellation, end to end across both halves.
 //!
-//! The receiving side has always been implemented: `notifications/cancelled`
-//! fires the request's token and the dispatcher drops the handler future
-//! without answering (cancellation spec: "stop processing … not send a response
-//! for the cancelled request"). What these tests pin is that a real TurboMCP
-//! *client* produces that notification when it abandons a request, so a server
-//! stops working instead of computing an answer nobody will read.
+//! A cancelled request fires its token and is never answered (cancellation
+//! spec: "stop processing … not send a response for the cancelled
+//! request"). What the handler gets is the server's choice: by default
+//! (`Cancellation::Cooperative`) it is told, through `ctx.base.cancellation`,
+//! and stops its own way, cleanup included; under `Cancellation::Abort` it
+//! is dropped at its next `.await`. These tests pin both, on every way a
+//! request is abandoned: a TurboMCP client's `notifications/cancelled`, its
+//! timeout, a dropped call, and an HTTP client disconnecting.
 //!
-//! A handler cannot ask whether it was cancelled — dropping its future is the
-//! mechanism — so the assertions are made from inside the tool with a drop
-//! guard: it entered, it was dropped, and it never reached its last line.
+//! The tool records what it got to: it entered, whether it noticed the
+//! cancellation, whether its future was dropped, and that it never reached
+//! its last line.
 
 #![cfg(feature = "client")]
 
@@ -21,13 +23,14 @@ use serde_json::Map;
 use tokio::io::{BufReader, split};
 use turbomcp::client::{Client, ClientBuilder, ClientError, ConnectMode};
 use turbomcp::prelude::*;
-use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
+use turbomcp::{Cancellation, LegacySessionAdapter, SerdeJsonCodec, serve};
 use turbomcp_service::io::LineTransport;
 
 /// What the tool got to before it stopped.
 #[derive(Default)]
 struct Marks {
     entered: AtomicBool,
+    noticed: AtomicBool,
     dropped: AtomicBool,
     finished: AtomicBool,
 }
@@ -35,6 +38,9 @@ struct Marks {
 impl Marks {
     fn entered(&self) -> bool {
         self.entered.load(Ordering::SeqCst)
+    }
+    fn noticed(&self) -> bool {
+        self.noticed.load(Ordering::SeqCst)
     }
     fn dropped(&self) -> bool {
         self.dropped.load(Ordering::SeqCst)
@@ -60,22 +66,34 @@ struct Slow {
 
 #[server(name = "slow", version = "1.0.0")]
 impl Slow {
-    /// Sleep far longer than any caller will wait.
+    /// Sleep far longer than any caller will wait, watching for
+    /// cancellation.
     #[tool(description = "Block until cancelled")]
-    async fn block(&self) -> McpResult<String> {
+    async fn block(&self, ctx: &CallToolContext) -> McpResult<String> {
         self.marks.entered.store(true, Ordering::SeqCst);
-        // Dropped when the dispatcher drops this future — which is what
-        // cancellation *is* on the server side.
+        // Dropped when this future is: at the end, or wherever the
+        // dispatcher drops it under `Cancellation::Abort`.
         let _mark = DropMark(Arc::clone(&self.marks));
-        tokio::time::sleep(Duration::from_secs(30)).await;
-        self.marks.finished.store(true, Ordering::SeqCst);
-        Ok("the caller waited it out".into())
+        tokio::select! {
+            () = ctx.base.cancellation.cancelled() => {
+                self.marks.noticed.store(true, Ordering::SeqCst);
+                Err(McpError::internal("cancelled"))
+            }
+            () = tokio::time::sleep(Duration::from_secs(30)) => {
+                self.marks.finished.store(true, Ordering::SeqCst);
+                Ok("the caller waited it out".into())
+            }
+        }
     }
 }
 
 /// Spawn the server (the stack `run_stdio` wires) on one end of a duplex pipe
 /// and connect a typed client with `request_timeout` on the other.
-async fn connect(mode: ConnectMode, request_timeout: Duration) -> (Client, Arc<Marks>) {
+async fn connect(
+    mode: ConnectMode,
+    request_timeout: Duration,
+    cancellation: Cancellation,
+) -> (Client, Arc<Marks>) {
     let marks = Arc::new(Marks::default());
     let server = Slow {
         marks: Arc::clone(&marks),
@@ -86,7 +104,7 @@ async fn connect(mode: ConnectMode, request_timeout: Duration) -> (Client, Arc<M
     let transport = LineTransport::new(BufReader::new(s_rd), s_wr, SerdeJsonCodec);
     tokio::spawn(serve(
         transport,
-        LegacySessionAdapter::new(server.into_server().build()),
+        LegacySessionAdapter::new(server.into_server().with_cancellation(cancellation).build()),
     ));
 
     let (c_rd, c_wr) = split(client_io);
@@ -119,56 +137,75 @@ async fn settle(marks: &Marks) {
     }
 }
 
-async fn assert_cancelled_server_side(marks: &Marks) {
+async fn assert_cancelled_server_side(marks: &Marks, cancellation: Cancellation) {
     settle(marks).await;
     assert!(marks.entered(), "the tool should have started");
     assert!(
         marks.dropped(),
-        "the handler future must be dropped, not left running for 30s"
+        "the handler must have stopped, not be left running for 30s"
     );
     assert!(
         !marks.finished(),
         "a cancelled handler must not run to completion"
     );
+    match cancellation {
+        Cancellation::Cooperative => assert!(
+            marks.noticed(),
+            "cooperatively, the handler is told and stops its own way"
+        ),
+        _ => assert!(
+            !marks.noticed(),
+            "under Abort the handler is dropped before it can notice"
+        ),
+    }
 }
+
+const BOTH: [Cancellation; 2] = [Cancellation::Cooperative, Cancellation::Abort];
 
 /// The client's own timeout elapses: it gives up *and* says so.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn client_timeout_stops_the_server_handler() {
-    let (client, marks) = connect(ConnectMode::Modern, GIVE_UP_AFTER).await;
-    let result = client.call_tool("block", Map::new()).await;
-    assert!(
-        matches!(result, Err(ClientError::Timeout)),
-        "expected Timeout, got {result:?}"
-    );
-    assert_cancelled_server_side(&marks).await;
+    for cancellation in BOTH {
+        let (client, marks) = connect(ConnectMode::Modern, GIVE_UP_AFTER, cancellation).await;
+        let result = client.call_tool("block", Map::new()).await;
+        assert!(
+            matches!(result, Err(ClientError::Timeout)),
+            "expected Timeout, got {result:?}"
+        );
+        assert_cancelled_server_side(&marks, cancellation).await;
+    }
 }
 
 /// The caller abandons the future instead — no error is ever returned, so the
 /// only thing that can stop the server is the client noticing the drop.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropped_call_stops_the_server_handler() {
-    let (client, marks) = connect(ConnectMode::Modern, Duration::from_secs(60)).await;
-    let abandoned =
-        tokio::time::timeout(GIVE_UP_AFTER, client.call_tool("block", Map::new())).await;
-    assert!(
-        abandoned.is_err(),
-        "the caller's deadline should fire first"
-    );
-    assert_cancelled_server_side(&marks).await;
+    for cancellation in BOTH {
+        let (client, marks) =
+            connect(ConnectMode::Modern, Duration::from_secs(60), cancellation).await;
+        let abandoned =
+            tokio::time::timeout(GIVE_UP_AFTER, client.call_tool("block", Map::new())).await;
+        assert!(
+            abandoned.is_err(),
+            "the caller's deadline should fire first"
+        );
+        assert_cancelled_server_side(&marks, cancellation).await;
+    }
 }
 
 /// Cancellation is transport- and revision-independent: the legacy handshake
 /// reaches the same in-flight registry.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancellation_works_on_the_legacy_path_too() {
-    let (client, marks) = connect(ConnectMode::Legacy, GIVE_UP_AFTER).await;
-    let result = client.call_tool("block", Map::new()).await;
-    assert!(
-        matches!(result, Err(ClientError::Timeout)),
-        "expected Timeout, got {result:?}"
-    );
-    assert_cancelled_server_side(&marks).await;
+    for cancellation in BOTH {
+        let (client, marks) = connect(ConnectMode::Legacy, GIVE_UP_AFTER, cancellation).await;
+        let result = client.call_tool("block", Map::new()).await;
+        assert!(
+            matches!(result, Err(ClientError::Timeout)),
+            "expected Timeout, got {result:?}"
+        );
+        assert_cancelled_server_side(&marks, cancellation).await;
+    }
 }
 
 /// A cancelled request must not also be answered. The client stays usable and
@@ -176,9 +213,10 @@ async fn cancellation_works_on_the_legacy_path_too() {
 /// the abandoned one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancelled_request_is_never_answered() {
-    let (client, marks) = connect(ConnectMode::Modern, GIVE_UP_AFTER).await;
+    let (client, marks) =
+        connect(ConnectMode::Modern, GIVE_UP_AFTER, Cancellation::default()).await;
     assert!(client.call_tool("block", Map::new()).await.is_err());
-    assert_cancelled_server_side(&marks).await;
+    assert_cancelled_server_side(&marks, Cancellation::default()).await;
 
     // `tools/list` is answered normally, proving the abandoned id left the
     // pending table without stranding the connection.
@@ -265,6 +303,10 @@ async fn an_http_disconnect_cancels_the_request() {
         "a client disconnect MUST cancel the request it was waiting on"
     );
     assert!(!marks.finished());
+    assert!(
+        marks.noticed(),
+        "cooperatively, a disconnect fires the token rather than cutting the handler off"
+    );
     shutdown.cancel();
 }
 
@@ -316,6 +358,6 @@ async fn a_typed_http_client_timing_out_stops_the_server_handler() {
         "expected Timeout, got {result:?}"
     );
 
-    assert_cancelled_server_side(&marks).await;
+    assert_cancelled_server_side(&marks, Cancellation::default()).await;
     shutdown.cancel();
 }

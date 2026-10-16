@@ -41,6 +41,33 @@ pub trait McpServerCore: Clone + Send + Sync + 'static {
         None
     }
 
+    /// A stateful (`2025-06-18`/`2025-11-25`) client is starting a session.
+    /// `ctx` says who it is, what it supports, the revision negotiated and
+    /// whom it authenticated as. Return an error to refuse it: the client
+    /// gets that error as the handshake's answer and no session is created.
+    /// The default accepts everyone.
+    ///
+    /// `2026-07-28` has no handshake: each request carries the client's
+    /// identity and capabilities itself, so gate those per request (a
+    /// `tower` layer or an interceptor). To set up state for a session,
+    /// observe its start with `ServerBuilder::observe_sessions`.
+    fn on_initialize(
+        &self,
+        ctx: &crate::InitializeContext,
+    ) -> impl core::future::Future<Output = turbomcp_core::McpResult<()>> + Send {
+        let _ = ctx;
+        core::future::ready(Ok(()))
+    }
+
+    /// A client cancelled request `request_id` (`notifications/cancelled`),
+    /// with its stated `reason`. The request's handler has already been told
+    /// (its `ctx.base.cancellation` fired); this is for the server as a
+    /// whole: auditing, metrics. The default does nothing. Keep it quick: it
+    /// runs as the notification is read.
+    fn on_cancelled(&self, request_id: &turbomcp_core::RequestId, reason: Option<&str>) {
+        let _ = (request_id, reason);
+    }
+
     /// Register the capabilities this server implements. Every
     /// [`ServerBuilder`](crate::ServerBuilder) starts from it, so
     /// `into_server()` means the same thing wherever it is called.
