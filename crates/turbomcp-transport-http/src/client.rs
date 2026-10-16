@@ -119,7 +119,10 @@ async fn recover_session(shared: &Arc<Shared>, sent: Option<&str>) -> Result<boo
     let Some(handshake) = shared.handshake.lock().clone() else {
         return Ok(false);
     };
-    *shared.session.lock() = None;
+    // The dead id stays until the new one replaces it in one step. Clearing
+    // it first sent every request started during the re-handshake without a
+    // session, and the server's `400` for that is final; with the old id they
+    // get a `404` and queue behind this recovery instead.
     reinitialize(shared, &handshake).await?;
     Ok(true)
 }
@@ -767,6 +770,14 @@ async fn post_and_pump(
         JsonRpcMessage::Request(r) => Some(r.id.clone()),
         _ => None,
     };
+    // An answer to a server request (an elicitation, a sampled message) that
+    // the server never receives leaves its handler waiting out its timeout.
+    let answered = match &msg {
+        JsonRpcMessage::Response(r) if r.error.is_none() => {
+            r.id.clone().map(|id| (id, version.clone()))
+        }
+        _ => None,
+    };
 
     let outcome = match &cancel {
         Some((_, token)) => tokio::select! {
@@ -816,8 +827,36 @@ async fn post_and_pump(
                     .send((JsonRpcMessage::Response(resp), None))
                     .await;
             }
-            // Notifications / responses have no waiter — just log.
-            None => tracing::debug!(error = %message, "http client POST failed (no waiter)"),
+            // Nobody here waits on a notification or a response, but the
+            // server may: an answer it refused (a `413` for a large sampled
+            // image, say) is replaced by an error for the same request, so
+            // its handler fails now instead of at its timeout.
+            None => {
+                tracing::warn!(error = %message, "the server did not accept a message");
+                if let Some((id, version)) = answered {
+                    let refusal = JsonRpcResponse::error(
+                        id,
+                        JsonRpcError {
+                            code: turbomcp_core::codes::INTERNAL_ERROR,
+                            message: format!(
+                                "the client's answer could not be delivered: {message}"
+                            ),
+                            data: None,
+                        },
+                    );
+                    let sent = pump(
+                        &shared,
+                        JsonRpcMessage::Response(refusal),
+                        version,
+                        ParamHeaders::default(),
+                        &mut None,
+                    )
+                    .await;
+                    if sent.is_err() {
+                        tracing::warn!("the server did not accept the error in its place either");
+                    }
+                }
+            }
         }
     }
 }
@@ -1035,14 +1074,33 @@ async fn pump(
                 Ok(())
             };
         }
-        let frame: JsonRpcMessage =
+        let mut frame: JsonRpcMessage =
             serde_json::from_str(&text).map_err(|e| format!("json decode failed: {e}"))?;
         learn_negotiated_version(shared, &msg, &frame);
         if stateful && is_initialize {
             ensure_listening(shared).await;
         }
+        // A JSON body to a request is that request's response. An error with
+        // no id (the server couldn't read one) answers it too; anything else
+        // is delivered as itself, and the request fails rather than waiting
+        // for an answer this POST will never carry.
+        let mut unanswered = false;
+        if let JsonRpcMessage::Request(q) = &msg {
+            match &mut frame {
+                JsonRpcMessage::Response(r) if r.id.as_ref() == Some(&q.id) => {}
+                JsonRpcMessage::Response(r) if r.id.is_none() && r.error.is_some() => {
+                    r.id = Some(q.id.clone());
+                }
+                _ => unanswered = true,
+            }
+        }
         slot.take();
         let _ = shared.inbound_tx.send((frame, None)).await;
+        if unanswered {
+            return Err(PumpFailure::Failed(
+                "the server's JSON answer was not this request's response".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1235,11 +1293,30 @@ async fn listen(shared: Arc<Shared>) {
         // is harmless — it is already `true`.
         let _ = shared.stream_ready.send(true);
         match outcome {
+            Ok(resp)
+                if resp.status().is_success()
+                    && !resp
+                        .headers()
+                        .get(CONTENT_TYPE)
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|ct| ct.starts_with("text/event-stream")) =>
+            {
+                // A `200` that isn't a stream is no stream; reconnecting to it
+                // at the server's `retry` forever was a request a second.
+                refusals = refusals.saturating_add(1);
+                tracing::debug!("standalone stream answered without an event stream; retrying");
+            }
             Ok(resp) if resp.status().is_success() => {
-                refusals = 0;
+                // The backoff resets once the stream delivers something: one
+                // that opens and ends at once is as good as a refusal.
+                let mut delivered = false;
                 let mut events = bounded_sse(resp, shared.limits.max_response_bytes).eventsource();
                 while let Some(event) = events.next().await {
                     let Ok(event) = event else { break };
+                    if !delivered {
+                        delivered = true;
+                        refusals = 0;
+                    }
                     if !event.id.is_empty() {
                         last_event_id = Some(event.id.clone());
                     }
@@ -1262,6 +1339,9 @@ async fn listen(shared: Arc<Shared>) {
                             tracing::debug!(error = %e, "standalone sse frame decode failed");
                         }
                     }
+                }
+                if !delivered {
+                    refusals = refusals.saturating_add(1);
                 }
             }
             Ok(resp) => {

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ServerProcess` (`turbomcp-client`), the server behind a stdio
+  connection: `shutdown` runs the spec's sequence (wait for the server to
+  exit once its input closes, then `SIGTERM`, then `SIGKILL`, to its whole
+  process group on Unix), dropping it kills the server, and `log_stderr`
+  routes its stderr into `tracing` (escaped, 4 KiB a line).
+- `HttpConfig::max_connections` (default 4,096) and `header_read_timeout`
+  (default 30 s), enforced by the listener before any request exists.
+- `HttpConfig::without_event_store`, `InMemoryEventStore::max_bytes`,
+  `WebSocketClientTransport::without_keepalive`, `RateKey::client` and
+  `turbomcp_service::client_ip`, and `ReplyQueued`.
 - `ServerBuilder::call_timeout`: a call still running after the limit is
   cancelled (its handler dropped, its cancellation fired) and answered with
   a timeout error, so a hung handler can't hold an admission slot forever.
@@ -380,6 +390,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The HTTP listener caps connections and closes one that takes over the
+  header-read timeout to send a request's headers, idle keep-alives
+  included. `axum::serve` set neither (hyper's timeout is inert without a
+  timer), and every limit the endpoint had acted only once a request was
+  parsed, so connections that never sent one held descriptors without
+  bound.
+- Anonymous rate limits and stream budgets count an IPv6 client by its
+  `/64`; one holding a block could rotate addresses for a fresh budget.
+- A legacy `GET` stream ends when the bearer token that opened it expires,
+  as a WebSocket connection does.
+- Transport-level errors (a session backend's own message, with its hosts
+  and connection strings) reach HTTP clients as a generic message; the
+  detail is logged.
+- The in-memory event store is bounded in bytes (64 MiB by default): its
+  worst case was `events_per_stream × max_streams` messages of any size.
+- Logging the peer's text: invalid frames log one warning per connection
+  (the rest at debug), and a child server's stderr and the peer's error
+  text are escaped and bounded. Span request ids are cut at 128 bytes.
+- `cargo deny` refuses crates from unknown registries and git sources.
 - One caller can no longer fill the session table. `SessionStore` holds
   at most `DEFAULT_OWNER_QUOTA` (1024) sessions per owner, the
   authenticated principal or else the client address (an IPv6 client by its
@@ -541,6 +570,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Session recovery over HTTP kept the dead session id until the new one
+  replaced it: calls started during the re-handshake went out without a
+  session, got the server's final `400`, and failed.
+- An answer the server refused (a `413` for a large sampled image) is
+  replaced by an error for the same request, so the server's handler fails
+  at once instead of waiting out its 120 s timeout.
+- HTTP refusals are JSON-RPC: the body limit's `413` and a cut-off body
+  (a `2026-07-28` client reads a non-JSON `4xx` as a legacy server), a
+  POST that isn't `Content-Type: application/json` (`415`), a JSON-RPC
+  response POSTed on `2026-07-28` (where clients send none, `400`), a body
+  stating a revision the server doesn't serve (the unsupported-version
+  error rather than "session required"), an in-band `subscriptions/listen`
+  refusal (now with the stateless wire's status), and an
+  `MCP-Protocol-Version` that isn't visible ASCII or is sent twice, or a
+  repeated `Mcp-Method`/`Mcp-Name` (no longer read as absent, or as the
+  first copy).
+- Origins are compared as RFC 6454 origins (`http://LOCALHOST:80` is
+  `http://localhost`); `allow_origin` refuses an entry that can never
+  match. The host check reads the request target's authority on HTTP/2,
+  which sends no `Host`.
+- Session response streams are resumable by default, as the `2025-11-25`
+  transport SHOULD: every event has an id and the stream opens with the
+  priming event, which `2025-06-18` streams (where it isn't defined) skip.
+  A resume past a finished stream's retention is refused even before the
+  store sweeps it.
+- A `2025-11-25` task's first message can no longer overtake its
+  `CreateTaskResult` on a pipe, where the client couldn't tell whose it
+  was.
+- The HTTP client: a JSON answer that isn't the request's response fails
+  the request at once (an id-less error answers it), and a standalone
+  stream answered without an event stream, or that ends without one, is
+  backed off instead of re-requested every second.
+- The WebSocket client gives up connecting after 30 s and pings by
+  default (after 30 s idle; two unanswered close the connection), so a
+  half-open socket is noticed.
 - A hand-written tool schema whose root omits `type` (or lists several)
   was advertised as an empty object, every property dropped, while calls
   were still validated against the real schema; it now reaches the wire
@@ -950,6 +1014,13 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `connect_child` returns `(Client, ServerProcess)` (was
+  `tokio::process::Child`) and starts the server in its own process group;
+  the gateway's upstreams use the same type. A stdio upstream's stderr logs
+  on target `turbomcp::server_stderr` (was `turbomcp_proxy::upstream`).
+- `HttpConfig` serves sessions with an `InMemoryEventStore` unless told
+  `without_event_store()`. The HTTP listener is hyper's HTTP/1 connection
+  directly, not `axum::serve`.
 - **Breaking:** `SessionStore` refuses a caller's sessions beyond its
   owner quota with `SessionError::QuotaExceeded` (`429`); raise it with
   `with_owner_quota` where many clients share an address.

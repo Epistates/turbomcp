@@ -17,6 +17,26 @@ pub(crate) const MCP_PROTOCOL_VERSION: &str = "mcp.protocol.version";
 pub(crate) const MCP_SESSION_ID: &str = "mcp.session.id";
 pub(crate) const MCP_RESOURCE_URI: &str = "mcp.resource.uri";
 pub(crate) const JSONRPC_REQUEST_ID: &str = "jsonrpc.request.id";
+
+/// The most of a request id recorded on a span.
+const MAX_REQUEST_ID: usize = 128;
+
+/// `id` as the `jsonrpc.request.id` attribute: a string id is the peer's to
+/// choose and may be a megabyte long, which every span and exported trace
+/// would otherwise carry; past [`MAX_REQUEST_ID`] bytes it is cut.
+pub(crate) fn request_id(id: &turbomcp_core::RequestId) -> String {
+    match id {
+        turbomcp_core::RequestId::Number(n) => n.to_string(),
+        turbomcp_core::RequestId::String(s) if s.len() <= MAX_REQUEST_ID => s.clone(),
+        turbomcp_core::RequestId::String(s) => {
+            let mut end = MAX_REQUEST_ID;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}…", &s[..end])
+        }
+    }
+}
 pub(crate) const GEN_AI_TOOL_NAME: &str = "gen_ai.tool.name";
 pub(crate) const GEN_AI_PROMPT_NAME: &str = "gen_ai.prompt.name";
 pub(crate) const GEN_AI_OPERATION_NAME: &str = "gen_ai.operation.name";

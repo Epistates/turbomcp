@@ -254,14 +254,16 @@ calls fail and resource subscriptions must be renewed. Clients reconnect their
 
 On these wires a client disconnect doesn't cancel a call (the revisions say
 it SHOULD NOT): the call runs on until `notifications/cancelled`, its
-session ending, or shutdown. To get its response to a client that lost the
-connection, configure an event store
-(`HttpConfig::with_event_store(Arc::new(InMemoryEventStore::new()))`): response
-streams are then primed with event ids, and the client's `GET` with
-`Last-Event-ID` replays what it missed and follows the rest live. The bundled
-store keeps 1,024 events per stream and finished streams for five minutes. A
-store shared across replicas still needs the sticky routing above, since the
-call itself runs in one process. With a store, the session's `GET` stream is
+session ending, or shutdown. Its response still reaches a client that lost
+the connection: response streams are resumable by default, through a bundled
+in-memory event store. Every event carries an id (on `2025-11-25` the stream
+opens with the priming event), and the client's `GET` with `Last-Event-ID`
+replays what it missed and follows the rest live. The bundled store keeps
+1,024 events per stream, 64 MiB in all, and finished streams for five
+minutes; set your own with `HttpConfig::with_event_store` (a store shared
+across replicas still needs the sticky routing above, since the call itself
+runs in one process), or turn resumability off with `without_event_store()`.
+The session's `GET` stream is
 resumable too: it keeps recording while no connection carries it (for
 `HttpConfig::detached_stream_ttl`, five minutes by default), so a
 notification or server request sent during a reconnect is replayed rather
@@ -276,7 +278,15 @@ server-initiated polling). Nothing is lost between polls.
 A session-store outage answers `503` + `Retry-After` (clients retry), not
 `404` (which would send every client to re-`initialize` at once). The bundled
 store refuses new sessions with `503` when full rather than evicting live
-ones; idle sessions expire after an hour.
+ones, and holds any one caller (its principal, else its address, an IPv6
+client by its `/64`) to 1,024 sessions, answering more with `429`
+(`SessionStore::with_owner_quota`). Idle sessions expire after an hour.
+
+The listener closes a connection that takes over 30 s to send a request's
+headers, idle keep-alives included (`HttpConfig::header_read_timeout`), and
+holds at most 4,096 connections (`max_connections`). Behind a reverse proxy,
+name it with `with_trusted_proxies`, or every anonymous caller shares the
+proxy's address and its per-client budgets.
 
 **Health.** `HttpConfig::with_health_check("/healthz")` answers `200` while
 serving and `503` once shutdown begins, so a load balancer stops routing to a

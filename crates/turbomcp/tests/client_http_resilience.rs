@@ -386,3 +386,126 @@ async fn sequential_calls_never_find_their_own_slot_taken() {
             .unwrap_or_else(|e| panic!("call {n} was refused: {e}"));
     }
 }
+
+/// Concurrent calls meeting an expired session all recover. Recovery cleared
+/// the session id before re-initializing, so a call that started during the
+/// re-handshake went out with no session at all, got the server's `400`
+/// "session required", and failed for good.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn calls_racing_a_session_recovery_never_go_out_sessionless() {
+    let recovering = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = Arc::clone(&recovering);
+    let mock = Mock::new(move |mock, rpc, msg, session| {
+        if let Some(sid) = session
+            && mock.expired.lock().unwrap().iter().any(|e| e == sid)
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        match rpc {
+            "initialize" => {
+                // A slow re-handshake: the window the other calls race.
+                if mock.handshakes.load(Ordering::SeqCst) > 0 {
+                    flag.store(true, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+                initialize(mock, &msg["id"])
+            }
+            "<stream>" => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+            "tools/list" if session.is_none() => {
+                (StatusCode::BAD_REQUEST, "session required").into_response()
+            }
+            "tools/list" => result(&msg["id"], json!({ "tools": [] })),
+            _ => StatusCode::ACCEPTED.into_response(),
+        }
+    });
+    let url = serve(Arc::clone(&mock)).await;
+    let client = ClientBuilder::new("racer", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .connect(HttpClientTransport::new(&url).unwrap())
+        .await
+        .expect("handshake");
+
+    mock.expired.lock().unwrap().push("session-0".into());
+    let first = tokio::spawn({
+        let client = client.clone();
+        async move { client.list_tools(None).await }
+    });
+    // The rest start once the recovery handshake is under way.
+    while !recovering.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let racing = (0..3).map(|_| {
+        let client = client.clone();
+        async move { client.list_tools(None).await }
+    });
+    for outcome in futures::future::join_all(racing).await {
+        outcome.expect("a call racing the recovery recovers too");
+    }
+    first
+        .await
+        .unwrap()
+        .expect("the call that found it expired recovers");
+    assert!(
+        mock.seen("tools/list").iter().all(|s| s.session.is_some()),
+        "no call went out sessionless: {:?}",
+        mock.seen("tools/list")
+    );
+    assert_eq!(mock.handshakes.load(Ordering::SeqCst), 2, "one recovery");
+}
+
+/// A JSON answer that isn't the request's response fails the request at
+/// once; an id-less error answers it. Both used to leave the caller waiting
+/// for an answer that POST would never carry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_json_answer_that_is_not_the_response_fails_the_call() {
+    let mock = Mock::new(|mock, rpc, msg, _| match rpc {
+        "initialize" => initialize(mock, &msg["id"]),
+        "<stream>" => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+        "tools/list" => result(&json!("someone-else"), json!({ "tools": [] })),
+        "tools/call" => Json(json!({
+            "jsonrpc": "2.0",
+            "error": { "code": -32600, "message": "unreadable" },
+        }))
+        .into_response(),
+        _ => StatusCode::ACCEPTED.into_response(),
+    });
+    let url = serve(Arc::clone(&mock)).await;
+    let client = ClientBuilder::new("strict", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .connect(HttpClientTransport::new(&url).unwrap())
+        .await
+        .expect("handshake");
+
+    let wrong = tokio::time::timeout(Duration::from_secs(5), client.list_tools(None))
+        .await
+        .expect("answered, not left waiting");
+    assert!(wrong.is_err());
+    let idless = tokio::time::timeout(Duration::from_secs(5), client.call_tool("t", Map::new()))
+        .await
+        .expect("answered, not left waiting");
+    let err = idless.expect_err("the id-less error is this request's");
+    assert_eq!(err.as_rpc().map(|e| e.code), Some(-32600), "{err:?}");
+}
+
+/// A standalone stream answered `200` with no event stream is backed off
+/// like a refusal; it was re-requested at the server's `retry` forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_200_that_is_not_a_stream_is_backed_off() {
+    let mock = Mock::new(|mock, rpc, msg, _| match rpc {
+        "initialize" => initialize(mock, &msg["id"]),
+        "<stream>" => Json(json!({})).into_response(),
+        _ => StatusCode::ACCEPTED.into_response(),
+    });
+    let url = serve(Arc::clone(&mock)).await;
+    let _client = ClientBuilder::new("patient", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .connect(HttpClientTransport::new(&url).unwrap())
+        .await
+        .expect("handshake");
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let gets = mock.seen("<stream>").len();
+    assert!(
+        gets <= 2,
+        "backed off (1s, then 2s, …): {gets} GETs in 2.5s"
+    );
+}

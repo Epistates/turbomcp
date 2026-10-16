@@ -119,6 +119,10 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let mut ctx = ctx;
     ctx.cancellation = token.clone();
     let task_owner = owner(&sid, &ctx.extensions);
+    let reply_queued = ctx
+        .extensions
+        .get::<turbomcp_service::ReplyQueued>()
+        .cloned();
     let quota = crate::tasks::quota_key(&ctx);
     // The call outlives its request: what it sends on the call's behalf may
     // go on until the task ends, and no further.
@@ -190,6 +194,12 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let work = async move {
         let _tracked = tracked;
         let _ended = ended;
+        // Not a word from the task before the `CreateTaskResult` that tells
+        // the client it exists (see `ReplyQueued`); bounded, so a reply that
+        // never goes out can't hold the work forever.
+        if let Some(queued) = reply_queued {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), queued.queued()).await;
+        }
         tokio::select! {
             () = token.cancelled() => {
                 // `tasks/cancel` (or expiry purge) already transitioned the

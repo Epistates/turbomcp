@@ -14,7 +14,7 @@ use support::example_bin;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn connect_child_spawns_handshakes_and_calls() {
-    let (client, mut child) = connect_child(
+    let (client, server) = connect_child(
         ClientBuilder::new("child-smoke", "1.0.0"),
         Command::new(example_bin("hello_world")),
     )
@@ -35,7 +35,14 @@ async fn connect_child_spawns_handshakes_and_calls() {
         other => panic!("expected text content, got {other:?}"),
     }
 
-    child.kill().await.expect("child teardown");
+    // The spec's shutdown: close the input, and the server exits on its own.
+    client.close().await;
+    let started = std::time::Instant::now();
+    server.shutdown().await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "the server exited when its stdin closed, with no signal needed"
+    );
 }
 
 /// A token-triggered shutdown ends the process promptly even while the client

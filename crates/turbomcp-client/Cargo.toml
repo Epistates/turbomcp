@@ -28,6 +28,10 @@ futures = { workspace = true }
 # Validates `structuredContent` against the tool's declared `outputSchema`.
 jsonschema = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+# Signals a child server's whole process group at shutdown (safe API).
+rustix = { version = "1", default-features = false, features = ["process", "std"] }
+
 [dev-dependencies]
 turbomcp-server = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util"] }

@@ -35,10 +35,21 @@ use governor::{DefaultKeyedRateLimiter, Quota};
 pub enum RateKey {
     /// Per authenticated subject (`Identity::Bearer`/`Dpop`/`Custom` subject).
     Subject(String),
-    /// Per source IP (anonymous requests).
+    /// Per source IP (anonymous requests). Build it with
+    /// [`client`](Self::client), which counts an IPv6 client by its `/64`.
     Ip(IpAddr),
     /// One shared bucket — used when no subject and no peer address is known.
     Global,
+}
+
+impl RateKey {
+    /// The bucket for an anonymous client at `ip`: an IPv6 client by its
+    /// `/64` ([`client_ip`](crate::client_ip)), so one holding a block of
+    /// addresses can't rotate through them for a fresh budget each time.
+    #[must_use]
+    pub fn client(ip: IpAddr) -> Self {
+        Self::Ip(crate::client_ip(ip))
+    }
 }
 
 /// A pluggable rate limiter (HTTP transport-level; mirrors

@@ -203,10 +203,14 @@ async fn progress_notifications_ride_the_posts_own_stream() {
 // ---- the 2025-11-25 primer event ------------------------------------------------
 
 fn legacy_initialize() -> Request<Body> {
+    initialize_at("2025-11-25")
+}
+
+fn initialize_at(version: &str) -> Request<Body> {
     let body = json!({
         "jsonrpc": "2.0", "id": 0, "method": "initialize",
         "params": {
-            "protocolVersion": "2025-11-25",
+            "protocolVersion": version,
             "capabilities": {},
             "clientInfo": { "name": "primer-test", "version": "0.0.0" },
         }
@@ -221,6 +225,10 @@ fn legacy_initialize() -> Request<Body> {
 }
 
 fn legacy_call_with_token(id: i64, session: &str) -> Request<Body> {
+    call_at(id, session, "2025-11-25")
+}
+
+fn call_at(id: i64, session: &str, version: &str) -> Request<Body> {
     let body = json!({
         "jsonrpc": "2.0", "id": id, "method": "tools/call",
         "params": {
@@ -235,13 +243,55 @@ fn legacy_call_with_token(id: i64, session: &str) -> Request<Body> {
         .uri("/mcp")
         .header(header::CONTENT_TYPE, "application/json")
         .header("mcp-session-id", session)
-        .header("MCP-Protocol-Version", "2025-11-25")
+        .header("MCP-Protocol-Version", version)
         .body(Body::from(body.to_string()))
         .unwrap()
 }
 
-/// A POST-response SSE stream carries no event `id`, because this endpoint
-/// does not replay.
+/// The streamed body of a progress-reporting call at `version`, on `config`.
+async fn streamed_call(config: HttpConfig, version: &str) -> String {
+    let app = router(
+        VersionDispatcher::new(Slow, MethodRouter::new().with_tools()),
+        config,
+    );
+    let init = app.clone().oneshot(initialize_at(version)).await.unwrap();
+    let session = init.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let resp = app.oneshot(call_at(7, &session, version)).await.unwrap();
+    let bytes = tokio::time::timeout(Duration::from_secs(5), resp.into_body().collect())
+        .await
+        .expect("the stream should terminate")
+        .unwrap()
+        .to_bytes();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// By default a session's response streams are resumable (a bounded
+/// in-memory event store): every event has an id, and a `2025-11-25` stream
+/// opens with the priming event the transport SHOULD send. `2025-06-18`
+/// predates priming, so its stream has ids but no empty-`data` primer a
+/// strict client might try to parse.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_streams_are_resumable_and_primed_on_2025_11_25() {
+    let current = streamed_call(HttpConfig::new(), "2025-11-25").await;
+    let first = current.lines().take(2).collect::<Vec<_>>();
+    assert!(
+        first[0].starts_with("id:") && first[1] == "data: ",
+        "{current:?}"
+    );
+
+    let older = streamed_call(HttpConfig::new(), "2025-06-18").await;
+    assert!(older.lines().any(|l| l.starts_with("id:")), "{older:?}");
+    assert!(
+        !older.lines().any(|l| l == "data: " || l == "data:"),
+        "no primer on 2025-06-18: {older:?}"
+    );
+}
+
+/// Without an event store, a POST-response SSE stream carries no event `id`,
+/// because nothing would replay it.
 ///
 /// Attaching one is a MAY under §Resumability and Redelivery, and it is what
 /// tells a client it may reconnect with `Last-Event-ID` and be caught up.
@@ -252,7 +302,7 @@ fn legacy_call_with_token(id: i64, session: &str) -> Request<Body> {
 async fn legacy_streams_advertise_no_resumability_they_cannot_honour() {
     let app = router(
         VersionDispatcher::new(Slow, MethodRouter::new().with_tools()),
-        HttpConfig::new(),
+        HttpConfig::new().without_event_store(),
     );
 
     let init = app.clone().oneshot(legacy_initialize()).await.unwrap();

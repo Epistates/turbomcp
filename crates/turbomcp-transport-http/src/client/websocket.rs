@@ -62,20 +62,43 @@ impl core::fmt::Debug for WebSocketClientTransport {
     }
 }
 
+/// How long connecting (TCP, TLS and the upgrade) may take.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The default keepalive: a ping after 30 s without inbound traffic, and the
+/// connection given up after two go unanswered, so a half-open socket (a NAT
+/// that forgot it) is noticed within about 90 s rather than never.
+const DEFAULT_KEEPALIVE: Keepalive = Keepalive {
+    interval: Duration::from_secs(30),
+    max_idle_pings: Some(2),
+};
+
+/// `connecting` within [`CONNECT_TIMEOUT`].
+async fn within_deadline<T>(
+    connecting: impl Future<Output = Result<T, tokio_tungstenite::tungstenite::Error>>,
+) -> Result<T, WsError> {
+    match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
+        Ok(connected) => connected.map_err(|e| WsError::Socket(Box::new(e))),
+        Err(_) => Err(WsError::Socket(
+            format!("connecting took longer than {CONNECT_TIMEOUT:?}").into(),
+        )),
+    }
+}
+
 impl WebSocketClientTransport {
     /// Connect with `request`: a `ws://` or `wss://` URL, or an
     /// `http::Request` carrying headers of your own (an `Authorization`
-    /// bearer, a tenant header).
+    /// bearer, a tenant header). Gives up after 30 s.
     ///
     /// # Errors
-    /// [`WsError::Socket`] if the connection or the handshake fails.
+    /// [`WsError::Socket`] if the connection or the handshake fails or times
+    /// out.
     pub async fn connect(request: impl IntoClientRequest + Unpin) -> Result<Self, WsError> {
         let (request, network) = prepare(request)?;
-        let (socket, _response) = tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(|e| WsError::Socket(Box::new(e)))?;
+        let (socket, _response) =
+            within_deadline(tokio_tungstenite::connect_async(request)).await?;
         Ok(Self {
-            link: Link::new(socket, None).with_network(network),
+            link: Link::new(socket, Some(DEFAULT_KEEPALIVE)).with_network(network),
         })
     }
 
@@ -86,29 +109,35 @@ impl WebSocketClientTransport {
     /// check and the connect.
     ///
     /// # Errors
-    /// [`WsError::Socket`] if the handshake fails.
+    /// [`WsError::Socket`] if the handshake fails or takes over 30 s.
     pub async fn connect_over(
         request: impl IntoClientRequest + Unpin,
         stream: tokio::net::TcpStream,
     ) -> Result<Self, WsError> {
         let (request, network) = prepare(request)?;
-        let (socket, _response) = tokio_tungstenite::client_async_tls(request, stream)
-            .await
-            .map_err(|e| WsError::Socket(Box::new(e)))?;
+        let (socket, _response) =
+            within_deadline(tokio_tungstenite::client_async_tls(request, stream)).await?;
         Ok(Self {
-            link: Link::new(socket, None).with_network(network),
+            link: Link::new(socket, Some(DEFAULT_KEEPALIVE)).with_network(network),
         })
     }
 
     /// Ping the server after `interval` without inbound traffic, and give up
-    /// after `max_idle_pings` unanswered pings (`None` pings forever). Off by
-    /// default.
+    /// after `max_idle_pings` unanswered pings (`None` pings forever). By
+    /// default a ping goes after 30 s, and two unanswered end the connection.
     #[must_use]
     pub fn with_keepalive(mut self, interval: Duration, max_idle_pings: Option<u32>) -> Self {
         self.link.set_keepalive(Some(Keepalive {
             interval,
             max_idle_pings,
         }));
+        self
+    }
+
+    /// Send no keepalive pings.
+    #[must_use]
+    pub fn without_keepalive(mut self) -> Self {
+        self.link.set_keepalive(None);
         self
     }
 }

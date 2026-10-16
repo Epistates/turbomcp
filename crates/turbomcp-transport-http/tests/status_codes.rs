@@ -259,3 +259,71 @@ async fn a_full_session_table_refuses_initialize_and_keeps_its_sessions() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+async fn error_of(resp: axum::response::Response) -> (StatusCode, Value) {
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).expect("a JSON-RPC body");
+    (status, body["error"].clone())
+}
+
+/// "The client MUST NOT send JSON-RPC responses" on `2026-07-28`.
+#[tokio::test]
+async fn a_response_posted_on_the_stateless_wire_is_refused() {
+    let resp = app(HttpConfig::new())
+        .oneshot(post(
+            json!({ "jsonrpc": "2.0", "id": "srv-1", "result": {} }),
+            &[("MCP-Protocol-Version", "2026-07-28")],
+        ))
+        .await
+        .unwrap();
+    let (status, error) = error_of(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["code"], codes::INVALID_REQUEST);
+}
+
+/// A body naming a revision this server doesn't serve is answered as an
+/// unsupported version, not as a request missing its session.
+#[tokio::test]
+async fn a_body_stating_an_unserved_version_is_an_unsupported_version() {
+    let mut body = modern_list(1);
+    body["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = json!("2027-01-01");
+    let resp = app(HttpConfig::new())
+        .oneshot(post(body, &[]))
+        .await
+        .unwrap();
+    let (status, error) = error_of(resp).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["code"], codes::UNSUPPORTED_PROTOCOL_VERSION);
+    assert_eq!(error["data"]["requested"], "2027-01-01");
+}
+
+/// A POST body is JSON: anything else is `415`, with a JSON-RPC body.
+#[tokio::test]
+async fn a_post_that_is_not_json_is_415() {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header("accept", "application/json, text/event-stream")
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from(modern_list(1).to_string()))
+        .unwrap();
+    let (status, error) = error_of(app(HttpConfig::new()).oneshot(req).await.unwrap()).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(error["code"], codes::INVALID_REQUEST);
+}
+
+/// Over the body limit: still `413`, now with a JSON-RPC body a `2026-07-28`
+/// client won't mistake for a legacy server's.
+#[tokio::test]
+async fn an_oversized_body_is_413_with_a_json_rpc_body() {
+    let mut body = modern_list(1);
+    body["params"]["pad"] = json!("x".repeat(4096));
+    let resp = app(HttpConfig::new().max_body_bytes(1024))
+        .oneshot(post(body, &MODERN))
+        .await
+        .unwrap();
+    let (status, error) = error_of(resp).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(error["code"], codes::INVALID_REQUEST);
+}

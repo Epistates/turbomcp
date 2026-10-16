@@ -97,21 +97,31 @@ impl NetworkFacts {
 #[must_use]
 pub fn client_key(address: &str) -> String {
     match address.parse::<IpAddr>() {
-        Ok(IpAddr::V6(v6)) => match v6.to_ipv4_mapped() {
-            Some(v4) => v4.to_string(),
-            None => {
-                let network = u128::from(v6) & !u128::from(u64::MAX);
-                format!("{}/64", Ipv6Addr::from(network))
-            }
-        },
-        Ok(ip) => ip.to_string(),
+        Ok(ip @ IpAddr::V6(v6)) if v6.to_ipv4_mapped().is_none() => {
+            format!("{}/64", client_ip(ip))
+        }
+        Ok(ip) => client_ip(ip).to_string(),
         Err(_) => address.to_owned(),
+    }
+}
+
+/// The address a per-client limit counts `ip` as (see [`client_key`]): an
+/// IPv4-mapped address as its IPv4 address, any other IPv6 address as the
+/// first address of its `/64`.
+#[must_use]
+pub fn client_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & !u128::from(u64::MAX))),
+        },
+        v4 => v4,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::client_key;
+    use super::{client_ip, client_key};
 
     #[test]
     fn an_ipv6_client_is_keyed_by_its_64() {
@@ -121,5 +131,9 @@ mod tests {
         assert_eq!(client_key("::ffff:203.0.113.7"), "203.0.113.7");
         assert_eq!(client_key("203.0.113.7"), "203.0.113.7");
         assert_eq!(client_key("not-an-ip"), "not-an-ip");
+        assert_eq!(
+            client_ip("2001:db8:1:2:aaaa::1".parse().unwrap()),
+            "2001:db8:1:2::".parse::<std::net::IpAddr>().unwrap()
+        );
     }
 }

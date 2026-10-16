@@ -255,7 +255,7 @@ pub(super) fn version_header_rejection(
         StatusCode::BAD_REQUEST,
         id,
         turbomcp_core::codes::UNSUPPORTED_PROTOCOL_VERSION,
-        format!("unsupported MCP-Protocol-Version header: {requested}"),
+        format!("unsupported protocol version: {requested}"),
         Some(serde_json::json!({ "supported": supported, "requested": requested })),
     )
 }
@@ -289,6 +289,44 @@ pub(super) fn not_acceptable_rejection(detail: &str) -> Response {
     (StatusCode::NOT_ACCEPTABLE, Json(body)).into_response()
 }
 
+/// A JSON-RPC response POSTed on `2026-07-28`, where a client sends none.
+pub(super) fn response_on_stateless_wire_rejection() -> Response {
+    let body = JsonRpcResponse::error_without_id(turbomcp_core::JsonRpcError {
+        code: turbomcp_core::codes::INVALID_REQUEST,
+        message: "a 2026-07-28 client sends no JSON-RPC responses: input is answered by \
+                  retrying the request with inputResponses"
+            .into(),
+        data: None,
+    });
+    (StatusCode::BAD_REQUEST, Json(body)).into_response()
+}
+
+/// A POST whose `Content-Type` isn't `application/json`: `415`.
+pub(super) fn unsupported_media_type_rejection() -> Response {
+    let body = JsonRpcResponse::error_without_id(turbomcp_core::JsonRpcError {
+        code: turbomcp_core::codes::INVALID_REQUEST,
+        message: "POST bodies are JSON-RPC messages, sent as Content-Type: application/json".into(),
+        data: None,
+    });
+    (StatusCode::UNSUPPORTED_MEDIA_TYPE, Json(body)).into_response()
+}
+
+/// A body that couldn't be read (over the size limit, or cut off), with the
+/// status axum gave it and a JSON-RPC error rather than its plain text.
+pub(super) fn body_rejection(rejection: &axum::extract::rejection::BytesRejection) -> Response {
+    let status = rejection.status();
+    let body = JsonRpcResponse::error_without_id(turbomcp_core::JsonRpcError {
+        code: turbomcp_core::codes::INVALID_REQUEST,
+        message: if status == StatusCode::PAYLOAD_TOO_LARGE {
+            "request body exceeds this server's size limit".into()
+        } else {
+            format!("request body could not be read: {}", rejection.body_text())
+        },
+        data: None,
+    });
+    (status, Json(body)).into_response()
+}
+
 /// A body that isn't a valid message: `400` with the JSON-RPC error it is owed
 /// (Parse error, or Invalid Request echoing the id when one was readable).
 /// "The HTTP response body MAY comprise a JSON-RPC error response that has no
@@ -317,7 +355,19 @@ pub(super) fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>
         ProtocolError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    let error = err.to_jsonrpc_error();
+    let mut error = err.to_jsonrpc_error();
+    // What failed inside (a session backend's own error, with its host names
+    // and connection strings) is the operator's to read, not the client's.
+    let generic = match err {
+        ProtocolError::Transport(_) => Some("transport error"),
+        ProtocolError::Unavailable(_) => Some("service temporarily unavailable"),
+        ProtocolError::Internal(_) => Some("internal error"),
+        _ => None,
+    };
+    if let Some(generic) = generic {
+        tracing::warn!(error = %err, "answered with a transport-level error");
+        error.message = generic.to_owned();
+    }
     let body = match id {
         Some(id) => JsonRpcResponse::error(id, error),
         None => JsonRpcResponse::error_without_id(error),
@@ -337,6 +387,19 @@ pub(super) fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_backend_failure_reaches_the_client_without_its_details() {
+        let response = protocol_error_response(
+            &ProtocolError::Unavailable("redis://admin:pw@10.0.0.5 refused".into()),
+            None,
+        );
+        let body =
+            futures::executor::block_on(axum::body::to_bytes(response.into_body(), 4096)).unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(!text.contains("redis"), "{text}");
+        assert!(text.contains("temporarily unavailable"), "{text}");
+    }
 
     #[test]
     fn a_rate_limited_refusal_is_429_with_retry_after() {

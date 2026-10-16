@@ -419,3 +419,95 @@ async fn metadata_is_served_at_the_path_inserted_location_too() {
         assert_eq!(body_json(resp).await["resource"], RESOURCE, "{uri}");
     }
 }
+
+/// A session's `GET` stream ends when the token that opened it expires, as a
+/// WebSocket connection does: it used to carry notifications (which name
+/// resource URIs) to a caller whose token had lapsed, until it closed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_get_stream_ends_when_its_token_expires() {
+    let k = URL_SAFE_NO_PAD.encode(SECRET);
+    let jwks = StaticJwks::from_json(
+        &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
+    )
+    .unwrap();
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let rs = ResourceServer::new(
+        validator,
+        ResourceMetadata::new(RESOURCE, [ISSUER]),
+        METADATA_URL,
+    );
+    let dispatcher = VersionDispatcher::new(Whoami, MethodRouter::new().with_tools());
+    let terminator = dispatcher.session_terminator();
+    let app = router(
+        dispatcher,
+        HttpConfig::new()
+            .with_authenticator(Arc::new(rs))
+            .with_session_terminator(Arc::new(terminator)),
+    );
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut header = Header::new(Algorithm::HS256);
+    header.kid = Some(KID.to_owned());
+    let short = encode(
+        &header,
+        &json!({ "sub": "alice", "aud": RESOURCE, "iss": ISSUER, "exp": now + 2 }),
+        &EncodingKey::from_secret(SECRET),
+    )
+    .unwrap();
+    let bearer = format!("Bearer {short}");
+
+    let init = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("accept", "application/json, text/event-stream")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::from(
+                    json!({
+                        "jsonrpc": "2.0", "id": 0, "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-11-25",
+                            "capabilities": {},
+                            "clientInfo": { "name": "t", "version": "1" },
+                        }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(init.status(), StatusCode::OK);
+    let sid = init.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    let stream = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/mcp")
+                .header("accept", "text/event-stream")
+                .header("mcp-session-id", &sid)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), StatusCode::OK);
+    let ended = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        stream.into_body().collect(),
+    )
+    .await;
+    assert!(ended.is_ok(), "the stream outlived its token");
+}

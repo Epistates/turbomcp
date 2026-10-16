@@ -44,6 +44,26 @@ pub(super) fn declared_version(msg: &JsonRpcMessage) -> Option<String> {
 /// Headers are pure **mirrors** — the body stays authoritative and values are
 /// never sourced *from* headers (the earlier fill-absent `Mcp-Param-*` merge
 /// is gone; it let a header inject an argument the body omitted).
+/// The request's `MCP-Protocol-Version`, if it sent one. `Err` (with what to
+/// report as the requested version) for a value that isn't visible ASCII or
+/// a header sent more than once: "invalid" is answered `400`, not read as
+/// absent, and two values are two answers to which revision this is.
+pub(super) fn version_header(headers: &HeaderMap) -> Result<Option<&str>, &'static str> {
+    let mut sent = headers.get_all(&headers::PROTOCOL_VERSION).iter();
+    let Some(first) = sent.next() else {
+        return Ok(None);
+    };
+    if sent.next().is_some() {
+        return Err("<repeated>");
+    }
+    first.to_str().map(Some).map_err(|_| "<invalid>")
+}
+
+/// Whether `name` was sent more than once.
+fn repeated(headers: &HeaderMap, name: &axum::http::HeaderName) -> bool {
+    headers.get_all(name).iter().nth(1).is_some()
+}
+
 pub(super) fn validate_request_headers(
     msg: &JsonRpcMessage,
     headers: &HeaderMap,
@@ -52,9 +72,8 @@ pub(super) fn validate_request_headers(
     // Every rejection below echoes this, so the client can correlate it.
     let id = request_id(msg);
     let id = id.as_ref();
-    let header_version = headers
-        .get(&headers::PROTOCOL_VERSION)
-        .and_then(|v| v.to_str().ok());
+    // A malformed or repeated header was refused before this point.
+    let header_version = version_header(headers).ok().flatten();
 
     // The mirror invariant: when both the header and the body name a version,
     // they MUST agree — whatever the versions.
@@ -90,6 +109,17 @@ pub(super) fn validate_request_headers(
     let JsonRpcMessage::Request(req) = msg else {
         return None;
     };
+    // An intermediary that routes on one copy of a repeated header while
+    // this server validates the other is the split the mirrors exist to
+    // prevent.
+    for name in [&headers::MCP_METHOD, &headers::MCP_NAME] {
+        if repeated(headers, name) {
+            return Some(header_mismatch_rejection(
+                id,
+                &format!("{name} header sent more than once"),
+            ));
+        }
+    }
 
     // `Mcp-Method` is required on every request POST and mirrors `method`.
     match headers
@@ -235,6 +265,35 @@ mod tests {
         let mut wrong = base.to_vec();
         wrong.push(("Mcp-Name", "t-2"));
         assert!(validate_request_headers(&poll, &headers(&wrong)).is_some());
+    }
+
+    #[test]
+    fn a_malformed_or_repeated_version_header_is_not_absent() {
+        assert_eq!(version_header(&HeaderMap::new()), Ok(None));
+        assert_eq!(
+            version_header(&headers(&[("mcp-protocol-version", "2025-11-25")])),
+            Ok(Some("2025-11-25"))
+        );
+        let mut bad = HeaderMap::new();
+        bad.insert(
+            &headers::PROTOCOL_VERSION,
+            HeaderValue::from_bytes(b"2025-11-25\xff").unwrap(),
+        );
+        assert_eq!(version_header(&bad), Err("<invalid>"));
+        let mut twice = headers(&[("mcp-protocol-version", "2025-11-25")]);
+        twice.append(
+            &headers::PROTOCOL_VERSION,
+            HeaderValue::from_static("2026-07-28"),
+        );
+        assert_eq!(version_header(&twice), Err("<repeated>"));
+    }
+
+    #[test]
+    fn a_repeated_routing_header_is_refused() {
+        let msg = draft_call("eu");
+        let mut h = headers(&draft_call_headers(&[]));
+        h.append(&headers::MCP_METHOD, HeaderValue::from_static("tools/list"));
+        assert!(validate_request_headers(&msg, &h).is_some());
     }
 
     #[test]

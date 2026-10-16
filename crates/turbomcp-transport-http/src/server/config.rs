@@ -90,6 +90,8 @@ pub(super) const RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-re
 /// chain the builder methods.
 #[derive(Clone)]
 pub struct HttpConfig {
+    pub(super) max_connections: usize,
+    pub(super) header_read_timeout: Duration,
     pub(super) max_concurrent_requests: usize,
     pub(super) max_streams: usize,
     pub(super) max_streams_per_client: usize,
@@ -168,6 +170,8 @@ impl core::fmt::Debug for HttpConfig {
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {
+            max_connections: 4096,
+            header_read_timeout: Duration::from_secs(30),
             max_concurrent_requests: 1024,
             max_streams: 1024,
             max_streams_per_client: 64,
@@ -188,7 +192,10 @@ impl Default for HttpConfig {
             supported_versions: None,
             health_path: None,
             calls: TaskTracker::new(),
-            event_store: None,
+            // Resumable by default, within the store's byte budget: the
+            // `2025-11-25` transport SHOULD prime each stream, and an event
+            // id is only honest with a replay behind it.
+            event_store: Some(Arc::new(super::resume::InMemoryEventStore::default())),
             sse_polling: None,
             detached_stream_ttl: DEFAULT_DETACHED_STREAM_TTL,
             #[cfg(feature = "websocket")]
@@ -240,6 +247,10 @@ impl HttpConfig {
     /// new stream gets `429`. Without this, one client could hold every
     /// stream the endpoint allows. A caller with neither an identity nor a
     /// peer address is held to [`max_streams`](Self::max_streams) only.
+    ///
+    /// Behind a reverse proxy, configure the proxy's addresses with
+    /// `with_trusted_proxies`: otherwise every anonymous caller is the proxy's
+    /// address and they share one budget. An IPv6 client counts by its `/64`.
     #[must_use]
     pub fn max_streams_per_client(mut self, limit: usize) -> Self {
         self.max_streams_per_client = limit.max(1);
@@ -270,6 +281,29 @@ impl HttpConfig {
         Self::default()
     }
 
+    /// The most TCP connections served at once (default 4,096). At the cap
+    /// the listener stops accepting until one closes, so connections that
+    /// never send a request can't exhaust file descriptors and memory: the
+    /// request limits only see a connection once it has sent one. Applies to
+    /// the listener [`Http`](crate::Http) and `serve_http` run, not to a
+    /// [`router`](crate::router) you serve yourself.
+    #[must_use]
+    pub fn max_connections(mut self, limit: usize) -> Self {
+        self.max_connections = limit.max(1);
+        self
+    }
+
+    /// How long a connection may take to send a request's headers, counted
+    /// from when it is ready for one, so it also bounds an idle keep-alive
+    /// connection (default 30 s). A peer sending a byte every few seconds is
+    /// closed instead of holding a connection open indefinitely. Applies to
+    /// the listener [`Http`](crate::Http) and `serve_http` run.
+    #[must_use]
+    pub fn header_read_timeout(mut self, timeout: Duration) -> Self {
+        self.header_read_timeout = timeout;
+        self
+    }
+
     /// Set the endpoint path (default `/mcp`).
     #[must_use]
     pub fn path(mut self, path: impl Into<String>) -> Self {
@@ -284,12 +318,20 @@ impl HttpConfig {
         self
     }
 
-    /// Add an allowed `Origin` (exact match, e.g. `https://app.example.com`).
-    /// Browsers on it get CORS headers too.
+    /// Add an allowed `Origin` (e.g. `https://app.example.com`), compared as
+    /// an origin: scheme, host (case-insensitively) and port, a default port
+    /// the same as none. Browsers on it get CORS headers too.
+    ///
+    /// # Panics
+    /// If `origin` is not a `scheme://host[:port]` origin: an entry that can
+    /// never match is a configuration mistake better found at startup.
     #[must_use]
     pub fn allow_origin(mut self, origin: impl Into<String>) -> Self {
+        let origin = origin.into();
+        let normalized = super::guards::normalized_origin(&origin)
+            .unwrap_or_else(|| panic!("allow_origin: `{origin}` is not an origin"));
         match &mut self.origins {
-            OriginPolicy::Allowlist(list) => list.push(origin.into()),
+            OriginPolicy::Allowlist(list) => list.push(normalized),
             OriginPolicy::Any => {}
         }
         self
@@ -445,15 +487,25 @@ impl HttpConfig {
     /// resumable, keeping their events in `store`
     /// ([`InMemoryEventStore`](crate::InMemoryEventStore) is the bundled one).
     ///
-    /// Such a stream is primed with an event id and every event carries one;
+    /// Such a stream carries an event id on every event (and, on
+    /// `2025-11-25`, opens with the priming event the transport SHOULD send);
     /// a client that loses the connection sends `GET` with `Last-Event-ID`
     /// and is caught up on what it missed, then follows the rest live. A call
     /// on a session already runs on after its client disconnects; this is
-    /// what lets its response still reach the client. Off by default, and
-    /// then no event ids are sent: an id is a promise of replay.
+    /// what lets its response still reach the client. On by default with an
+    /// [`InMemoryEventStore`](crate::InMemoryEventStore) (64 MiB at most);
+    /// set your own to share it across replicas or bound it differently.
     #[must_use]
     pub fn with_event_store(mut self, store: Arc<dyn EventStore>) -> Self {
         self.event_store = Some(store);
+        self
+    }
+
+    /// Don't make response streams resumable: no event store, no event ids
+    /// (an id is a promise of replay), no priming event.
+    #[must_use]
+    pub fn without_event_store(mut self) -> Self {
+        self.event_store = None;
         self
     }
 

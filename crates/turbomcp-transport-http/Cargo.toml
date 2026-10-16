@@ -15,7 +15,7 @@ categories = ["network-programming", "web-programming::http-server", "web-progra
 [features]
 default = ["server"]
 # The axum endpoint: `router`, `serve_http`, `HttpConfig`.
-server = ["dep:axum", "dep:ipnet", "dep:mime", "dep:tower", "dep:tower-http", "dep:uuid", "tokio/net", "turbomcp-service/governor", "dep:tokio-util"]
+server = ["dep:axum", "dep:hyper", "dep:hyper-util", "dep:ipnet", "dep:url", "dep:mime", "dep:tower", "dep:tower-http", "dep:uuid", "tokio/net", "turbomcp-service/governor", "dep:tokio-util"]
 # `HttpClientTransport` for turbomcp-client, and `connect_http`.
 client = [
     "dep:reqwest",
@@ -50,10 +50,14 @@ bytes = { workspace = true }
 # CIDR ranges for trusted proxies.
 ipnet = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
+hyper = { workspace = true, features = ["server", "http1"], optional = true }
+hyper-util = { workspace = true, features = ["tokio", "server", "service"], optional = true }
 mime = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v4"], optional = true }
+# Origin comparison (RFC 6454 tuples).
+url = { workspace = true, optional = true }
 # client
 turbomcp-client = { workspace = true, optional = true }
 turbomcp-protocol = { workspace = true, optional = true }

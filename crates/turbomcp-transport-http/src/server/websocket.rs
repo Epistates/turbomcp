@@ -31,6 +31,7 @@ use turbomcp_service::{ServeConfig, ServerHandle};
 
 use super::{
     HttpConfig, HttpState, PeerIp, check_host, check_origin, enforce_auth, enforce_rate_limit,
+    expires_at,
 };
 use crate::ws_link::{Frame, Keepalive, Link, Read, WsError, close};
 
@@ -173,12 +174,13 @@ async fn upgrade<H: ServerHandle>(
     State(state): State<WsState<H>>,
     peer: PeerIp,
     headers: HeaderMap,
+    uri: axum::http::Uri,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     if let Some(rejection) = check_origin(&state.http.origins, &headers) {
         return rejection;
     }
-    if let Some(rejection) = check_host(&state.http.hosts, &headers) {
+    if let Some(rejection) = check_host(&state.http.hosts, &headers, &uri) {
         return rejection;
     }
     let authenticated = match enforce_auth(&state.http, &headers).await {
@@ -263,14 +265,4 @@ async fn connection<H: ServerHandle>(
     if let Err(e) = result {
         tracing::debug!(error = %e, "websocket connection ended with an error");
     }
-}
-
-/// When a bearer token's `exp` claim (seconds since the epoch) passes.
-fn expires_at(identity: &Identity) -> Option<tokio::time::Instant> {
-    let exp = identity.claim("exp")?.as_u64()?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    Some(tokio::time::Instant::now() + Duration::from_secs(exp.saturating_sub(now)))
 }

@@ -25,6 +25,7 @@ mod handler;
 mod input;
 mod observe;
 mod options;
+mod process;
 mod progress;
 mod stdio;
 mod subscription;
@@ -39,6 +40,7 @@ pub use handler::{
 };
 pub use observe::{ClosedSession, OutboundRequest, RequestObserver, RequestScope};
 pub use options::CallOptions;
+pub use process::ServerProcess;
 pub use progress::ProgressCallback;
 pub use stdio::connect_child;
 pub use subscription::{Subscription, SubscriptionEnd, SubscriptionEvent};

@@ -6,13 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::BufReader;
-use turbomcp_client::{Client, ClientBuilder};
+use turbomcp_client::{Client, ClientBuilder, ServerProcess};
 use turbomcp_core::codec::DefaultCodec;
 use turbomcp_service::io::LineTransport;
 
 #[cfg(feature = "http")]
 use crate::OutboundAuth;
-use crate::process::ChildProcess;
 use crate::{Inherit, ProxyError, Upstream};
 
 #[cfg(feature = "http")]
@@ -158,7 +157,7 @@ pub(crate) async fn upstream(
     options: &ConnectOptions,
     client: ClientBuilder,
     subject: Option<&crate::link::Subject>,
-) -> Result<(Client, Option<ChildProcess>), ProxyError> {
+) -> Result<(Client, Option<ServerProcess>), ProxyError> {
     #[cfg(feature = "http")]
     let bearer = options.credential.for_link(subject);
     #[cfg(not(feature = "http"))]
@@ -220,7 +219,9 @@ pub(crate) async fn upstream(
                     source: std::io::Error::other("stdio pipes were not captured"),
                 });
             };
-            let process = ChildProcess::new(child, label.clone(), grace);
+            let process = ServerProcess::new(child)
+                .grace(grace)
+                .log_stderr(label.clone());
             let transport =
                 LineTransport::new(BufReader::new(stdout), stdin, DefaultCodec::default());
             // On failure `process` drops, which kills the group.

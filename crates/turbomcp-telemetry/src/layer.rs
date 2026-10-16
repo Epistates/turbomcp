@@ -197,11 +197,7 @@ impl<S> TraceContextService<S> {
         );
 
         if let JsonRpcMessage::Request(r) = msg {
-            let id = match &r.id {
-                turbomcp_core::RequestId::Number(n) => n.to_string(),
-                turbomcp_core::RequestId::String(s) => s.clone(),
-            };
-            span.record(semconv::JSONRPC_REQUEST_ID, id);
+            span.record(semconv::JSONRPC_REQUEST_ID, semconv::request_id(&r.id));
         }
         if let Some(version) = semconv::protocol_version(msg) {
             span.record(semconv::MCP_PROTOCOL_VERSION, version);

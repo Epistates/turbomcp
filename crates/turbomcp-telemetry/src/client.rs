@@ -30,7 +30,6 @@ use serde_json::{Map, Value};
 use tracing::field::Empty;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use turbomcp_client::{ClientError, OutboundRequest, RequestObserver, RequestScope};
-use turbomcp_core::RequestId;
 
 use crate::propagation;
 use crate::semconv::{self, Outcome, Target};
@@ -118,7 +117,7 @@ impl RequestObserver for ClientTelemetry {
             "mcp.method.name" = method.as_ref(),
             "mcp.protocol.version" = Empty,
             "mcp.resource.uri" = Empty,
-            "jsonrpc.request.id" = request_id(request.id).as_str(),
+            "jsonrpc.request.id" = crate::semconv::request_id(request.id).as_str(),
             "gen_ai.tool.name" = Empty,
             "gen_ai.prompt.name" = Empty,
             "gen_ai.operation.name" = Empty,
@@ -201,13 +200,6 @@ fn peer_labels(network: &turbomcp_service::NetworkFacts) -> Vec<KeyValue> {
         }
     }
     labels
-}
-
-fn request_id(id: &RequestId) -> String {
-    match id {
-        RequestId::Number(n) => n.to_string(),
-        RequestId::String(s) => s.clone(),
-    }
 }
 
 struct ClientScope {

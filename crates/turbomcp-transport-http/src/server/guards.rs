@@ -174,7 +174,7 @@ impl<St: Send + Sync> FromRequestParts<St> for PeerIp {
 pub(super) fn client_key(subject: Option<&str>, peer_ip: Option<IpAddr>) -> RateKey {
     match subject {
         Some(sub) => RateKey::Subject(sub.to_owned()),
-        None => peer_ip.map_or(RateKey::Global, RateKey::Ip),
+        None => peer_ip.map_or(RateKey::Global, RateKey::client),
     }
 }
 
@@ -218,16 +218,47 @@ pub(super) fn accepts(headers: &HeaderMap, required: &mime::Mime) -> bool {
         })
 }
 
+/// When a bearer token's `exp` claim (seconds since the epoch) passes: the
+/// end of what a long-lived connection or stream it opened may carry.
+pub(super) fn expires_at(identity: &turbomcp_core::Identity) -> Option<tokio::time::Instant> {
+    let exp = identity.claim("exp")?.as_u64()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(tokio::time::Instant::now() + std::time::Duration::from_secs(exp.saturating_sub(now)))
+}
+
+/// Whether the request's `Content-Type` is `application/json` (parameters
+/// such as `charset` allowed).
+pub(super) fn is_json(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<mime::Mime>().ok())
+        .is_some_and(|m| m.type_() == mime::APPLICATION && m.subtype() == mime::JSON)
+}
+
 /// Returns `Some(rejection)` if the request's `Origin` is disallowed, else `None`.
 pub(super) fn check_origin(policy: &OriginPolicy, headers: &HeaderMap) -> Option<Response> {
     let origin = headers.get(header::ORIGIN)?; // no Origin → non-browser → allowed
     match policy {
         OriginPolicy::Any => None,
         OriginPolicy::Allowlist(list) => {
-            let origin = origin.to_str().unwrap_or_default();
-            (!list.iter().any(|allowed| allowed == origin)).then(|| forbidden("origin not allowed"))
+            let origin = origin.to_str().ok().and_then(normalized_origin);
+            (!origin.is_some_and(|origin| list.contains(&origin)))
+                .then(|| forbidden("origin not allowed"))
         }
     }
+}
+
+/// `origin` as the (scheme, host, port) tuple RFC 6454 compares, serialized:
+/// the host lowercased and a default port dropped, so `http://LOCALHOST:80`
+/// and `http://localhost` are one origin. `None` for anything that isn't a
+/// tuple origin (`null`, a `file:` or `data:` URL), which matches nothing.
+pub(super) fn normalized_origin(origin: &str) -> Option<String> {
+    let origin = url::Url::parse(origin).ok()?.origin();
+    origin.is_tuple().then(|| origin.ascii_serialization())
 }
 
 /// Whether a `Host` header value matches an allowlist entry: exactly, or by
@@ -250,13 +281,20 @@ fn host_matches(allowed: &str, host: &str) -> bool {
 /// Returns `Some(rejection)` if the request's `Host` is disallowed, else `None`.
 /// Unlike `Origin`, `Host` is always present, so `Allowlist` mode rejects a
 /// missing/unmatched `Host` — the point is to pin the server's expected host(s).
-pub(super) fn check_host(policy: &HostPolicy, headers: &HeaderMap) -> Option<Response> {
+/// The authority is the `Host` header, or on HTTP/2 (where it travels as
+/// `:authority` and no `Host` is synthesized) the request target's.
+pub(super) fn check_host(
+    policy: &HostPolicy,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+) -> Option<Response> {
     match policy {
         HostPolicy::Any => None,
         HostPolicy::Allowlist(list) => {
             let host = headers
                 .get(header::HOST)
                 .and_then(|v| v.to_str().ok())
+                .or_else(|| uri.authority().map(axum::http::uri::Authority::as_str))
                 .unwrap_or_default();
             (!list.iter().any(|allowed| host_matches(allowed, host)))
                 .then(|| forbidden("host not allowed"))
@@ -268,6 +306,36 @@ pub(super) fn check_host(policy: &HostPolicy, headers: &HeaderMap) -> Option<Res
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+
+    #[test]
+    fn origins_compare_as_origins() {
+        let policy =
+            OriginPolicy::Allowlist(vec![normalized_origin("http://localhost:3000").unwrap()]);
+        let from = |origin: &'static str| {
+            let mut h = HeaderMap::new();
+            h.insert(header::ORIGIN, HeaderValue::from_static(origin));
+            check_origin(&policy, &h).is_none()
+        };
+        assert!(from("http://localhost:3000"));
+        assert!(from("http://LOCALHOST:3000"), "hosts are case-insensitive");
+        assert!(!from("http://localhost:3001"));
+        assert!(!from("https://localhost:3000"));
+        assert!(!from("null"));
+        assert_eq!(
+            normalized_origin("https://App.Example.com:443"),
+            normalized_origin("https://app.example.com")
+        );
+    }
+
+    /// Over HTTP/2 the authority is `:authority`, with no `Host` header.
+    #[test]
+    fn the_host_check_reads_the_authority_when_there_is_no_host_header() {
+        let policy = HostPolicy::Allowlist(vec!["mcp.example.com".into()]);
+        let uri: axum::http::Uri = "https://mcp.example.com/mcp".parse().unwrap();
+        assert!(check_host(&policy, &HeaderMap::new(), &uri).is_none());
+        let other: axum::http::Uri = "https://evil.example/mcp".parse().unwrap();
+        assert!(check_host(&policy, &HeaderMap::new(), &other).is_some());
+    }
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()

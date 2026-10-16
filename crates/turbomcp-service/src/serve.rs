@@ -53,6 +53,29 @@ use turbomcp_core::{ConnectionId, Identity, JsonRpcMessage, McpRequest};
 
 use crate::{McpService, Peer, ProtocolError, Transport, catch_handler_panic};
 
+/// Fired once a request's reply is in its connection's outbound queue.
+///
+/// The serve loop attaches one to every request. On a pipe the queue is the
+/// order the peer reads in, so work that must not speak before the reply
+/// has (a `2025-11-25` task, whose `CreateTaskResult` is what tells the
+/// client the task exists) waits on it: a task's first elicitation used to
+/// overtake its `CreateTaskResult`, and the client could not tell whose it
+/// was. Transports whose replies travel apart from other messages (HTTP)
+/// attach none.
+#[derive(Clone, Debug, Default)]
+pub struct ReplyQueued(CancellationToken);
+
+impl ReplyQueued {
+    /// Resolves once the reply is queued (at once if it already is).
+    pub async fn queued(&self) {
+        self.0.cancelled().await;
+    }
+
+    fn mark(&self) {
+        self.0.cancel();
+    }
+}
+
 /// Tuning for the [`serve_with`] driver.
 #[derive(Clone, Debug)]
 pub struct ServeConfig {
@@ -185,6 +208,8 @@ where
     // "drive-to-ready, clone, call" concurrency pattern).
     let svc = service;
 
+    // Invalid frames this peer has sent, for the log (see below).
+    let mut invalid_frames = 0u64;
     let result = loop {
         // Unbiased on purpose. Polling outbound first let a handler that
         // emits notifications faster than the peer reads keep this branch
@@ -220,7 +245,20 @@ where
                     // on the connection over one malformed line.
                     Err(e) => match T::invalid_frame(e) {
                         Ok(bad) => {
-                            tracing::warn!(error = %bad, "invalid frame from peer");
+                            // The peer chooses how often this happens and
+                            // what the error quotes: one warning per
+                            // connection, the rest at debug, each bounded and
+                            // with control characters escaped.
+                            invalid_frames += 1;
+                            let shown: String = bad.to_string().chars().take(256).collect();
+                            if invalid_frames == 1 {
+                                tracing::warn!(
+                                    error = ?shown,
+                                    "invalid frame from peer (more on this connection log at debug)"
+                                );
+                            } else {
+                                tracing::debug!(error = ?shown, count = invalid_frames, "invalid frame from peer");
+                            }
                             if let Some(reply) = bad.response()
                                 && tx.try_send(reply.into()).is_err()
                             {
@@ -286,7 +324,9 @@ where
                         // it cancels. A service that isn't ready yet is driven
                         // to readiness on the handler task instead, never on
                         // the reader, which also has to keep writing.
+                        let queued = ReplyQueued::default();
                         let mut request = McpRequest::new(msg)
+                            .with(queued.clone())
                             .with(connection_id.clone())
                             .with(peer.clone())
                             .with(turbomcp_core::ConnectionClosed(closed.clone()));
@@ -316,6 +356,8 @@ where
                             };
                         handlers.spawn(async move {
                             let _permit = permit; // released when the handler ends
+                            // Marked on every path, so nothing waits forever.
+                            let _queued = MarkOnDrop(queued);
                             match catch_handler_panic(reply_id.clone(), call).await {
                                 Ok(Some(reply)) => {
                                     let _ = out_tx.send(reply).await;
@@ -404,5 +446,15 @@ where
     match result {
         Err(e) => Err(e),
         Ok(()) => close,
+    }
+}
+
+/// Marks its [`ReplyQueued`] when dropped: after the reply is sent, or when
+/// there was none to send.
+struct MarkOnDrop(ReplyQueued);
+
+impl Drop for MarkOnDrop {
+    fn drop(&mut self) {
+        self.0.mark();
     }
 }

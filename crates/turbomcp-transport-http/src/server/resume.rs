@@ -102,10 +102,32 @@ pub trait EventStore: Send + Sync {
 }
 
 struct StreamLog {
-    events: VecDeque<StoredEvent>,
-    /// The highest seq dropped to stay within the per-stream bound.
+    /// Each event with its serialized size.
+    events: VecDeque<(StoredEvent, usize)>,
+    /// The highest seq dropped to stay within a bound.
     dropped_through: u64,
     completed_at: Option<Instant>,
+    /// The serialized size of `events`.
+    bytes: usize,
+}
+
+impl StreamLog {
+    /// Drop the oldest event, returning its size.
+    fn drop_oldest(&mut self) -> Option<usize> {
+        let (old, size) = self.events.pop_front()?;
+        self.dropped_through = old.seq;
+        self.bytes -= size;
+        Some(size)
+    }
+}
+
+/// Every stream, and their combined size.
+#[derive(Default)]
+struct Logs {
+    streams: HashMap<(String, String), StreamLog>,
+    bytes: usize,
+    /// New streams since the last retention sweep.
+    since_sweep: usize,
 }
 
 /// A bounded in-process [`EventStore`].
@@ -113,12 +135,16 @@ struct StreamLog {
 /// Each stream keeps its last `events_per_stream` events (default 1,024); a
 /// resume from before them is refused. A finished stream is kept for
 /// `retention` (default 5 minutes), long enough for a client to come back
-/// for its response. At most `max_streams` (default 10,000) are kept;
-/// finished ones go first, oldest first.
+/// for its response. At most `max_streams` (default 10,000) are kept, and at
+/// most `max_bytes` of serialized messages in all (default 64 MiB): past
+/// either, finished streams go first, oldest first, then the oldest events
+/// of the largest live stream. Worst-case memory is about `max_bytes`, not
+/// `events_per_stream × max_streams` messages of any size.
 pub struct InMemoryEventStore {
-    streams: Mutex<HashMap<(String, String), StreamLog>>,
+    logs: Mutex<Logs>,
     events_per_stream: usize,
     max_streams: usize,
+    max_bytes: usize,
     retention: Duration,
 }
 
@@ -127,6 +153,7 @@ impl core::fmt::Debug for InMemoryEventStore {
         f.debug_struct("InMemoryEventStore")
             .field("events_per_stream", &self.events_per_stream)
             .field("max_streams", &self.max_streams)
+            .field("max_bytes", &self.max_bytes)
             .field("retention", &self.retention)
             .finish_non_exhaustive()
     }
@@ -135,17 +162,18 @@ impl core::fmt::Debug for InMemoryEventStore {
 impl Default for InMemoryEventStore {
     fn default() -> Self {
         Self {
-            streams: Mutex::default(),
+            logs: Mutex::default(),
             events_per_stream: 1024,
             max_streams: 10_000,
+            max_bytes: 64 * 1024 * 1024,
             retention: Duration::from_secs(5 * 60),
         }
     }
 }
 
 impl InMemoryEventStore {
-    /// The defaults: 1,024 events per stream, 10,000 streams, 5 minutes'
-    /// retention after a stream finishes.
+    /// The defaults: 1,024 events per stream, 10,000 streams, 64 MiB in all,
+    /// 5 minutes' retention after a stream finishes.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -165,6 +193,13 @@ impl InMemoryEventStore {
         self
     }
 
+    /// Keep at most `bytes` of serialized messages across every stream.
+    #[must_use]
+    pub fn max_bytes(mut self, bytes: usize) -> Self {
+        self.max_bytes = bytes;
+        self
+    }
+
     /// Keep a finished stream for `retention`.
     #[must_use]
     pub fn retention(mut self, retention: Duration) -> Self {
@@ -172,27 +207,67 @@ impl InMemoryEventStore {
         self
     }
 
-    fn lock(&self) -> parking_lot::MutexGuard<'_, HashMap<(String, String), StreamLog>> {
-        self.streams.lock()
+    fn lock(&self) -> parking_lot::MutexGuard<'_, Logs> {
+        self.logs.lock()
     }
 
-    /// Drop expired finished streams, then the oldest finished (or, failing
-    /// that, any) streams beyond the bound.
-    fn prune(&self, streams: &mut HashMap<(String, String), StreamLog>) {
-        let now = Instant::now();
-        streams.retain(|_, log| {
-            log.completed_at
-                .is_none_or(|at| now.duration_since(at) < self.retention)
-        });
-        while streams.len() >= self.max_streams {
-            let victim = streams
+    /// Before a new stream: drop expired finished streams (every 256 new
+    /// streams, or when full, not on each one: the sweep is a scan under the
+    /// lock), then the oldest finished (or, failing that, any) streams
+    /// beyond the bound.
+    fn make_room_for_a_stream(&self, logs: &mut Logs) {
+        logs.since_sweep += 1;
+        if logs.since_sweep >= 256 || logs.streams.len() >= self.max_streams {
+            logs.since_sweep = 0;
+            let now = Instant::now();
+            let mut freed = 0;
+            logs.streams.retain(|_, log| {
+                let keep = log
+                    .completed_at
+                    .is_none_or(|at| now.duration_since(at) < self.retention);
+                if !keep {
+                    freed += log.bytes;
+                }
+                keep
+            });
+            logs.bytes -= freed;
+        }
+        while logs.streams.len() >= self.max_streams {
+            let victim = logs
+                .streams
                 .iter()
                 .min_by_key(|(_, log)| (log.completed_at.is_none(), log.completed_at))
                 .map(|(key, _)| key.clone());
-            match victim {
-                Some(key) => streams.remove(&key),
+            match victim.and_then(|key| logs.streams.remove(&key)) {
+                Some(log) => logs.bytes -= log.bytes,
                 None => break,
+            }
+        }
+    }
+
+    /// Shed events until the store is within `max_bytes`: whole finished
+    /// streams, oldest first, then the oldest events of the largest stream.
+    fn shed_bytes(&self, logs: &mut Logs) {
+        while logs.bytes > self.max_bytes {
+            let finished = logs
+                .streams
+                .iter()
+                .filter(|(_, log)| log.completed_at.is_some())
+                .min_by_key(|(_, log)| log.completed_at)
+                .map(|(key, _)| key.clone());
+            if let Some(key) = finished {
+                if let Some(log) = logs.streams.remove(&key) {
+                    logs.bytes -= log.bytes;
+                }
+                continue;
+            }
+            let Some(largest) = logs.streams.values_mut().max_by_key(|log| log.bytes) else {
+                break;
             };
+            match largest.drop_oldest() {
+                Some(size) => logs.bytes -= size,
+                None => break,
+            }
         }
     }
 }
@@ -206,25 +281,42 @@ impl EventStore for InMemoryEventStore {
         message: &'a JsonRpcMessage,
     ) -> EventFuture<'a, Result<(), EventStoreError>> {
         Box::pin(async move {
-            let mut streams = self.lock();
+            // Sized before the lock: serializing a large result is the costly
+            // part, and nothing about it needs the store.
+            let size = serde_json::to_vec(message).map_or(0, |bytes| bytes.len());
+            let mut logs = self.lock();
+            let logs = &mut *logs;
             let key = (session.to_owned(), stream.to_owned());
-            if !streams.contains_key(&key) {
-                self.prune(&mut streams);
+            if !logs.streams.contains_key(&key) {
+                self.make_room_for_a_stream(logs);
             }
-            let log = streams.entry(key).or_insert_with(|| StreamLog {
+            let log = logs.streams.entry(key).or_insert_with(|| StreamLog {
                 events: VecDeque::new(),
                 dropped_through: 0,
                 completed_at: None,
+                bytes: 0,
             });
-            log.events.push_back(StoredEvent {
-                seq,
-                message: message.clone(),
-            });
+            if size > self.max_bytes {
+                // Larger than the whole store: not kept, and a resume from
+                // before it is refused rather than silently skipping it.
+                log.dropped_through = seq;
+                return Ok(());
+            }
+            log.events.push_back((
+                StoredEvent {
+                    seq,
+                    message: message.clone(),
+                },
+                size,
+            ));
+            log.bytes += size;
+            logs.bytes += size;
             while log.events.len() > self.events_per_stream {
-                if let Some(old) = log.events.pop_front() {
-                    log.dropped_through = old.seq;
+                if let Some(size) = log.drop_oldest() {
+                    logs.bytes -= size;
                 }
             }
+            self.shed_bytes(logs);
             Ok(())
         })
     }
@@ -237,16 +329,25 @@ impl EventStore for InMemoryEventStore {
         before: u64,
     ) -> EventFuture<'a, Result<Option<Vec<StoredEvent>>, EventStoreError>> {
         Box::pin(async move {
-            let streams = self.lock();
-            let Some(log) = streams.get(&(session.to_owned(), stream.to_owned())) else {
+            let logs = self.lock();
+            let Some(log) = logs.streams.get(&(session.to_owned(), stream.to_owned())) else {
                 return Ok(None);
             };
+            // Expired streams are swept in batches; one past its retention is
+            // gone to a resume whether or not the sweep has reached it.
+            if log
+                .completed_at
+                .is_some_and(|at| at.elapsed() >= self.retention)
+            {
+                return Ok(None);
+            }
             if after < log.dropped_through {
                 return Ok(None);
             }
             Ok(Some(
                 log.events
                     .iter()
+                    .map(|(event, _)| event)
                     .filter(|e| e.seq > after && e.seq < before)
                     .cloned()
                     .collect(),
@@ -262,6 +363,7 @@ impl EventStore for InMemoryEventStore {
         Box::pin(async move {
             if let Some(log) = self
                 .lock()
+                .streams
                 .get_mut(&(session.to_owned(), stream.to_owned()))
             {
                 log.completed_at = Some(Instant::now());
@@ -275,7 +377,17 @@ impl EventStore for InMemoryEventStore {
         session: &'a str,
     ) -> EventFuture<'a, Result<(), EventStoreError>> {
         Box::pin(async move {
-            self.lock().retain(|(owner, _), _| owner != session);
+            let mut logs = self.lock();
+            let logs = &mut *logs;
+            let mut freed = 0;
+            logs.streams.retain(|(owner, _), log| {
+                let keep = owner != session;
+                if !keep {
+                    freed += log.bytes;
+                }
+                keep
+            });
+            logs.bytes -= freed;
             Ok(())
         })
     }
@@ -559,6 +671,74 @@ mod tests {
 
     fn note(n: u64) -> JsonRpcMessage {
         JsonRpcNotification::new(format!("n{n}"), None).into()
+    }
+
+    /// A notification whose serialized form is about `bytes` long.
+    fn sized(bytes: usize) -> JsonRpcMessage {
+        JsonRpcNotification::new("n", Some(serde_json::json!({ "pad": "x".repeat(bytes) }))).into()
+    }
+
+    /// The store stays within its byte budget: finished streams go first,
+    /// then the oldest events of the largest live one.
+    #[tokio::test]
+    async fn the_store_keeps_to_its_byte_budget() {
+        let store = InMemoryEventStore::new().max_bytes(10_000);
+        for seq in 1..=4 {
+            store.append("s", "done", seq, &sized(2_000)).await.unwrap();
+        }
+        store.complete("s", "done").await.unwrap();
+        for seq in 1..=4 {
+            store.append("s", "live", seq, &sized(2_000)).await.unwrap();
+        }
+        assert!(store.lock().bytes <= 10_000);
+        assert!(
+            store
+                .replay("s", "done", 0, u64::MAX)
+                .await
+                .unwrap()
+                .is_none(),
+            "the finished stream went first"
+        );
+        assert_eq!(
+            store
+                .replay("s", "live", 0, u64::MAX)
+                .await
+                .unwrap()
+                .unwrap()
+                .len(),
+            4
+        );
+        // Now only the live stream can give way, oldest event first.
+        for seq in 5..=6 {
+            store.append("s", "live", seq, &sized(2_000)).await.unwrap();
+        }
+        assert!(store.lock().bytes <= 10_000);
+        assert!(
+            store
+                .replay("s", "live", 0, u64::MAX)
+                .await
+                .unwrap()
+                .is_none(),
+            "a resume from before the shed events is refused"
+        );
+        let kept = store
+            .replay("s", "live", 2, u64::MAX)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(kept.last().unwrap().seq, 6);
+
+        // One message larger than the whole budget isn't kept at all.
+        store.append("s", "huge", 1, &sized(20_000)).await.unwrap();
+        assert!(
+            store
+                .replay("s", "huge", 0, u64::MAX)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        store.forget_session("s").await.unwrap();
+        assert_eq!(store.lock().bytes, 0, "the byte count follows removals");
     }
 
     #[tokio::test]

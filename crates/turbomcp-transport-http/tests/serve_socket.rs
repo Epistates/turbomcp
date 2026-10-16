@@ -1,7 +1,8 @@
 //! Real-socket smoke test for [`serve_http`]: bind an ephemeral port, drive a
 //! `tools/call` round-trip with a real HTTP client, then verify graceful
 //! shutdown via the cancellation token. The `oneshot` tests cover the handler
-//! stack; this covers the bind + `axum::serve` + shutdown glue.
+//! stack; this covers the bind + accept loop + shutdown glue, and the limits the
+//! accept loop enforces before any request exists.
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -102,4 +103,88 @@ async fn round_trip_and_graceful_shutdown_over_a_real_socket() {
         .expect("server should shut down promptly")
         .unwrap();
     result.expect("serve_http exits Ok on graceful shutdown");
+}
+
+/// Serve `Echo` on an ephemeral port with `config`; the address and the
+/// shutdown token.
+async fn serve(config: HttpConfig) -> (SocketAddr, CancellationToken) {
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let shutdown = CancellationToken::new();
+    let dispatcher = VersionDispatcher::new(Echo, MethodRouter::new().with_tools());
+    let http = turbomcp_transport_http::Http::listener(listener)
+        .config(config.with_shutdown(shutdown.clone()));
+    tokio::spawn(async move {
+        use turbomcp_service::Serve as _;
+        let _ = http.serve(dispatcher).await;
+    });
+    (addr, shutdown)
+}
+
+/// Whether the server has closed `stream` (a read returns EOF or an error)
+/// within `within`.
+async fn closed_within(stream: &mut tokio::net::TcpStream, within: Duration) -> bool {
+    use tokio::io::AsyncReadExt as _;
+    let mut buf = [0u8; 256];
+    loop {
+        match tokio::time::timeout(within, stream.read(&mut buf)).await {
+            Ok(Ok(0) | Err(_)) => return true,
+            Ok(Ok(_)) => {}
+            Err(_) => return false,
+        }
+    }
+}
+
+/// A peer that dribbles its headers is cut off at the header-read timeout,
+/// and so is one that connects and says nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_slow_to_send_headers_is_closed() {
+    use tokio::io::AsyncWriteExt as _;
+    let (addr, shutdown) =
+        serve(HttpConfig::new().header_read_timeout(Duration::from_millis(300))).await;
+
+    let mut idle = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut slow = tokio::net::TcpStream::connect(addr).await.unwrap();
+    slow.write_all(b"POST /mcp HTTP/1.1\r\nHost: x\r\n")
+        .await
+        .unwrap();
+    assert!(
+        closed_within(&mut idle, Duration::from_secs(3)).await,
+        "idle"
+    );
+    assert!(
+        closed_within(&mut slow, Duration::from_secs(3)).await,
+        "slow"
+    );
+    shutdown.cancel();
+}
+
+/// At the connection cap the listener stops accepting: a further client is
+/// not served until a connection closes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_connection_cap_holds_new_clients_until_one_closes() {
+    let (addr, shutdown) = serve(HttpConfig::new().max_connections(1)).await;
+    let health = |addr: SocketAddr| async move {
+        reqwest::Client::new()
+            .post(format!("http://{addr}/mcp"))
+            .header("accept", "application/json, text/event-stream")
+            .header("content-type", "application/json")
+            .body("{}")
+            .timeout(Duration::from_millis(500))
+            .send()
+            .await
+    };
+
+    let hog = tokio::net::TcpStream::connect(addr).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        health(addr).await.is_err(),
+        "a second connection is not served while the first holds the only slot"
+    );
+    drop(hog);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(health(addr).await.is_ok(), "served once the slot frees");
+    shutdown.cancel();
 }

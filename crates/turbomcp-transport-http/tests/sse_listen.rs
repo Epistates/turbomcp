@@ -76,11 +76,20 @@ fn listen_request(id: i64, notifications: Value) -> Request<Body> {
 }
 
 /// Pull raw chunks off the SSE body until one complete event (terminated by a
-/// blank line) is buffered; returns it (comments included).
+/// blank line) is buffered; returns it (comments included). A priming event
+/// (an id with empty `data`) is skipped, as clients skip it.
 async fn next_sse_chunk(body: &mut Body, buffer: &mut String) -> String {
     loop {
         if let Some(end) = buffer.find("\n\n") {
             let event: String = buffer.drain(..end + 2).collect();
+            let primer = event.lines().any(|l| l.starts_with("id:"))
+                && event
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("data:"))
+                    .all(|d| d.trim().is_empty());
+            if primer {
+                continue;
+            }
             return event;
         }
         let frame = tokio::time::timeout(Duration::from_secs(5), body.frame())

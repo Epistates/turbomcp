@@ -11,14 +11,13 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tokio::sync::broadcast;
-use turbomcp_client::{Client, ClientBuilder, NotificationHandler};
+use turbomcp_client::{Client, ClientBuilder, NotificationHandler, ServerProcess};
 use turbomcp_core::McpResult;
 use turbomcp_protocol::{methods, neutral};
 use turbomcp_server::bus::Change;
 
 use crate::ProxyError;
 use crate::bridge::{Completions, UpstreamHandlers};
-use crate::process::ChildProcess;
 
 /// How old a catalogue must be before a miss refetches it.
 const MISS_REFETCH_AFTER: Duration = Duration::from_secs(1);
@@ -28,7 +27,7 @@ const CHANGE_BUFFER: usize = 64;
 
 /// What opening a connection yields: the handshaken client, and the child
 /// process behind it when the upstream is a command.
-pub(crate) type Opened = (Client, Option<ChildProcess>);
+pub(crate) type Opened = (Client, Option<ServerProcess>);
 
 /// The caller a connection acts for, when the upstream sees callers (token
 /// exchange): the latest token they presented, refreshed by each call.
@@ -108,7 +107,7 @@ pub(crate) struct Link {
     pub(crate) completions: Completions,
     /// Held across a call that may ask for input, when calls are serialized.
     serial: Option<tokio::sync::Mutex<()>>,
-    child: tokio::sync::Mutex<Option<ChildProcess>>,
+    child: tokio::sync::Mutex<Option<ServerProcess>>,
     closed: AtomicBool,
     /// Calls using the connection now.
     leases: AtomicUsize,

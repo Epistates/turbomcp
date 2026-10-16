@@ -72,16 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Spawn the server and run the handshake. `connect_child` hands back the
-    // `Child` too, so process lifetime stays the caller's to manage.
-    let (client, mut child) = connect_child(
+    // server process too: dropping it kills the server, `shutdown` ends it the
+    // way the spec asks.
+    let (client, process) = connect_child(
         ClientBuilder::new("example-client", "1.0.0")
             .with_elicitation(Cli)
             .with_notifications(Cli),
-        {
-            let mut cmd = Command::new(&server);
-            cmd.kill_on_drop(true);
-            cmd
-        },
+        Command::new(&server),
     )
     .await?;
 
@@ -125,6 +122,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\nserver advertises no resources capability");
     }
 
-    child.kill().await?;
+    // Close the input, then wait for the server to exit (escalating to
+    // signals if it doesn't).
+    client.close().await;
+    process.shutdown().await;
     Ok(())
 }

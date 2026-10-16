@@ -30,7 +30,6 @@ use axum::extract::{DefaultBodyLimit, Extension, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::serve::ListenerExt as _;
 use serde_json::json;
 use tokio_util::task::TaskTracker;
 use turbomcp_core::codec::{Codec, DefaultCodec};
@@ -46,16 +45,20 @@ use turbomcp_service::{
 use config::{HostPolicy, OriginPolicy, RESOURCE_METADATA_PATH};
 use guards::{
     PeerIp, accepts, check_host, check_origin, client_key, enforce_auth, enforce_rate_limit,
+    expires_at, is_json,
 };
 use reject::{
-    deadline_passed, envelope_rejection, insufficient_scope, invalid_frame_response,
-    method_not_allowed, not_acceptable_rejection, protocol_error_response, service_unavailable,
-    session_not_found, session_required_rejection, sessions_need_an_owner, too_many_requests,
-    unknown_event_rejection, version_header_rejection,
+    body_rejection, deadline_passed, envelope_rejection, insufficient_scope,
+    invalid_frame_response, method_not_allowed, not_acceptable_rejection, protocol_error_response,
+    response_on_stateless_wire_rejection, service_unavailable, session_not_found,
+    session_required_rejection, sessions_need_an_owner, too_many_requests, unknown_event_rejection,
+    unsupported_media_type_rejection, version_header_rejection,
 };
 use sse::{AbortOnDrop, Outlet, SSE_CHANNEL_CAPACITY, request_stream, sse_response};
 use streams::{Admission, StreamBudget, StreamSlot};
-use validate::{declared_version, message_has_version, request_id, validate_request_headers};
+use validate::{
+    declared_version, message_has_version, request_id, validate_request_headers, version_header,
+};
 
 /// Errors from running the HTTP transport.
 #[derive(Debug, thiserror::Error)]
@@ -139,9 +142,16 @@ impl<S> HttpState<S> {
     /// the session's stream and a `DELETE` ending it are requests too, and a
     /// header naming a version the server never agreed to is as wrong there.
     fn reject_version_header(&self, headers: &HeaderMap) -> Option<Response> {
-        let version = headers
-            .get(&headers::PROTOCOL_VERSION)
-            .and_then(|v| v.to_str().ok())?;
+        let version = match version_header(headers) {
+            Ok(version) => version?,
+            Err(invalid) => {
+                return Some(version_header_rejection(
+                    None,
+                    invalid,
+                    &self.supported_versions,
+                ));
+            }
+        };
         (!self.serves(version))
             .then(|| version_header_rejection(None, version, &self.supported_versions))
     }
@@ -246,7 +256,7 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
                     let (parts, body) = request.into_parts();
                     let key = PeerIp::from_parts(&parts)
                         .client_ip(&gate_proxies)
-                        .map_or(RateKey::Global, RateKey::Ip);
+                        .map_or(RateKey::Global, RateKey::client);
                     if let Err(retry_after) = limiter.check(&key) {
                         return too_many_requests(retry_after);
                     }
@@ -372,40 +382,26 @@ async fn serve_listener<H: ServerHandle>(
     let (shutdown, closing) =
         close_then_shut_down(&server, config.shutdown.clone(), shutdown_timeout);
     config.shutdown = shutdown.clone();
-    let signal = shutdown.clone();
     let calls = config.calls.clone();
     #[cfg(feature = "websocket")]
     let websocket = config.websocket.clone();
+    let limits = Limits {
+        connections: config.max_connections,
+        header_read_timeout: config.header_read_timeout,
+    };
     let app = router(server, config);
     if let Ok(addr) = listener.local_addr() {
         tracing::info!(%addr, "turbomcp http transport listening");
     }
-    // `with_connect_info` so the rate limiter can key anonymous requests on the
-    // peer IP (a no-op when no limiter is configured).
-    // Small SSE events shouldn't wait on Nagle's algorithm.
-    let listener = listener.tap_io(|tcp| {
-        if let Err(e) = tcp.set_nodelay(true) {
-            tracing::debug!(error = %e, "could not set TCP_NODELAY");
-        }
-    });
-    let serving = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move { shutdown.cancelled().await });
-    use std::future::IntoFuture as _;
-    let serving = serving.into_future();
-    tokio::pin!(serving);
+    let accepting = accept(listener, app, limits, shutdown, shutdown_timeout);
+    tokio::pin!(accepting);
     tokio::pin!(closing);
     tokio::select! {
-        result = &mut serving => result?,
-        () = signal.cancelled() => {
-            if let Ok(result) = tokio::time::timeout(shutdown_timeout, &mut serving).await { result?; }
-        }
+        result = &mut accepting => result?,
         () = &mut closing => unreachable!("the close task never completes"),
     }
     // A call whose client went away (a session's call outlives its
-    // response) is not one of axum's connections; wait for those too.
+    // response) is not one of the connections; wait for those too.
     calls.close();
     if tokio::time::timeout(shutdown_timeout, calls.wait())
         .await
@@ -425,14 +421,125 @@ async fn serve_listener<H: ServerHandle>(
     Ok(())
 }
 
+/// What the accept loop enforces before a request exists.
+struct Limits {
+    connections: usize,
+    header_read_timeout: std::time::Duration,
+}
+
+/// Serve `app` on `listener` until `shutdown`, then let open connections
+/// finish their requests for up to `drain`.
+///
+/// `axum::serve` gives no header-read timeout (hyper's is inert without a
+/// timer) and no connection cap, and every request limit acts only once a
+/// request has been parsed: a peer opening connections it never uses, or
+/// sending headers a byte at a time, held descriptors and memory without
+/// bound. This is the same loop with both: at the cap it stops accepting
+/// until a connection closes, and hyper closes one that takes longer than
+/// the timeout to send headers (which also bounds an idle keep-alive).
+async fn accept(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    limits: Limits,
+    shutdown: CancellationToken,
+    drain: std::time::Duration,
+) -> std::io::Result<()> {
+    use hyper_util::rt::{TokioIo, TokioTimer};
+    use tower::ServiceExt as _;
+
+    let slots = Arc::new(tokio::sync::Semaphore::new(limits.connections));
+    let connections = TaskTracker::new();
+    let mut http1 = hyper::server::conn::http1::Builder::new();
+    http1
+        .timer(TokioTimer::new())
+        .header_read_timeout(limits.header_read_timeout);
+    loop {
+        let slot = tokio::select! {
+            slot = Arc::clone(&slots).acquire_owned() => {
+                slot.expect("the connection semaphore is never closed")
+            }
+            () = shutdown.cancelled() => break,
+        };
+        let (tcp, peer) = tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok(accepted) => accepted,
+                Err(e) => {
+                    // A connection reset before it was accepted is that
+                    // connection's problem. Anything else (out of descriptors)
+                    // is the process's: back off rather than spin on it.
+                    if !matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionRefused
+                    ) {
+                        tracing::error!(error = %e, "accept failed; retrying in 1s");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                    continue;
+                }
+            },
+            () = shutdown.cancelled() => break,
+        };
+        // Small SSE events shouldn't wait on Nagle's algorithm.
+        if let Err(e) = tcp.set_nodelay(true) {
+            tracing::debug!(error = %e, "could not set TCP_NODELAY");
+        }
+        // `ConnectInfo`, so the rate limiter can key anonymous requests on
+        // the peer address.
+        let service = app.clone().map_request(
+            move |mut request: axum::http::Request<hyper::body::Incoming>| {
+                request
+                    .extensions_mut()
+                    .insert(axum::extract::ConnectInfo(peer));
+                request
+            },
+        );
+        let connection = http1
+            .serve_connection(
+                TokioIo::new(tcp),
+                hyper_util::service::TowerToHyperService::new(service),
+            )
+            .with_upgrades();
+        let shutdown = shutdown.clone();
+        connections.spawn(async move {
+            tokio::pin!(connection);
+            let served = tokio::select! {
+                served = connection.as_mut() => served,
+                () = shutdown.cancelled() => {
+                    connection.as_mut().graceful_shutdown();
+                    connection.await
+                }
+            };
+            if let Err(e) = served {
+                tracing::debug!(error = %e, "connection ended with an error");
+            }
+            drop(slot);
+        });
+    }
+    drop(listener);
+    connections.close();
+    if tokio::time::timeout(drain, connections.wait())
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            open = connections.len(),
+            "connections still open at the end of the shutdown deadline"
+        );
+    }
+    Ok(())
+}
+
 // ---- handlers ----------------------------------------------------------------
 
 async fn mcp_post<S>(
     State(state): State<HttpState<S>>,
     Extension(admission): Extension<Admission>,
     peer: PeerIp,
+    uri: axum::http::Uri,
     headers: HeaderMap,
-    body: Bytes,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Response
 where
     S: McpService + Clone + Sync,
@@ -441,7 +548,7 @@ where
     if let Some(rejection) = check_origin(&state.origins, &headers) {
         return rejection;
     }
-    if let Some(rejection) = check_host(&state.hosts, &headers) {
+    if let Some(rejection) = check_host(&state.hosts, &headers, &uri) {
         return rejection;
     }
     // Transports spec §Sending Messages to the Server: the client MUST list
@@ -453,6 +560,10 @@ where
             "POST requires an Accept header listing both application/json and text/event-stream",
         );
     }
+    // The body is a JSON-RPC message, sent as `application/json`.
+    if !is_json(&headers) {
+        return unsupported_media_type_rejection();
+    }
 
     // Resource-server auth (if configured), before the body is decoded: an
     // unauthenticated caller shouldn't get to spend a JSON parse. A rejected
@@ -460,6 +571,12 @@ where
     let authenticated = match enforce_auth(&state, &headers).await {
         Ok(authenticated) => authenticated,
         Err(rejection) => return *rejection,
+    };
+    // Over `max_body_bytes`, or cut off: answered as JSON-RPC (a `2026-07-28`
+    // client reads a non-JSON `4xx` as a legacy server), keeping the status.
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_rejection(&rejection),
     };
     let subject = authenticated.as_ref().and_then(|a| a.subject.clone());
     let client_ip = peer.client_ip(&state.trusted_proxies);
@@ -510,9 +627,16 @@ where
     // can parse. Tolerating a real-but-unserved version (`2024-11-05`, or
     // `2025-11-25` on a `2025-06-18`-only server) meant answering it in a wire
     // shape the client never asked for.
-    let header_version = headers
-        .get(&headers::PROTOCOL_VERSION)
-        .and_then(|v| v.to_str().ok());
+    let header_version = match version_header(&headers) {
+        Ok(version) => version,
+        Err(invalid) => {
+            return version_header_rejection(
+                request_id(&msg).as_ref(),
+                invalid,
+                &state.supported_versions,
+            );
+        }
+    };
     if let Some(v) = header_version
         && !state.serves(v)
     {
@@ -525,6 +649,25 @@ where
     // legacy bodies.
     if let Some(rejection) = validate_request_headers(&msg, &headers) {
         return rejection;
+    }
+    // A body stating a revision this server doesn't serve (with no header to
+    // refuse first) is answered as that, not as a session-less request.
+    if let Some(declared) = declared_version(&msg)
+        && !state.serves(&declared)
+    {
+        return version_header_rejection(
+            request_id(&msg).as_ref(),
+            &declared,
+            &state.supported_versions,
+        );
+    }
+    // "The client MUST NOT send JSON-RPC responses" on `2026-07-28`, which
+    // asks for input by returning results instead.
+    if matches!(&msg, JsonRpcMessage::Response(_))
+        && header_version
+            .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28)
+    {
+        return response_on_stateless_wire_rejection();
     }
     // Whether this request rides the stateless wire. The body's own `_meta`
     // is the primary signal, but a request whose envelope is *missing* has no
@@ -652,6 +795,13 @@ where
     // path renders as plain JSON — so the divert is safe on method alone.)
     let is_listen = msg.method() == Some("subscriptions/listen");
     let is_request = matches!(&msg, JsonRpcMessage::Request(_));
+    // The priming event (an id and an empty `data`) is `2025-11-25`'s; a
+    // strict `2025-06-18` client may try to parse the empty data as JSON.
+    // Its events still carry ids, so it can still resume.
+    let prime = declared_version(&msg)
+        .as_deref()
+        .or(header_version)
+        .is_none_or(|v| ProtocolVersion::from_wire(v) != ProtocolVersion::V2025_06_18);
     let id = request_id(&msg);
     let request = McpRequest {
         message: msg,
@@ -667,7 +817,7 @@ where
     // the inline path below — its response must carry the minted session
     // header, and the handshake never streams.
     if !is_initialize && is_request {
-        return request_post(&state, request, stateless_request, &admission).await;
+        return request_post(&state, request, stateless_request, prime, &admission).await;
     }
 
     let mut svc = state.service.clone();
@@ -797,8 +947,14 @@ where
         // Accepted: no JSON-RPC response; the ack notification is already in
         // the channel as the stream's first event.
         Ok(None) => {}
-        // Rejected in-band (bad filter, legacy path, unsupported version).
-        Ok(Some(reply)) => return encode_json_response(&state.codec, &reply),
+        // Rejected in-band (bad filter, legacy path, unsupported version),
+        // with the status the stateless wire gives that error (a `-32021`
+        // is `400`, not `200`), as any other request's.
+        Ok(Some(reply)) => {
+            let mut resp = encode_json_response(&state.codec, &reply);
+            apply_stateless_error_status(&mut resp, &reply, true);
+            return resp;
+        }
         Err(e) => return protocol_error_response(&e, id),
     }
 
@@ -842,6 +998,7 @@ async fn request_post<S>(
     state: &HttpState<S>,
     mut request: McpRequest,
     stateless_request: bool,
+    prime: bool,
     admission: &Admission,
 ) -> Response
 where
@@ -859,7 +1016,7 @@ where
         .map(|s| s.as_str().to_owned());
     let detach = session.is_some();
     if let (Some(session), Some(store)) = (session, state.event_store.clone()) {
-        return resumable_post(state, store, session, request, admission).await;
+        return resumable_post(state, store, session, request, prime, admission).await;
     }
     // No event `id` on this stream, because this endpoint does not replay.
     //
@@ -939,6 +1096,7 @@ async fn resumable_post<S>(
     store: Arc<dyn resume::EventStore>,
     session: String,
     mut request: McpRequest,
+    prime: bool,
     admission: &Admission,
 ) -> Response
 where
@@ -1000,7 +1158,7 @@ where
             Some(first) => resume::resumable_stream(
                 state.codec,
                 stream,
-                true,
+                prime,
                 vec![first],
                 Some(events),
                 (state.sse_keepalive, state.sse_polling),
@@ -1010,7 +1168,7 @@ where
         () = tokio::time::sleep(state.sse_upgrade_after) => resume::resumable_stream(
             state.codec,
             stream,
-            true,
+            prime,
             Vec::new(),
             Some(events),
             (state.sse_keepalive, state.sse_polling),
@@ -1063,6 +1221,7 @@ async fn mcp_get<S>(
     State(state): State<HttpState<S>>,
     Extension(admission): Extension<Admission>,
     peer: PeerIp,
+    uri: axum::http::Uri,
     headers: HeaderMap,
 ) -> Response
 where
@@ -1072,7 +1231,7 @@ where
     if let Some(rejection) = check_origin(&state.origins, &headers) {
         return rejection;
     }
-    if let Some(rejection) = check_host(&state.hosts, &headers) {
+    if let Some(rejection) = check_host(&state.hosts, &headers, &uri) {
         return rejection;
     }
     // A server that supports only 2026-07-28 "SHOULD respond as follows:
@@ -1090,8 +1249,11 @@ where
         return rejection;
     }
     // The GET stream is part of the protected resource; require auth too.
-    let subject = match enforce_auth(&state, &headers).await {
-        Ok(authenticated) => authenticated.and_then(|a| a.subject),
+    let (subject, expiry) = match enforce_auth(&state, &headers).await {
+        Ok(authenticated) => (
+            authenticated.as_ref().and_then(|a| a.subject.clone()),
+            authenticated.as_ref().and_then(|a| expires_at(&a.identity)),
+        ),
         Err(rejection) => return *rejection,
     };
     let client_ip = peer.client_ip(&state.trusted_proxies);
@@ -1127,15 +1289,30 @@ where
     // "Resumption is always via HTTP GET with `Last-Event-ID`." Without an
     // event store nothing carries an id, so the header can't name anything
     // and the request is the session's standalone stream as usual.
+    // A token that has expired authorizes nothing more: the stream ends at
+    // its `exp`, as a WebSocket connection does, and the client reconnects
+    // (resuming, with an event store) on a fresh one.
     if let Some(store) = state.event_store.clone() {
         admission.release();
-        return match headers
-            .get(&headers::LAST_EVENT_ID)
-            .and_then(|v| v.to_str().ok())
-        {
-            Some(last) => resume_stream(&state, sid, last, slot).await,
-            None => resumable_get(&state, store, sid, slot),
-        };
+        return until(
+            expiry,
+            match headers
+                .get(&headers::LAST_EVENT_ID)
+                .and_then(|v| v.to_str().ok())
+            {
+                Some(last) => resume_stream(&state, sid, last, slot).await,
+                None => {
+                    // Primed on `2025-11-25` only, as a POST's stream is.
+                    let prime = headers
+                        .get(&headers::PROTOCOL_VERSION)
+                        .and_then(|v| v.to_str().ok())
+                        .is_none_or(|v| {
+                            ProtocolVersion::from_wire(v) != ProtocolVersion::V2025_06_18
+                        });
+                    resumable_get(&state, store, sid, prime, slot)
+                }
+            },
+        );
     }
     let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
     // One stream per session: a newer GET replaces this one in the registry
@@ -1149,7 +1326,21 @@ where
         _slot: Some(slot),
     };
     admission.release();
-    sse_response(state.codec, rx, outlet, state.sse_keepalive, close)
+    until(
+        expiry,
+        sse_response(state.codec, rx, outlet, state.sse_keepalive, close),
+    )
+}
+
+/// `response` with its body ended at `deadline`, if there is one.
+fn until(deadline: Option<tokio::time::Instant>, response: Response) -> Response {
+    let Some(deadline) = deadline else {
+        return response;
+    };
+    let (parts, body) = response.into_parts();
+    let body =
+        futures::StreamExt::take_until(body.into_data_stream(), tokio::time::sleep_until(deadline));
+    Response::from_parts(parts, axum::body::Body::from_stream(body))
 }
 
 /// The session's `GET` stream, made resumable by the event store: every
@@ -1163,6 +1354,7 @@ fn resumable_get<S>(
     state: &HttpState<S>,
     store: Arc<dyn resume::EventStore>,
     session: &str,
+    prime: bool,
     slot: StreamSlot,
 ) -> Response {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
@@ -1204,7 +1396,7 @@ fn resumable_get<S>(
     resume::resumable_stream(
         state.codec,
         stream,
-        true,
+        prime,
         Vec::new(),
         Some(events),
         (state.sse_keepalive, state.sse_polling),
@@ -1221,6 +1413,7 @@ fn resumable_get<S>(
 async fn mcp_delete<S>(
     State(state): State<HttpState<S>>,
     peer: PeerIp,
+    uri: axum::http::Uri,
     headers: HeaderMap,
 ) -> Response
 where
@@ -1230,7 +1423,7 @@ where
     if let Some(rejection) = check_origin(&state.origins, &headers) {
         return rejection;
     }
-    if let Some(rejection) = check_host(&state.hosts, &headers) {
+    if let Some(rejection) = check_host(&state.hosts, &headers, &uri) {
         return rejection;
     }
     if !state.serves_sessions() {

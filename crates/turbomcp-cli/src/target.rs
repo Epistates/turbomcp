@@ -71,20 +71,16 @@ impl From<Mode> for ConnectMode {
 /// A live connection, and the child process behind it when there is one.
 pub struct Connected {
     pub client: Client,
-    child: Option<tokio::process::Child>,
+    child: Option<turbomcp::client::ServerProcess>,
 }
 
 impl Connected {
     /// End the connection (and the child: closing its stdin is the spec's
-    /// shutdown, and a server that ignores it is killed).
-    pub async fn close(mut self) {
+    /// shutdown, then `SIGTERM` and `SIGKILL` for a server that ignores it).
+    pub async fn close(self) {
         self.client.close().await;
-        if let Some(child) = &mut self.child
-            && tokio::time::timeout(Duration::from_secs(2), child.wait())
-                .await
-                .is_err()
-        {
-            let _ = child.kill().await;
+        if let Some(child) = self.child {
+            child.grace(Duration::from_secs(2)).shutdown().await;
         }
     }
 }
@@ -150,7 +146,7 @@ impl Target {
                 ..
             } => {
                 let mut cmd = tokio::process::Command::new(&command);
-                cmd.args(&args).envs(&env).kill_on_drop(true);
+                cmd.args(&args).envs(&env);
                 if let Some(cwd) = cwd {
                     cmd.current_dir(cwd);
                 }
