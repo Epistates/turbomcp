@@ -103,7 +103,7 @@ impl IdentityAssertion {
 pub struct IdentityProvider {
     token_endpoint: String,
     credentials: ClientCredentials,
-    auth: ClientAuth,
+    auth: ClientAuth<'static>,
 }
 
 impl IdentityProvider {
@@ -349,7 +349,7 @@ impl EnterpriseAuthorization {
         endpoint: &str,
         what: &str,
         credentials: &ClientCredentials,
-        auth: ClientAuth,
+        auth: ClientAuth<'_>,
         form: Vec<(&str, &str)>,
     ) -> Result<T, OAuthClientError> {
         post_form(

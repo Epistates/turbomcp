@@ -74,6 +74,13 @@ pub enum HttpClientError {
     /// transport sets those itself.
     #[error("`{0}` is a protocol header; the transport sets it")]
     ReservedHeader(String),
+    /// A bearer token would go over cleartext `http://` to a host other than
+    /// this machine. See [`HttpClientTransport::allow_cleartext_bearer`].
+    #[error(
+        "refusing to send a bearer token over cleartext http to {0}: use https, \
+         or allow_cleartext_bearer() for a network you trust"
+    )]
+    CleartextBearer(String),
 }
 
 /// A request's share of [`HttpClientLimits::max_posts`], held from admission
@@ -446,6 +453,8 @@ struct Shared {
     listening: AtomicBool,
     /// Where the `Authorization` header comes from, when the server wants one.
     bearer: Option<Arc<dyn BearerSource>>,
+    /// Whether a bearer token may go over cleartext `http://` to a remote host.
+    cleartext_bearer: bool,
     /// The POST behind each in-flight request, so a cancellation can drop the
     /// one it names. Every task clears its own entry on the way out, so this
     /// holds only genuinely in-flight requests.
@@ -591,6 +600,7 @@ impl HttpClientTransport {
                 inbound_tx,
                 listening: AtomicBool::new(false),
                 bearer: None,
+                cleartext_bearer: false,
                 posts: Mutex::new(HashMap::new()),
                 failures: Mutex::new(HashMap::new()),
                 shutdown: CancellationToken::new(),
@@ -674,6 +684,12 @@ impl HttpClientTransport {
     ///
     /// # Panics
     /// If another transport clone is mid-request. Call this before connecting.
+    ///
+    /// The token only goes over `https`, or plain `http` to this machine
+    /// (`localhost`, a loopback address): "Implementations MUST follow OAuth
+    /// 2.1 Section 1.5", which requires TLS for every request carrying a
+    /// token. Anything else is refused at the first request with
+    /// [`HttpClientError::CleartextBearer`].
     #[must_use]
     pub fn with_bearer_source(mut self, source: Arc<dyn BearerSource>) -> Self {
         Arc::get_mut(&mut self.shared)
@@ -681,6 +697,53 @@ impl HttpClientTransport {
             .bearer = Some(source);
         self
     }
+
+    /// Send the bearer token over cleartext `http://` to a remote host too:
+    /// for a network whose links you trust (a service mesh that encrypts
+    /// beneath the application). Anyone on the path can read and replay the
+    /// token otherwise.
+    ///
+    /// # Panics
+    /// If another transport clone is mid-request. Call this before connecting.
+    #[must_use]
+    pub fn allow_cleartext_bearer(mut self) -> Self {
+        Arc::get_mut(&mut self.shared)
+            .expect("allow_cleartext_bearer must be called before the transport is connected")
+            .cleartext_bearer = true;
+        self
+    }
+}
+
+/// Every `WWW-Authenticate` line of a response as one value, joined with
+/// `", "` as RFC 9110 combines a repeated header: a server may send `Basic`
+/// on one line and `Bearer` on the next, and reading only the first missed
+/// the challenge that mattered.
+fn www_authenticate(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    let lines: Vec<&str> = headers
+        .get_all("www-authenticate")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    (!lines.is_empty()).then(|| lines.join(", "))
+}
+
+/// The host of `url` when it is plain `http` to somewhere other than this
+/// machine.
+fn cleartext_remote(url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(url).ok()?;
+    if url.scheme() != "http" {
+        return None;
+    }
+    let host = url.host_str()?;
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    let local = match bare.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => {
+            let name = bare.to_ascii_lowercase();
+            name == "localhost" || name.ends_with(".localhost")
+        }
+    };
+    (!local).then(|| host.to_owned())
 }
 
 /// The client [`HttpClientTransport::new`] uses: no redirects (a bearer token
@@ -761,6 +824,12 @@ impl Transport for HttpClientTransport {
             if stream_close_cancels {
                 return Ok(());
             }
+        }
+        if self.shared.bearer.is_some()
+            && !self.shared.cleartext_bearer
+            && let Some(host) = cleartext_remote(&self.shared.url)
+        {
+            return Err(HttpClientError::CleartextBearer(host));
         }
         // Remember the handshake so an expired session can be re-established
         // without the typed client above having to know sessions exist.
@@ -1085,11 +1154,7 @@ async fn pump(
         if status.is_success() {
             break resp;
         }
-        let www_authenticate = resp
-            .headers()
-            .get("www-authenticate")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
+        let www_authenticate = www_authenticate(resp.headers());
         let retry_after = resp
             .headers()
             .get("retry-after")
@@ -1532,11 +1597,7 @@ async fn listen(shared: Arc<Shared>) {
                 if matches!(status.as_u16(), 401 | 403)
                     && let Some(source) = &shared.bearer
                 {
-                    let challenge = resp
-                        .headers()
-                        .get("www-authenticate")
-                        .and_then(|v| v.to_str().ok())
-                        .map(str::to_owned);
+                    let challenge = www_authenticate(resp.headers());
                     match source
                         .on_challenge(
                             status.as_u16(),
@@ -1683,6 +1744,28 @@ async fn await_stream_ready(shared: &Arc<Shared>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bearer token goes over cleartext only to this machine.
+    #[test]
+    fn cleartext_bearer_is_refused_off_this_machine() {
+        assert_eq!(
+            cleartext_remote("http://mcp.example.com/mcp").as_deref(),
+            Some("mcp.example.com")
+        );
+        assert_eq!(
+            cleartext_remote("http://10.0.0.5:8080/mcp").as_deref(),
+            Some("10.0.0.5")
+        );
+        for local in [
+            "http://localhost:3000/mcp",
+            "http://api.localhost/mcp",
+            "http://127.0.0.1/mcp",
+            "http://[::1]:8080/mcp",
+            "https://mcp.example.com/mcp",
+        ] {
+            assert_eq!(cleartext_remote(local), None, "{local}");
+        }
+    }
     use serde_json::json;
     use turbomcp_core::JsonRpcRequest;
 
@@ -1700,6 +1783,7 @@ mod tests {
             inbound_tx: mpsc::channel(1).0,
             listening: AtomicBool::new(false),
             bearer: None,
+            cleartext_bearer: false,
             posts: Mutex::new(HashMap::new()),
             stream_ready: watch::channel(false).0,
             failures: Mutex::new(HashMap::new()),

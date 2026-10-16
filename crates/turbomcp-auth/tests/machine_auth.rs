@@ -88,14 +88,11 @@ async fn token(
 }
 
 fn machine(base: &str, secret: Option<&str>) -> MachineAuthorization {
-    MachineAuthorization::new(
-        format!("{base}/mcp"),
-        base,
-        ClientCredentials {
-            client_id: "gateway".into(),
-            client_secret: secret.map(|s| s.to_owned().into()),
-        },
-    )
+    MachineAuthorization::new(format!("{base}/mcp"), base, {
+        let mut credentials = ClientCredentials::public("gateway");
+        credentials.client_secret = secret.map(|s| s.to_owned().into());
+        credentials
+    })
     // The mock lives on loopback.
     .with_network_policy(NetworkPolicy::default())
     .unwrap()
@@ -139,10 +136,7 @@ async fn a_resource_naming_another_authorization_server_is_refused() {
     let machine = MachineAuthorization::new(
         format!("{base}/mcp"),
         "https://as.example.com",
-        ClientCredentials {
-            client_id: "gateway".into(),
-            client_secret: Some("s3cret".to_owned().into()),
-        },
+        ClientCredentials::confidential("gateway", "s3cret"),
     )
     .with_network_policy(NetworkPolicy::default())
     .unwrap();
@@ -166,10 +160,7 @@ async fn a_trailing_slash_does_not_make_another_issuer() {
     let machine = MachineAuthorization::new(
         format!("{base}/mcp"),
         format!("{base}/"),
-        ClientCredentials {
-            client_id: "gateway".into(),
-            client_secret: Some("s3cret".to_owned().into()),
-        },
+        ClientCredentials::confidential("gateway", "s3cret"),
     )
     .with_network_policy(NetworkPolicy::default())
     .unwrap();
@@ -249,4 +240,54 @@ async fn a_grant_the_server_does_not_offer_is_refused_before_asking() {
         assert!(matches!(err, OAuthClientError::Discovery(_)), "{err}");
     }
     assert!(mock.lock().unwrap().forms.is_empty());
+}
+
+/// With `private_key_jwt` no secret is needed or sent: each request carries
+/// a fresh assertion signed for this client, audienced to the issuer, that
+/// expires within a minute.
+#[cfg(feature = "jwt")]
+#[tokio::test]
+async fn private_key_jwt_sends_a_signed_assertion_instead_of_a_secret() {
+    use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Validation};
+    use turbomcp_auth::client::ClientAssertion;
+
+    let mock: Shared = Arc::default();
+    let base = spawn(Arc::clone(&mock)).await;
+    let key = b"a-client-assertion-key-of-32-bytes!";
+    let machine = MachineAuthorization::new(
+        format!("{base}/mcp"),
+        base.clone(),
+        ClientCredentials::public("signer"),
+    )
+    .with_private_key_jwt(
+        ClientAssertion::new(EncodingKey::from_secret(key), Algorithm::HS256).with_key_id("k1"),
+    )
+    .with_network_policy(NetworkPolicy::default())
+    .unwrap();
+    let discovered = machine.discover(None).await.unwrap();
+    machine
+        .client_credentials(&discovered, &["mcp:tools".to_owned()])
+        .await
+        .expect("granted");
+
+    let (form, auth) = mock.lock().unwrap().forms.pop().unwrap();
+    assert!(auth.is_none(), "no Basic secret");
+    assert!(!form.contains_key("client_secret"));
+    assert_eq!(
+        form["client_assertion_type"],
+        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+    );
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.set_audience(&[base.as_str()]);
+    validation.set_issuer(&["signer"]);
+    let claims = jsonwebtoken::decode::<Value>(
+        &form["client_assertion"],
+        &DecodingKey::from_secret(key),
+        &validation,
+    )
+    .expect("a valid assertion")
+    .claims;
+    assert_eq!(claims["sub"], "signer");
+    assert!(claims["jti"].as_str().is_some_and(|j| !j.is_empty()));
+    assert!(claims["exp"].as_u64().unwrap() - claims["iat"].as_u64().unwrap() <= 60);
 }

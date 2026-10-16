@@ -45,6 +45,31 @@ pub trait CredentialStore: Send + Sync {
     /// Drop everything stored for `issuer` (e.g. after the resource's
     /// authorization server changed).
     fn clear<'a>(&'a self, issuer: &'a str) -> BoxFuture<'a, ()>;
+
+    /// The authorization server refused the refresh token issued by `issuer`
+    /// for `resource` (`invalid_grant`): it is dead, and should not be
+    /// offered again. The default does nothing; a store that keeps tokens
+    /// across runs should forget the set.
+    fn refresh_rejected<'a>(&'a self, issuer: &'a str, resource: &'a str) -> BoxFuture<'a, ()> {
+        let _ = (issuer, resource);
+        Box::pin(async {})
+    }
+
+    /// Held across one refresh of `issuer`'s tokens for `resource`: a store
+    /// several processes share (an OS keychain) returns a cross-process lock
+    /// here. Refresh tokens rotate, so two processes redeeming the same one
+    /// leave one of them, or with replay detection both, holding a dead
+    /// grant. The refresh re-reads the store once it holds the guard and
+    /// takes a set another process already rotated to. The default guards
+    /// nothing, which is right for a store one process owns.
+    fn refresh_guard<'a>(
+        &'a self,
+        issuer: &'a str,
+        resource: &'a str,
+    ) -> BoxFuture<'a, Box<dyn Send + 'a>> {
+        let _ = (issuer, resource);
+        Box::pin(async { Box::new(()) as Box<dyn Send> })
+    }
 }
 
 /// In-memory, process-lifetime credential store — the default.
@@ -113,6 +138,14 @@ impl CredentialStore for MemoryCredentialStore {
         Box::pin(async move {
             self.clients.lock().remove(issuer);
             self.tokens.lock().retain(|(iss, _), _| iss != issuer);
+        })
+    }
+
+    fn refresh_rejected<'a>(&'a self, issuer: &'a str, resource: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.tokens
+                .lock()
+                .remove(&(issuer.to_owned(), resource.to_owned()));
         })
     }
 }

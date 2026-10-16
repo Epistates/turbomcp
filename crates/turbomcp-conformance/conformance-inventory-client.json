@@ -372,6 +372,7 @@
     "2026-07-28::auth/offline-access-scope::pkce-verifier-matches-challenge",
     "2026-07-28::auth/offline-access-scope::prm-pathbased-requested",
     "2026-07-28::auth/offline-access-scope::sep-2207-client-metadata-grant-types",
+    "2026-07-28::auth/offline-access-scope::sep-2207-offline-access-requested",
     "2026-07-28::auth/offline-access-scope::sep-837-application-type-present",
     "2026-07-28::auth/offline-access-scope::token-request",
     "2026-07-28::auth/offline-access-scope::valid-bearer-token",

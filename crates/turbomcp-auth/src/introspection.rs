@@ -266,7 +266,10 @@ impl IntrospectionValidator {
         }
         let key: [u8; 32] = Sha256::digest(token.as_bytes()).into();
         if let Some(cached) = self.cache.get(&key) {
-            if cached.exp.is_none_or(|exp| exp + self.leeway > now()) {
+            if cached
+                .exp
+                .is_none_or(|exp| exp.saturating_add(self.leeway) > now())
+            {
                 return Ok(cached.principal);
             }
             self.cache.invalidate(&key);
@@ -364,10 +367,10 @@ impl IntrospectionValidator {
         let now = now();
         let time = |name: &str| claims.get(name).and_then(Value::as_u64);
         let exp = time("exp");
-        if exp.is_some_and(|exp| exp + self.leeway <= now) {
+        if exp.is_some_and(|exp| exp.saturating_add(self.leeway) <= now) {
             return invalid("the token has expired");
         }
-        if time("nbf").is_some_and(|nbf| nbf > now + self.leeway) {
+        if time("nbf").is_some_and(|nbf| nbf > now.saturating_add(self.leeway)) {
             return invalid("the token is not yet valid");
         }
         let audiences: Vec<&str> = match claims.get("aud") {
@@ -410,6 +413,10 @@ impl IntrospectionValidator {
 impl BearerValidator for IntrospectionValidator {
     fn validate<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<AuthPrincipal, AuthError>> {
         Box::pin(self.validate_inner(token))
+    }
+
+    fn audiences(&self) -> Vec<String> {
+        self.audiences.clone()
     }
 }
 

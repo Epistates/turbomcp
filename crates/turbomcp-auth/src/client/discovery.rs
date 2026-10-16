@@ -69,6 +69,10 @@ pub struct AuthorizationServerMetadata {
 /// `resource_metadata` URL when present, else the RFC 9728 well-known
 /// fallbacks in spec order (path-inserted, then root).
 ///
+/// Under [`NetworkPolicy::public_only`](crate::NetworkPolicy::public_only),
+/// as the engines default to: these URLs come from a server, and a
+/// private-address fetch is how a hostile one reaches the inside network.
+///
 /// # Errors
 /// [`OAuthClientError::Discovery`] when no document can be fetched or parsed.
 pub async fn discover_protected_resource(
@@ -80,7 +84,7 @@ pub async fn discover_protected_resource(
         http,
         resource_url,
         challenge_metadata_url,
-        &crate::NetworkPolicy::default(),
+        &crate::NetworkPolicy::public_only(),
     )
     .await
 }
@@ -273,11 +277,15 @@ fn protected_resource_wellknown_candidates(
 /// [`OAuthClientError::Discovery`] when no valid document is found;
 /// [`OAuthClientError::PkceUnsupported`] when the metadata omits
 /// `code_challenge_methods_supported` (the MCP MUST-refuse rule).
+///
+/// Under [`NetworkPolicy::public_only`](crate::NetworkPolicy::public_only),
+/// as the engines default to.
 pub async fn discover_authorization_server(
     http: &reqwest::Client,
     issuer: &str,
 ) -> Result<AuthorizationServerMetadata, OAuthClientError> {
-    discover_authorization_server_with_policy(http, issuer, &crate::NetworkPolicy::default()).await
+    discover_authorization_server_with_policy(http, issuer, &crate::NetworkPolicy::public_only())
+        .await
 }
 
 pub(crate) async fn discover_authorization_server_with_policy(
@@ -343,11 +351,23 @@ pub(crate) async fn discover_with_policy(
     Ok(super::flow::Discovered { resource, server })
 }
 
-/// Whether two issuer identifiers name the same server. RFC 8414 compares
-/// issuers as strings; a trailing `/` is the one difference deployments
-/// routinely disagree on, and never names a different server.
-fn same_issuer(a: &str, b: &str) -> bool {
-    a.trim_end_matches('/') == b.trim_end_matches('/')
+/// Whether two issuer identifiers name the same server. The metadata's
+/// `issuer` "MUST be identical" to the one asked for (RFC 8414 §3.3), so this
+/// compares strings, with one allowance: a root issuer with and without its
+/// `/` (`https://as.example` and `https://as.example/`), which URL
+/// serialization itself disagrees on. A path issuer must match exactly:
+/// `https://as.example/t/` and `https://as.example/t` are different issuers.
+pub(crate) fn same_issuer(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let root = |s: &str| {
+        url::Url::parse(s)
+            .ok()
+            .filter(|u| u.path() == "/" && u.query().is_none() && u.fragment().is_none())
+            .map(|u| u.origin().ascii_serialization())
+    };
+    matches!((root(a), root(b)), (Some(x), Some(y)) if x == y)
 }
 
 /// Fetch and validate `issuer`'s metadata: the document's `issuer` MUST equal
@@ -369,7 +389,7 @@ pub(crate) async fn fetch_authorization_server(
         match fetch_json::<AuthorizationServerMetadata>(http, candidate, policy).await {
             Ok(meta) => {
                 // RFC 8414 §3.3 / OIDC Discovery §4.3: reject impersonation.
-                if meta.issuer.trim_end_matches('/') != issuer.trim_end_matches('/') {
+                if !same_issuer(&meta.issuer, issuer) {
                     return Err(OAuthClientError::Discovery(format!(
                         "authorization server metadata issuer mismatch: document says {}, expected {issuer}",
                         meta.issuer

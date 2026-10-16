@@ -33,23 +33,20 @@ impl AuthPrincipal {
 pub trait BearerValidator: Send + Sync {
     /// Validate `token` (the raw value after `Bearer `).
     fn validate<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<AuthPrincipal, AuthError>>;
+
+    /// The audiences this validator accepts, when it knows them. A
+    /// [`ResourceServer`](crate::ResourceServer) checks its metadata's
+    /// `resource` is among them. The default, empty, means unknown.
+    fn audiences(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
-/// Scopes from `scope` and `scp`, each a space-delimited string or an array
-/// of strings (Microsoft Entra ID issues `scp` as a string). Read the same
-/// way as [`Identity::granted_scopes`](turbomcp_core::Identity::granted_scopes),
-/// so the baseline gate and the per-tool check agree on what a token grants.
+/// Scopes from `scope` and `scp`, read by
+/// [`turbomcp_core::scopes::granted_by`], as
+/// [`Identity::granted_scopes`](turbomcp_core::Identity::granted_scopes) reads
+/// them: the baseline gate and the per-tool check agree on what a token grants.
 #[cfg(any(feature = "jwt", feature = "introspection"))]
 pub(crate) fn extract_scopes(claims: &Map<String, Value>) -> Vec<String> {
-    let mut out = Vec::new();
-    for claim in ["scope", "scp"] {
-        match claims.get(claim) {
-            Some(Value::String(s)) => out.extend(s.split_whitespace().map(str::to_owned)),
-            Some(Value::Array(arr)) => {
-                out.extend(arr.iter().filter_map(Value::as_str).map(str::to_owned));
-            }
-            _ => {}
-        }
-    }
-    out
+    turbomcp_core::scopes::granted_by(|claim| claims.get(claim))
 }

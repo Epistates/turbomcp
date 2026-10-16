@@ -30,7 +30,7 @@ mod token_endpoint;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-pub use challenge::{BearerChallenge, parse_bearer_challenge};
+pub use challenge::{BearerChallenge, parse_bearer_challenge, parse_bearer_challenges};
 pub use discovery::{AuthorizationServerMetadata, ProtectedResourceMetadata};
 pub use enterprise::{
     AssertionKind, EnterpriseAuthorization, ID_JAG_PROFILE, IdJag, IdentityAssertion,
@@ -42,6 +42,8 @@ pub use registration::{
     ApplicationType, ClientCredentials, DynamicRegistration, RegistrationStrategy,
 };
 pub use store::{CredentialStore, MemoryCredentialStore};
+#[cfg(feature = "jwt")]
+pub use token_endpoint::ClientAssertion;
 
 /// The tokens one authorization produced.
 ///
@@ -144,9 +146,38 @@ pub enum OAuthClientError {
         /// The `iss` the response carried.
         got: String,
     },
-    /// The token endpoint rejected the exchange/refresh.
+    /// The token request failed on the way: the network, the server's own
+    /// error (a `5xx`), an answer that didn't parse. Worth retrying.
     #[error("token exchange failed: {0}")]
     TokenExchange(String),
+    /// The authorization server answered the token request with an OAuth
+    /// error (RFC 6749 §5.2): a definitive answer about this grant or this
+    /// client, not a failure to reach it. `invalid_grant` means the code or
+    /// refresh token is dead; `invalid_client`, that this client's
+    /// credentials are.
+    #[error("token request rejected: {error}{}", description.as_deref().map(|d| format!(": {d}")).unwrap_or_default())]
+    TokenRejected {
+        /// The OAuth `error` code.
+        error: String,
+        /// The `error_description`, if given.
+        description: Option<String>,
+    },
+}
+
+impl OAuthClientError {
+    /// Whether the server said the grant (authorization code or refresh
+    /// token) is no good: the refresh token should be discarded, not retried.
+    #[must_use]
+    pub fn is_invalid_grant(&self) -> bool {
+        matches!(self, Self::TokenRejected { error, .. } if error == "invalid_grant")
+    }
+
+    /// Whether the server said this client's credentials are no good: stored
+    /// credentials should be dropped and the client registered again.
+    #[must_use]
+    pub fn is_invalid_client(&self) -> bool {
+        matches!(self, Self::TokenRejected { error, .. } if error == "invalid_client")
+    }
 }
 
 #[cfg(test)]
@@ -176,10 +207,7 @@ mod tests {
         );
         assert_eq!(serde_json::from_value::<TokenSet>(value).unwrap(), tokens);
 
-        let creds = ClientCredentials {
-            client_id: "id".into(),
-            client_secret: Some("cs".to_owned().into()),
-        };
+        let creds = ClientCredentials::confidential("id", "cs");
         let value = serde_json::to_value(&creds).unwrap();
         assert_eq!(value, json!({ "client_id": "id", "client_secret": "cs" }));
         assert_eq!(

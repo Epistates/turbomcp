@@ -209,3 +209,53 @@ async fn rejected_refresh_is_not_retried_by_every_waiting_caller() {
     assert!(f.session.on_challenge(401, None, None).await.unwrap());
     assert_eq!(f.consent.calls.load(Ordering::SeqCst), 2);
 }
+
+/// A `401` for the token in hand spends the refresh token before the user:
+/// a token whose expiry the server noticed first used to cost a new consent.
+#[tokio::test]
+async fn a_401_refreshes_before_asking_the_user() {
+    let f = fixture(false, false).await;
+    assert!(f.session.on_challenge(401, None, None).await.unwrap());
+    assert_eq!(f.consent.calls.load(Ordering::SeqCst), 1);
+    assert!(
+        f.session
+            .on_challenge(401, None, Some("access-one"))
+            .await
+            .unwrap()
+    );
+    assert_eq!(f.refreshes.load(Ordering::SeqCst), 1, "refreshed");
+    assert_eq!(
+        f.consent.calls.load(Ordering::SeqCst),
+        1,
+        "the user wasn't asked again"
+    );
+    assert_eq!(
+        f.session.bearer().await.as_deref().map(String::as_str),
+        Some("access-two")
+    );
+}
+
+/// A server that keeps demanding a scope the authorization server won't
+/// grant sends the user to authorize at most three times, not once per call.
+#[tokio::test]
+async fn an_ungrantable_step_up_stops_asking() {
+    let f = fixture(false, false).await;
+    let challenge = r#"Bearer error="insufficient_scope", scope="admin""#;
+    for _ in 0..3 {
+        assert!(
+            f.session
+                .on_challenge(403, Some(challenge), Some("access-one"))
+                .await
+                .unwrap()
+        );
+    }
+    let refused = f
+        .session
+        .on_challenge(403, Some(challenge), Some("access-one"))
+        .await;
+    assert!(
+        refused.is_err(),
+        "a fourth prompt for the same scopes is refused"
+    );
+    assert_eq!(f.consent.calls.load(Ordering::SeqCst), 3);
+}

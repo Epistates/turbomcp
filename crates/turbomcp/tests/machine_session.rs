@@ -166,10 +166,7 @@ async fn a_service_authorizes_itself_and_steps_up() {
     let engine = MachineAuthorization::new(
         resource.clone(),
         authority.clone(),
-        ClientCredentials {
-            client_id: "deploy-bot".into(),
-            client_secret: Some("s3cret".to_owned().into()),
-        },
+        ClientCredentials::confidential("deploy-bot", "s3cret"),
     )
     .with_network_policy(NetworkPolicy::default())
     .unwrap();

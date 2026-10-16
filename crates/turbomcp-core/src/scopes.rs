@@ -117,6 +117,27 @@ impl ScopeHierarchy for ImpliedScopes {
 #[derive(Clone, Debug)]
 pub struct ScopeRules(pub Arc<dyn ScopeHierarchy>);
 
+/// The scopes a token's claims grant: `scope` and `scp`, each a
+/// space-delimited string or an array of strings (Microsoft Entra ID issues
+/// `scp` as a string). `claim` looks a claim up by name. The one reading of
+/// "granted" everything shares, so a resource server's baseline gate and a
+/// tool's declared scopes can't disagree about a token.
+pub fn granted_by<'a>(claim: impl Fn(&str) -> Option<&'a serde_json::Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in ["scope", "scp"] {
+        match claim(name) {
+            Some(serde_json::Value::String(s)) => {
+                out.extend(s.split_whitespace().map(String::from))
+            }
+            Some(serde_json::Value::Array(arr)) => {
+                out.extend(arr.iter().filter_map(|v| v.as_str().map(String::from)));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 impl ScopeRules {
     /// Whether `granted` covers every scope in `required` under these rules.
     #[must_use]

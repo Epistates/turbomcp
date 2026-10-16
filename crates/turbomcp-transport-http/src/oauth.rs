@@ -23,8 +23,18 @@ struct Authorized {
     discovered: Discovered,
     credentials: ClientCredentials,
     tokens: TokenSet,
-    refresh_failed: bool,
+    /// The authorization server said the refresh token is dead
+    /// (`invalid_grant`): only a new authorization replaces this token set.
+    refresh_dead: bool,
 }
+
+/// How many times one scope set may send the user to authorize within
+/// [`PROMPT_WINDOW`]: "Clients SHOULD implement retry limits and SHOULD track
+/// scope upgrade attempts to avoid repeated failures".
+const MAX_PROMPTS: u32 = 3;
+
+/// The window [`MAX_PROMPTS`] counts within.
+const PROMPT_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 /// One resource's OAuth lifecycle. Attach with `HttpClientTransport::with_bearer_source`.
 /// Token values and application callbacks are deliberately absent from Debug.
@@ -32,6 +42,14 @@ pub struct OAuthSession {
     engine: OAuthClient,
     handler: Arc<dyn AuthorizationHandler>,
     state: tokio::sync::Mutex<Option<Authorized>>,
+    /// Held across an interactive authorization, so concurrent challenges
+    /// send the user to the browser once; `state` is not, so requests keep
+    /// their bearer while the user decides.
+    interactive: tokio::sync::Mutex<()>,
+    /// The longest an interactive authorization may take.
+    authorization_timeout: Duration,
+    /// Prompts per scope set: how many, and since when.
+    prompts: parking_lot::Mutex<std::collections::HashMap<Vec<String>, (u32, std::time::Instant)>>,
 }
 
 impl OAuthSession {
@@ -42,7 +60,67 @@ impl OAuthSession {
             engine,
             handler,
             state: tokio::sync::Mutex::new(None),
+            interactive: tokio::sync::Mutex::new(()),
+            authorization_timeout: Duration::from_secs(5 * 60),
+            prompts: parking_lot::Mutex::default(),
         }
+    }
+
+    /// The longest the application's [`AuthorizationHandler`] may take to
+    /// return the user's callback (default 5 minutes). Past it the request
+    /// that needed authorization fails, rather than waiting on a browser tab
+    /// the user closed.
+    #[must_use]
+    pub fn authorization_timeout(mut self, timeout: Duration) -> Self {
+        self.authorization_timeout = timeout;
+        self
+    }
+
+    /// Redeem `current`'s refresh token. `Ok(false)` when there is none to
+    /// use or the server said it is dead; `Err` for a failure that may pass.
+    async fn try_refresh(&self, current: &mut Authorized) -> Result<bool, String> {
+        if current.refresh_dead || current.tokens.refresh_token.is_none() {
+            return Ok(false);
+        }
+        match self
+            .engine
+            .refresh(&current.discovered, &current.credentials, &current.tokens)
+            .await
+        {
+            Ok(tokens) => {
+                current.tokens = tokens;
+                Ok(true)
+            }
+            // A definitive answer: only the user can replace this grant.
+            Err(e) if e.is_invalid_grant() || e.is_invalid_client() => {
+                current.refresh_dead = true;
+                Ok(false)
+            }
+            // The network, the server's own error: the refresh token is
+            // still good, so it is kept for the next try.
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Count a prompt for `scopes`, refusing past [`MAX_PROMPTS`].
+    fn count_prompt(&self, scopes: &[String]) -> Result<(), String> {
+        let mut key = scopes.to_vec();
+        key.sort();
+        let mut prompts = self.prompts.lock();
+        let now = std::time::Instant::now();
+        let (count, since) = prompts.entry(key).or_insert((0, now));
+        if now.duration_since(*since) > PROMPT_WINDOW {
+            *count = 0;
+            *since = now;
+        }
+        if *count >= MAX_PROMPTS {
+            return Err(format!(
+                "authorization for [{}] already failed {MAX_PROMPTS} times; not asking again yet",
+                scopes.join(" ")
+            ));
+        }
+        *count += 1;
+        Ok(())
     }
 }
 
@@ -59,22 +137,15 @@ impl crate::BearerSource for OAuthSession {
     async fn bearer(&self) -> Option<zeroize::Zeroizing<String>> {
         let mut state = self.state.lock().await;
         let current = state.as_mut()?;
-        if current.refresh_failed {
-            return None;
-        }
-        if current.tokens.expires_within(Duration::from_secs(30)) {
-            match self
-                .engine
-                .refresh(&current.discovered, &current.credentials, &current.tokens)
-                .await
-            {
-                Ok(tokens) => current.tokens = tokens,
-                // A rejected refresh requires a fresh challenge and user consent.
-                Err(_) => {
-                    // Waiting callers share the failure as well as success.
-                    // The next resource challenge may authorize a new token set.
-                    current.refresh_failed = true;
-                    return None;
+        if current.tokens.expires_within(EXPIRY_SKEW) {
+            match self.try_refresh(current).await {
+                Ok(true) => {}
+                // Nothing to refresh with: the token goes until the server
+                // refuses it, and that challenge starts a new authorization.
+                Ok(false) if current.refresh_dead => return None,
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "token refresh failed; will retry");
                 }
             }
         }
@@ -91,22 +162,37 @@ impl crate::BearerSource for OAuthSession {
             return Ok(false);
         }
         let challenge = header.and_then(parse_bearer_challenge);
-        if status == 403
-            && challenge.as_ref().and_then(|c| c.error.as_deref()) != Some("insufficient_scope")
-        {
+        let step_up = challenge
+            .as_ref()
+            .is_some_and(BearerChallenge::is_insufficient_scope);
+        if status == 403 && !step_up {
             return Ok(false);
         }
-        let mut state = self.state.lock().await;
-        // Another request completed authorization while this request was in flight.
-        if let Some(current) = state.as_ref()
-            && Some(current.tokens.access_token.as_str()) != rejected
-            && !current.tokens.expires_within(Duration::from_secs(30))
-            && challenge
+        let covered = |tokens: &TokenSet| {
+            challenge
                 .as_ref()
-                .is_none_or(|c| c.scopes().iter().all(|s| current.tokens.scopes.contains(s)))
+                .is_none_or(|c| c.scopes().iter().all(|s| tokens.scopes.contains(s)))
+        };
         {
-            return Ok(true);
+            let mut state = self.state.lock().await;
+            if let Some(current) = state.as_mut() {
+                // Another request replaced the token while this one was in
+                // flight.
+                if Some(current.tokens.access_token.as_str()) != rejected
+                    && !current.tokens.expires_within(EXPIRY_SKEW)
+                    && covered(&current.tokens)
+                {
+                    return Ok(true);
+                }
+                // A `401` for the token we hold: the refresh token comes
+                // before the user (an expiry the server noticed first, a
+                // token issued without `expires_in`).
+                if !step_up && self.try_refresh(current).await? {
+                    return Ok(true);
+                }
+            }
         }
+
         let discovered = self
             .engine
             .discover(challenge.as_ref())
@@ -117,43 +203,83 @@ impl crate::BearerSource for OAuthSession {
             .credentials(&discovered)
             .await
             .map_err(|e| e.to_string())?;
-        let selected = OAuthClient::select_scopes(challenge.as_ref(), &discovered);
-        let scopes = match state
-            .as_ref()
-            .filter(|s| s.discovered.server.issuer == discovered.server.issuer)
-        {
-            Some(current) => OAuthClient::step_up_scopes(&current.tokens.scopes, &selected),
+        let selected = OAuthClient::with_offline_access(
+            OAuthClient::select_scopes(challenge.as_ref(), &discovered),
+            &discovered,
+        );
+        let previous = {
+            let state = self.state.lock().await;
+            state
+                .as_ref()
+                .filter(|s| s.discovered.server.issuer == discovered.server.issuer)
+                .map(|s| s.tokens.scopes.clone())
+        };
+        // What this operation asked for, before the union with what was
+        // already granted: the unit prompts are counted in.
+        let asked = selected.clone();
+        let scopes = match &previous {
+            Some(previous) => OAuthClient::step_up_scopes(previous, &selected),
             None => selected,
         };
-        if state.is_none()
+
+        // A durable store may hold a token set from an earlier run: live, it
+        // is used; expired with a refresh token, it is refreshed. Either beats
+        // sending the user to the browser.
+        if previous.is_none()
             && let Some(tokens) = self.engine.stored_tokens(&discovered).await
-            && !tokens.expires_within(Duration::from_secs(30))
             && scopes.iter().all(|scope| tokens.scopes.contains(scope))
             && Some(tokens.access_token.as_str()) != rejected
         {
-            *state = Some(Authorized {
-                discovered,
-                credentials,
+            let mut restored = Authorized {
+                discovered: discovered.clone(),
+                credentials: credentials.clone(),
                 tokens,
-                refresh_failed: false,
-            });
+                refresh_dead: false,
+            };
+            let usable = !restored.tokens.expires_within(EXPIRY_SKEW)
+                || self.try_refresh(&mut restored).await.unwrap_or(false);
+            if usable {
+                *self.state.lock().await = Some(restored);
+                return Ok(true);
+            }
+        }
+
+        // The user, once, however many requests were refused.
+        let _prompting = self.interactive.lock().await;
+        // Another request finished an authorization while this one waited.
+        if let Some(current) = self.state.lock().await.as_ref()
+            && Some(current.tokens.access_token.as_str()) != rejected
+            && !current.tokens.expires_within(EXPIRY_SKEW)
+            && covered(&current.tokens)
+        {
             return Ok(true);
         }
+        self.count_prompt(&asked)?;
         let pending = self
             .engine
             .begin(&discovered, &credentials, &scopes)
             .map_err(|e| e.to_string())?;
-        let callback = self.handler.authorize(&pending.authorize_url).await?;
+        let callback = tokio::time::timeout(
+            self.authorization_timeout,
+            self.handler.authorize(&pending.authorize_url),
+        )
+        .await
+        .map_err(|_| {
+            format!(
+                "authorization was not completed within {:?}",
+                self.authorization_timeout
+            )
+        })??;
         let tokens = self
             .engine
             .complete(&discovered, &credentials, pending, &callback)
             .await
             .map_err(|e| e.to_string())?;
-        *state = Some(Authorized {
+        *self.state.lock().await = Some(Authorized {
             discovered,
             credentials,
             tokens,
-            refresh_failed: false,
+            refresh_dead: false,
         });
         Ok(true)
     }

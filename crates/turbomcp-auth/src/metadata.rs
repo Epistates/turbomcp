@@ -43,9 +43,20 @@ impl ResourceMetadata {
     }
 
     /// Declare the scopes the resource recognizes (RFC 9728 `scopes_supported`).
+    ///
+    /// `offline_access` is left out: it is the authorization server's to
+    /// offer, and servers "SHOULD NOT include `offline_access` in
+    /// `scopes_supported`", since a client requesting every listed scope
+    /// would then ask every user for long-lived access.
     #[must_use]
     pub fn scopes_supported(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.scopes_supported = Some(scopes.into_iter().map(Into::into).collect());
+        self.scopes_supported = Some(
+            scopes
+                .into_iter()
+                .map(Into::into)
+                .filter(|scope: &String| scope != "offline_access")
+                .collect(),
+        );
         self
     }
 }

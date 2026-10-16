@@ -120,17 +120,7 @@ impl Identity {
     /// form Microsoft Entra ID issues).
     #[must_use]
     pub fn granted_scopes(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        for claim in ["scope", "scp"] {
-            match self.claim(claim) {
-                Some(Value::String(s)) => out.extend(s.split_whitespace().map(String::from)),
-                Some(Value::Array(arr)) => {
-                    out.extend(arr.iter().filter_map(|v| v.as_str().map(String::from)));
-                }
-                _ => {}
-            }
-        }
-        out
+        crate::scopes::granted_by(|claim| self.claim(claim))
     }
 
     /// Whether this identity holds every scope in `required` exactly (`true`

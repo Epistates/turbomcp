@@ -38,6 +38,9 @@ pub struct MachineAuthorization {
     credentials: ClientCredentials,
     http: reqwest::Client,
     network: crate::NetworkPolicy,
+    /// Authenticate with a signed assertion rather than the secret.
+    #[cfg(feature = "jwt")]
+    assertion: Option<std::sync::Arc<super::token_endpoint::ClientAssertion>>,
 }
 
 impl MachineAuthorization {
@@ -69,7 +72,22 @@ impl MachineAuthorization {
             credentials,
             http: network.http_client().expect("HTTP client initialization"),
             network,
+            #[cfg(feature = "jwt")]
+            assertion: None,
         }
+    }
+
+    /// Authenticate with `private_key_jwt` (RFC 7523): each token request
+    /// carries a fresh assertion signed with `assertion`'s key, and no
+    /// client secret is needed or sent.
+    #[cfg(feature = "jwt")]
+    #[must_use]
+    pub fn with_private_key_jwt(
+        mut self,
+        assertion: super::token_endpoint::ClientAssertion,
+    ) -> Self {
+        self.assertion = Some(std::sync::Arc::new(assertion));
+        self
     }
 
     /// Reach endpoints under `policy` instead.
@@ -180,6 +198,10 @@ impl MachineAuthorization {
     }
 
     fn require_secret(&self, grant: &str) -> Result<(), OAuthClientError> {
+        #[cfg(feature = "jwt")]
+        if self.assertion.is_some() {
+            return Ok(());
+        }
         if self.credentials.client_secret.is_none() {
             return Err(OAuthClientError::Discovery(format!(
                 "the `{grant}` grant authenticates the client, and client `{}` has no secret",
@@ -194,13 +216,20 @@ impl MachineAuthorization {
         discovered: &Discovered,
         form: Vec<(&str, &str)>,
     ) -> Result<T, OAuthClientError> {
+        #[cfg(feature = "jwt")]
+        let auth = match &self.assertion {
+            Some(key) => ClientAuth::PrivateKeyJwt(key, &discovered.server.issuer),
+            None => ClientAuth::for_server(&discovered.server),
+        };
+        #[cfg(not(feature = "jwt"))]
+        let auth = ClientAuth::for_server(&discovered.server);
         post_form(
             &self.http,
             &self.network,
             &discovered.server.token_endpoint,
             "the token endpoint",
             &self.credentials,
-            ClientAuth::for_server(&discovered.server),
+            auth,
             form,
         )
         .await

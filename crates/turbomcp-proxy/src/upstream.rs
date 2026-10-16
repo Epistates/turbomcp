@@ -351,10 +351,10 @@ impl ServiceAccount {
     }
 
     pub(crate) fn credentials(&self) -> turbomcp_auth::client::ClientCredentials {
-        turbomcp_auth::client::ClientCredentials {
-            client_id: self.client_id.clone(),
-            client_secret: Some(self.client_secret.clone()),
-        }
+        let mut credentials =
+            turbomcp_auth::client::ClientCredentials::public(self.client_id.clone());
+        credentials.client_secret = Some(self.client_secret.clone());
+        credentials
     }
 }
 

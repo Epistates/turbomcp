@@ -39,8 +39,22 @@ impl<V: BearerValidator> ResourceServer<V> {
     /// `metadata`, whose metadata document is served at `metadata_url` (the
     /// absolute `…/.well-known/oauth-protected-resource` URL, echoed in the
     /// `WWW-Authenticate` challenge so clients can fetch it).
+    ///
+    /// # Panics
+    /// If the validator names its audiences and the metadata's `resource` is
+    /// not one of them. Clients request tokens for exactly that `resource`
+    /// (RFC 8707), so such a server would refuse every token issued for it:
+    /// an endpoint URL used as one and the origin as the other, say.
     #[must_use]
     pub fn new(validator: V, metadata: ResourceMetadata, metadata_url: impl Into<String>) -> Self {
+        let audiences = validator.audiences();
+        assert!(
+            audiences.is_empty() || audiences.contains(&metadata.resource),
+            "ResourceServer: the metadata's resource `{}` is not an audience the validator \
+             accepts ({}); clients request tokens for that resource, so every one would be refused",
+            metadata.resource,
+            audiences.join(", ")
+        );
         Self {
             validator,
             metadata,
@@ -106,6 +120,18 @@ impl<V: BearerValidator> ResourceServer<V> {
         }
     }
 
+    /// The 400 for a malformed Bearer `Authorization` header (RFC 6750 §3.1
+    /// `invalid_request`).
+    fn bad_request(&self) -> AuthDecision {
+        AuthDecision::Challenge {
+            status: 400,
+            www_authenticate: www_authenticate(&[
+                ("error".to_owned(), "invalid_request".to_owned()),
+                ("resource_metadata".to_owned(), self.metadata_url.clone()),
+            ]),
+        }
+    }
+
     /// The 403 challenge for a valid token lacking a required scope
     /// (RFC 6750 §3.1: `error="insufficient_scope"`).
     fn forbidden(&self) -> AuthDecision {
@@ -129,9 +155,15 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
         Box::pin(async move {
             let token = match bearer_token(authorization) {
                 Ok(token) => token,
-                // No header → bare 401; malformed header → invalid_token 401.
+                // No credentials, or another scheme's ("attempted using an
+                // unsupported authentication method"): the bare challenge,
+                // with no error code (RFC 6750 §3.1).
                 Err(AuthError::MissingToken) => return self.unauthorized(false),
-                Err(_) => return self.unauthorized(true),
+                Err(_) if !authorization.is_some_and(names_bearer) => {
+                    return self.unauthorized(false);
+                }
+                // A Bearer header that isn't one: `400 invalid_request`.
+                Err(_) => return self.bad_request(),
             };
             let principal = match self.validator.validate(token).await {
                 Ok(principal) => principal,
@@ -199,12 +231,24 @@ fn bearer_token(authorization: Option<&str>) -> Result<&str, AuthError> {
 /// values here (errors, scopes, URLs) don't contain quotes, so no escaping is
 /// needed.
 fn www_authenticate(params: &[(String, String)]) -> String {
+    // Quoted-string escaping (RFC 9110 §5.6.4): a `"` or `\\` in a value
+    // would otherwise end it early, and the header then fails to parse, or
+    // to become a header value at all, losing `insufficient_scope`.
+    let quote = |v: &str| v.replace('\\', "\\\\").replace('"', "\\\"");
     let body = params
         .iter()
-        .map(|(k, v)| format!("{k}=\"{v}\""))
+        .map(|(k, v)| format!("{k}=\"{}\"", quote(v)))
         .collect::<Vec<_>>()
         .join(", ");
     format!("Bearer {body}")
+}
+
+/// Whether an `Authorization` value is Bearer's (however malformed).
+fn names_bearer(header: &str) -> bool {
+    header
+        .split_whitespace()
+        .next()
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("bearer"))
 }
 
 #[cfg(test)]
@@ -224,6 +268,12 @@ mod tests {
             bearer_token(Some("Bearer ")),
             Err(AuthError::MalformedHeader)
         ));
+    }
+
+    #[test]
+    fn challenge_values_are_escaped() {
+        let h = www_authenticate(&[("scope".to_owned(), r#"a"b\c"#.to_owned())]);
+        assert_eq!(h, r#"Bearer scope="a\"b\\c""#);
     }
 
     #[test]

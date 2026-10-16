@@ -161,20 +161,6 @@ async fn insufficient_scope_is_403() {
     assert!(www_authenticate.contains("scope=\"mcp:use\""));
 }
 
-#[tokio::test]
-async fn malformed_header_is_401_invalid_token() {
-    let rs = resource_server();
-    let AuthDecision::Challenge {
-        status,
-        www_authenticate,
-    } = rs.authenticate(Some("Basic abc123")).await
-    else {
-        panic!("expected challenge");
-    };
-    assert_eq!(status, 401);
-    assert!(www_authenticate.contains("error=\"invalid_token\""));
-}
-
 /// The classic JWT algorithm-confusion bypass: the validator's alg allowlist
 /// (default `[RS256]`) must reject an HS256 token even though it is "validly"
 /// signed with a key the source can resolve — the allowlist fires first.
@@ -299,4 +285,90 @@ fn resource_metadata_document_shape() {
     assert_eq!(doc["authorization_servers"][0], ISSUER);
     assert_eq!(doc["scopes_supported"][0], "mcp:use");
     assert_eq!(doc["bearer_methods_supported"][0], "header");
+}
+
+/// A key whose JWK names another algorithm doesn't verify this token's
+/// (RFC 7517 §4.4).
+#[tokio::test]
+async fn a_key_published_for_another_algorithm_verifies_nothing() {
+    use turbomcp_auth::BearerValidator;
+    let k = URL_SAFE_NO_PAD.encode(SECRET);
+    let jwks = StaticJwks::from_json(
+        &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS384", "kid": KID } ]}).to_string(),
+    )
+    .unwrap();
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    assert!(validator.validate(&sign(good_claims())).await.is_err());
+}
+
+/// With `require_access_token_type`, only a token typed `at+jwt` (RFC 9068)
+/// is accepted: an ID token from the same issuer can't stand in for one.
+#[tokio::test]
+async fn an_untyped_token_is_refused_when_access_tokens_must_be_typed() {
+    use turbomcp_auth::BearerValidator;
+    let validator = JwtValidator::new(
+        StaticJwks::from_json(&jwks_json()).unwrap(),
+        RESOURCE,
+        ISSUER,
+    )
+    .algorithms(vec![Algorithm::HS256])
+    .require_access_token_type();
+    assert!(
+        validator.validate(&sign(good_claims())).await.is_err(),
+        "typ JWT"
+    );
+
+    let mut header = Header::new(Algorithm::HS256);
+    header.kid = Some(KID.to_owned());
+    header.typ = Some("at+jwt".to_owned());
+    let typed = encode(&header, &good_claims(), &EncodingKey::from_secret(SECRET)).unwrap();
+    validator
+        .validate(&typed)
+        .await
+        .expect("typed as an access token");
+}
+
+/// A resource server whose metadata names a resource its validator won't
+/// accept tokens for is refused at construction: every client token would
+/// be.
+#[test]
+#[should_panic(expected = "is not an audience the validator accepts")]
+fn a_resource_the_validator_rejects_is_a_construction_error() {
+    let jwks = StaticJwks::from_json(&jwks_json()).unwrap();
+    let validator = JwtValidator::new(jwks, "https://mcp.example.com/mcp", ISSUER);
+    let _ = ResourceServer::new(
+        validator,
+        ResourceMetadata::new(RESOURCE, [ISSUER]),
+        METADATA_URL,
+    );
+}
+
+/// A Bearer header that isn't one is `400 invalid_request`; another scheme
+/// gets the bare `401` challenge (RFC 6750 §3.1).
+#[tokio::test]
+async fn malformed_and_foreign_authorization_headers() {
+    let rs = resource_server();
+    match rs.authenticate(Some("Bearer ")).await {
+        AuthDecision::Challenge {
+            status,
+            www_authenticate,
+        } => {
+            assert_eq!(status, 400);
+            assert!(
+                www_authenticate.contains("invalid_request"),
+                "{www_authenticate}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    match rs.authenticate(Some("Basic dXNlcjpwYXNz")).await {
+        AuthDecision::Challenge {
+            status,
+            www_authenticate,
+        } => {
+            assert_eq!(status, 401);
+            assert!(!www_authenticate.contains("error="), "{www_authenticate}");
+        }
+        other => panic!("{other:?}"),
+    }
 }

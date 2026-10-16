@@ -50,50 +50,51 @@ impl BearerChallenge {
 /// parameter names. Unknown parameters are ignored.
 #[must_use]
 pub fn parse_bearer_challenge(header: &str) -> Option<BearerChallenge> {
-    // Find the Bearer scheme (a header may carry multiple challenges; we take
-    // the first Bearer one). The scheme is followed by whitespace or is the
-    // whole (parameter-less) challenge.
-    let lower = header.to_ascii_lowercase();
-    let start = find_scheme(&lower, "bearer")?;
-    let rest = &header[start + "bearer".len()..];
-
-    let mut challenge = BearerChallenge::default();
-    for (name, value) in parse_auth_params(rest) {
-        match name.to_ascii_lowercase().as_str() {
-            "resource_metadata" => challenge.resource_metadata = Some(value),
-            "scope" => challenge.scope = Some(value),
-            "error" => challenge.error = Some(value),
-            "error_description" => challenge.error_description = Some(value),
-            _ => {}
+    // Walk the challenges in order (a header may carry several, and the
+    // first Bearer one is ours), each a scheme and then its parameters. A
+    // scheme is only ever read where a challenge starts, so `bearer` inside
+    // another challenge's quoted value (`Basic realm="bearer"`) is never
+    // mistaken for one.
+    let mut rest = header;
+    loop {
+        rest = rest.trim_start_matches([' ', '\t', ',']);
+        if rest.is_empty() {
+            return None;
         }
+        let scheme_end = rest.find([' ', '\t', ',']).unwrap_or(rest.len());
+        let scheme = &rest[..scheme_end];
+        let (params, remaining) = parse_auth_params(&rest[scheme_end..]);
+        if scheme.eq_ignore_ascii_case("bearer") {
+            let mut challenge = BearerChallenge::default();
+            for (name, value) in params {
+                match name.to_ascii_lowercase().as_str() {
+                    "resource_metadata" => challenge.resource_metadata = Some(value),
+                    "scope" => challenge.scope = Some(value),
+                    "error" => challenge.error = Some(value),
+                    "error_description" => challenge.error_description = Some(value),
+                    _ => {}
+                }
+            }
+            return Some(challenge);
+        }
+        rest = remaining;
     }
-    Some(challenge)
 }
 
-/// Locate `scheme` as a standalone token in a lowercased header value.
-fn find_scheme(lower: &str, scheme: &str) -> Option<usize> {
-    let mut from = 0;
-    while let Some(pos) = lower[from..].find(scheme) {
-        let at = from + pos;
-        let before_ok = at == 0
-            || lower[..at]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c == ' ' || c == ',' || c == '\t');
-        let after = lower[at + scheme.len()..].chars().next();
-        let after_ok = after.is_none() || after.is_some_and(|c| c == ' ' || c == '\t');
-        if before_ok && after_ok {
-            return Some(at);
-        }
-        from = at + scheme.len();
-    }
-    None
+/// Parse every `WWW-Authenticate` line of a response together: RFC 9110
+/// lets each challenge travel on a line of its own (`Basic` on one, `Bearer`
+/// on the next), so reading only the first missed the one that mattered.
+#[must_use]
+pub fn parse_bearer_challenges<'a>(
+    lines: impl IntoIterator<Item = &'a str>,
+) -> Option<BearerChallenge> {
+    lines.into_iter().find_map(parse_bearer_challenge)
 }
 
 /// Parse `name=value` / `name="value"` pairs until the next challenge scheme
 /// (or end of input). Stops at a bare token that isn't followed by `=` — that
 /// is the next challenge's scheme name per RFC 7235's grammar.
-fn parse_auth_params(input: &str) -> BTreeMap<String, String> {
+fn parse_auth_params(input: &str) -> (BTreeMap<String, String>, &str) {
     let mut params = BTreeMap::new();
     let mut rest = input;
     loop {
@@ -111,7 +112,14 @@ fn parse_auth_params(input: &str) -> BTreeMap<String, String> {
         }
         let after = rest[name_end..].trim_start();
         let Some(after_eq) = after.strip_prefix('=') else {
-            break; // next challenge scheme, not a parameter
+            // The next challenge's scheme, not a parameter (or a token68,
+            // which carries nothing of ours either way).
+            if name_end < rest.len() && !rest[name_end..].starts_with([',', ' ', '\t']) {
+                // A token68 ends at the next comma.
+                rest = &rest[rest.find(',').unwrap_or(rest.len())..];
+                continue;
+            }
+            break;
         };
         let after_eq = after_eq.trim_start();
         if let Some(quoted) = after_eq.strip_prefix('"') {
@@ -141,12 +149,27 @@ fn parse_auth_params(input: &str) -> BTreeMap<String, String> {
             rest = &after_eq[value_end..];
         }
     }
-    params
+    (params, rest)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `bearer` inside another challenge's quoted value is not a challenge,
+    /// and a Bearer challenge on a later line is found.
+    #[test]
+    fn only_a_real_bearer_challenge_counts() {
+        let c = parse_bearer_challenge(
+            "Basic realm=\"use bearer tokens\", Bearer scope=\"files:read\"",
+        )
+        .unwrap();
+        assert_eq!(c.scope.as_deref(), Some("files:read"));
+        assert!(parse_bearer_challenge("Basic realm=\"bearer\"").is_none());
+        let c = parse_bearer_challenges(["Basic realm=\"x\"", "Bearer error=\"invalid_token\""])
+            .unwrap();
+        assert_eq!(c.error.as_deref(), Some("invalid_token"));
+    }
 
     #[test]
     fn parses_the_spec_example() {

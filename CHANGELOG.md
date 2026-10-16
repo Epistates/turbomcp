@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `private_key_jwt` client authentication (RFC 7523):
+  `MachineAuthorization::with_private_key_jwt(ClientAssertion)` signs a
+  fresh one-minute assertion (`aud` = the issuer, random `jti`) per token
+  request instead of sending a secret, as the client credentials extension
+  recommends.
+- `RegistrationStrategy::Chain` (and `RegistrationStrategy::in_spec_order`):
+  pre-registered, Client ID Metadata Document, then dynamic registration,
+  the first that applies to the authorization server winning, as clients
+  SHOULD.
+- `CredentialStore::refresh_guard` (serialize refresh-token rotation
+  across processes sharing a keychain) and `refresh_rejected`;
+  `OAuthSession::authorization_timeout`; `JwtValidator::require_access_token_type`
+  (RFC 9068 `at+jwt`); `HttpJwks::stale_if_error`;
+  `HttpClientTransport::allow_cleartext_bearer`;
+  `ClientCredentials::confidential`/`is_expired`;
+  `BearerValidator::audiences`; `parse_bearer_challenges`.
 - Client handler context: `ElicitationHandler::elicit_with`/`elicit_url_with`,
   `SamplingHandler::create_message_with` and `RootsHandler::list_roots_with`
   receive a `HandlerContext` (the request id or `inputRequests` key, the
@@ -411,6 +427,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The HTTP client refuses to send a bearer token over cleartext `http://`
+  to anything but this machine ("Implementations MUST follow OAuth 2.1
+  Section 1.5"), with `HttpClientError::CleartextBearer`;
+  `allow_cleartext_bearer()` is the explicit opt-out.
+- Issuer comparison is exact ("MUST be identical"), except a root issuer
+  with and without its `/`: a path issuer with a trailing slash used to
+  match one without.
+- Discovery, registration and challenge parsing: the public free functions
+  default to `NetworkPolicy::public_only` like the engines; `bearer` inside
+  another challenge's quoted value is no longer read as a Bearer challenge,
+  and every `WWW-Authenticate` line is read, not only the first; an
+  authorization callback older than 10 minutes is refused.
+- JWT validation skips JWKs published for encryption (`use: enc`) or for
+  another algorithm (`alg`).
 - URL-mode elicitations are checked before a handler sees them: the `url`
   must parse and be `http` or `https` (a `file:`, `javascript:` or `data:`
   URL is refused with `-32602`), and `message` and `elicitationId` are
@@ -599,6 +629,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OAuth refresh: a refresh failure on the network is retried instead of
+  treated as final; only `invalid_grant` (now `OAuthClientError::TokenRejected`,
+  apart from transient `TokenExchange`) discards the refresh token. A `401`
+  for the current token tries the refresh token before the user, and a
+  token set restored from a durable store with an expired access token is
+  refreshed rather than re-consented.
+- Interactive authorization no longer blocks every request while the user
+  is in the browser, gives up after `authorization_timeout` (5 minutes),
+  and asks at most three times per challenged scope set in 10 minutes.
+- `offline_access` is requested when the authorization server lists it, so
+  OIDC servers issue a refresh token.
+- Registration: a stored client whose `client_secret_expires_at` has passed
+  is registered again, and an `invalid_client` answer drops the stored
+  credentials. Discovery tries every advertised authorization server
+  (pre-registered issuers first) instead of only the first.
+- `ResourceServer::new` refuses a validator that won't accept tokens for
+  the metadata's `resource` (clients request exactly that audience), and
+  `ResourceMetadata::scopes_supported` leaves out `offline_access`.
+- A malformed Bearer `Authorization` header is `400 invalid_request` and
+  another scheme gets the bare `401` challenge (RFC 6750 §3.1);
+  `WWW-Authenticate` values are escaped.
+- `HttpJwks` shares one key set across validations instead of copying it,
+  lets callers use the expired set while one refreshes, and keeps serving
+  the last good set for an hour when the issuer is down.
+- Introspection's `exp`/`nbf` leeway arithmetic can no longer overflow on
+  an authorization server's value.
+- `OAuthClient::new` refuses a `redirect_uri` that dynamic registration
+  doesn't register.
 - A panicking progress callback no longer takes the connection down (it
   ran on the connection's actor, and every call waited out its timeout), a
   panicking notification handler loses only that notification instead of
@@ -1079,6 +1137,10 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `ClientCredentials` is `#[non_exhaustive]` with a
+  `client_secret_expires_at` field; build it with `public` or
+  `confidential`. `OAuthClientError::TokenRejected` is new, and a token
+  endpoint's OAuth error arrives as it rather than as `TokenExchange`.
 - **Breaking:** `connect_child` returns `(Client, ServerProcess)` (was
   `tokio::process::Child`) and starts the server in its own process group;
   the gateway's upstreams use the same type. A stdio upstream's stderr logs

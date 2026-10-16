@@ -117,15 +117,9 @@ fn flow(base: &str) -> EnterpriseAuthorization {
         base,
         IdentityProvider::new(
             format!("{base}/idp/token"),
-            ClientCredentials {
-                client_id: "sso-client".into(),
-                client_secret: Some("sso-secret".to_owned().into()),
-            },
+            ClientCredentials::confidential("sso-client", "sso-secret"),
         ),
-        ClientCredentials {
-            client_id: "mcp-client".into(),
-            client_secret: Some("mcp-secret".to_owned().into()),
-        },
+        ClientCredentials::confidential("mcp-client", "mcp-secret"),
     )
     // The mocks live on loopback.
     .with_network_policy(NetworkPolicy::default())
@@ -208,7 +202,7 @@ async fn the_idps_refusal_is_reported() {
         .await
         .unwrap_err();
     assert!(
-        matches!(&err, OAuthClientError::TokenExchange(m) if m.contains("access_denied") && m.contains("not in the MCP group")),
+        matches!(&err, OAuthClientError::TokenRejected { error, description } if error == "access_denied" && description.as_deref().is_some_and(|d| d.contains("not in the MCP group"))),
         "{err}"
     );
     assert!(mock.lock().unwrap().as_forms.is_empty());

@@ -374,10 +374,7 @@ async fn run_auth(url: &str, context: &ScenarioContext) -> Result<(), String> {
         },
         Some(id) => RegistrationStrategy::Preregistered {
             credentials: match context.client_secret.as_deref() {
-                Some(secret) => ClientCredentials {
-                    client_id: id.to_string(),
-                    client_secret: Some(secret.to_string().into()),
-                },
+                Some(secret) => ClientCredentials::confidential(id, secret),
                 None => ClientCredentials::public(id),
             },
             // The scenario hands us credentials without naming their issuer:

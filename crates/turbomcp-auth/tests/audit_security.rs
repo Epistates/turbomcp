@@ -92,3 +92,54 @@ async fn failed_jwks_refresh_establishes_backoff() {
     assert_eq!(count.load(Ordering::SeqCst), 1);
     server.abort();
 }
+
+/// An issuer outage after the TTL keeps the last good key set serving (for
+/// the stale-if-error grace) instead of failing every token at once, and an
+/// encryption key never verifies a signature.
+#[tokio::test]
+async fn an_outage_serves_the_last_good_key_set() {
+    let up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let serving = up.clone();
+    let app = Router::new().route(
+        "/jwks",
+        get(move || {
+            let serving = serving.clone();
+            async move {
+                if serving.load(Ordering::SeqCst) {
+                    Ok(Json(json!({ "keys": [
+                        { "kty": "oct", "k": "c2VjcmV0LXNpZ25pbmcta2V5LTMyLWJ5dGVzLWxvbmc", "kid": "sig" },
+                        { "kty": "oct", "k": "c2VjcmV0LXNpZ25pbmcta2V5LTMyLWJ5dGVzLWxvbmc", "kid": "enc", "use": "enc" },
+                    ]})))
+                } else {
+                    Err(axum::http::StatusCode::SERVICE_UNAVAILABLE)
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/jwks", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let source = HttpJwks::new(url, Duration::from_millis(50));
+    assert!(source.decoding_key(Some("sig")).await.is_ok());
+    assert!(
+        source.decoding_key(Some("enc")).await.is_err(),
+        "a key published for encryption verifies nothing"
+    );
+
+    up.store(false, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        source.decoding_key(Some("sig")).await.is_ok(),
+        "past its TTL with the issuer down, the last good set still serves"
+    );
+
+    let strict = HttpJwks::new(
+        format!("http://127.0.0.1:{}/jwks", 9),
+        Duration::from_millis(50),
+    )
+    .stale_if_error(Duration::ZERO);
+    assert!(strict.decoding_key(Some("sig")).await.is_err());
+    server.abort();
+}

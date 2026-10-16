@@ -61,7 +61,14 @@ pub struct PendingAuthorization {
     expected_issuer: String,
     iss_advertised: bool,
     scopes: Vec<String>,
+    /// When `begin` made it; a callback past [`PENDING_TTL`] is refused.
+    created: std::time::Instant,
 }
+
+/// How long an authorization may wait for its callback. A user finishes in
+/// minutes; a callback days later is replayed or stale, and its code (if it
+/// still worked) would bind tokens to an authorization nobody is driving.
+pub const PENDING_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 impl std::fmt::Debug for PendingAuthorization {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -163,19 +170,31 @@ impl OAuthClient {
     /// `NetworkPolicy::default()` or `public_only().with_allowed_ranges(…)`.
     ///
     /// # Panics
-    /// If the TLS backend can't initialize, which the HTTP client needs.
+    /// If the TLS backend can't initialize, which the HTTP client needs; or
+    /// if `strategy` registers dynamically with `redirect_uris` that don't
+    /// include `redirect_uri`, which the authorization server would refuse
+    /// at every authorization ("the redirect URI MUST match one registered").
     #[must_use]
     pub fn new(
         resource: impl Into<String>,
         redirect_uri: impl Into<String>,
         strategy: RegistrationStrategy,
     ) -> Self {
+        let redirect_uri = redirect_uri.into();
+        if let Some(registered) = strategy.dynamic_redirect_uris() {
+            assert!(
+                registered.contains(&redirect_uri),
+                "OAuthClient: redirect_uri `{redirect_uri}` is not among the redirect_uris \
+                 dynamic registration asks for ({})",
+                registered.join(", ")
+            );
+        }
         let network = crate::NetworkPolicy::public_only();
         Self {
             http: network.http_client().expect("HTTP client initialization"),
             network,
             resource: resource.into(),
-            redirect_uri: redirect_uri.into(),
+            redirect_uri,
             strategy,
             store: Arc::new(MemoryCredentialStore::default()),
         }
@@ -241,15 +260,41 @@ impl OAuthClient {
             &self.network,
         )
         .await?;
-        // Selection among multiple advertised servers is the client's call
-        // (RFC 9728 §7.6); we take the first. Wrap the engine to override.
-        let issuer = resource_meta.authorization_servers[0].clone();
-        let server =
-            discover_authorization_server_with_policy(&self.http, &issuer, &self.network).await?;
-        Ok(Discovered {
-            resource: resource_meta,
-            server,
-        })
+        // Selection among several advertised servers is the client's call
+        // (RFC 9728 §7.6): one this client holds pre-registered credentials
+        // for first, then the rest in the order advertised, the first whose
+        // metadata validates winning. Taking only the first left a client
+        // stranded when that one was down.
+        let preferred = self.strategy.preregistered_issuers();
+        let mut candidates: Vec<&String> = resource_meta
+            .authorization_servers
+            .iter()
+            .filter(|issuer| {
+                preferred
+                    .iter()
+                    .any(|p| super::discovery::same_issuer(p, issuer))
+            })
+            .collect();
+        candidates.extend(resource_meta.authorization_servers.iter().filter(|issuer| {
+            !preferred
+                .iter()
+                .any(|p| super::discovery::same_issuer(p, issuer))
+        }));
+        let mut last =
+            OAuthClientError::Discovery("the resource names no authorization server".into());
+        for issuer in candidates {
+            match discover_authorization_server_with_policy(&self.http, issuer, &self.network).await
+            {
+                Ok(server) => {
+                    return Ok(Discovered {
+                        resource: resource_meta,
+                        server,
+                    });
+                }
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
     }
 
     /// The credentials to use at the discovered server: previously stored for
@@ -265,8 +310,17 @@ impl OAuthClient {
         // Configured pre-registered credentials are the authority on who this
         // client is: a client stored earlier for the issuer (a DCR client,
         // say) must not quietly stand in for them.
-        let configured = matches!(self.strategy, RegistrationStrategy::Preregistered { .. });
-        if !configured && let Some(stored) = self.store.load_client(&discovered.server.issuer).await
+        let configured = self.strategy.is_preregistered()
+            && self
+                .strategy
+                .preregistered_issuers()
+                .iter()
+                .any(|issuer| super::discovery::same_issuer(issuer, &discovered.server.issuer));
+        // A stored secret past its `client_secret_expires_at` is registered
+        // again rather than presented.
+        if !configured
+            && let Some(stored) = self.store.load_client(&discovered.server.issuer).await
+            && !stored.is_expired()
         {
             return Ok(stored);
         }
@@ -302,6 +356,25 @@ impl OAuthClient {
             .scopes_supported
             .clone()
             .unwrap_or_default()
+    }
+
+    /// `scopes` plus `offline_access` when the authorization server lists it
+    /// in `scopes_supported` (2026-07-28: clients "MAY add `offline_access`
+    /// ... when the Authorization Server metadata contains it"): an OIDC
+    /// authorization server issues a refresh token only for it, and without
+    /// one every expiry is a fresh browser flow. For a user's authorization;
+    /// a client acting as itself has nothing to refresh.
+    #[must_use]
+    pub fn with_offline_access(mut scopes: Vec<String>, discovered: &Discovered) -> Vec<String> {
+        let offered = discovered
+            .server
+            .scopes_supported
+            .as_ref()
+            .is_some_and(|supported| supported.iter().any(|s| s == "offline_access"));
+        if offered && !scopes.iter().any(|s| s == "offline_access") {
+            scopes.push("offline_access".to_owned());
+        }
+        scopes
     }
 
     /// The step-up scope set: the union of previously requested scopes and
@@ -361,6 +434,7 @@ impl OAuthClient {
                 .authorization_response_iss_parameter_supported
                 == Some(true),
             scopes: scopes.to_vec(),
+            created: std::time::Instant::now(),
         })
     }
 
@@ -383,6 +457,11 @@ impl OAuthClient {
         pending: PendingAuthorization,
         callback: &CallbackParams,
     ) -> Result<TokenSet, OAuthClientError> {
+        if pending.created.elapsed() > PENDING_TTL {
+            return Err(OAuthClientError::Authorization(format!(
+                "the authorization response came after {PENDING_TTL:?}; start again"
+            )));
+        }
         if discovered.server.issuer != pending.expected_issuer {
             return Err(OAuthClientError::IssuerMismatch {
                 expected: pending.expected_issuer,
@@ -460,13 +539,33 @@ impl OAuthClient {
                 async move { oauth_http_call(&http, req, &policy).await }
             })
             .await
-            .map_err(|e| OAuthClientError::TokenExchange(e.to_string()))?;
+            .map_err(token_request_error);
+        let token = self
+            .unless_client_rejected(token, &discovered.server.issuer)
+            .await?;
 
         let tokens = to_token_set(&token, &pending.scopes);
         self.store
             .store_tokens(&discovered.server.issuer, &self.resource, &tokens)
             .await;
         Ok(tokens)
+    }
+
+    /// `result`, after dropping what is stored for `issuer` when the server
+    /// said this client's credentials are no good (`invalid_client`): a DCR
+    /// client the server forgot, or whose secret expired, is registered
+    /// again next time instead of being presented forever.
+    async fn unless_client_rejected<T>(
+        &self,
+        result: Result<T, OAuthClientError>,
+        issuer: &str,
+    ) -> Result<T, OAuthClientError> {
+        if let Err(e) = &result
+            && e.is_invalid_client()
+        {
+            self.store.clear(issuer).await;
+        }
+        result
     }
 
     /// Redeem a refresh token (with the `resource` parameter) and persist the
@@ -486,6 +585,16 @@ impl OAuthClient {
                 "no refresh token; re-authorization required".into(),
             ));
         };
+        let issuer = &discovered.server.issuer;
+        let _guard = self.store.refresh_guard(issuer, &self.resource).await;
+        // Another process sharing the store may have rotated this refresh
+        // token while we waited for the guard: its set is the live one.
+        if let Some(stored) = self.store.load_tokens(issuer, &self.resource).await
+            && stored.refresh_token.as_ref().map(|t| t.as_str()) != Some(refresh_token.as_str())
+            && !stored.expires_within(std::time::Duration::from_secs(30))
+        {
+            return Ok(stored);
+        }
         for endpoint in [
             &discovered.server.issuer,
             &discovered.server.authorization_endpoint,
@@ -507,8 +616,16 @@ impl OAuthClient {
                 async move { oauth_http_call(&http, req, &policy).await }
             })
             .await
-            .map_err(|e| OAuthClientError::TokenExchange(e.to_string()))?;
-
+            .map_err(token_request_error);
+        let token = self
+            .unless_client_rejected(token, &discovered.server.issuer)
+            .await;
+        if let Err(e) = &token
+            && e.is_invalid_grant()
+        {
+            self.store.refresh_rejected(issuer, &self.resource).await;
+        }
+        let token = token?;
         let mut rotated = to_token_set(&token, &tokens.scopes);
         // An AS that doesn't rotate the refresh token keeps the old one live.
         if rotated.refresh_token.is_none() {
@@ -621,6 +738,20 @@ fn to_token_set(
     }
 }
 
+/// The server's own OAuth error as [`OAuthClientError::TokenRejected`]; a
+/// failure to get one as [`OAuthClientError::TokenExchange`].
+fn token_request_error(
+    e: oauth2::RequestTokenError<OAuthClientError, oauth2::basic::BasicErrorResponse>,
+) -> OAuthClientError {
+    match e {
+        oauth2::RequestTokenError::ServerResponse(response) => OAuthClientError::TokenRejected {
+            error: response.error().to_string(),
+            description: response.error_description().cloned(),
+        },
+        other => OAuthClientError::TokenExchange(other.to_string()),
+    }
+}
+
 /// Bridge `oauth2`'s HTTP request/response types over our `reqwest` client
 /// (byte-level conversions, so the two crates' `http` versions never need to
 /// agree).
@@ -697,10 +828,7 @@ mod tests {
         assert!(!dbg.contains("super-secret"), "token leaked: {dbg}");
         assert!(dbg.contains("<redacted>") && dbg.contains("files:read"));
 
-        let creds = ClientCredentials {
-            client_id: "public-id".into(),
-            client_secret: Some("cs-super-secret".to_owned().into()),
-        };
+        let creds = ClientCredentials::confidential("public-id", "cs-super-secret");
         let dbg = format!("{creds:?}");
         assert!(!dbg.contains("super-secret"), "client secret leaked: {dbg}");
         assert!(dbg.contains("public-id") && dbg.contains("<redacted>"));
@@ -712,6 +840,7 @@ mod tests {
             expected_issuer: "https://as.example".into(),
             iss_advertised: true,
             scopes: vec![],
+            created: std::time::Instant::now(),
         };
         let dbg = format!("{pending:?}");
         assert!(!dbg.contains("super-secret"), "pkce verifier leaked: {dbg}");

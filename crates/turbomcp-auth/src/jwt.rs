@@ -20,6 +20,7 @@ pub struct JwtValidator<S> {
     issuers: Vec<String>,
     algorithms: Vec<Algorithm>,
     leeway: u64,
+    access_token_typ: bool,
 }
 
 impl<S: JwkSource> JwtValidator<S> {
@@ -34,7 +35,19 @@ impl<S: JwkSource> JwtValidator<S> {
             issuers: vec![issuer.into()],
             algorithms: vec![Algorithm::RS256],
             leeway: 60,
+            access_token_typ: false,
         }
+    }
+
+    /// Accept only tokens typed as access tokens (RFC 9068 §4: `typ` is
+    /// `at+jwt`, which "resource servers MUST verify"), so an ID token or any
+    /// other JWT the same issuer signs can't be presented as one. Off by
+    /// default, since many authorization servers don't type their access
+    /// tokens; turn it on where yours does.
+    #[must_use]
+    pub fn require_access_token_type(mut self) -> Self {
+        self.access_token_typ = true;
+        self
     }
 
     /// Accept additional audiences (e.g. a legacy URI alongside the canonical).
@@ -79,7 +92,19 @@ impl<S: JwkSource> JwtValidator<S> {
                 header.alg
             )));
         }
-        let key = self.source.decoding_key(header.kid.as_deref()).await?;
+        if self.access_token_typ
+            && !header.typ.as_deref().is_some_and(|typ| {
+                typ.eq_ignore_ascii_case("at+jwt") || typ.eq_ignore_ascii_case("application/at+jwt")
+            })
+        {
+            return Err(AuthError::InvalidToken(
+                "not typed as an access token (at+jwt)".into(),
+            ));
+        }
+        let key = self
+            .source
+            .decoding_key_for(header.kid.as_deref(), header.alg)
+            .await?;
 
         let mut validation = Validation::new(header.alg);
         validation.set_audience(&self.audiences);
@@ -99,6 +124,10 @@ impl<S: JwkSource> JwtValidator<S> {
 impl<S: JwkSource> BearerValidator for JwtValidator<S> {
     fn validate<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<AuthPrincipal, AuthError>> {
         Box::pin(self.validate_inner(token))
+    }
+
+    fn audiences(&self) -> Vec<String> {
+        self.audiences.clone()
     }
 }
 
@@ -160,5 +189,9 @@ impl BearerValidator for IssuerValidators {
             }
             Ok(principal)
         })
+    }
+
+    fn audiences(&self) -> Vec<String> {
+        self.0.values().flat_map(|v| v.audiences()).collect()
     }
 }
