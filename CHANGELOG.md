@@ -743,6 +743,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The generated wire types' docs render. Every paragraph after the first of
+  a multi-line field doc was indented and showed on docs.rs as a Rust code
+  block; TSDoc `{@link CallToolRequesttools/call}` markup (upstream's
+  `schema.json` drops the ` | `) is now an intra-doc link that rustdoc
+  checks; site-relative `/specification/…` links point at
+  modelcontextprotocol.io; bare URLs are links.
 - A resource template the matcher can't read (`{path:0}`) compiled, was
   listed, and could never be read. The macro now evaluates the runtime's own
   grammar (`uri_template::validate`, a `const fn` the matcher calls first) in
@@ -1300,6 +1306,19 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** the generated wire types drop the unions nothing can decode
+  into: `ServerResult`, `ClientResult` (except `2026-07-28`'s, which is
+  `Result`), `PrimitiveSchemaDefinition`, `EnumSchema` (except
+  `2025-06-18`'s plain object) and `MultiSelectEnumSchema`. typify rendered
+  them as structs with one flattened `Option` per member, every member that
+  fit was filled, and a string enum re-encoded with `type` written three
+  times; `2025-06-18`'s `ServerResult` decoded every result as `Result`.
+  Their member types remain, and codegen now refuses to emit that shape at
+  all. The JSON-RPC and MCP error structs accept only their own `code`
+  (`InvalidParamsError.code` is a newtype that decodes only `-32602`, where
+  it was any `i64`), and an elicitation result's form values may be floats
+  (`ElicitResultContentValueVariant1::Number`), as `schema.ts` types them
+  and the generated `schema.json` does not.
 - **Breaking:** the per-call path stops copying what doesn't change.
   `Claims` is `Arc<Map<…>>` (build one from a map with `.into()`), and
   `RequestContext::client_info` / `client_capabilities` are

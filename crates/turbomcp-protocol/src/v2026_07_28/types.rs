@@ -19,27 +19,27 @@ use ::alloc::{
 ///Optional annotations for the client. The client can use annotations to inform how objects are used or displayed
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct Annotations {
-    /**Describes who the intended audience of this object or data is.
-
-    It can include multiple entries to indicate content useful for multiple audiences (e.g., `["user", "assistant"]`).*/
+    /// Describes who the intended audience of this object or data is.
+    ///
+    /// It can include multiple entries to indicate content useful for multiple audiences (e.g., `["user", "assistant"]`).
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub audience: ::alloc::vec::Vec<Role>,
-    /**The moment the resource was last modified, as an ISO 8601 formatted string.
-
-    Should be an ISO 8601 formatted string (e.g., "2025-01-12T15:00:58Z").
-
-    Examples: last activity timestamp in an open file, timestamp when the resource
-    was attached, etc.*/
+    /// The moment the resource was last modified, as an ISO 8601 formatted string.
+    ///
+    /// Should be an ISO 8601 formatted string (e.g., "2025-01-12T15:00:58Z").
+    ///
+    /// Examples: last activity timestamp in an open file, timestamp when the resource
+    /// was attached, etc.
     #[serde(
         rename = "lastModified",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub last_modified: ::core::option::Option<::alloc::string::String>,
-    /**Describes how important this data is for operating the server.
-
-    A value of 1 means "most important," and indicates that the data is
-    effectively required, while 0 means "least important," and indicates that
-    the data is entirely optional.*/
+    /// Describes how important this data is for operating the server.
+    ///
+    /// A value of 1 means "most important," and indicates that the data is
+    /// effectively required, while 0 means "least important," and indicates that
+    /// the data is entirely optional.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub priority: ::core::option::Option<f64>,
 }
@@ -114,12 +114,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for AudioContentType {
 pub struct BaseMetadata {
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
@@ -204,16 +204,16 @@ impl ::core::convert::TryFrom<::alloc::string::String> for BooleanSchemaType {
 ///A result that supports a time-to-live (TTL) hint for client-side caching.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CacheableResult {
-    /**Indicates the intended scope of the cached response, analogous to HTTP
-    `Cache-Control: public` vs `Cache-Control: private`.
-
-    - `"public"`: The response does not contain user-specific data. Any
-      client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-      the response and serve it across authorization contexts.
-    - `"private"`: The response MAY be cached and reused only within the
-      same authorization context. Caches MUST NOT be shared across
-      authorization contexts (e.g., a different access token requires a
-      different cache).*/
+    /// Indicates the intended scope of the cached response, analogous to HTTP
+    /// `Cache-Control: public` vs `Cache-Control: private`.
+    ///
+    /// - `"public"`: The response does not contain user-specific data. Any
+    ///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+    ///   the response and serve it across authorization contexts.
+    /// - `"private"`: The response MAY be cached and reused only within the
+    ///   same authorization context. Caches MUST NOT be shared across
+    ///   authorization contexts (e.g., a different access token requires a
+    ///   different cache).
     #[serde(
         rename = "cacheScope",
         default = "defaults::cacheable_result_cache_scope"
@@ -224,26 +224,26 @@ pub struct CacheableResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::cacheable_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
-    /**A hint from the server indicating how long (in milliseconds) the
-    client MAY cache this response before re-fetching. Semantics are
-    analogous to HTTP Cache-Control max-age.
-
-    - If 0, The response SHOULD be considered immediately stale,
-      The client MAY re-fetch every time the result is needed.
-    - If positive, the client SHOULD consider the result fresh for this many
-      milliseconds after receiving the response.*/
+    /// A hint from the server indicating how long (in milliseconds) the
+    /// client MAY cache this response before re-fetching. Semantics are
+    /// analogous to HTTP Cache-Control max-age.
+    ///
+    /// - If 0, The response SHOULD be considered immediately stale,
+    ///   The client MAY re-fetch every time the result is needed.
+    /// - If positive, the client SHOULD consider the result fresh for this many
+    ///   milliseconds after receiving the response.
     #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
@@ -257,16 +257,16 @@ impl ::core::default::Default for CacheableResult {
         }
     }
 }
-/**Indicates the intended scope of the cached response, analogous to HTTP
-`Cache-Control: public` vs `Cache-Control: private`.
-
-- `"public"`: The response does not contain user-specific data. Any
-  client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-  the response and serve it across authorization contexts.
-- `"private"`: The response MAY be cached and reused only within the
-  same authorization context. Caches MUST NOT be shared across
-  authorization contexts (e.g., a different access token requires a
-  different cache).*/
+/// Indicates the intended scope of the cached response, analogous to HTTP
+/// `Cache-Control: public` vs `Cache-Control: private`.
+///
+/// - `"public"`: The response does not contain user-specific data. Any
+///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+///   the response and serve it across authorization contexts.
+/// - `"private"`: The response MAY be cached and reused only within the
+///   same authorization context. Caches MUST NOT be shared across
+///   authorization contexts (e.g., a different access token requires a
+///   different cache).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -445,23 +445,23 @@ pub struct CallToolRequestParams {
     )]
     pub request_state: ::core::option::Option<::alloc::string::String>,
 }
-///The result returned by the server for a {@link CallToolRequesttools/call} request.
+///The result returned by the server for a [`tools/call`](CallToolRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CallToolResult {
     ///A list of content objects that represent the unstructured result of the tool call.
     pub content: ::alloc::vec::Vec<ContentBlock>,
-    /**Whether the tool call ended in an error.
-
-    If not set, this is assumed to be false (the call was successful).
-
-    Any errors that originate from the tool SHOULD be reported inside the result
-    object, with `isError` set to true, _not_ as an MCP protocol-level error
-    response. Otherwise, the LLM would not be able to see that an error occurred
-    and self-correct.
-
-    However, any errors in _finding_ the tool, an error indicating that the
-    server does not support tool calls, or any other exceptional conditions,
-    should be reported as an MCP error response.*/
+    /// Whether the tool call ended in an error.
+    ///
+    /// If not set, this is assumed to be false (the call was successful).
+    ///
+    /// Any errors that originate from the tool SHOULD be reported inside the result
+    /// object, with `isError` set to true, _not_ as an MCP protocol-level error
+    /// response. Otherwise, the LLM would not be able to see that an error occurred
+    /// and self-correct.
+    ///
+    /// However, any errors in _finding_ the tool, an error indicating that the
+    /// server does not support tool calls, or any other exceptional conditions,
+    /// should be reported as an MCP error response.
     #[serde(
         rename = "isError",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -472,29 +472,29 @@ pub struct CallToolResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::call_tool_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
-    /**An optional JSON value that represents the structured result of the tool call.
-
-    This can be any JSON value (object, array, string, number, boolean, or null)
-    that conforms to the tool's outputSchema if one is defined.*/
+    /// An optional JSON value that represents the structured result of the tool call.
+    ///
+    /// This can be any JSON value (object, array, string, number, boolean, or null)
+    /// that conforms to the tool's outputSchema if one is defined.
     #[serde(
         rename = "structuredContent",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub structured_content: ::core::option::Option<::serde_json::Value>,
 }
-///A successful response from the server for a {@link CallToolRequesttools/call} request.
+///A successful response from the server for a [`tools/call`](CallToolRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CallToolResultResponse {
     pub id: RequestId,
@@ -565,13 +565,13 @@ impl ::core::convert::From<CallToolResult> for CallToolResultResponseResult {
         Self::CallToolResult(value)
     }
 }
-/**This notification is sent by the client to indicate that it is cancelling a request it previously issued.
-
-On stdio, the server also sends this notification, solely to terminate a {@link SubscriptionsListenRequestsubscriptions/listen} stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.
-
-The request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.
-
-This notification indicates that the result will be unused, so any associated processing SHOULD cease.*/
+/// This notification is sent by the client to indicate that it is cancelling a request it previously issued.
+///
+/// On stdio, the server also sends this notification, solely to terminate a [`subscriptions/listen`](SubscriptionsListenRequest) stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.
+///
+/// The request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.
+///
+/// This notification indicates that the result will be unused, so any associated processing SHOULD cease.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CancelledNotification {
     pub jsonrpc: CancelledNotificationJsonrpc,
@@ -683,9 +683,9 @@ pub struct CancelledNotificationParams {
     ///An optional string describing the reason for the cancellation. This MAY be logged or presented to the user.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub reason: ::core::option::Option<::alloc::string::String>,
-    /**The ID of the request to cancel.
-
-    This MUST correspond to the ID of a request the client previously issued.*/
+    /// The ID of the request to cancel.
+    ///
+    /// This MUST correspond to the ID of a request the client previously issued.
     #[serde(rename = "requestId")]
     pub request_id: RequestId,
 }
@@ -700,12 +700,12 @@ pub struct ClientCapabilities {
         skip_serializing_if = ":: alloc :: collections :: BTreeMap::is_empty"
     )]
     pub experimental: ::alloc::collections::BTreeMap<::alloc::string::String, JsonObject>,
-    /**Optional MCP extensions that the client supports. Keys are extension identifiers
-    (e.g., "io.modelcontextprotocol/oauth-client-credentials"), and values are
-    per-extension settings objects. An empty object indicates support with no settings.
-
-    Keys MUST follow the {@link MetaObject`_meta` key naming rules}, with a
-    mandatory prefix.*/
+    /// Optional MCP extensions that the client supports. Keys are extension identifiers
+    /// (e.g., "io.modelcontextprotocol/oauth-client-credentials"), and values are
+    /// per-extension settings objects. An empty object indicates support with no settings.
+    ///
+    /// Keys MUST follow the [`_meta` key naming rules](MetaObject), with a
+    /// mandatory prefix.
     #[serde(
         default,
         skip_serializing_if = ":: alloc :: collections :: BTreeMap::is_empty"
@@ -728,21 +728,21 @@ pub struct ClientCapabilitiesElicitation {
 ///Present if the client supports sampling from an LLM.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ClientCapabilitiesSampling {
-    /**Whether the client supports context inclusion via `includeContext` parameter.
-    If not declared, servers SHOULD only use `includeContext: "none"` (or omit it).*/
+    /// Whether the client supports context inclusion via `includeContext` parameter.
+    /// If not declared, servers SHOULD only use `includeContext: "none"` (or omit it).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub context: ::core::option::Option<JsonObject>,
     ///Whether the client supports tool use via `tools` and `toolChoice` parameters.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub tools: ::core::option::Option<JsonObject>,
 }
-/**This notification is sent by the client to indicate that it is cancelling a request it previously issued.
-
-On stdio, the server also sends this notification, solely to terminate a {@link SubscriptionsListenRequestsubscriptions/listen} stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.
-
-The request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.
-
-This notification indicates that the result will be unused, so any associated processing SHOULD cease.*/
+/// This notification is sent by the client to indicate that it is cancelling a request it previously issued.
+///
+/// On stdio, the server also sends this notification, solely to terminate a [`subscriptions/listen`](SubscriptionsListenRequest) stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.
+///
+/// The request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.
+///
+/// This notification indicates that the result will be unused, so any associated processing SHOULD cease.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ClientNotification {
     pub jsonrpc: ClientNotificationJsonrpc,
@@ -1076,7 +1076,7 @@ impl ::core::convert::From<ResourceTemplateReference> for CompleteRequestParamsR
         Self::ResourceTemplateReference(value)
     }
 }
-///The result returned by the server for a {@link CompleteRequestcompletion/complete} request.
+///The result returned by the server for a [`completion/complete`](CompleteRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteResult {
     pub completion: CompleteResultCompletion,
@@ -1085,13 +1085,13 @@ pub struct CompleteResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::complete_result_result_type"
@@ -1113,7 +1113,7 @@ pub struct CompleteResultCompletion {
     ///An array of completion values. Must not exceed 100 items.
     pub values: ::alloc::vec::Vec<::alloc::string::String>,
 }
-///A successful response from the server for a {@link CompleteRequestcompletion/complete} request.
+///A successful response from the server for a [`completion/complete`](CompleteRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteResultResponse {
     pub id: RequestId,
@@ -1258,20 +1258,20 @@ impl ::core::convert::TryFrom<::alloc::string::String> for CreateMessageRequestM
 ///Parameters for a `sampling/createMessage` request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CreateMessageRequestParams {
-    /**A request to include context from one or more MCP servers (including the caller), to be attached to the prompt.
-    The client MAY ignore this request.
-
-    Default is `"none"`. The values `"thisServer"` and `"allServers"` are deprecated (SEP-2596): servers SHOULD
-    omit this field or use `"none"`, and SHOULD only use the deprecated values if the client declares
-    {@link ClientCapabilities.sampling.context}.*/
+    /// A request to include context from one or more MCP servers (including the caller), to be attached to the prompt.
+    /// The client MAY ignore this request.
+    ///
+    /// Default is `"none"`. The values `"thisServer"` and `"allServers"` are deprecated (SEP-2596): servers SHOULD
+    /// omit this field or use `"none"`, and SHOULD only use the deprecated values if the client declares
+    /// [`ClientCapabilities.sampling.context`](ClientCapabilities).
     #[serde(
         rename = "includeContext",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub include_context: ::core::option::Option<CreateMessageRequestParamsIncludeContext>,
-    /**The requested maximum number of tokens to sample (to prevent runaway completions).
-
-    The client MAY choose to sample fewer tokens than the requested maximum.*/
+    /// The requested maximum number of tokens to sample (to prevent runaway completions).
+    ///
+    /// The client MAY choose to sample fewer tokens than the requested maximum.
     #[serde(rename = "maxTokens")]
     pub max_tokens: i64,
     pub messages: ::alloc::vec::Vec<SamplingMessage>,
@@ -1298,25 +1298,25 @@ pub struct CreateMessageRequestParams {
     pub system_prompt: ::core::option::Option<::alloc::string::String>,
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub temperature: ::core::option::Option<f64>,
-    /**Controls how the model uses tools.
-    The client MUST return an error if this field is provided but {@link ClientCapabilities.sampling.tools} is not declared.
-    Default is `{ mode: "auto" }`.*/
+    /// Controls how the model uses tools.
+    /// The client MUST return an error if this field is provided but [`ClientCapabilities.sampling.tools`](ClientCapabilities) is not declared.
+    /// Default is `{ mode: "auto" }`.
     #[serde(
         rename = "toolChoice",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub tool_choice: ::core::option::Option<ToolChoice>,
-    /**Tools that the model may use during generation.
-    The client MUST return an error if this field is provided but {@link ClientCapabilities.sampling.tools} is not declared.*/
+    /// Tools that the model may use during generation.
+    /// The client MUST return an error if this field is provided but [`ClientCapabilities.sampling.tools`](ClientCapabilities) is not declared.
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub tools: ::alloc::vec::Vec<Tool>,
 }
-/**A request to include context from one or more MCP servers (including the caller), to be attached to the prompt.
-The client MAY ignore this request.
-
-Default is `"none"`. The values `"thisServer"` and `"allServers"` are deprecated (SEP-2596): servers SHOULD
-omit this field or use `"none"`, and SHOULD only use the deprecated values if the client declares
-{@link ClientCapabilities.sampling.context}.*/
+/// A request to include context from one or more MCP servers (including the caller), to be attached to the prompt.
+/// The client MAY ignore this request.
+///
+/// Default is `"none"`. The values `"thisServer"` and `"allServers"` are deprecated (SEP-2596): servers SHOULD
+/// omit this field or use `"none"`, and SHOULD only use the deprecated values if the client declares
+/// [`ClientCapabilities.sampling.context`](ClientCapabilities).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1373,9 +1373,9 @@ impl ::core::convert::TryFrom<::alloc::string::String>
         value.parse()
     }
 }
-/**The result returned by the client for a {@link CreateMessageRequestsampling/createMessage} request.
-The client should inform the user before returning the sampled message, to allow them
-to inspect the response (human in the loop) and decide whether to allow the server to see it.*/
+/// The result returned by the client for a [`sampling/createMessage`](CreateMessageRequest) request.
+/// The client should inform the user before returning the sampled message, to allow them
+/// to inspect the response (human in the loop) and decide whether to allow the server to see it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CreateMessageResult {
     pub content: CreateMessageResultContent,
@@ -1387,15 +1387,15 @@ pub struct CreateMessageResult {
     ///The name of the model that generated the message.
     pub model: ::alloc::string::String,
     pub role: Role,
-    /**The reason why sampling stopped, if known.
-
-    Standard values:
-    - `"endTurn"`: Natural end of the assistant's turn
-    - `"stopSequence"`: A stop sequence was encountered
-    - `"maxTokens"`: Maximum token limit was reached
-    - `"toolUse"`: The model wants to use one or more tools
-
-    This field is an open string to allow for provider-specific stop reasons.*/
+    /// The reason why sampling stopped, if known.
+    ///
+    /// Standard values:
+    /// - `"endTurn"`: Natural end of the assistant's turn
+    /// - `"stopSequence"`: A stop sequence was encountered
+    /// - `"maxTokens"`: Maximum token limit was reached
+    /// - `"toolUse"`: The model wants to use one or more tools
+    ///
+    /// This field is an open string to allow for provider-specific stop reasons.
     #[serde(
         rename = "stopReason",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -1478,10 +1478,10 @@ impl ::core::str::FromStr for Cursor {
         Ok(Self(value.to_string()))
     }
 }
-/**A request from the client asking the server to advertise its supported
-protocol versions, capabilities, and other metadata. Servers **MUST**
-implement `server/discover`. Clients **MAY** call it but are not required
-to — version negotiation can also happen inline via per-request `_meta`.*/
+/// A request from the client asking the server to advertise its supported
+/// protocol versions, capabilities, and other metadata. Servers **MUST**
+/// implement `server/discover`. Clients **MAY** call it but are not required
+/// to — version negotiation can also happen inline via per-request `_meta`.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct DiscoverRequest {
     pub id: RequestId,
@@ -1583,19 +1583,19 @@ impl ::core::convert::TryFrom<::alloc::string::String> for DiscoverRequestMethod
         value.parse()
     }
 }
-///The result returned by the server for a {@link DiscoverRequestserver/discover} request.
+///The result returned by the server for a [`server/discover`](DiscoverRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct DiscoverResult {
-    /**Indicates the intended scope of the cached response, analogous to HTTP
-    `Cache-Control: public` vs `Cache-Control: private`.
-
-    - `"public"`: The response does not contain user-specific data. Any
-      client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-      the response and serve it across authorization contexts.
-    - `"private"`: The response MAY be cached and reused only within the
-      same authorization context. Caches MUST NOT be shared across
-      authorization contexts (e.g., a different access token requires a
-      different cache).*/
+    /// Indicates the intended scope of the cached response, analogous to HTTP
+    /// `Cache-Control: public` vs `Cache-Control: private`.
+    ///
+    /// - `"public"`: The response does not contain user-specific data. Any
+    ///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+    ///   the response and serve it across authorization contexts.
+    /// - `"private"`: The response MAY be cached and reused only within the
+    ///   same authorization context. Caches MUST NOT be shared across
+    ///   authorization contexts (e.g., a different access token requires a
+    ///   different cache).
     #[serde(
         rename = "cacheScope",
         default = "defaults::discover_result_cache_scope"
@@ -1603,12 +1603,12 @@ pub struct DiscoverResult {
     pub cache_scope: DiscoverResultCacheScope,
     ///The capabilities of the server.
     pub capabilities: ServerCapabilities,
-    /**Natural-language guidance describing the server and its features.
-
-    This can be used by clients to improve an LLM's understanding of
-    available tools (e.g., by including it in a system prompt). It should
-    focus on information that helps the model use the server effectively
-    and should not duplicate information already in tool descriptions.*/
+    /// Natural-language guidance describing the server and its features.
+    ///
+    /// This can be used by clients to improve an LLM's understanding of
+    /// available tools (e.g., by including it in a system prompt). It should
+    /// focus on information that helps the model use the server effectively
+    /// and should not duplicate information already in tool descriptions.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub instructions: ::core::option::Option<::alloc::string::String>,
     #[serde(
@@ -1616,43 +1616,43 @@ pub struct DiscoverResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::discover_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
-    /**MCP Protocol Versions this server supports. The client should choose a
-    version from this list for use in subsequent requests.*/
+    /// MCP Protocol Versions this server supports. The client should choose a
+    /// version from this list for use in subsequent requests.
     #[serde(rename = "supportedVersions")]
     pub supported_versions: ::alloc::vec::Vec<::alloc::string::String>,
-    /**A hint from the server indicating how long (in milliseconds) the
-    client MAY cache this response before re-fetching. Semantics are
-    analogous to HTTP Cache-Control max-age.
-
-    - If 0, The response SHOULD be considered immediately stale,
-      The client MAY re-fetch every time the result is needed.
-    - If positive, the client SHOULD consider the result fresh for this many
-      milliseconds after receiving the response.*/
+    /// A hint from the server indicating how long (in milliseconds) the
+    /// client MAY cache this response before re-fetching. Semantics are
+    /// analogous to HTTP Cache-Control max-age.
+    ///
+    /// - If 0, The response SHOULD be considered immediately stale,
+    ///   The client MAY re-fetch every time the result is needed.
+    /// - If positive, the client SHOULD consider the result fresh for this many
+    ///   milliseconds after receiving the response.
     #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
-/**Indicates the intended scope of the cached response, analogous to HTTP
-`Cache-Control: public` vs `Cache-Control: private`.
-
-- `"public"`: The response does not contain user-specific data. Any
-  client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-  the response and serve it across authorization contexts.
-- `"private"`: The response MAY be cached and reused only within the
-  same authorization context. Caches MUST NOT be shared across
-  authorization contexts (e.g., a different access token requires a
-  different cache).*/
+/// Indicates the intended scope of the cached response, analogous to HTTP
+/// `Cache-Control: public` vs `Cache-Control: private`.
+///
+/// - `"public"`: The response does not contain user-specific data. Any
+///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+///   the response and serve it across authorization contexts.
+/// - `"private"`: The response MAY be cached and reused only within the
+///   same authorization context. Caches MUST NOT be shared across
+///   authorization contexts (e.g., a different access token requires a
+///   different cache).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1708,7 +1708,7 @@ impl ::core::default::Default for DiscoverResultCacheScope {
         DiscoverResultCacheScope::Private
     }
 }
-///A successful response from the server for a {@link DiscoverRequestserver/discover} request.
+///A successful response from the server for a [`server/discover`](DiscoverRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct DiscoverResultResponse {
     pub id: RequestId,
@@ -1826,8 +1826,8 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ElicitRequestFormPara
         value.parse()
     }
 }
-/**A restricted subset of JSON Schema.
-Only top-level properties are allowed, without nesting.*/
+/// A restricted subset of JSON Schema.
+/// Only top-level properties are allowed, without nesting.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ElicitRequestFormParamsRequestedSchema {
     pub properties: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
@@ -1964,27 +1964,27 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ElicitRequestUrlParam
         value.parse()
     }
 }
-///The result returned by the client for an {@link ElicitRequestelicitation/create} request.
+///The result returned by the client for an [`elicitation/create`](ElicitRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ElicitResult {
-    /**The user action in response to the elicitation.
-    - `"accept"`: User submitted the form/confirmed the action
-    - `"decline"`: User explicitly declined the action
-    - `"cancel"`: User dismissed without making an explicit choice*/
+    /// The user action in response to the elicitation.
+    /// - `"accept"`: User submitted the form/confirmed the action
+    /// - `"decline"`: User explicitly declined the action
+    /// - `"cancel"`: User dismissed without making an explicit choice
     pub action: ElicitResultAction,
-    /**The submitted form data, only present when action is `"accept"` and mode was `"form"`.
-    Contains values matching the requested schema.
-    Omitted for out-of-band mode responses.*/
+    /// The submitted form data, only present when action is `"accept"` and mode was `"form"`.
+    /// Contains values matching the requested schema.
+    /// Omitted for out-of-band mode responses.
     #[serde(
         default,
         skip_serializing_if = ":: alloc :: collections :: BTreeMap::is_empty"
     )]
     pub content: ::alloc::collections::BTreeMap<::alloc::string::String, ElicitResultContentValue>,
 }
-/**The user action in response to the elicitation.
-- `"accept"`: User submitted the form/confirmed the action
-- `"decline"`: User explicitly declined the action
-- `"cancel"`: User dismissed without making an explicit choice*/
+/// The user action in response to the elicitation.
+/// - `"accept"`: User submitted the form/confirmed the action
+/// - `"decline"`: User explicitly declined the action
+/// - `"cancel"`: User dismissed without making an explicit choice
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2064,6 +2064,7 @@ impl ::core::convert::From<ElicitResultContentValueVariant1> for ElicitResultCon
 pub enum ElicitResultContentValueVariant1 {
     Boolean(bool),
     Integer(i64),
+    Number(f64),
     String(::alloc::string::String),
 }
 impl ::core::fmt::Display for ElicitResultContentValueVariant1 {
@@ -2071,6 +2072,7 @@ impl ::core::fmt::Display for ElicitResultContentValueVariant1 {
         match self {
             Self::Boolean(x) => x.fmt(f),
             Self::Integer(x) => x.fmt(f),
+            Self::Number(x) => x.fmt(f),
             Self::String(x) => x.fmt(f),
         }
     }
@@ -2085,10 +2087,15 @@ impl ::core::convert::From<i64> for ElicitResultContentValueVariant1 {
         Self::Integer(value)
     }
 }
-/**The contents of a resource, embedded into a prompt or tool call result.
-
-It is up to the client how best to render embedded resources for the benefit
-of the LLM and/or the user.*/
+impl ::core::convert::From<f64> for ElicitResultContentValueVariant1 {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+/// The contents of a resource, embedded into a prompt or tool call result.
+///
+/// It is up to the client how best to render embedded resources for the benefit
+/// of the LLM and/or the user.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct EmbeddedResource {
     ///Optional annotations for the client.
@@ -2186,20 +2193,6 @@ impl ::core::convert::From<Result> for EmptyResult {
     fn from(value: Result) -> Self {
         Self(value)
     }
-}
-///`EnumSchema`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-pub struct EnumSchema {
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_0: ::core::option::Option<UntitledSingleSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_1: ::core::option::Option<TitledSingleSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_2: ::core::option::Option<UntitledMultiSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_3: ::core::option::Option<TitledMultiSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_4: ::core::option::Option<LegacyTitledEnumSchema>,
 }
 ///`Error`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -2338,7 +2331,7 @@ pub struct GetPromptRequestParams {
     )]
     pub request_state: ::core::option::Option<::alloc::string::String>,
 }
-///The result returned by the server for a {@link GetPromptRequestprompts/get} request.
+///The result returned by the server for a [`prompts/get`](GetPromptRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct GetPromptResult {
     ///An optional description for the prompt.
@@ -2350,20 +2343,20 @@ pub struct GetPromptResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::get_prompt_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
 }
-///A successful response from the server for a {@link GetPromptRequestprompts/get} request.
+///A successful response from the server for a [`prompts/get`](GetPromptRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct GetPromptResultResponse {
     pub id: RequestId,
@@ -2434,10 +2427,10 @@ impl ::core::convert::From<GetPromptResult> for GetPromptResultResponseResult {
         Self::GetPromptResult(value)
     }
 }
-/**Returned when a server rejects a request because the values in the HTTP
-headers do not match the corresponding values in the request body, or
-because required headers are missing or malformed. For HTTP, the response
-status code MUST be `400 Bad Request`.*/
+/// Returned when a server rejects a request because the values in the HTTP
+/// headers do not match the corresponding values in the request body, or
+/// because required headers are missing or malformed. For HTTP, the response
+/// status code MUST be `400 Bad Request`.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct HeaderMismatchError {
     pub error: HeaderMismatchErrorError,
@@ -2448,12 +2441,46 @@ pub struct HeaderMismatchError {
 ///`HeaderMismatchErrorError`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct HeaderMismatchErrorError {
-    pub code: i64,
+    pub code: HeaderMismatchErrorErrorCode,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub data: ::core::option::Option<::serde_json::Value>,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
+}
+///`HeaderMismatchErrorErrorCode`
+#[derive(::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct HeaderMismatchErrorErrorCode(i64);
+impl ::core::ops::Deref for HeaderMismatchErrorErrorCode {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::core::convert::From<HeaderMismatchErrorErrorCode> for i64 {
+    fn from(value: HeaderMismatchErrorErrorCode) -> Self {
+        value.0
+    }
+}
+impl ::core::convert::TryFrom<i64> for HeaderMismatchErrorErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::core::result::Result<Self, self::error::ConversionError> {
+        if ![-32020_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for HeaderMismatchErrorErrorCode {
+    fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
 }
 ///`HeaderMismatchErrorJsonrpc`
 #[derive(
@@ -2505,41 +2532,41 @@ impl ::core::convert::TryFrom<::alloc::string::String> for HeaderMismatchErrorJs
 ///An optionally-sized icon that can be displayed in a user interface.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Icon {
-    /**Optional MIME type override if the source MIME type is missing or generic.
-    For example: `"image/png"`, `"image/jpeg"`, or `"image/svg+xml"`.*/
+    /// Optional MIME type override if the source MIME type is missing or generic.
+    /// For example: `"image/png"`, `"image/jpeg"`, or `"image/svg+xml"`.
     #[serde(
         rename = "mimeType",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub mime_type: ::core::option::Option<::alloc::string::String>,
-    /**Optional array of strings that specify sizes at which the icon can be used.
-    Each string should be in WxH format (e.g., `"48x48"`, `"96x96"`) or `"any"` for scalable formats like SVG.
-
-    If not provided, the client should assume that the icon can be used at any size.*/
+    /// Optional array of strings that specify sizes at which the icon can be used.
+    /// Each string should be in WxH format (e.g., `"48x48"`, `"96x96"`) or `"any"` for scalable formats like SVG.
+    ///
+    /// If not provided, the client should assume that the icon can be used at any size.
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub sizes: ::alloc::vec::Vec<::alloc::string::String>,
-    /**A standard URI pointing to an icon resource. May be an HTTP/HTTPS URL or a
-    `data:` URI with Base64-encoded image data.
-
-    Consumers SHOULD take steps to ensure URLs serving icons are from the
-    same domain as the client/server or a trusted domain.
-
-    Consumers SHOULD take appropriate precautions when consuming SVGs as they can contain
-    executable JavaScript.*/
+    /// A standard URI pointing to an icon resource. May be an HTTP/HTTPS URL or a
+    /// `data:` URI with Base64-encoded image data.
+    ///
+    /// Consumers SHOULD take steps to ensure URLs serving icons are from the
+    /// same domain as the client/server or a trusted domain.
+    ///
+    /// Consumers SHOULD take appropriate precautions when consuming SVGs as they can contain
+    /// executable JavaScript.
     pub src: ::alloc::string::String,
-    /**Optional specifier for the theme this icon is designed for. `"light"` indicates
-    the icon is designed to be used with a light background, and `"dark"` indicates
-    the icon is designed to be used with a dark background.
-
-    If not provided, the client should assume the icon can be used with any theme.*/
+    /// Optional specifier for the theme this icon is designed for. `"light"` indicates
+    /// the icon is designed to be used with a light background, and `"dark"` indicates
+    /// the icon is designed to be used with a dark background.
+    ///
+    /// If not provided, the client should assume the icon can be used with any theme.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub theme: ::core::option::Option<IconTheme>,
 }
-/**Optional specifier for the theme this icon is designed for. `"light"` indicates
-the icon is designed to be used with a light background, and `"dark"` indicates
-the icon is designed to be used with a dark background.
-
-If not provided, the client should assume the icon can be used with any theme.*/
+/// Optional specifier for the theme this icon is designed for. `"light"` indicates
+/// the icon is designed to be used with a light background, and `"dark"` indicates
+/// the icon is designed to be used with a dark background.
+///
+/// If not provided, the client should assume the icon can be used with any theme.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2593,15 +2620,15 @@ impl ::core::convert::TryFrom<::alloc::string::String> for IconTheme {
 ///Base interface to add `icons` property.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct Icons {
-    /**Optional set of sized icons that the client can display in a user interface.
-
-    Clients that support rendering icons MUST support at least the following MIME types:
-    - `image/png` - PNG images (safe, universal compatibility)
-    - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
-
-    Clients that support rendering icons SHOULD also support:
-    - `image/svg+xml` - SVG images (scalable but requires security precautions)
-    - `image/webp` - WebP images (modern, efficient format)*/
+    /// Optional set of sized icons that the client can display in a user interface.
+    ///
+    /// Clients that support rendering icons MUST support at least the following MIME types:
+    /// - `image/png` - PNG images (safe, universal compatibility)
+    /// - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
+    ///
+    /// Clients that support rendering icons SHOULD also support:
+    /// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+    /// - `image/webp` - WebP images (modern, efficient format)
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub icons: ::alloc::vec::Vec<Icon>,
 }
@@ -2674,32 +2701,32 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ImageContentType {
 ///Describes the MCP implementation.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Implementation {
-    /**An optional human-readable description of what this implementation does.
-
-    This can be used by clients or servers to provide context about their purpose
-    and capabilities. For example, a server might describe the types of resources
-    or tools it provides, while a client might describe its intended use case.*/
+    /// An optional human-readable description of what this implementation does.
+    ///
+    /// This can be used by clients or servers to provide context about their purpose
+    /// and capabilities. For example, a server might describe the types of resources
+    /// or tools it provides, while a client might describe its intended use case.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    /**Optional set of sized icons that the client can display in a user interface.
-
-    Clients that support rendering icons MUST support at least the following MIME types:
-    - `image/png` - PNG images (safe, universal compatibility)
-    - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
-
-    Clients that support rendering icons SHOULD also support:
-    - `image/svg+xml` - SVG images (scalable but requires security precautions)
-    - `image/webp` - WebP images (modern, efficient format)*/
+    /// Optional set of sized icons that the client can display in a user interface.
+    ///
+    /// Clients that support rendering icons MUST support at least the following MIME types:
+    /// - `image/png` - PNG images (safe, universal compatibility)
+    /// - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
+    ///
+    /// Clients that support rendering icons SHOULD also support:
+    /// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+    /// - `image/webp` - WebP images (modern, efficient format)
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub icons: ::alloc::vec::Vec<Icon>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     ///The version of this implementation.
@@ -2734,8 +2761,8 @@ impl ::core::convert::From<ElicitRequest> for InputRequest {
         Self::ElicitRequest(value)
     }
 }
-/**A map of server-initiated requests that the client must fulfill.
-Keys are server-assigned identifiers; values are the request objects.*/
+/// A map of server-initiated requests that the client must fulfill.
+/// Keys are server-assigned identifiers; values are the request objects.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(transparent)]
 pub struct InputRequests(pub ::alloc::collections::BTreeMap<::alloc::string::String, InputRequest>);
@@ -2759,10 +2786,10 @@ impl ::core::convert::From<::alloc::collections::BTreeMap<::alloc::string::Strin
         Self(value)
     }
 }
-/**An InputRequiredResult sent by the server to indicate that additional input is needed
-before the request can be completed.
-
-At least one of `inputRequests` or `requestState` MUST be present.*/
+/// An InputRequiredResult sent by the server to indicate that additional input is needed
+/// before the request can be completed.
+///
+/// At least one of `inputRequests` or `requestState` MUST be present.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InputRequiredResult {
     #[serde(
@@ -2780,23 +2807,23 @@ pub struct InputRequiredResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub request_state: ::core::option::Option<::alloc::string::String>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(rename = "resultType")]
     pub result_type: InputRequiredResultResultType,
 }
-/**Indicates the type of the result, which allows the client to determine
-how to parse the result object.
-
-Servers implementing this protocol version MUST include this field.
-For backward compatibility, when a client receives a result from a
-server implementing an earlier protocol version (which does not include
-`resultType`), the client MUST treat the absent field as `"complete"`.*/
+/// Indicates the type of the result, which allows the client to determine
+/// how to parse the result object.
+///
+/// Servers implementing this protocol version MUST include this field.
+/// For backward compatibility, when a client receives a result from a
+/// server implementing an earlier protocol version (which does not include
+/// `resultType`), the client MUST treat the absent field as `"complete"`.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2882,9 +2909,9 @@ pub struct InputResponseRequestParams {
     )]
     pub request_state: ::core::option::Option<::alloc::string::String>,
 }
-/**A map of client responses to server-initiated requests.
-Keys correspond to the keys in the {@link InputRequests} map;
-values are the client's result for each request.*/
+/// A map of client responses to server-initiated requests.
+/// Keys correspond to the keys in the [`InputRequests`] map;
+/// values are the client's result for each request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(transparent)]
 pub struct InputResponses(
@@ -2914,43 +2941,145 @@ impl ::core::convert::From<::alloc::collections::BTreeMap<::alloc::string::Strin
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InternalError {
     ///The error type that occurred.
-    pub code: i64,
+    pub code: InternalErrorCode,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub data: ::core::option::Option<::serde_json::Value>,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
 }
-/**A JSON-RPC error indicating that the method parameters are invalid or malformed.
-
-In MCP, this error is returned in various contexts when request parameters fail validation:
-
-- **Tools**: Unknown tool name or invalid tool arguments
-- **Prompts**: Unknown prompt name or missing required arguments
-- **Pagination**: Invalid or expired cursor values
-- **Logging**: Invalid log level
-- **Elicitation**: Server requests an elicitation mode not declared in client capabilities
-- **Sampling**: Missing tool result or tool results mixed with other content*/
+///The error type that occurred.
+#[derive(::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct InternalErrorCode(i64);
+impl ::core::ops::Deref for InternalErrorCode {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::core::convert::From<InternalErrorCode> for i64 {
+    fn from(value: InternalErrorCode) -> Self {
+        value.0
+    }
+}
+impl ::core::convert::TryFrom<i64> for InternalErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::core::result::Result<Self, self::error::ConversionError> {
+        if ![-32603_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for InternalErrorCode {
+    fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+/// A JSON-RPC error indicating that the method parameters are invalid or malformed.
+///
+/// In MCP, this error is returned in various contexts when request parameters fail validation:
+///
+/// - **Tools**: Unknown tool name or invalid tool arguments
+/// - **Prompts**: Unknown prompt name or missing required arguments
+/// - **Pagination**: Invalid or expired cursor values
+/// - **Logging**: Invalid log level
+/// - **Elicitation**: Server requests an elicitation mode not declared in client capabilities
+/// - **Sampling**: Missing tool result or tool results mixed with other content
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InvalidParamsError {
     ///The error type that occurred.
-    pub code: i64,
+    pub code: InvalidParamsErrorCode,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub data: ::core::option::Option<::serde_json::Value>,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
+}
+///The error type that occurred.
+#[derive(::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct InvalidParamsErrorCode(i64);
+impl ::core::ops::Deref for InvalidParamsErrorCode {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::core::convert::From<InvalidParamsErrorCode> for i64 {
+    fn from(value: InvalidParamsErrorCode) -> Self {
+        value.0
+    }
+}
+impl ::core::convert::TryFrom<i64> for InvalidParamsErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::core::result::Result<Self, self::error::ConversionError> {
+        if ![-32602_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for InvalidParamsErrorCode {
+    fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
 }
 ///A JSON-RPC error indicating that the request is not a valid request object. This error is returned when the message structure does not conform to the JSON-RPC 2.0 specification requirements for a request (e.g., missing required fields like `jsonrpc` or `method`, or using invalid types for these fields).
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InvalidRequestError {
     ///The error type that occurred.
-    pub code: i64,
+    pub code: InvalidRequestErrorCode,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub data: ::core::option::Option<::serde_json::Value>,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
+}
+///The error type that occurred.
+#[derive(::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct InvalidRequestErrorCode(i64);
+impl ::core::ops::Deref for InvalidRequestErrorCode {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::core::convert::From<InvalidRequestErrorCode> for i64 {
+    fn from(value: InvalidRequestErrorCode) -> Self {
+        value.0
+    }
+}
+impl ::core::convert::TryFrom<i64> for InvalidRequestErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::core::result::Result<Self, self::error::ConversionError> {
+        if ![-32600_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for InvalidRequestErrorCode {
+    fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
 }
 ///`JsonArray`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3282,8 +3411,8 @@ impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcResultResponse
         value.parse()
     }
 }
-/**Use {@link TitledSingleSelectEnumSchema} instead.
-This interface will be removed in a future version.*/
+/// Use [`TitledSingleSelectEnumSchema`] instead.
+/// This interface will be removed in a future version.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct LegacyTitledEnumSchema {
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
@@ -3292,8 +3421,8 @@ pub struct LegacyTitledEnumSchema {
     pub description: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "enum")]
     pub enum_: ::alloc::vec::Vec<::alloc::string::String>,
-    /**(Legacy) Display names for enum values.
-    Non-standard according to JSON schema 2020-12.*/
+    /// (Legacy) Display names for enum values.
+    /// Non-standard according to JSON schema 2020-12.
     #[serde(
         rename = "enumNames",
         default,
@@ -3454,19 +3583,19 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListPromptsRequestMet
         value.parse()
     }
 }
-///The result returned by the server for a {@link ListPromptsRequestprompts/list} request.
+///The result returned by the server for a [`prompts/list`](ListPromptsRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListPromptsResult {
-    /**Indicates the intended scope of the cached response, analogous to HTTP
-    `Cache-Control: public` vs `Cache-Control: private`.
-
-    - `"public"`: The response does not contain user-specific data. Any
-      client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-      the response and serve it across authorization contexts.
-    - `"private"`: The response MAY be cached and reused only within the
-      same authorization context. Caches MUST NOT be shared across
-      authorization contexts (e.g., a different access token requires a
-      different cache).*/
+    /// Indicates the intended scope of the cached response, analogous to HTTP
+    /// `Cache-Control: public` vs `Cache-Control: private`.
+    ///
+    /// - `"public"`: The response does not contain user-specific data. Any
+    ///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+    ///   the response and serve it across authorization contexts.
+    /// - `"private"`: The response MAY be cached and reused only within the
+    ///   same authorization context. Caches MUST NOT be shared across
+    ///   authorization contexts (e.g., a different access token requires a
+    ///   different cache).
     #[serde(
         rename = "cacheScope",
         default = "defaults::list_prompts_result_cache_scope"
@@ -3477,47 +3606,47 @@ pub struct ListPromptsResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     pub prompts: ::alloc::vec::Vec<Prompt>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::list_prompts_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
-    /**A hint from the server indicating how long (in milliseconds) the
-    client MAY cache this response before re-fetching. Semantics are
-    analogous to HTTP Cache-Control max-age.
-
-    - If 0, The response SHOULD be considered immediately stale,
-      The client MAY re-fetch every time the result is needed.
-    - If positive, the client SHOULD consider the result fresh for this many
-      milliseconds after receiving the response.*/
+    /// A hint from the server indicating how long (in milliseconds) the
+    /// client MAY cache this response before re-fetching. Semantics are
+    /// analogous to HTTP Cache-Control max-age.
+    ///
+    /// - If 0, The response SHOULD be considered immediately stale,
+    ///   The client MAY re-fetch every time the result is needed.
+    /// - If positive, the client SHOULD consider the result fresh for this many
+    ///   milliseconds after receiving the response.
     #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
-/**Indicates the intended scope of the cached response, analogous to HTTP
-`Cache-Control: public` vs `Cache-Control: private`.
-
-- `"public"`: The response does not contain user-specific data. Any
-  client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-  the response and serve it across authorization contexts.
-- `"private"`: The response MAY be cached and reused only within the
-  same authorization context. Caches MUST NOT be shared across
-  authorization contexts (e.g., a different access token requires a
-  different cache).*/
+/// Indicates the intended scope of the cached response, analogous to HTTP
+/// `Cache-Control: public` vs `Cache-Control: private`.
+///
+/// - `"public"`: The response does not contain user-specific data. Any
+///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+///   the response and serve it across authorization contexts.
+/// - `"private"`: The response MAY be cached and reused only within the
+///   same authorization context. Caches MUST NOT be shared across
+///   authorization contexts (e.g., a different access token requires a
+///   different cache).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3573,7 +3702,7 @@ impl ::core::default::Default for ListPromptsResultCacheScope {
         ListPromptsResultCacheScope::Private
     }
 }
-///A successful response from the server for a {@link ListPromptsRequestprompts/list} request.
+///A successful response from the server for a [`prompts/list`](ListPromptsRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListPromptsResultResponse {
     pub id: RequestId,
@@ -3729,19 +3858,19 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListResourceTemplates
         value.parse()
     }
 }
-///The result returned by the server for a {@link ListResourceTemplatesRequestresources/templates/list} request.
+///The result returned by the server for a [`resources/templates/list`](ListResourceTemplatesRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourceTemplatesResult {
-    /**Indicates the intended scope of the cached response, analogous to HTTP
-    `Cache-Control: public` vs `Cache-Control: private`.
-
-    - `"public"`: The response does not contain user-specific data. Any
-      client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-      the response and serve it across authorization contexts.
-    - `"private"`: The response MAY be cached and reused only within the
-      same authorization context. Caches MUST NOT be shared across
-      authorization contexts (e.g., a different access token requires a
-      different cache).*/
+    /// Indicates the intended scope of the cached response, analogous to HTTP
+    /// `Cache-Control: public` vs `Cache-Control: private`.
+    ///
+    /// - `"public"`: The response does not contain user-specific data. Any
+    ///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+    ///   the response and serve it across authorization contexts.
+    /// - `"private"`: The response MAY be cached and reused only within the
+    ///   same authorization context. Caches MUST NOT be shared across
+    ///   authorization contexts (e.g., a different access token requires a
+    ///   different cache).
     #[serde(
         rename = "cacheScope",
         default = "defaults::list_resource_templates_result_cache_scope"
@@ -3752,8 +3881,8 @@ pub struct ListResourceTemplatesResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -3761,39 +3890,39 @@ pub struct ListResourceTemplatesResult {
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "resourceTemplates")]
     pub resource_templates: ::alloc::vec::Vec<ResourceTemplate>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::list_resource_templates_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
-    /**A hint from the server indicating how long (in milliseconds) the
-    client MAY cache this response before re-fetching. Semantics are
-    analogous to HTTP Cache-Control max-age.
-
-    - If 0, The response SHOULD be considered immediately stale,
-      The client MAY re-fetch every time the result is needed.
-    - If positive, the client SHOULD consider the result fresh for this many
-      milliseconds after receiving the response.*/
+    /// A hint from the server indicating how long (in milliseconds) the
+    /// client MAY cache this response before re-fetching. Semantics are
+    /// analogous to HTTP Cache-Control max-age.
+    ///
+    /// - If 0, The response SHOULD be considered immediately stale,
+    ///   The client MAY re-fetch every time the result is needed.
+    /// - If positive, the client SHOULD consider the result fresh for this many
+    ///   milliseconds after receiving the response.
     #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
-/**Indicates the intended scope of the cached response, analogous to HTTP
-`Cache-Control: public` vs `Cache-Control: private`.
-
-- `"public"`: The response does not contain user-specific data. Any
-  client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-  the response and serve it across authorization contexts.
-- `"private"`: The response MAY be cached and reused only within the
-  same authorization context. Caches MUST NOT be shared across
-  authorization contexts (e.g., a different access token requires a
-  different cache).*/
+/// Indicates the intended scope of the cached response, analogous to HTTP
+/// `Cache-Control: public` vs `Cache-Control: private`.
+///
+/// - `"public"`: The response does not contain user-specific data. Any
+///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+///   the response and serve it across authorization contexts.
+/// - `"private"`: The response MAY be cached and reused only within the
+///   same authorization context. Caches MUST NOT be shared across
+///   authorization contexts (e.g., a different access token requires a
+///   different cache).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3849,7 +3978,7 @@ impl ::core::default::Default for ListResourceTemplatesResultCacheScope {
         ListResourceTemplatesResultCacheScope::Private
     }
 }
-///A successful response from the server for a {@link ListResourceTemplatesRequestresources/templates/list} request.
+///A successful response from the server for a [`resources/templates/list`](ListResourceTemplatesRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourceTemplatesResultResponse {
     pub id: RequestId,
@@ -4007,19 +4136,19 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListResourcesRequestM
         value.parse()
     }
 }
-///The result returned by the server for a {@link ListResourcesRequestresources/list} request.
+///The result returned by the server for a [`resources/list`](ListResourcesRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourcesResult {
-    /**Indicates the intended scope of the cached response, analogous to HTTP
-    `Cache-Control: public` vs `Cache-Control: private`.
-
-    - `"public"`: The response does not contain user-specific data. Any
-      client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-      the response and serve it across authorization contexts.
-    - `"private"`: The response MAY be cached and reused only within the
-      same authorization context. Caches MUST NOT be shared across
-      authorization contexts (e.g., a different access token requires a
-      different cache).*/
+    /// Indicates the intended scope of the cached response, analogous to HTTP
+    /// `Cache-Control: public` vs `Cache-Control: private`.
+    ///
+    /// - `"public"`: The response does not contain user-specific data. Any
+    ///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+    ///   the response and serve it across authorization contexts.
+    /// - `"private"`: The response MAY be cached and reused only within the
+    ///   same authorization context. Caches MUST NOT be shared across
+    ///   authorization contexts (e.g., a different access token requires a
+    ///   different cache).
     #[serde(
         rename = "cacheScope",
         default = "defaults::list_resources_result_cache_scope"
@@ -4030,47 +4159,47 @@ pub struct ListResourcesResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     pub resources: ::alloc::vec::Vec<Resource>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::list_resources_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
-    /**A hint from the server indicating how long (in milliseconds) the
-    client MAY cache this response before re-fetching. Semantics are
-    analogous to HTTP Cache-Control max-age.
-
-    - If 0, The response SHOULD be considered immediately stale,
-      The client MAY re-fetch every time the result is needed.
-    - If positive, the client SHOULD consider the result fresh for this many
-      milliseconds after receiving the response.*/
+    /// A hint from the server indicating how long (in milliseconds) the
+    /// client MAY cache this response before re-fetching. Semantics are
+    /// analogous to HTTP Cache-Control max-age.
+    ///
+    /// - If 0, The response SHOULD be considered immediately stale,
+    ///   The client MAY re-fetch every time the result is needed.
+    /// - If positive, the client SHOULD consider the result fresh for this many
+    ///   milliseconds after receiving the response.
     #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
-/**Indicates the intended scope of the cached response, analogous to HTTP
-`Cache-Control: public` vs `Cache-Control: private`.
-
-- `"public"`: The response does not contain user-specific data. Any
-  client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-  the response and serve it across authorization contexts.
-- `"private"`: The response MAY be cached and reused only within the
-  same authorization context. Caches MUST NOT be shared across
-  authorization contexts (e.g., a different access token requires a
-  different cache).*/
+/// Indicates the intended scope of the cached response, analogous to HTTP
+/// `Cache-Control: public` vs `Cache-Control: private`.
+///
+/// - `"public"`: The response does not contain user-specific data. Any
+///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+///   the response and serve it across authorization contexts.
+/// - `"private"`: The response MAY be cached and reused only within the
+///   same authorization context. Caches MUST NOT be shared across
+///   authorization contexts (e.g., a different access token requires a
+///   different cache).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4126,7 +4255,7 @@ impl ::core::default::Default for ListResourcesResultCacheScope {
         ListResourcesResultCacheScope::Private
     }
 }
-///A successful response from the server for a {@link ListResourcesRequestresources/list} request.
+///A successful response from the server for a [`resources/list`](ListResourcesRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourcesResultResponse {
     pub id: RequestId,
@@ -4180,13 +4309,13 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListResourcesResultRe
         value.parse()
     }
 }
-/**Sent from the server to request a list of root URIs from the client. Roots allow
-servers to ask for specific directories or files to operate on. A common example
-for roots is providing a set of repositories or directories a server should operate
-on.
-
-This request is typically used when the server needs to understand the file system
-structure or access specific locations that the client has permission to read from.*/
+/// Sent from the server to request a list of root URIs from the client. Roots allow
+/// servers to ask for specific directories or files to operate on. A common example
+/// for roots is providing a set of repositories or directories a server should operate
+/// on.
+///
+/// This request is typically used when the server needs to understand the file system
+/// structure or access specific locations that the client has permission to read from.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsRequest {
     pub method: ListRootsRequestMethod,
@@ -4249,9 +4378,9 @@ pub struct ListRootsRequestParams {
     )]
     pub meta: ::core::option::Option<MetaObject>,
 }
-/**The result returned by the client for a {@link ListRootsRequestroots/list} request.
-This result contains an array of {@link Root} objects, each representing a root directory
-or file that the server can operate on.*/
+/// The result returned by the client for a [`roots/list`](ListRootsRequest) request.
+/// This result contains an array of [`Root`] objects, each representing a root directory
+/// or file that the server can operate on.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsResult {
     pub roots: ::alloc::vec::Vec<Root>,
@@ -4358,19 +4487,19 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListToolsRequestMetho
         value.parse()
     }
 }
-///The result returned by the server for a {@link ListToolsRequesttools/list} request.
+///The result returned by the server for a [`tools/list`](ListToolsRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListToolsResult {
-    /**Indicates the intended scope of the cached response, analogous to HTTP
-    `Cache-Control: public` vs `Cache-Control: private`.
-
-    - `"public"`: The response does not contain user-specific data. Any
-      client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-      the response and serve it across authorization contexts.
-    - `"private"`: The response MAY be cached and reused only within the
-      same authorization context. Caches MUST NOT be shared across
-      authorization contexts (e.g., a different access token requires a
-      different cache).*/
+    /// Indicates the intended scope of the cached response, analogous to HTTP
+    /// `Cache-Control: public` vs `Cache-Control: private`.
+    ///
+    /// - `"public"`: The response does not contain user-specific data. Any
+    ///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+    ///   the response and serve it across authorization contexts.
+    /// - `"private"`: The response MAY be cached and reused only within the
+    ///   same authorization context. Caches MUST NOT be shared across
+    ///   authorization contexts (e.g., a different access token requires a
+    ///   different cache).
     #[serde(
         rename = "cacheScope",
         default = "defaults::list_tools_result_cache_scope"
@@ -4381,47 +4510,47 @@ pub struct ListToolsResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::list_tools_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
     pub tools: ::alloc::vec::Vec<Tool>,
-    /**A hint from the server indicating how long (in milliseconds) the
-    client MAY cache this response before re-fetching. Semantics are
-    analogous to HTTP Cache-Control max-age.
-
-    - If 0, The response SHOULD be considered immediately stale,
-      The client MAY re-fetch every time the result is needed.
-    - If positive, the client SHOULD consider the result fresh for this many
-      milliseconds after receiving the response.*/
+    /// A hint from the server indicating how long (in milliseconds) the
+    /// client MAY cache this response before re-fetching. Semantics are
+    /// analogous to HTTP Cache-Control max-age.
+    ///
+    /// - If 0, The response SHOULD be considered immediately stale,
+    ///   The client MAY re-fetch every time the result is needed.
+    /// - If positive, the client SHOULD consider the result fresh for this many
+    ///   milliseconds after receiving the response.
     #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
-/**Indicates the intended scope of the cached response, analogous to HTTP
-`Cache-Control: public` vs `Cache-Control: private`.
-
-- `"public"`: The response does not contain user-specific data. Any
-  client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-  the response and serve it across authorization contexts.
-- `"private"`: The response MAY be cached and reused only within the
-  same authorization context. Caches MUST NOT be shared across
-  authorization contexts (e.g., a different access token requires a
-  different cache).*/
+/// Indicates the intended scope of the cached response, analogous to HTTP
+/// `Cache-Control: public` vs `Cache-Control: private`.
+///
+/// - `"public"`: The response does not contain user-specific data. Any
+///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+///   the response and serve it across authorization contexts.
+/// - `"private"`: The response MAY be cached and reused only within the
+///   same authorization context. Caches MUST NOT be shared across
+///   authorization contexts (e.g., a different access token requires a
+///   different cache).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4477,7 +4606,7 @@ impl ::core::default::Default for ListToolsResultCacheScope {
         ListToolsResultCacheScope::Private
     }
 }
-///A successful response from the server for a {@link ListToolsRequesttools/list} request.
+///A successful response from the server for a [`tools/list`](ListToolsRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListToolsResultResponse {
     pub id: RequestId,
@@ -4531,10 +4660,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListToolsResultRespon
         value.parse()
     }
 }
-/**The severity of a log message.
-
-These map to syslog message severities, as specified in RFC-5424:
-https://datatracker.ietf.org/doc/html/rfc5424#section-6.2.1*/
+/// The severity of a log message.
+///
+/// These map to syslog message severities, as specified in RFC-5424:
+/// <https://datatracker.ietf.org/doc/html/rfc5424#section-6.2.1>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4726,21 +4855,21 @@ pub struct LoggingMessageNotificationParams {
     )]
     pub meta: ::core::option::Option<NotificationMetaObject>,
 }
-/**Represents the contents of a `_meta` field, which clients and servers use to attach additional metadata to their interactions.
-
-Certain key names are reserved by MCP for protocol-level metadata; implementations MUST NOT make assumptions about values at these keys. Additionally, specific schema definitions may reserve particular names for purpose-specific metadata, as declared in those definitions.
-
-Valid keys have two segments:
-
-**Prefix:**
-- Optional — if specified, MUST be a series of _labels_ separated by dots (`.`), followed by a slash (`/`).
-- Labels MUST start with a letter and end with a letter or digit. Interior characters may be letters, digits, or hyphens (`-`).
-- Implementations SHOULD use reverse DNS notation (e.g., `com.example/` rather than `example.com/`).
-- Any prefix where the second label is `modelcontextprotocol` or `mcp` is **reserved** for MCP use. For example: `io.modelcontextprotocol/`, `dev.mcp/`, `org.modelcontextprotocol.api/`, and `com.mcp.tools/` are all reserved. However, `com.example.mcp/` is NOT reserved, as the second label is `example`.
-
-**Name:**
-- Unless empty, MUST start and end with an alphanumeric character (`[a-z0-9A-Z]`).
-- Interior characters may be alphanumeric, hyphens (`-`), underscores (`_`), or dots (`.`).*/
+/// Represents the contents of a `_meta` field, which clients and servers use to attach additional metadata to their interactions.
+///
+/// Certain key names are reserved by MCP for protocol-level metadata; implementations MUST NOT make assumptions about values at these keys. Additionally, specific schema definitions may reserve particular names for purpose-specific metadata, as declared in those definitions.
+///
+/// Valid keys have two segments:
+///
+/// **Prefix:**
+/// - Optional — if specified, MUST be a series of _labels_ separated by dots (`.`), followed by a slash (`/`).
+/// - Labels MUST start with a letter and end with a letter or digit. Interior characters may be letters, digits, or hyphens (`-`).
+/// - Implementations SHOULD use reverse DNS notation (e.g., `com.example/` rather than `example.com/`).
+/// - Any prefix where the second label is `modelcontextprotocol` or `mcp` is **reserved** for MCP use. For example: `io.modelcontextprotocol/`, `dev.mcp/`, `org.modelcontextprotocol.api/`, and `com.mcp.tools/` are all reserved. However, `com.example.mcp/` is NOT reserved, as the second label is `example`.
+///
+/// **Name:**
+/// - Unless empty, MUST start and end with an alphanumeric character (`[a-z0-9A-Z]`).
+/// - Interior characters may be alphanumeric, hyphens (`-`), underscores (`_`), or dots (`.`).
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 #[serde(transparent)]
 pub struct MetaObject(pub ::serde_json::Map<::alloc::string::String, ::serde_json::Value>);
@@ -4764,24 +4893,58 @@ impl ::core::convert::From<::serde_json::Map<::alloc::string::String, ::serde_js
         Self(value)
     }
 }
-/**A JSON-RPC error indicating that the requested method does not exist or is not available.
-
-In MCP, a server returns this error when a client invokes a method the server does not implement — either a genuinely unknown method, or one gated behind a server capability the server did not advertise (e.g., calling `prompts/list` when the `prompts` capability was not advertised).
-
-A request that requires a client capability the client did not declare is signalled instead by {@link MissingRequiredClientCapabilityError} (`-32021`).*/
+/// A JSON-RPC error indicating that the requested method does not exist or is not available.
+///
+/// In MCP, a server returns this error when a client invokes a method the server does not implement — either a genuinely unknown method, or one gated behind a server capability the server did not advertise (e.g., calling `prompts/list` when the `prompts` capability was not advertised).
+///
+/// A request that requires a client capability the client did not declare is signalled instead by [`MissingRequiredClientCapabilityError`] (`-32021`).
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct MethodNotFoundError {
     ///The error type that occurred.
-    pub code: i64,
+    pub code: MethodNotFoundErrorCode,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub data: ::core::option::Option<::serde_json::Value>,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
 }
-/**Returned when processing a request requires a capability the client did not
-declare in `clientCapabilities`. For HTTP, the response status code MUST be
-`400 Bad Request`.*/
+///The error type that occurred.
+#[derive(::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct MethodNotFoundErrorCode(i64);
+impl ::core::ops::Deref for MethodNotFoundErrorCode {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::core::convert::From<MethodNotFoundErrorCode> for i64 {
+    fn from(value: MethodNotFoundErrorCode) -> Self {
+        value.0
+    }
+}
+impl ::core::convert::TryFrom<i64> for MethodNotFoundErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::core::result::Result<Self, self::error::ConversionError> {
+        if ![-32601_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for MethodNotFoundErrorCode {
+    fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+/// Returned when processing a request requires a capability the client did not
+/// declare in `clientCapabilities`. For HTTP, the response status code MUST be
+/// `400 Bad Request`.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct MissingRequiredClientCapabilityError {
     pub error: MissingRequiredClientCapabilityErrorError,
@@ -4792,10 +4955,44 @@ pub struct MissingRequiredClientCapabilityError {
 ///`MissingRequiredClientCapabilityErrorError`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct MissingRequiredClientCapabilityErrorError {
-    pub code: i64,
+    pub code: MissingRequiredClientCapabilityErrorErrorCode,
     pub data: MissingRequiredClientCapabilityErrorErrorData,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
+}
+///`MissingRequiredClientCapabilityErrorErrorCode`
+#[derive(::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct MissingRequiredClientCapabilityErrorErrorCode(i64);
+impl ::core::ops::Deref for MissingRequiredClientCapabilityErrorErrorCode {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::core::convert::From<MissingRequiredClientCapabilityErrorErrorCode> for i64 {
+    fn from(value: MissingRequiredClientCapabilityErrorErrorCode) -> Self {
+        value.0
+    }
+}
+impl ::core::convert::TryFrom<i64> for MissingRequiredClientCapabilityErrorErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::core::result::Result<Self, self::error::ConversionError> {
+        if ![-32021_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for MissingRequiredClientCapabilityErrorErrorCode {
+    fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
 }
 ///`MissingRequiredClientCapabilityErrorErrorData`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -4853,78 +5050,70 @@ impl ::core::convert::TryFrom<::alloc::string::String>
         value.parse()
     }
 }
-/**Hints to use for model selection.
-
-Keys not declared here are currently left unspecified by the spec and are up
-to the client to interpret.*/
+/// Hints to use for model selection.
+///
+/// Keys not declared here are currently left unspecified by the spec and are up
+/// to the client to interpret.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ModelHint {
-    /**A hint for a model name.
-
-    The client SHOULD treat this as a substring of a model name; for example:
-     - `claude-3-5-sonnet` should match `claude-3-5-sonnet-20241022`
-     - `sonnet` should match `claude-3-5-sonnet-20241022`, `claude-3-sonnet-20240229`, etc.
-     - `claude` should match any Claude model
-
-    The client MAY also map the string to a different provider's model name or a different model family, as long as it fills a similar niche; for example:
-     - `gemini-1.5-flash` could match `claude-3-haiku-20240307`*/
+    /// A hint for a model name.
+    ///
+    /// The client SHOULD treat this as a substring of a model name; for example:
+    ///  - `claude-3-5-sonnet` should match `claude-3-5-sonnet-20241022`
+    ///  - `sonnet` should match `claude-3-5-sonnet-20241022`, `claude-3-sonnet-20240229`, etc.
+    ///  - `claude` should match any Claude model
+    ///
+    /// The client MAY also map the string to a different provider's model name or a different model family, as long as it fills a similar niche; for example:
+    ///  - `gemini-1.5-flash` could match `claude-3-haiku-20240307`
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::alloc::string::String>,
 }
-/**The server's preferences for model selection, requested of the client during sampling.
-
-Because LLMs can vary along multiple dimensions, choosing the "best" model is
-rarely straightforward.  Different models excel in different areas—some are
-faster but less capable, others are more capable but more expensive, and so
-on. This interface allows servers to express their priorities across multiple
-dimensions to help clients make an appropriate selection for their use case.
-
-These preferences are always advisory. The client MAY ignore them. It is also
-up to the client to decide how to interpret these preferences and how to
-balance them against other considerations.*/
+/// The server's preferences for model selection, requested of the client during sampling.
+///
+/// Because LLMs can vary along multiple dimensions, choosing the "best" model is
+/// rarely straightforward.  Different models excel in different areas—some are
+/// faster but less capable, others are more capable but more expensive, and so
+/// on. This interface allows servers to express their priorities across multiple
+/// dimensions to help clients make an appropriate selection for their use case.
+///
+/// These preferences are always advisory. The client MAY ignore them. It is also
+/// up to the client to decide how to interpret these preferences and how to
+/// balance them against other considerations.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ModelPreferences {
-    /**How much to prioritize cost when selecting a model. A value of 0 means cost
-    is not important, while a value of 1 means cost is the most important
-    factor.*/
+    /// How much to prioritize cost when selecting a model. A value of 0 means cost
+    /// is not important, while a value of 1 means cost is the most important
+    /// factor.
     #[serde(
         rename = "costPriority",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub cost_priority: ::core::option::Option<f64>,
-    /**Optional hints to use for model selection.
-
-    If multiple hints are specified, the client MUST evaluate them in order
-    (such that the first match is taken).
-
-    The client SHOULD prioritize these hints over the numeric priorities, but
-    MAY still use the priorities to select from ambiguous matches.*/
+    /// Optional hints to use for model selection.
+    ///
+    /// If multiple hints are specified, the client MUST evaluate them in order
+    /// (such that the first match is taken).
+    ///
+    /// The client SHOULD prioritize these hints over the numeric priorities, but
+    /// MAY still use the priorities to select from ambiguous matches.
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub hints: ::alloc::vec::Vec<ModelHint>,
-    /**How much to prioritize intelligence and capabilities when selecting a
-    model. A value of 0 means intelligence is not important, while a value of 1
-    means intelligence is the most important factor.*/
+    /// How much to prioritize intelligence and capabilities when selecting a
+    /// model. A value of 0 means intelligence is not important, while a value of 1
+    /// means intelligence is the most important factor.
     #[serde(
         rename = "intelligencePriority",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub intelligence_priority: ::core::option::Option<f64>,
-    /**How much to prioritize sampling speed (latency) when selecting a model. A
-    value of 0 means speed is not important, while a value of 1 means speed is
-    the most important factor.*/
+    /// How much to prioritize sampling speed (latency) when selecting a model. A
+    /// value of 0 means speed is not important, while a value of 1 means speed is
+    /// the most important factor.
     #[serde(
         rename = "speedPriority",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub speed_priority: ::core::option::Option<f64>,
-}
-///`MultiSelectEnumSchema`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-pub struct MultiSelectEnumSchema {
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_0: ::core::option::Option<UntitledMultiSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_1: ::core::option::Option<TitledMultiSelectEnumSchema>,
 }
 ///`Notification`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -4933,19 +5122,19 @@ pub struct Notification {
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub params: ::core::option::Option<JsonObject>,
 }
-///Extends {@link MetaObject} with additional notification-specific fields. All key naming rules from `MetaObject` apply.
+///Extends [`MetaObject`] with additional notification-specific fields. All key naming rules from `MetaObject` apply.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct NotificationMetaObject {
-    /**Identifies the subscription stream a notification was delivered on. The
-    server MUST include this key on every notification delivered via a
-    {@link SubscriptionsListenRequestsubscriptions/listen} stream, so the
-    client can correlate the notification with the originating subscription.
-    The key is absent on notifications not delivered via a subscription
-    stream (e.g. progress notifications for an in-flight request), which is
-    why it is optional here.
-
-    The value is the JSON-RPC ID of the `subscriptions/listen` request that
-    opened the stream.*/
+    /// Identifies the subscription stream a notification was delivered on. The
+    /// server MUST include this key on every notification delivered via a
+    /// [`subscriptions/listen`](SubscriptionsListenRequest) stream, so the
+    /// client can correlate the notification with the originating subscription.
+    /// The key is absent on notifications not delivered via a subscription
+    /// stream (e.g. progress notifications for an in-flight request), which is
+    /// why it is optional here.
+    ///
+    /// The value is the JSON-RPC ID of the `subscriptions/listen` request that
+    /// opened the stream.
     #[serde(
         rename = "io.modelcontextprotocol/subscriptionId",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -5088,8 +5277,8 @@ impl ::core::convert::TryFrom<::alloc::string::String> for PaginatedRequestJsonr
 ///Common params for paginated requests.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PaginatedRequestParams {
-    /**An opaque token representing the current pagination position.
-    If provided, the server should return results starting after this cursor.*/
+    /// An opaque token representing the current pagination position.
+    /// If provided, the server should return results starting after this cursor.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "_meta")]
@@ -5103,20 +5292,20 @@ pub struct PaginatedResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::paginated_result_result_type"
@@ -5136,33 +5325,46 @@ impl ::core::default::Default for PaginatedResult {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ParseError {
     ///The error type that occurred.
-    pub code: i64,
+    pub code: ParseErrorCode,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub data: ::core::option::Option<::serde_json::Value>,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
 }
-/**Restricted schema definitions that only allow primitive types
-without nested objects or arrays.*/
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-pub struct PrimitiveSchemaDefinition {
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_0: ::core::option::Option<StringSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_1: ::core::option::Option<NumberSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_2: ::core::option::Option<BooleanSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_3: ::core::option::Option<UntitledSingleSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_4: ::core::option::Option<TitledSingleSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_5: ::core::option::Option<UntitledMultiSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_6: ::core::option::Option<TitledMultiSelectEnumSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_7: ::core::option::Option<LegacyTitledEnumSchema>,
+///The error type that occurred.
+#[derive(::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct ParseErrorCode(i64);
+impl ::core::ops::Deref for ParseErrorCode {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::core::convert::From<ParseErrorCode> for i64 {
+    fn from(value: ParseErrorCode) -> Self {
+        value.0
+    }
+}
+impl ::core::convert::TryFrom<i64> for ParseErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::core::result::Result<Self, self::error::ConversionError> {
+        if ![-32700_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ParseErrorCode {
+    fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
 }
 ///An out-of-band notification used to inform the receiver of a progress update for a long-running request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -5265,7 +5467,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ProgressNotificationM
         value.parse()
     }
 }
-///Parameters for a {@link ProgressNotificationnotifications/progress} notification.
+///Parameters for a [`notifications/progress`](ProgressNotification) notification.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ProgressNotificationParams {
     ///An optional message describing the current progress.
@@ -5314,15 +5516,15 @@ pub struct Prompt {
     ///An optional description of what this prompt provides
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    /**Optional set of sized icons that the client can display in a user interface.
-
-    Clients that support rendering icons MUST support at least the following MIME types:
-    - `image/png` - PNG images (safe, universal compatibility)
-    - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
-
-    Clients that support rendering icons SHOULD also support:
-    - `image/svg+xml` - SVG images (scalable but requires security precautions)
-    - `image/webp` - WebP images (modern, efficient format)*/
+    /// Optional set of sized icons that the client can display in a user interface.
+    ///
+    /// Clients that support rendering icons MUST support at least the following MIME types:
+    /// - `image/png` - PNG images (safe, universal compatibility)
+    /// - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
+    ///
+    /// Clients that support rendering icons SHOULD also support:
+    /// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+    /// - `image/webp` - WebP images (modern, efficient format)
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub icons: ::alloc::vec::Vec<Icon>,
     #[serde(
@@ -5332,12 +5534,12 @@ pub struct Prompt {
     pub meta: ::core::option::Option<MetaObject>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
@@ -5352,16 +5554,16 @@ pub struct PromptArgument {
     ///Whether this argument must be provided.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub required: ::core::option::Option<bool>,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
-///An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `promptsListChanged` filter field.
+///An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This is only delivered on a [`subscriptions/listen`](SubscriptionsListenRequest) stream when the client requested it via the `promptsListChanged` filter field.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptListChangedNotification {
     pub jsonrpc: PromptListChangedNotificationJsonrpc,
@@ -5465,10 +5667,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for PromptListChangedNoti
         value.parse()
     }
 }
-/**Describes a message returned as part of a prompt.
-
-This is similar to {@link SamplingMessage}, but also supports the embedding of
-resources from the MCP server.*/
+/// Describes a message returned as part of a prompt.
+///
+/// This is similar to [`SamplingMessage`], but also supports the embedding of
+/// resources from the MCP server.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptMessage {
     pub content: ContentBlock,
@@ -5479,12 +5681,12 @@ pub struct PromptMessage {
 pub struct PromptReference {
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
@@ -5657,19 +5859,19 @@ pub struct ReadResourceRequestParams {
     ///The URI of the resource. The URI can use any protocol; it is up to the server how to interpret it.
     pub uri: ::alloc::string::String,
 }
-///The result returned by the server for a {@link ReadResourceRequestresources/read} request.
+///The result returned by the server for a [`resources/read`](ReadResourceRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ReadResourceResult {
-    /**Indicates the intended scope of the cached response, analogous to HTTP
-    `Cache-Control: public` vs `Cache-Control: private`.
-
-    - `"public"`: The response does not contain user-specific data. Any
-      client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-      the response and serve it across authorization contexts.
-    - `"private"`: The response MAY be cached and reused only within the
-      same authorization context. Caches MUST NOT be shared across
-      authorization contexts (e.g., a different access token requires a
-      different cache).*/
+    /// Indicates the intended scope of the cached response, analogous to HTTP
+    /// `Cache-Control: public` vs `Cache-Control: private`.
+    ///
+    /// - `"public"`: The response does not contain user-specific data. Any
+    ///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+    ///   the response and serve it across authorization contexts.
+    /// - `"private"`: The response MAY be cached and reused only within the
+    ///   same authorization context. Caches MUST NOT be shared across
+    ///   authorization contexts (e.g., a different access token requires a
+    ///   different cache).
     #[serde(
         rename = "cacheScope",
         default = "defaults::read_resource_result_cache_scope"
@@ -5681,39 +5883,39 @@ pub struct ReadResourceResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::read_resource_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
-    /**A hint from the server indicating how long (in milliseconds) the
-    client MAY cache this response before re-fetching. Semantics are
-    analogous to HTTP Cache-Control max-age.
-
-    - If 0, The response SHOULD be considered immediately stale,
-      The client MAY re-fetch every time the result is needed.
-    - If positive, the client SHOULD consider the result fresh for this many
-      milliseconds after receiving the response.*/
+    /// A hint from the server indicating how long (in milliseconds) the
+    /// client MAY cache this response before re-fetching. Semantics are
+    /// analogous to HTTP Cache-Control max-age.
+    ///
+    /// - If 0, The response SHOULD be considered immediately stale,
+    ///   The client MAY re-fetch every time the result is needed.
+    /// - If positive, the client SHOULD consider the result fresh for this many
+    ///   milliseconds after receiving the response.
     #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
-/**Indicates the intended scope of the cached response, analogous to HTTP
-`Cache-Control: public` vs `Cache-Control: private`.
-
-- `"public"`: The response does not contain user-specific data. Any
-  client or intermediary (e.g., shared gateway, caching proxy) MAY cache
-  the response and serve it across authorization contexts.
-- `"private"`: The response MAY be cached and reused only within the
-  same authorization context. Caches MUST NOT be shared across
-  authorization contexts (e.g., a different access token requires a
-  different cache).*/
+/// Indicates the intended scope of the cached response, analogous to HTTP
+/// `Cache-Control: public` vs `Cache-Control: private`.
+///
+/// - `"public"`: The response does not contain user-specific data. Any
+///   client or intermediary (e.g., shared gateway, caching proxy) MAY cache
+///   the response and serve it across authorization contexts.
+/// - `"private"`: The response MAY be cached and reused only within the
+///   same authorization context. Caches MUST NOT be shared across
+///   authorization contexts (e.g., a different access token requires a
+///   different cache).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -5786,7 +5988,7 @@ impl ::core::convert::From<BlobResourceContents> for ReadResourceResultContentsI
         Self::BlobResourceContents(value)
     }
 }
-///A successful response from the server for a {@link ReadResourceRequestresources/read} request.
+///A successful response from the server for a [`resources/read`](ReadResourceRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ReadResourceResultResponse {
     pub id: RequestId,
@@ -5884,51 +6086,51 @@ impl ::core::convert::From<i64> for RequestId {
         Self::Integer(value)
     }
 }
-///Extends {@link MetaObject} with additional request-specific fields. All key naming rules from `MetaObject` apply.
+///Extends [`MetaObject`] with additional request-specific fields. All key naming rules from `MetaObject` apply.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RequestMetaObject {
-    /**The client's capabilities for this specific request. Required.
-
-    Capabilities are declared per-request rather than once at initialization;
-    an empty object means the client supports no optional capabilities.
-    Servers MUST NOT infer capabilities from prior requests.*/
+    /// The client's capabilities for this specific request. Required.
+    ///
+    /// Capabilities are declared per-request rather than once at initialization;
+    /// an empty object means the client supports no optional capabilities.
+    /// Servers MUST NOT infer capabilities from prior requests.
     #[serde(rename = "io.modelcontextprotocol/clientCapabilities")]
     pub io_modelcontextprotocol_client_capabilities: ClientCapabilities,
-    /**Identifies the client software making the request. Clients SHOULD
-    include this field on every request unless specifically configured not
-    to do so.
-
-    The {@link Implementation} schema requires `name` and `version`; other
-    fields are optional.
-
-    The value is self-reported by the client and is not verified by the
-    protocol. It is intended for display, logging, and debugging. Servers
-    SHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for
-    security decisions.*/
+    /// Identifies the client software making the request. Clients SHOULD
+    /// include this field on every request unless specifically configured not
+    /// to do so.
+    ///
+    /// The [`Implementation`] schema requires `name` and `version`; other
+    /// fields are optional.
+    ///
+    /// The value is self-reported by the client and is not verified by the
+    /// protocol. It is intended for display, logging, and debugging. Servers
+    /// SHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for
+    /// security decisions.
     #[serde(
         rename = "io.modelcontextprotocol/clientInfo",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub io_modelcontextprotocol_client_info: ::core::option::Option<Implementation>,
-    /**The desired log level for this request. Optional.
-
-    If absent, the server MUST NOT send any {@link LoggingMessageNotificationnotifications/message}
-    notifications for this request. The client opts in to log messages by
-    explicitly setting a level. Replaces the former `logging/setLevel` RPC.*/
+    /// The desired log level for this request. Optional.
+    ///
+    /// If absent, the server MUST NOT send any [`notifications/message`](LoggingMessageNotification)
+    /// notifications for this request. The client opts in to log messages by
+    /// explicitly setting a level. Replaces the former `logging/setLevel` RPC.
     #[serde(
         rename = "io.modelcontextprotocol/logLevel",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub io_modelcontextprotocol_log_level: ::core::option::Option<LoggingLevel>,
-    /**The MCP Protocol Version being used for this request. Required.
-
-    For the HTTP transport, this value MUST match the `MCP-Protocol-Version`
-    header; otherwise the server MUST return a `400 Bad Request`. If the
-    server does not support the requested version, it MUST return an
-    {@link UnsupportedProtocolVersionError}.*/
+    /// The MCP Protocol Version being used for this request. Required.
+    ///
+    /// For the HTTP transport, this value MUST match the `MCP-Protocol-Version`
+    /// header; otherwise the server MUST return a `400 Bad Request`. If the
+    /// server does not support the requested version, it MUST return an
+    /// [`UnsupportedProtocolVersionError`].
     #[serde(rename = "io.modelcontextprotocol/protocolVersion")]
     pub io_modelcontextprotocol_protocol_version: ::alloc::string::String,
-    ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by {@link ProgressNotificationnotifications/progress}). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
+    ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by [`notifications/progress`](ProgressNotification)). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
     #[serde(
         rename = "progressToken",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -5949,20 +6151,20 @@ pub struct Resource {
     ///Optional annotations for the client.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
-    /**A description of what this resource represents.
-
-    This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
+    /// A description of what this resource represents.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    /**Optional set of sized icons that the client can display in a user interface.
-
-    Clients that support rendering icons MUST support at least the following MIME types:
-    - `image/png` - PNG images (safe, universal compatibility)
-    - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
-
-    Clients that support rendering icons SHOULD also support:
-    - `image/svg+xml` - SVG images (scalable but requires security precautions)
-    - `image/webp` - WebP images (modern, efficient format)*/
+    /// Optional set of sized icons that the client can display in a user interface.
+    ///
+    /// Clients that support rendering icons MUST support at least the following MIME types:
+    /// - `image/png` - PNG images (safe, universal compatibility)
+    /// - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
+    ///
+    /// Clients that support rendering icons SHOULD also support:
+    /// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+    /// - `image/webp` - WebP images (modern, efficient format)
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub icons: ::alloc::vec::Vec<Icon>,
     #[serde(
@@ -5978,17 +6180,17 @@ pub struct Resource {
     pub mime_type: ::core::option::Option<::alloc::string::String>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
-
-    This can be used by Hosts to display file sizes and estimate context window usage.*/
+    /// The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
+    ///
+    /// This can be used by Hosts to display file sizes and estimate context window usage.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub size: ::core::option::Option<i64>,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     ///The URI of this resource.
@@ -6011,28 +6213,28 @@ pub struct ResourceContents {
     ///The URI of this resource.
     pub uri: ::alloc::string::String,
 }
-/**A resource that the server is capable of reading, included in a prompt or tool call result.
-
-Note: resource links returned by tools are not guaranteed to appear in the results of {@link ListResourcesRequestresources/list} requests.*/
+/// A resource that the server is capable of reading, included in a prompt or tool call result.
+///
+/// Note: resource links returned by tools are not guaranteed to appear in the results of [`resources/list`](ListResourcesRequest) requests.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceLink {
     ///Optional annotations for the client.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
-    /**A description of what this resource represents.
-
-    This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
+    /// A description of what this resource represents.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    /**Optional set of sized icons that the client can display in a user interface.
-
-    Clients that support rendering icons MUST support at least the following MIME types:
-    - `image/png` - PNG images (safe, universal compatibility)
-    - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
-
-    Clients that support rendering icons SHOULD also support:
-    - `image/svg+xml` - SVG images (scalable but requires security precautions)
-    - `image/webp` - WebP images (modern, efficient format)*/
+    /// Optional set of sized icons that the client can display in a user interface.
+    ///
+    /// Clients that support rendering icons MUST support at least the following MIME types:
+    /// - `image/png` - PNG images (safe, universal compatibility)
+    /// - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
+    ///
+    /// Clients that support rendering icons SHOULD also support:
+    /// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+    /// - `image/webp` - WebP images (modern, efficient format)
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub icons: ::alloc::vec::Vec<Icon>,
     #[serde(
@@ -6048,17 +6250,17 @@ pub struct ResourceLink {
     pub mime_type: ::core::option::Option<::alloc::string::String>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
-
-    This can be used by Hosts to display file sizes and estimate context window usage.*/
+    /// The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
+    ///
+    /// This can be used by Hosts to display file sizes and estimate context window usage.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub size: ::core::option::Option<i64>,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
@@ -6113,7 +6315,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ResourceLinkType {
         value.parse()
     }
 }
-///An optional notification from the server to the client, informing it that the list of resources it can read from has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `resourcesListChanged` filter field.
+///An optional notification from the server to the client, informing it that the list of resources it can read from has changed. This is only delivered on a [`subscriptions/listen`](SubscriptionsListenRequest) stream when the client requested it via the `resourcesListChanged` filter field.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceListChangedNotification {
     pub jsonrpc: ResourceListChangedNotificationJsonrpc,
@@ -6231,20 +6433,20 @@ pub struct ResourceTemplate {
     ///Optional annotations for the client.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
-    /**A description of what this template is for.
-
-    This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
+    /// A description of what this template is for.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    /**Optional set of sized icons that the client can display in a user interface.
-
-    Clients that support rendering icons MUST support at least the following MIME types:
-    - `image/png` - PNG images (safe, universal compatibility)
-    - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
-
-    Clients that support rendering icons SHOULD also support:
-    - `image/svg+xml` - SVG images (scalable but requires security precautions)
-    - `image/webp` - WebP images (modern, efficient format)*/
+    /// Optional set of sized icons that the client can display in a user interface.
+    ///
+    /// Clients that support rendering icons MUST support at least the following MIME types:
+    /// - `image/png` - PNG images (safe, universal compatibility)
+    /// - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
+    ///
+    /// Clients that support rendering icons SHOULD also support:
+    /// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+    /// - `image/webp` - WebP images (modern, efficient format)
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub icons: ::alloc::vec::Vec<Icon>,
     #[serde(
@@ -6260,12 +6462,12 @@ pub struct ResourceTemplate {
     pub mime_type: ::core::option::Option<::alloc::string::String>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     ///A URI template (according to RFC 6570) that can be used to construct resource URIs.
@@ -6327,7 +6529,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ResourceTemplateRefer
         value.parse()
     }
 }
-///A notification from the server to the client, informing it that a resource has changed and may need to be read again. This is only sent for resources the client opted in to via the `resourceSubscriptions` field of a {@link SubscriptionsListenRequestsubscriptions/listen} request.
+///A notification from the server to the client, informing it that a resource has changed and may need to be read again. This is only sent for resources the client opted in to via the `resourceSubscriptions` field of a [`subscriptions/listen`](SubscriptionsListenRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceUpdatedNotification {
     pub jsonrpc: ResourceUpdatedNotificationJsonrpc,
@@ -6447,32 +6649,32 @@ pub struct Result {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<ResultMetaObject>,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(rename = "resultType", default = "defaults::result_result_type")]
     pub result_type: ::alloc::string::String,
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-///Extends {@link MetaObject} with additional result-specific fields. All key naming rules from `MetaObject` apply.
+///Extends [`MetaObject`] with additional result-specific fields. All key naming rules from `MetaObject` apply.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResultMetaObject {
-    /**Identifies the server software producing the response. Servers SHOULD
-    include this field on every response unless specifically configured not
-    to do so.
-
-    The {@link Implementation} schema requires `name` and `version`; other
-    fields are optional.
-
-    The value is self-reported by the server and is not verified by the
-    protocol. It is intended for display, logging, and debugging. Clients
-    SHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for
-    security decisions.*/
+    /// Identifies the server software producing the response. Servers SHOULD
+    /// include this field on every response unless specifically configured not
+    /// to do so.
+    ///
+    /// The [`Implementation`] schema requires `name` and `version`; other
+    /// fields are optional.
+    ///
+    /// The value is self-reported by the server and is not verified by the
+    /// protocol. It is intended for display, logging, and debugging. Clients
+    /// SHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for
+    /// security decisions.
     #[serde(
         rename = "io.modelcontextprotocol/serverInfo",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -6481,11 +6683,11 @@ pub struct ResultMetaObject {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-/**Indicates the type of a {@link Result} object, allowing the client to
-determine how to parse the response.
-
-complete - the request completed successfully and the result contains the final content.
-input_required - the request requires additional input and the result contains an {@link InputRequiredResult} object with instructions for the client to provide additional input before retrying the original request.*/
+/// Indicates the type of a [`Result`] object, allowing the client to
+/// determine how to parse the response.
+///
+/// complete - the request completed successfully and the result contains the final content.
+/// input_required - the request requires additional input and the result contains an [`InputRequiredResult`] object with instructions for the client to provide additional input before retrying the original request.
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
@@ -6577,14 +6779,14 @@ pub struct Root {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<MetaObject>,
-    /**An optional name for the root. This can be used to provide a human-readable
-    identifier for the root, which may be useful for display purposes or for
-    referencing the root in other parts of the application.*/
+    /// An optional name for the root. This can be used to provide a human-readable
+    /// identifier for the root, which may be useful for display purposes or for
+    /// referencing the root in other parts of the application.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::alloc::string::String>,
-    /**The URI identifying the root. This *must* start with `file://` for now.
-    This restriction may be relaxed in future versions of the protocol to allow
-    other URI schemes.*/
+    /// The URI identifying the root. This *must* start with `file://` for now.
+    /// This restriction may be relaxed in future versions of the protocol to allow
+    /// other URI schemes.
     pub uri: ::alloc::string::String,
 }
 ///Describes a message issued to or received from an LLM API.
@@ -6688,12 +6890,12 @@ pub struct ServerCapabilities {
         skip_serializing_if = ":: alloc :: collections :: BTreeMap::is_empty"
     )]
     pub experimental: ::alloc::collections::BTreeMap<::alloc::string::String, JsonObject>,
-    /**Optional MCP extensions that the server supports. Keys are extension identifiers
-    (e.g., "io.modelcontextprotocol/tasks"), and values are per-extension settings
-    objects. An empty object indicates support with no settings.
-
-    Keys MUST follow the {@link MetaObject`_meta` key naming rules}, with a
-    mandatory prefix.*/
+    /// Optional MCP extensions that the server supports. Keys are extension identifiers
+    /// (e.g., "io.modelcontextprotocol/tasks"), and values are per-extension settings
+    /// objects. An empty object indicates support with no settings.
+    ///
+    /// Keys MUST follow the [`_meta` key naming rules](MetaObject), with a
+    /// mandatory prefix.
     #[serde(
         default,
         skip_serializing_if = ":: alloc :: collections :: BTreeMap::is_empty"
@@ -6794,34 +6996,6 @@ impl ::core::convert::From<LoggingMessageNotification> for ServerNotification {
     fn from(value: LoggingMessageNotification) -> Self {
         Self::LoggingMessageNotification(value)
     }
-}
-///`ServerResult`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-pub struct ServerResult {
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_0: ::core::option::Option<Result>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_1: ::core::option::Option<InputRequiredResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_2: ::core::option::Option<DiscoverResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_3: ::core::option::Option<ListResourcesResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_4: ::core::option::Option<ListResourceTemplatesResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_5: ::core::option::Option<ReadResourceResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_6: ::core::option::Option<SubscriptionsListenResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_7: ::core::option::Option<ListPromptsResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_8: ::core::option::Option<GetPromptResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_9: ::core::option::Option<ListToolsResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_10: ::core::option::Option<CallToolResult>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_11: ::core::option::Option<CompleteResult>,
 }
 ///`SingleSelectEnumSchema`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -6970,50 +7144,50 @@ impl ::core::convert::TryFrom<::alloc::string::String> for StringSchemaType {
         value.parse()
     }
 }
-/**The set of notification types a client may opt in to on a
-{@link SubscriptionsListenRequestsubscriptions/listen} request.
-
-Each notification type is **opt-in**; the server **MUST NOT** send
-notification types the client has not explicitly requested here.*/
+/// The set of notification types a client may opt in to on a
+/// [`subscriptions/listen`](SubscriptionsListenRequest) request.
+///
+/// Each notification type is **opt-in**; the server **MUST NOT** send
+/// notification types the client has not explicitly requested here.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct SubscriptionFilter {
-    ///If true, receive {@link PromptListChangedNotificationnotifications/prompts/list_changed}.
+    ///If true, receive [`notifications/prompts/list_changed`](PromptListChangedNotification).
     #[serde(
         rename = "promptsListChanged",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub prompts_list_changed: ::core::option::Option<bool>,
-    /**Subscribe to {@link ResourceUpdatedNotificationnotifications/resources/updated} for these resource URIs.
-    Replaces the former `resources/subscribe` RPC.*/
+    /// Subscribe to [`notifications/resources/updated`](ResourceUpdatedNotification) for these resource URIs.
+    /// Replaces the former `resources/subscribe` RPC.
     #[serde(
         rename = "resourceSubscriptions",
         default,
         skip_serializing_if = "::alloc::vec::Vec::is_empty"
     )]
     pub resource_subscriptions: ::alloc::vec::Vec<::alloc::string::String>,
-    ///If true, receive {@link ResourceListChangedNotificationnotifications/resources/list_changed}.
+    ///If true, receive [`notifications/resources/list_changed`](ResourceListChangedNotification).
     #[serde(
         rename = "resourcesListChanged",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub resources_list_changed: ::core::option::Option<bool>,
-    ///If true, receive {@link ToolListChangedNotificationnotifications/tools/list_changed}.
+    ///If true, receive [`notifications/tools/list_changed`](ToolListChangedNotification).
     #[serde(
         rename = "toolsListChanged",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub tools_list_changed: ::core::option::Option<bool>,
 }
-/**Sent by the server to acknowledge that a
-{@link SubscriptionsListenRequestsubscriptions/listen} subscription has been
-established and to report which notification types it agreed to honor.
-
-This notification MUST be the first message the server sends carrying the
-subscription's ID in `io.modelcontextprotocol/subscriptionId`. The server MUST
-NOT send any notification on the subscription before acknowledging it. On
-stdio, where every subscription shares one channel, this ordering is defined
-per subscription ID and not per channel: messages belonging to other
-subscriptions MAY be interleaved before it.*/
+/// Sent by the server to acknowledge that a
+/// [`subscriptions/listen`](SubscriptionsListenRequest) subscription has been
+/// established and to report which notification types it agreed to honor.
+///
+/// This notification MUST be the first message the server sends carrying the
+/// subscription's ID in `io.modelcontextprotocol/subscriptionId`. The server MUST
+/// NOT send any notification on the subscription before acknowledging it. On
+/// stdio, where every subscription shares one channel, this ordering is defined
+/// per subscription ID and not per channel: messages belonging to other
+/// subscriptions MAY be interleaved before it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscriptionsAcknowledgedNotification {
     pub jsonrpc: SubscriptionsAcknowledgedNotificationJsonrpc,
@@ -7122,7 +7296,7 @@ impl ::core::convert::TryFrom<::alloc::string::String>
         value.parse()
     }
 }
-///Parameters for a {@link SubscriptionsAcknowledgedNotificationnotifications/subscriptions/acknowledged} notification.
+///Parameters for a [`notifications/subscriptions/acknowledged`](SubscriptionsAcknowledgedNotification) notification.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscriptionsAcknowledgedNotificationParams {
     #[serde(
@@ -7130,15 +7304,15 @@ pub struct SubscriptionsAcknowledgedNotificationParams {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<NotificationMetaObject>,
-    /**The subset of requested notification types the server agreed to honor.
-    Only includes notification types the server actually supports; if the
-    client requested an unsupported type (e.g., `promptsListChanged` when
-    the server has no prompts), it is omitted from this set.*/
+    /// The subset of requested notification types the server agreed to honor.
+    /// Only includes notification types the server actually supports; if the
+    /// client requested an unsupported type (e.g., `promptsListChanged` when
+    /// the server has no prompts), it is omitted from this set.
     pub notifications: SubscriptionFilter,
 }
-/**Sent from the client to open a long-lived channel for receiving notifications
-outside the context of a specific request. Replaces the previous HTTP GET
-endpoint and ensures consistent behavior between HTTP and STDIO.*/
+/// Sent from the client to open a long-lived channel for receiving notifications
+/// outside the context of a specific request. Replaces the previous HTTP GET
+/// endpoint and ensures consistent behavior between HTTP and STDIO.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscriptionsListenRequest {
     pub id: RequestId,
@@ -7240,70 +7414,70 @@ impl ::core::convert::TryFrom<::alloc::string::String> for SubscriptionsListenRe
         value.parse()
     }
 }
-///Parameters for a {@link SubscriptionsListenRequestsubscriptions/listen} request.
+///Parameters for a [`subscriptions/listen`](SubscriptionsListenRequest) request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscriptionsListenRequestParams {
     #[serde(rename = "_meta")]
     pub meta: RequestMetaObject,
-    /**The notifications the client opts in to on this stream. The server
-    **MUST NOT** send notification types the client has not explicitly
-    requested.*/
+    /// The notifications the client opts in to on this stream. The server
+    /// **MUST NOT** send notification types the client has not explicitly
+    /// requested.
     pub notifications: SubscriptionFilter,
 }
-/**The response to a {@link SubscriptionsListenRequestsubscriptions/listen}
-request, signalling that the subscription has ended gracefully (for example,
-during server shutdown). Because the listen stream is long-lived, this result
-is sent only when the server tears the subscription down; an abrupt transport
-close carries no response. The result body is otherwise empty.*/
+/// The response to a [`subscriptions/listen`](SubscriptionsListenRequest)
+/// request, signalling that the subscription has ended gracefully (for example,
+/// during server shutdown). Because the listen stream is long-lived, this result
+/// is sent only when the server tears the subscription down; an abrupt transport
+/// close carries no response. The result body is otherwise empty.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscriptionsListenResult {
     #[serde(rename = "_meta")]
     pub meta: SubscriptionsListenResultMetaObject,
-    /**Indicates the type of the result, which allows the client to determine
-    how to parse the result object.
-
-    Servers implementing this protocol version MUST include this field.
-    For backward compatibility, when a client receives a result from a
-    server implementing an earlier protocol version (which does not include
-    `resultType`), the client MUST treat the absent field as `"complete"`.*/
+    /// Indicates the type of the result, which allows the client to determine
+    /// how to parse the result object.
+    ///
+    /// Servers implementing this protocol version MUST include this field.
+    /// For backward compatibility, when a client receives a result from a
+    /// server implementing an earlier protocol version (which does not include
+    /// `resultType`), the client MUST treat the absent field as `"complete"`.
     #[serde(
         rename = "resultType",
         default = "defaults::subscriptions_listen_result_result_type"
     )]
     pub result_type: ::alloc::string::String,
 }
-/**Extends {@link ResultMetaObject} with the subscription-stream identifier carried by a
-{@link SubscriptionsListenResult}. All key naming rules from `MetaObject` apply.*/
+/// Extends [`ResultMetaObject`] with the subscription-stream identifier carried by a
+/// [`SubscriptionsListenResult`]. All key naming rules from `MetaObject` apply.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscriptionsListenResultMetaObject {
-    /**Identifies the server software producing the response. Servers SHOULD
-    include this field on every response unless specifically configured not
-    to do so.
-
-    The {@link Implementation} schema requires `name` and `version`; other
-    fields are optional.
-
-    The value is self-reported by the server and is not verified by the
-    protocol. It is intended for display, logging, and debugging. Clients
-    SHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for
-    security decisions.*/
+    /// Identifies the server software producing the response. Servers SHOULD
+    /// include this field on every response unless specifically configured not
+    /// to do so.
+    ///
+    /// The [`Implementation`] schema requires `name` and `version`; other
+    /// fields are optional.
+    ///
+    /// The value is self-reported by the server and is not verified by the
+    /// protocol. It is intended for display, logging, and debugging. Clients
+    /// SHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for
+    /// security decisions.
     #[serde(
         rename = "io.modelcontextprotocol/serverInfo",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub io_modelcontextprotocol_server_info: ::core::option::Option<Implementation>,
-    /**Identifies the subscription stream this response closes, so the client can
-    correlate it with the originating subscription — mirroring the same key on
-    the stream's notifications. The value is the JSON-RPC ID of the
-    `subscriptions/listen` request that opened the stream (and equals this
-    response's `id`).*/
+    /// Identifies the subscription stream this response closes, so the client can
+    /// correlate it with the originating subscription — mirroring the same key on
+    /// the stream's notifications. The value is the JSON-RPC ID of the
+    /// `subscriptions/listen` request that opened the stream (and equals this
+    /// response's `id`).
     #[serde(rename = "io.modelcontextprotocol/subscriptionId")]
     pub io_modelcontextprotocol_subscription_id: RequestId,
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-/**A successful response from the server for a {@link SubscriptionsListenRequestsubscriptions/listen}
-request, sent when the server tears the subscription down gracefully.*/
+/// A successful response from the server for a [`subscriptions/listen`](SubscriptionsListenRequest)
+/// request, sent when the server tears the subscription down gracefully.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct SubscriptionsListenResultResponse {
     pub id: RequestId,
@@ -7609,25 +7783,25 @@ impl ::core::convert::TryFrom<::alloc::string::String> for TitledSingleSelectEnu
 ///Definition for a tool the client can call.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Tool {
-    /**Optional additional tool information.
-
-    Display name precedence order is: `title`, `annotations.title`, then `name`.*/
+    /// Optional additional tool information.
+    ///
+    /// Display name precedence order is: `title`, `annotations.title`, then `name`.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<ToolAnnotations>,
-    /**A human-readable description of the tool.
-
-    This can be used by clients to improve the LLM's understanding of available tools. It can be thought of like a "hint" to the model.*/
+    /// A human-readable description of the tool.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available tools. It can be thought of like a "hint" to the model.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    /**Optional set of sized icons that the client can display in a user interface.
-
-    Clients that support rendering icons MUST support at least the following MIME types:
-    - `image/png` - PNG images (safe, universal compatibility)
-    - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
-
-    Clients that support rendering icons SHOULD also support:
-    - `image/svg+xml` - SVG images (scalable but requires security precautions)
-    - `image/webp` - WebP images (modern, efficient format)*/
+    /// Optional set of sized icons that the client can display in a user interface.
+    ///
+    /// Clients that support rendering icons MUST support at least the following MIME types:
+    /// - `image/png` - PNG images (safe, universal compatibility)
+    /// - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
+    ///
+    /// Clients that support rendering icons SHOULD also support:
+    /// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+    /// - `image/webp` - WebP images (modern, efficient format)
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub icons: ::alloc::vec::Vec<Icon>,
     #[serde(rename = "inputSchema")]
@@ -7644,61 +7818,61 @@ pub struct Tool {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub output_schema: ::core::option::Option<ToolOutputSchema>,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for {@link Tool},
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for [`Tool`],
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
-/**Additional properties describing a {@link Tool} to clients.
-
-NOTE: all properties in `ToolAnnotations` are **hints**.
-They are not guaranteed to provide a faithful description of
-tool behavior (including descriptive properties like `title`).
-
-Clients should never make tool use decisions based on `ToolAnnotations`
-received from untrusted servers.*/
+/// Additional properties describing a [`Tool`] to clients.
+///
+/// NOTE: all properties in `ToolAnnotations` are **hints**.
+/// They are not guaranteed to provide a faithful description of
+/// tool behavior (including descriptive properties like `title`).
+///
+/// Clients should never make tool use decisions based on `ToolAnnotations`
+/// received from untrusted servers.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ToolAnnotations {
-    /**If true, the tool may perform destructive updates to its environment.
-    If false, the tool performs only additive updates.
-
-    (This property is meaningful only when `readOnlyHint == false`)
-
-    Default: true*/
+    /// If true, the tool may perform destructive updates to its environment.
+    /// If false, the tool performs only additive updates.
+    ///
+    /// (This property is meaningful only when `readOnlyHint == false`)
+    ///
+    /// Default: true
     #[serde(
         rename = "destructiveHint",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub destructive_hint: ::core::option::Option<bool>,
-    /**If true, calling the tool repeatedly with the same arguments
-    will have no additional effect on its environment.
-
-    (This property is meaningful only when `readOnlyHint == false`)
-
-    Default: false*/
+    /// If true, calling the tool repeatedly with the same arguments
+    /// will have no additional effect on its environment.
+    ///
+    /// (This property is meaningful only when `readOnlyHint == false`)
+    ///
+    /// Default: false
     #[serde(
         rename = "idempotentHint",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub idempotent_hint: ::core::option::Option<bool>,
-    /**If true, this tool may interact with an "open world" of external
-    entities. If false, the tool's domain of interaction is closed.
-    For example, the world of a web search tool is open, whereas that
-    of a memory tool is not.
-
-    Default: true*/
+    /// If true, this tool may interact with an "open world" of external
+    /// entities. If false, the tool's domain of interaction is closed.
+    /// For example, the world of a web search tool is open, whereas that
+    /// of a memory tool is not.
+    ///
+    /// Default: true
     #[serde(
         rename = "openWorldHint",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub open_world_hint: ::core::option::Option<bool>,
-    /**If true, the tool does not modify its environment.
-
-    Default: false*/
+    /// If true, the tool does not modify its environment.
+    ///
+    /// Default: false
     #[serde(
         rename = "readOnlyHint",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -7711,17 +7885,17 @@ pub struct ToolAnnotations {
 ///Controls tool selection behavior for sampling requests.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ToolChoice {
-    /**Controls the tool use ability of the model:
-    - `"auto"`: Model decides whether to use tools (default)
-    - `"required"`: Model MUST use at least one tool before completing
-    - `"none"`: Model MUST NOT use any tools*/
+    /// Controls the tool use ability of the model:
+    /// - `"auto"`: Model decides whether to use tools (default)
+    /// - `"required"`: Model MUST use at least one tool before completing
+    /// - `"none"`: Model MUST NOT use any tools
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub mode: ::core::option::Option<ToolChoiceMode>,
 }
-/**Controls the tool use ability of the model:
-- `"auto"`: Model decides whether to use tools (default)
-- `"required"`: Model MUST use at least one tool before completing
-- `"none"`: Model MUST NOT use any tools*/
+/// Controls the tool use ability of the model:
+/// - `"auto"`: Model decides whether to use tools (default)
+/// - `"required"`: Model MUST use at least one tool before completing
+/// - `"none"`: Model MUST NOT use any tools
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7776,20 +7950,20 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ToolChoiceMode {
         value.parse()
     }
 }
-/**A JSON Schema object defining the expected parameters for the tool.
-
-Tool arguments are always JSON objects, so `type: "object"` is required at the root.
-Beyond that, any JSON Schema 2020-12 keyword may appear alongside `type` — including
-composition keywords (`oneOf`, `anyOf`, `allOf`, `not`), conditional keywords
-(`if`/`then`/`else`), reference keywords (`$ref`, `$defs`, `$anchor`), and any other
-standard validation or annotation keywords.
-
-Property schemas may carry an `x-mcp-header` annotation to mirror the
-argument value into an HTTP header on the Streamable HTTP transport. See
-the Streamable HTTP transport specification for the validity and
-extraction rules.
-
-Defaults to JSON Schema 2020-12 when no explicit `$schema` is provided.*/
+/// A JSON Schema object defining the expected parameters for the tool.
+///
+/// Tool arguments are always JSON objects, so `type: "object"` is required at the root.
+/// Beyond that, any JSON Schema 2020-12 keyword may appear alongside `type` — including
+/// composition keywords (`oneOf`, `anyOf`, `allOf`, `not`), conditional keywords
+/// (`if`/`then`/`else`), reference keywords (`$ref`, `$defs`, `$anchor`), and any other
+/// standard validation or annotation keywords.
+///
+/// Property schemas may carry an `x-mcp-header` annotation to mirror the
+/// argument value into an HTTP header on the Streamable HTTP transport. See
+/// the Streamable HTTP transport specification for the validity and
+/// extraction rules.
+///
+/// Defaults to JSON Schema 2020-12 when no explicit `$schema` is provided.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolInputSchema {
     #[serde(
@@ -7802,7 +7976,7 @@ pub struct ToolInputSchema {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-///An optional notification from the server to the client, informing it that the list of tools it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `toolsListChanged` filter field.
+///An optional notification from the server to the client, informing it that the list of tools it offers has changed. This is only delivered on a [`subscriptions/listen`](SubscriptionsListenRequest) stream when the client requested it via the `toolsListChanged` filter field.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolListChangedNotification {
     pub jsonrpc: ToolListChangedNotificationJsonrpc,
@@ -7904,10 +8078,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ToolListChangedNotifi
         value.parse()
     }
 }
-/**An optional JSON Schema object defining the structure of the tool's output returned in
-the structuredContent field of a {@link CallToolResult}. This can be any valid JSON Schema 2020-12.
-
-Defaults to JSON Schema 2020-12 when no explicit `$schema` is provided.*/
+/// An optional JSON Schema object defining the structure of the tool's output returned in
+/// the structuredContent field of a [`CallToolResult`]. This can be any valid JSON Schema 2020-12.
+///
+/// Defaults to JSON Schema 2020-12 when no explicit `$schema` is provided.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolOutputSchema {
     #[serde(
@@ -7921,39 +8095,39 @@ pub struct ToolOutputSchema {
 ///The result of a tool use, provided by the user back to the assistant.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolResultContent {
-    /**The unstructured result content of the tool use.
-
-    This has the same format as {@link CallToolResult.content} and can include text, images,
-    audio, resource links, and embedded resources.*/
+    /// The unstructured result content of the tool use.
+    ///
+    /// This has the same format as [`CallToolResult.content`](CallToolResult) and can include text, images,
+    /// audio, resource links, and embedded resources.
     pub content: ::alloc::vec::Vec<ContentBlock>,
-    /**Whether the tool use resulted in an error.
-
-    If true, the content typically describes the error that occurred.
-    Default: false*/
+    /// Whether the tool use resulted in an error.
+    ///
+    /// If true, the content typically describes the error that occurred.
+    /// Default: false
     #[serde(
         rename = "isError",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub is_error: ::core::option::Option<bool>,
-    /**Optional metadata about the tool result. Clients SHOULD preserve this field when
-    including tool results in subsequent sampling requests to enable caching optimizations.*/
+    /// Optional metadata about the tool result. Clients SHOULD preserve this field when
+    /// including tool results in subsequent sampling requests to enable caching optimizations.
     #[serde(
         rename = "_meta",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub meta: ::core::option::Option<MetaObject>,
-    /**An optional structured result value.
-
-    This can be any JSON value (object, array, string, number, boolean, or null).
-    If the tool defined an {@link Tool.outputSchema}, this SHOULD conform to that schema.*/
+    /// An optional structured result value.
+    ///
+    /// This can be any JSON value (object, array, string, number, boolean, or null).
+    /// If the tool defined an [`Tool.outputSchema`](Tool), this SHOULD conform to that schema.
     #[serde(
         rename = "structuredContent",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub structured_content: ::core::option::Option<::serde_json::Value>,
-    /**The ID of the tool use this result corresponds to.
-
-    This MUST match the ID from a previous {@link ToolUseContent}.*/
+    /// The ID of the tool use this result corresponds to.
+    ///
+    /// This MUST match the ID from a previous [`ToolUseContent`].
     #[serde(rename = "toolUseId")]
     pub tool_use_id: ::alloc::string::String,
     #[serde(rename = "type")]
@@ -8009,14 +8183,14 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ToolResultContentType
 ///A request from the assistant to call a tool.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolUseContent {
-    /**A unique identifier for this tool use.
-
-    This ID is used to match tool results to their corresponding tool uses.*/
+    /// A unique identifier for this tool use.
+    ///
+    /// This ID is used to match tool results to their corresponding tool uses.
     pub id: ::alloc::string::String,
     ///The arguments to pass to the tool, conforming to the tool's input schema.
     pub input: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
-    /**Optional metadata about the tool use. Clients SHOULD preserve this field when
-    including tool uses in subsequent sampling requests to enable caching optimizations.*/
+    /// Optional metadata about the tool use. Clients SHOULD preserve this field when
+    /// including tool uses in subsequent sampling requests to enable caching optimizations.
     #[serde(
         rename = "_meta",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -8074,10 +8248,10 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ToolUseContentType {
         value.parse()
     }
 }
-/**Returned when the request's protocol version is unknown to the server or
-unsupported (e.g., a known experimental or draft version the server has
-chosen not to implement). For HTTP, the response status code MUST be
-`400 Bad Request`.*/
+/// Returned when the request's protocol version is unknown to the server or
+/// unsupported (e.g., a known experimental or draft version the server has
+/// chosen not to implement). For HTTP, the response status code MUST be
+/// `400 Bad Request`.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct UnsupportedProtocolVersionError {
     pub error: UnsupportedProtocolVersionErrorError,
@@ -8088,18 +8262,52 @@ pub struct UnsupportedProtocolVersionError {
 ///`UnsupportedProtocolVersionErrorError`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct UnsupportedProtocolVersionErrorError {
-    pub code: i64,
+    pub code: UnsupportedProtocolVersionErrorErrorCode,
     pub data: UnsupportedProtocolVersionErrorErrorData,
     ///A short description of the error. The message SHOULD be limited to a concise single sentence.
     pub message: ::alloc::string::String,
+}
+///`UnsupportedProtocolVersionErrorErrorCode`
+#[derive(::serde::Serialize, Clone, Debug)]
+#[serde(transparent)]
+pub struct UnsupportedProtocolVersionErrorErrorCode(i64);
+impl ::core::ops::Deref for UnsupportedProtocolVersionErrorErrorCode {
+    type Target = i64;
+    fn deref(&self) -> &i64 {
+        &self.0
+    }
+}
+impl ::core::convert::From<UnsupportedProtocolVersionErrorErrorCode> for i64 {
+    fn from(value: UnsupportedProtocolVersionErrorErrorCode) -> Self {
+        value.0
+    }
+}
+impl ::core::convert::TryFrom<i64> for UnsupportedProtocolVersionErrorErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: i64) -> ::core::result::Result<Self, self::error::ConversionError> {
+        if ![-32022_i64].contains(&value) {
+            Err("invalid value".into())
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for UnsupportedProtocolVersionErrorErrorCode {
+    fn deserialize<D>(deserializer: D) -> ::core::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        Self::try_from(<i64>::deserialize(deserializer)?)
+            .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
 }
 ///`UnsupportedProtocolVersionErrorErrorData`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct UnsupportedProtocolVersionErrorErrorData {
     ///The protocol version that was requested by the client.
     pub requested: ::alloc::string::String,
-    /**Protocol versions the server supports. The client should choose a
-    mutually supported version from this list and retry.*/
+    /// Protocol versions the server supports. The client should choose a
+    /// mutually supported version from this list and retry.
     pub supported: ::alloc::vec::Vec<::alloc::string::String>,
 }
 ///`UnsupportedProtocolVersionErrorJsonrpc`

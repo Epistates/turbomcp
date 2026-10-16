@@ -10,6 +10,7 @@
 //! the user dependency graph.
 #![forbid(unsafe_code)]
 
+mod docs;
 mod normalize;
 
 use anyhow::{Context, Result, bail};
@@ -25,24 +26,22 @@ fn main() -> Result<()> {
     let label = args.get(3).map_or("an MCP schema", String::as_str);
 
     let raw = std::fs::read_to_string(input).with_context(|| format!("reading schema {input}"))?;
+    // `to_no_std` rewrites `::std::` paths over the whole output, doc comments
+    // included; a schema description that mentions one would be rewritten too.
+    if raw.contains("::std::") || raw.contains(":: std ::") {
+        bail!("{input} mentions a `::std::` path, which to_no_std would rewrite");
+    }
     let mut value: serde_json::Value =
         serde_json::from_str(&raw).with_context(|| format!("parsing {input} as JSON"))?;
 
-    // Normalize before handing to typify (F14).
-    normalize::flatten_all_of(&mut value)
-        .map_err(|e| anyhow::anyhow!("schema normalization: {e}"))?;
-    // Keep embedded JSON-Schema nodes (tool input/output schemas) open so
-    // arbitrary keywords (`$defs`, `additionalProperties`, …) survive the wire.
-    normalize::open_embedded_schemas(&mut value);
-    // Keep `_meta` object shapes open (they are open maps by spec) so typed
-    // round-trips don't drop non-reserved keys.
-    normalize::open_meta_objects(&mut value);
-    normalize::allow_boolean_subschemas(&mut value);
-    // After `open_embedded_schemas`, which keys off the `const: "object"` pin.
-    normalize::pin_string_consts(&mut value);
-    normalize::open_optional_objects(&mut value);
-    normalize::default_result_type(&mut value);
-    normalize::default_cache_hints(&mut value);
+    let report =
+        normalize::run(&mut value).map_err(|e| anyhow::anyhow!("schema normalization: {e}"))?;
+    let defs: Vec<String> = value
+        .get("$defs")
+        .or_else(|| value.get("definitions"))
+        .and_then(serde_json::Value::as_object)
+        .map(|defs| defs.keys().cloned().collect())
+        .unwrap_or_default();
 
     let schema: schemars::schema::RootSchema =
         serde_json::from_value(value).context("interpreting normalized JSON as a RootSchema")?;
@@ -72,7 +71,19 @@ fn main() -> Result<()> {
 use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, vec, vec::Vec};\n";
     let body = format!("{intro}\n{no_std_prelude}\n{}", type_space.to_stream());
     let file = syn::parse_file(&body).context("parsing generated tokens as a Rust file")?;
-    let pretty = lenient_fields(&to_no_std(&prettyplease::unparse(&file)));
+    let pretty = docs::scrub(
+        &lenient_fields(&to_no_std(&prettyplease::unparse(&file))),
+        &defs,
+    );
+    // typify's shape for an `anyOf` it cannot discriminate: a struct with one
+    // flattened `Option` per member, all filled by whatever fits. See
+    // `normalize::drop_undiscriminated_unions`.
+    if let Some(at) = pretty.find("pub subtype_0:") {
+        let owner = pretty[..at].rfind("pub struct ").map_or("?", |s| {
+            pretty[s..].split_whitespace().nth(2).unwrap_or("?")
+        });
+        bail!("typify rendered {owner} as a struct of flattened Options; drop or discriminate it");
+    }
 
     // Deliberately records no filesystem path. The header used to carry the
     // schema's location at generation time, which made the output a function of
@@ -91,7 +102,7 @@ use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, v
         .with_context(|| format!("writing {output}"))?;
 
     eprintln!(
-        "turbomcp-codegen: wrote {output} ({} lines) from {input}",
+        "turbomcp-codegen: wrote {output} ({} lines) from {input}\n  {report:?}",
         pretty.lines().count()
     );
     Ok(())

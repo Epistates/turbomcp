@@ -1,16 +1,22 @@
-//! Schema normalization passes, applied in order by `main` before typify runs:
+//! Schema normalization passes, applied in order by [`run`] before typify runs:
 //!
 //! 1. [`flatten_all_of`] – typify cannot merge the task result intersections.
 //! 2. [`open_embedded_schemas`] – keep tool/elicitation schemas open.
 //! 3. [`open_meta_objects`] – keep `_meta` shapes open.
 //! 4. [`allow_boolean_subschemas`] – `properties: {"x": true}` is legal.
 //! 5. [`pin_string_consts`] – make discriminators discriminate.
-//! 6. [`open_optional_objects`] – keep `{}` distinct from absent.
-//! 7. [`default_result_type`] – absent `resultType` means `"complete"`.
-//! 8. [`default_cache_hints`] – absent `ttlMs`/`cacheScope` are defaulted.
+//! 6. [`pin_integer_consts`] – an error struct accepts only its own code.
+//! 7. [`open_optional_objects`] – keep `{}` distinct from absent.
+//! 8. [`default_result_type`] – absent `resultType` means `"complete"`.
+//! 9. [`default_cache_hints`] – absent `ttlMs`/`cacheScope` are defaulted.
+//! 10. [`widen_elicit_numbers`] – a submitted form value may be a float.
+//! 11. [`drop_undiscriminated_unions`] – no type that decodes as everything.
 //!
 //! Each pass exists because typify silently lost a schema fact the rest of the
-//! crate depends on; the pass docs say which one.
+//! crate depends on; the pass docs say which one. Each returns how many places
+//! it changed, and the test over the vendored schemas pins those counts: a
+//! schema update that moves a pass off its target fails there instead of
+//! silently changing the generated types.
 //!
 //! ## `allOf` flattening
 //!
@@ -33,9 +39,45 @@ use serde_json::{Map, Value};
 
 const METADATA_KEYS: [&str; 3] = ["description", "title", "default"];
 
+/// How many places each pass changed in one schema.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Report {
+    pub all_of_flattened: usize,
+    pub embedded_schemas_opened: usize,
+    pub meta_objects_opened: usize,
+    pub boolean_subschemas_allowed: usize,
+    pub string_consts_pinned: usize,
+    pub integer_consts_pinned: usize,
+    pub optional_objects_opened: usize,
+    pub result_types_defaulted: usize,
+    pub cache_hints_defaulted: usize,
+    pub elicit_numbers_widened: usize,
+    pub unions_dropped: Vec<String>,
+}
+
+/// Every pass, in the order the module docs list them.
+pub fn run(schema: &mut Value) -> Result<Report, String> {
+    Ok(Report {
+        all_of_flattened: flatten_all_of(schema)?,
+        embedded_schemas_opened: open_embedded_schemas(schema),
+        meta_objects_opened: open_meta_objects(schema),
+        boolean_subschemas_allowed: allow_boolean_subschemas(schema),
+        // After `open_embedded_schemas`, which keys off the `const: "object"` pin.
+        string_consts_pinned: pin_string_consts(schema),
+        // After `flatten_all_of`, which merges the refined codes into one node.
+        integer_consts_pinned: pin_integer_consts(schema),
+        optional_objects_opened: open_optional_objects(schema),
+        result_types_defaulted: default_result_type(schema),
+        cache_hints_defaulted: default_cache_hints(schema),
+        elicit_numbers_widened: widen_elicit_numbers(schema),
+        // Last: the reference check must see every rewrite that removed a `$ref`.
+        unions_dropped: drop_undiscriminated_unions(schema)?,
+    })
+}
+
 /// Flatten every `allOf` in `schema`, in place. `$ref`s are resolved against a
 /// snapshot of the schema's `$defs`/`definitions` taken before mutation.
-pub fn flatten_all_of(schema: &mut Value) -> Result<(), String> {
+pub fn flatten_all_of(schema: &mut Value) -> Result<usize, String> {
     let defs = schema
         .get("$defs")
         .or_else(|| schema.get("definitions"))
@@ -43,12 +85,13 @@ pub fn flatten_all_of(schema: &mut Value) -> Result<(), String> {
         .unwrap_or(Value::Null);
     // Transactional: an unsupported intersection leaves the input untouched.
     let mut candidate = schema.clone();
-    walk(&mut candidate, &defs, 0)?;
+    let mut flattened = 0;
+    walk(&mut candidate, &defs, 0, &mut flattened)?;
     *schema = candidate;
-    Ok(())
+    Ok(flattened)
 }
 
-fn walk(value: &mut Value, defs: &Value, depth: usize) -> Result<(), String> {
+fn walk(value: &mut Value, defs: &Value, depth: usize, hits: &mut usize) -> Result<(), String> {
     if depth > 128 {
         return Err("schema intersection recursion limit exceeded".into());
     }
@@ -56,14 +99,15 @@ fn walk(value: &mut Value, defs: &Value, depth: usize) -> Result<(), String> {
         Value::Object(map) => {
             if map.contains_key("allOf") {
                 flatten_node(map, defs, depth + 1)?;
+                *hits += 1;
             }
             for child in map.values_mut() {
-                walk(child, defs, depth + 1)?;
+                walk(child, defs, depth + 1, hits)?;
             }
         }
         Value::Array(items) => {
             for child in items {
-                walk(child, defs, depth + 1)?;
+                walk(child, defs, depth + 1, hits)?;
             }
         }
         _ => {}
@@ -220,22 +264,25 @@ fn intersect_property(a: &Value, b: &Value) -> Option<Value> {
 /// `properties` pin a `type` field to `{const: "object"}` — the distinctive
 /// shape of an embedded JSON Schema — and that doesn't already set
 /// `additionalProperties`.
-pub fn open_embedded_schemas(schema: &mut Value) {
-    walk(schema);
+pub fn open_embedded_schemas(schema: &mut Value) -> usize {
+    let mut opened = 0;
+    walk(schema, &mut opened);
+    return opened;
 
-    fn walk(value: &mut Value) {
+    fn walk(value: &mut Value, opened: &mut usize) {
         match value {
             Value::Object(map) => {
                 if is_embedded_schema(map) && !map.contains_key("additionalProperties") {
                     map.insert("additionalProperties".into(), Value::Object(Map::new()));
+                    *opened += 1;
                 }
                 for child in map.values_mut() {
-                    walk(child);
+                    walk(child, opened);
                 }
             }
             Value::Array(items) => {
                 for child in items {
-                    walk(child);
+                    walk(child, opened);
                 }
             }
             _ => {}
@@ -281,18 +328,17 @@ pub fn open_embedded_schemas(schema: &mut Value) {
 /// key (trace context, user metadata). Inject `additionalProperties: {}` into
 /// every definition referenced by a `_meta` property so typify emits a
 /// flattened `extra` catch-all map, mirroring `open_embedded_schemas`.
-pub fn open_meta_objects(schema: &mut Value) {
+pub fn open_meta_objects(schema: &mut Value) -> usize {
     let mut targets: Vec<String> = Vec::new();
     collect_meta_refs(schema, &mut targets);
 
-    let defs_key = if schema.get("$defs").is_some() {
-        "$defs"
-    } else {
-        "definitions"
+    let Some(defs) = schema
+        .get_mut(defs_key(schema))
+        .and_then(Value::as_object_mut)
+    else {
+        return 0;
     };
-    let Some(defs) = schema.get_mut(defs_key).and_then(Value::as_object_mut) else {
-        return;
-    };
+    let mut opened = 0;
     for name in targets {
         if let Some(Value::Object(def)) = defs.get_mut(&name)
             && def.get("type").and_then(Value::as_str) == Some("object")
@@ -300,8 +346,10 @@ pub fn open_meta_objects(schema: &mut Value) {
             && !def.contains_key("additionalProperties")
         {
             def.insert("additionalProperties".into(), Value::Object(Map::new()));
+            opened += 1;
         }
     }
+    return opened;
 
     /// Collect the local `$ref` targets of every property named `_meta`.
     fn collect_meta_refs(value: &Value, targets: &mut Vec<String>) {
@@ -355,27 +403,45 @@ fn defs_key(schema: &Value) -> &'static str {
 /// The `type: {const: "object"}` pin of an embedded JSON Schema is left alone:
 /// it is not a discriminator, [`open_embedded_schemas`] keys off it, and a tool
 /// schema is user data that decoding should not start rejecting.
-pub fn pin_string_consts(schema: &mut Value) {
-    walk(schema);
+pub fn pin_string_consts(schema: &mut Value) -> usize {
+    pin_consts(schema, "string", &|pinned| {
+        pinned.as_str().is_some_and(|s| s != "object")
+    })
+}
 
-    fn walk(value: &mut Value) {
+/// Turn every integer `const` into a one-value `enum`.
+///
+/// The same loss as [`pin_string_consts`], for the JSON-RPC error codes:
+/// `InvalidParamsError.code` is `const: -32602`, but typify emitted `i64`, so
+/// the struct decoded any error as an invalid-params error. A one-value integer
+/// `enum` becomes a newtype whose `Deserialize` and `TryFrom<i64>` accept only
+/// that code.
+pub fn pin_integer_consts(schema: &mut Value) -> usize {
+    pin_consts(schema, "integer", &|pinned| pinned.is_i64())
+}
+
+fn pin_consts(schema: &mut Value, ty: &str, pin: &dyn Fn(&Value) -> bool) -> usize {
+    let mut pinned = 0;
+    walk(schema, ty, pin, &mut pinned);
+    return pinned;
+
+    fn walk(value: &mut Value, ty: &str, pin: &dyn Fn(&Value) -> bool, pinned: &mut usize) {
         match value {
             Value::Object(map) => {
-                if map.get("type").and_then(Value::as_str) == Some("string")
-                    && let Some(Value::String(pinned)) = map.get("const")
-                    && pinned != "object"
+                if map.get("type").and_then(Value::as_str) == Some(ty)
+                    && map.get("const").is_some_and(pin)
+                    && let Some(value) = map.remove("const")
                 {
-                    let pinned = Value::String(pinned.clone());
-                    map.remove("const");
-                    map.insert("enum".into(), Value::Array(vec![pinned]));
+                    map.insert("enum".into(), Value::Array(vec![value]));
+                    *pinned += 1;
                 }
                 for child in map.values_mut() {
-                    walk(child);
+                    walk(child, ty, pin, pinned);
                 }
             }
             Value::Array(items) => {
                 for child in items {
-                    walk(child);
+                    walk(child, ty, pin, pinned);
                 }
             }
             _ => {}
@@ -396,14 +462,14 @@ pub fn pin_string_consts(schema: &mut Value) {
 /// integers and booleans, with an unconstrained schema. Extension settings,
 /// `experimental` capabilities and sampling `metadata` are arbitrary JSON; a
 /// float or a `null` in any of them made the typed decode fail.
-pub fn open_optional_objects(schema: &mut Value) {
+pub fn open_optional_objects(schema: &mut Value) -> usize {
     let key = defs_key(schema);
     let pointer = format!("#/{key}/{OPEN_OBJECT}");
     let mut rewritten = 0usize;
     walk(schema, &pointer, &mut rewritten);
 
     let Some(defs) = schema.get_mut(key).and_then(Value::as_object_mut) else {
-        return;
+        return rewritten;
     };
     if defs.contains_key("JSONValue") {
         defs.insert(
@@ -421,6 +487,7 @@ pub fn open_optional_objects(schema: &mut Value) {
             }),
         );
     }
+    return rewritten;
 
     fn walk(value: &mut Value, pointer: &str, rewritten: &mut usize) {
         match value {
@@ -496,7 +563,8 @@ pub fn open_optional_objects(schema: &mut Value) {
 /// `2025-11-25` schemas type each property schema as an object, so one `true`
 /// failed the typed parse of the whole tool: the server fell back to a bare
 /// `{"type":"object"}` and a client's `tools/list` failed outright.
-pub fn allow_boolean_subschemas(schema: &mut Value) {
+pub fn allow_boolean_subschemas(schema: &mut Value) -> usize {
+    let mut allowed = 0;
     match schema {
         Value::Object(map) => {
             let embedded = map.get("type").and_then(Value::as_str) == Some("object")
@@ -511,21 +579,25 @@ pub fn allow_boolean_subschemas(schema: &mut Value) {
                 && let Some(Value::Object(nested)) = map
                     .get_mut("properties")
                     .and_then(|p| p.get_mut("properties"))
-                && nested.contains_key("additionalProperties")
+                && nested
+                    .get("additionalProperties")
+                    .is_some_and(|rest| rest.as_object().is_none_or(|r| !r.is_empty()))
             {
                 nested.insert("additionalProperties".into(), Value::Object(Map::new()));
+                allowed += 1;
             }
             for child in map.values_mut() {
-                allow_boolean_subschemas(child);
+                allowed += allow_boolean_subschemas(child);
             }
         }
         Value::Array(items) => {
             for child in items {
-                allow_boolean_subschemas(child);
+                allowed += allow_boolean_subschemas(child);
             }
         }
         _ => {}
     }
+    allowed
 }
 
 /// Make `resultType` discriminate, and default it where it may be absent.
@@ -541,7 +613,7 @@ pub fn allow_boolean_subschemas(schema: &mut Value) {
 /// matched `InputRequiredResult` first (all its other fields are optional) and
 /// dropped the real result. Pinned, it is required and exact, so a complete
 /// result falls through to the type that can hold it.
-pub fn default_result_type(schema: &mut Value) {
+pub fn default_result_type(schema: &mut Value) -> usize {
     let key = defs_key(schema);
     if let Some(prop) = schema
         .get_mut(key)
@@ -552,9 +624,10 @@ pub fn default_result_type(schema: &mut Value) {
     {
         prop.insert("enum".into(), serde_json::json!(["input_required"]));
     }
-    walk(schema);
+    return walk(schema);
 
-    fn walk(schema: &mut Value) {
+    fn walk(schema: &mut Value) -> usize {
+        let mut defaulted = 0;
         match schema {
             Value::Object(map) => {
                 let defaultable = map
@@ -571,18 +644,20 @@ pub fn default_result_type(schema: &mut Value) {
                     {
                         prop.insert("default".into(), Value::String("complete".into()));
                     }
+                    defaulted += 1;
                 }
                 for child in map.values_mut() {
-                    walk(child);
+                    defaulted += walk(child);
                 }
             }
             Value::Array(items) => {
                 for child in items {
-                    walk(child);
+                    defaulted += walk(child);
                 }
             }
             _ => {}
         }
+        defaulted
     }
 }
 
@@ -594,7 +669,8 @@ pub fn default_result_type(schema: &mut Value) {
 /// Required in the schema, typify made every such result a decode error (one
 /// of the schema's own examples omits both). `cacheScope` gets `"private"`: the
 /// reading that never shares a response across authorization contexts.
-pub fn default_cache_hints(schema: &mut Value) {
+pub fn default_cache_hints(schema: &mut Value) -> usize {
+    let mut defaulted = 0;
     match schema {
         Value::Object(map) => {
             let hinted = map
@@ -614,21 +690,132 @@ pub fn default_cache_hints(schema: &mut Value) {
                         }
                     }
                 }
+                defaulted += 1;
             }
             for child in map.values_mut() {
-                default_cache_hints(child);
+                defaulted += default_cache_hints(child);
             }
         }
         Value::Array(items) => {
             for child in items {
-                default_cache_hints(child);
+                defaulted += default_cache_hints(child);
             }
         }
         _ => {}
     }
+    return defaulted;
 
     fn json_zero() -> Value {
         Value::Number(0.into())
+    }
+}
+
+/// Let a submitted form value be any number, not only an integer.
+///
+/// `schema.ts` types `ElicitResult.content` values as `string | number |
+/// boolean | string[]`, but the generated `schema.json` says `integer`, so the
+/// Rust value enum could not hold `3.5` for a `type: "number"` field the server
+/// itself asked for. `integer` stays ahead of `number`, so `30` still decodes
+/// as an integer and re-encodes as `30`, not `30.0`.
+pub fn widen_elicit_numbers(schema: &mut Value) -> usize {
+    let key = defs_key(schema);
+    let Some(values) = schema
+        .get_mut(key)
+        .and_then(|defs| defs.get_mut("ElicitResult"))
+        .and_then(|def| def.pointer_mut("/properties/content/additionalProperties"))
+    else {
+        return 0;
+    };
+    return walk(values);
+
+    fn walk(value: &mut Value) -> usize {
+        let mut widened = 0;
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::Array(types)) = map.get_mut("type")
+                    && let Some(at) = types.iter().position(|t| t == "integer")
+                    && !types.iter().any(|t| t == "number")
+                {
+                    types.insert(at + 1, Value::String("number".into()));
+                    widened += 1;
+                }
+                for child in map.values_mut() {
+                    widened += walk(child);
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    widened += walk(child);
+                }
+            }
+            _ => {}
+        }
+        widened
+    }
+}
+
+/// Unions no instance can be decoded into honestly.
+///
+/// typify renders an `anyOf` whose members it cannot tell apart as a struct of
+/// flattened `Option`s, one per member, and every member that fits is filled:
+/// `{"type":"string","enum":["a"]}` decodes as `PrimitiveSchemaDefinition` with
+/// three members set and re-encodes with `type` written three times. The result
+/// unions have no discriminator at all (which result a response holds follows
+/// from the request's method), so `2025-06-18`'s untagged `ServerResult` decoded
+/// everything as its first member, the open `Result`. Their members stay; only
+/// the union is removed. A definition with one of these names that is not an
+/// `anyOf` (`2025-06-18`'s `EnumSchema` is a plain object) is kept.
+const UNDISCRIMINATED: [&str; 5] = [
+    "ClientResult",
+    "ServerResult",
+    "PrimitiveSchemaDefinition",
+    "EnumSchema",
+    "MultiSelectEnumSchema",
+];
+
+/// Remove the [`UNDISCRIMINATED`] unions, refusing if anything still refers to
+/// one: a schema that starts using one needs a decision, not a dangling `$ref`.
+pub fn drop_undiscriminated_unions(schema: &mut Value) -> Result<Vec<String>, String> {
+    let key = defs_key(schema);
+    let Some(defs) = schema.get_mut(key).and_then(Value::as_object_mut) else {
+        return Ok(Vec::new());
+    };
+    let mut dropped = Vec::new();
+    for name in UNDISCRIMINATED {
+        if defs.get(name).is_some_and(|def| def.get("anyOf").is_some()) {
+            defs.remove(name);
+            dropped.push(name.to_owned());
+        }
+    }
+    let mut refs = Vec::new();
+    collect_refs(schema, &mut refs);
+    for name in &dropped {
+        let pointer = format!("#/{key}/{name}");
+        if refs.contains(&pointer.as_str()) {
+            return Err(format!(
+                "{name} is an undiscriminated union, but the schema still refers to it"
+            ));
+        }
+    }
+    return Ok(dropped);
+
+    fn collect_refs<'a>(value: &'a Value, refs: &mut Vec<&'a str>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::String(target)) = map.get("$ref") {
+                    refs.push(target);
+                }
+                for child in map.values() {
+                    collect_refs(child, refs);
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    collect_refs(child, refs);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -989,5 +1176,181 @@ mod audit_tests {
             assert!(flatten_all_of(&mut candidate).is_err());
             assert_eq!(candidate, schema);
         }
+    }
+}
+
+/// The passes over the schemas the checked-in types are generated from. The
+/// inline tests above use hand-written fragments; these pin what each pass
+/// actually hits on the real files, so a schema update that renames a target
+/// or adds a fourth embedded schema shows up as a count, not a quiet diff.
+#[cfg(test)]
+mod vendored {
+    use super::*;
+    use serde_json::json;
+
+    fn normalized(revision: &str) -> (Value, Report) {
+        let path = format!(
+            "{}/../turbomcp-protocol/tests/fixtures/schema/{revision}/schema.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let mut schema: Value = serde_json::from_str(&raw).unwrap();
+        let report = run(&mut schema).unwrap();
+        (schema, report)
+    }
+
+    fn def<'a>(schema: &'a Value, name: &str) -> &'a Value {
+        &schema[defs_key(schema)][name]
+    }
+
+    fn dropped(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    #[test]
+    fn each_pass_hits_what_it_targets_in_2025_06_18() {
+        let (schema, report) = normalized("2025-06-18");
+        assert_eq!(
+            report,
+            Report {
+                all_of_flattened: 0,
+                embedded_schemas_opened: 3,
+                meta_objects_opened: 0,
+                boolean_subschemas_allowed: 3,
+                string_consts_pinned: 39,
+                integer_consts_pinned: 0,
+                optional_objects_opened: 9,
+                result_types_defaulted: 0,
+                cache_hints_defaulted: 0,
+                elicit_numbers_widened: 1,
+                unions_dropped: dropped(&[
+                    "ClientResult",
+                    "ServerResult",
+                    "PrimitiveSchemaDefinition"
+                ]),
+            }
+        );
+        // The plain-object `EnumSchema` of this revision is not a union.
+        assert_eq!(def(&schema, "EnumSchema")["type"], "object");
+    }
+
+    #[test]
+    fn each_pass_hits_what_it_targets_in_2025_11_25() {
+        let (schema, report) = normalized("2025-11-25");
+        assert_eq!(
+            report,
+            Report {
+                all_of_flattened: 4,
+                embedded_schemas_opened: 3,
+                meta_objects_opened: 0,
+                boolean_subschemas_allowed: 3,
+                string_consts_pinned: 87,
+                integer_consts_pinned: 1,
+                optional_objects_opened: 23,
+                result_types_defaulted: 0,
+                cache_hints_defaulted: 0,
+                elicit_numbers_widened: 1,
+                unions_dropped: dropped(&[
+                    "ClientResult",
+                    "ServerResult",
+                    "PrimitiveSchemaDefinition",
+                    "EnumSchema",
+                    "MultiSelectEnumSchema",
+                ]),
+            }
+        );
+        assert_eq!(
+            def(&schema, "URLElicitationRequiredError")["properties"]["error"]["properties"]["code"]
+                ["enum"],
+            json!([-32042])
+        );
+    }
+
+    #[test]
+    fn each_pass_hits_what_it_targets_in_2026_07_28() {
+        let (schema, report) = normalized("2026-07-28");
+        assert_eq!(
+            report,
+            Report {
+                all_of_flattened: 3,
+                // The other two embedded schemas already carry
+                // `additionalProperties: {}` upstream.
+                embedded_schemas_opened: 1,
+                meta_objects_opened: 4,
+                boolean_subschemas_allowed: 1,
+                string_consts_pinned: 78,
+                // Five JSON-RPC codes and three MCP ones.
+                integer_consts_pinned: 8,
+                optional_objects_opened: 6,
+                result_types_defaulted: 13,
+                cache_hints_defaulted: 7,
+                elicit_numbers_widened: 1,
+                unions_dropped: dropped(&[
+                    "ServerResult",
+                    "PrimitiveSchemaDefinition",
+                    "EnumSchema",
+                    "MultiSelectEnumSchema",
+                ]),
+            }
+        );
+        assert_eq!(
+            def(&schema, "InputRequiredResult")["properties"]["resultType"]["enum"],
+            json!(["input_required"])
+        );
+        assert_eq!(
+            def(&schema, "JSONValue"),
+            &json!({ "description": "Any JSON value." })
+        );
+        assert_eq!(
+            def(&schema, "JSONObject")["additionalProperties"],
+            json!({})
+        );
+        // `ClientResult` is `Result` itself in this revision, not a union.
+        assert!(def(&schema, "ClientResult").get("anyOf").is_none());
+    }
+
+    #[test]
+    fn integer_consts_become_one_value_enums() {
+        let mut schema = json!({
+            "properties": {
+                "code": { "type": "integer", "const": -32602 },
+                "other": { "type": "integer" },
+                "const": { "type": "string" }
+            }
+        });
+        assert_eq!(pin_integer_consts(&mut schema), 1);
+        assert_eq!(
+            schema["properties"]["code"],
+            json!({ "type": "integer", "enum": [-32602] })
+        );
+        assert_eq!(schema["properties"]["other"], json!({ "type": "integer" }));
+    }
+
+    #[test]
+    fn elicit_values_keep_integers_ahead_of_numbers() {
+        let mut schema = json!({ "$defs": { "ElicitResult": { "properties": { "content": {
+            "additionalProperties": { "anyOf": [
+                { "type": "array", "items": { "type": "string" } },
+                { "type": ["string", "integer", "boolean"] }
+            ] }
+        } } } } });
+        assert_eq!(widen_elicit_numbers(&mut schema), 1);
+        assert_eq!(widen_elicit_numbers(&mut schema), 0);
+        assert_eq!(
+            schema.pointer(
+                "/$defs/ElicitResult/properties/content/additionalProperties/anyOf/1/type"
+            ),
+            Some(&json!(["string", "integer", "number", "boolean"]))
+        );
+    }
+
+    #[test]
+    fn a_dropped_union_that_is_still_referenced_is_refused() {
+        let mut schema = json!({ "$defs": {
+            "ServerResult": { "anyOf": [{ "$ref": "#/$defs/A" }, { "$ref": "#/$defs/B" }] },
+            "Holder": { "properties": { "r": { "$ref": "#/$defs/ServerResult" } } }
+        } });
+        let err = drop_undiscriminated_unions(&mut schema).unwrap_err();
+        assert!(err.contains("ServerResult"), "{err}");
     }
 }

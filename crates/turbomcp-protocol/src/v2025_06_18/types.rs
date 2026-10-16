@@ -19,27 +19,27 @@ use ::alloc::{
 ///Optional annotations for the client. The client can use annotations to inform how objects are used or displayed
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct Annotations {
-    /**Describes who the intended customer of this object or data is.
-
-    It can include multiple entries to indicate content useful for multiple audiences (e.g., `["user", "assistant"]`).*/
+    /// Describes who the intended customer of this object or data is.
+    ///
+    /// It can include multiple entries to indicate content useful for multiple audiences (e.g., `["user", "assistant"]`).
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub audience: ::alloc::vec::Vec<Role>,
-    /**The moment the resource was last modified, as an ISO 8601 formatted string.
-
-    Should be an ISO 8601 formatted string (e.g., "2025-01-12T15:00:58Z").
-
-    Examples: last activity timestamp in an open file, timestamp when the resource
-    was attached, etc.*/
+    /// The moment the resource was last modified, as an ISO 8601 formatted string.
+    ///
+    /// Should be an ISO 8601 formatted string (e.g., "2025-01-12T15:00:58Z").
+    ///
+    /// Examples: last activity timestamp in an open file, timestamp when the resource
+    /// was attached, etc.
     #[serde(
         rename = "lastModified",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub last_modified: ::core::option::Option<::alloc::string::String>,
-    /**Describes how important this data is for operating the server.
-
-    A value of 1 means "most important," and indicates that the data is
-    effectively required, while 0 means "least important," and indicates that
-    the data is entirely optional.*/
+    /// Describes how important this data is for operating the server.
+    ///
+    /// A value of 1 means "most important," and indicates that the data is
+    /// effectively required, while 0 means "least important," and indicates that
+    /// the data is entirely optional.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub priority: ::core::option::Option<f64>,
 }
@@ -51,7 +51,7 @@ pub struct AudioContent {
     pub annotations: ::core::option::Option<Annotations>,
     ///The base64-encoded audio data.
     pub data: ::alloc::string::String,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -116,12 +116,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for AudioContentType {
 pub struct BaseMetadata {
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
@@ -130,7 +130,7 @@ pub struct BaseMetadata {
 pub struct BlobResourceContents {
     ///A base64-encoded string representing the binary data of the item.
     pub blob: ::alloc::string::String,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -270,24 +270,24 @@ pub struct CallToolRequestParams {
 pub struct CallToolResult {
     ///A list of content objects that represent the unstructured result of the tool call.
     pub content: ::alloc::vec::Vec<ContentBlock>,
-    /**Whether the tool call ended in an error.
-
-    If not set, this is assumed to be false (the call was successful).
-
-    Any errors that originate from the tool SHOULD be reported inside the result
-    object, with `isError` set to true, _not_ as an MCP protocol-level error
-    response. Otherwise, the LLM would not be able to see that an error occurred
-    and self-correct.
-
-    However, any errors in _finding_ the tool, an error indicating that the
-    server does not support tool calls, or any other exceptional conditions,
-    should be reported as an MCP error response.*/
+    /// Whether the tool call ended in an error.
+    ///
+    /// If not set, this is assumed to be false (the call was successful).
+    ///
+    /// Any errors that originate from the tool SHOULD be reported inside the result
+    /// object, with `isError` set to true, _not_ as an MCP protocol-level error
+    /// response. Otherwise, the LLM would not be able to see that an error occurred
+    /// and self-correct.
+    ///
+    /// However, any errors in _finding_ the tool, an error indicating that the
+    /// server does not support tool calls, or any other exceptional conditions,
+    /// should be reported as an MCP error response.
     #[serde(
         rename = "isError",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub is_error: ::core::option::Option<bool>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -301,13 +301,13 @@ pub struct CallToolResult {
     )]
     pub structured_content: ::core::option::Option<JsonObject>,
 }
-/**This notification can be sent by either side to indicate that it is cancelling a previously-issued request.
-
-The request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.
-
-This notification indicates that the result will be unused, so any associated processing SHOULD cease.
-
-A client MUST NOT attempt to cancel its `initialize` request.*/
+/// This notification can be sent by either side to indicate that it is cancelling a previously-issued request.
+///
+/// The request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.
+///
+/// This notification indicates that the result will be unused, so any associated processing SHOULD cease.
+///
+/// A client MUST NOT attempt to cancel its `initialize` request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CancelledNotification {
     pub method: CancelledNotificationMethod,
@@ -366,9 +366,9 @@ pub struct CancelledNotificationParams {
     ///An optional string describing the reason for the cancellation. This MAY be logged or presented to the user.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub reason: ::core::option::Option<::alloc::string::String>,
-    /**The ID of the request to cancel.
-
-    This MUST correspond to the ID of a request previously issued in the same direction.*/
+    /// The ID of the request to cancel.
+    ///
+    /// This MUST correspond to the ID of a request previously issued in the same direction.
     #[serde(rename = "requestId")]
     pub request_id: RequestId,
 }
@@ -515,35 +515,6 @@ impl ::core::convert::From<CompleteRequest> for ClientRequest {
         Self::CompleteRequest(value)
     }
 }
-///`ClientResult`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-#[serde(untagged)]
-pub enum ClientResult {
-    Result(Result),
-    CreateMessageResult(CreateMessageResult),
-    ListRootsResult(ListRootsResult),
-    ElicitResult(ElicitResult),
-}
-impl ::core::convert::From<Result> for ClientResult {
-    fn from(value: Result) -> Self {
-        Self::Result(value)
-    }
-}
-impl ::core::convert::From<CreateMessageResult> for ClientResult {
-    fn from(value: CreateMessageResult) -> Self {
-        Self::CreateMessageResult(value)
-    }
-}
-impl ::core::convert::From<ListRootsResult> for ClientResult {
-    fn from(value: ListRootsResult) -> Self {
-        Self::ListRootsResult(value)
-    }
-}
-impl ::core::convert::From<ElicitResult> for ClientResult {
-    fn from(value: ElicitResult) -> Self {
-        Self::ElicitResult(value)
-    }
-}
 ///A request from the client to the server, to ask for completion options.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteRequest {
@@ -645,7 +616,7 @@ impl ::core::convert::From<ResourceTemplateReference> for CompleteRequestParamsR
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CompleteResult {
     pub completion: CompleteResultCompletion,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -765,9 +736,9 @@ pub struct CreateMessageRequestParams {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub include_context: ::core::option::Option<CreateMessageRequestParamsIncludeContext>,
-    /**The requested maximum number of tokens to sample (to prevent runaway completions).
-
-    The client MAY choose to sample fewer tokens than the requested maximum.*/
+    /// The requested maximum number of tokens to sample (to prevent runaway completions).
+    ///
+    /// The client MAY choose to sample fewer tokens than the requested maximum.
     #[serde(rename = "maxTokens")]
     pub max_tokens: i64,
     pub messages: ::alloc::vec::Vec<SamplingMessage>,
@@ -856,7 +827,7 @@ impl ::core::convert::TryFrom<::alloc::string::String>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct CreateMessageResult {
     pub content: CreateMessageResultContent,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -990,8 +961,8 @@ pub struct ElicitRequestParams {
     #[serde(rename = "requestedSchema")]
     pub requested_schema: ElicitRequestParamsRequestedSchema,
 }
-/**A restricted subset of JSON Schema.
-Only top-level properties are allowed, without nesting.*/
+/// A restricted subset of JSON Schema.
+/// Only top-level properties are allowed, without nesting.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ElicitRequestParamsRequestedSchema {
     pub properties: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
@@ -1005,19 +976,19 @@ pub struct ElicitRequestParamsRequestedSchema {
 ///The client's response to an elicitation request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ElicitResult {
-    /**The user action in response to the elicitation.
-    - "accept": User submitted the form/confirmed the action
-    - "decline": User explicitly declined the action
-    - "cancel": User dismissed without making an explicit choice*/
+    /// The user action in response to the elicitation.
+    /// - "accept": User submitted the form/confirmed the action
+    /// - "decline": User explicitly declined the action
+    /// - "cancel": User dismissed without making an explicit choice
     pub action: ElicitResultAction,
-    /**The submitted form data, only present when action is "accept".
-    Contains values matching the requested schema.*/
+    /// The submitted form data, only present when action is "accept".
+    /// Contains values matching the requested schema.
     #[serde(
         default,
         skip_serializing_if = ":: alloc :: collections :: BTreeMap::is_empty"
     )]
     pub content: ::alloc::collections::BTreeMap<::alloc::string::String, ElicitResultContentValue>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -1025,10 +996,10 @@ pub struct ElicitResult {
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-/**The user action in response to the elicitation.
-- "accept": User submitted the form/confirmed the action
-- "decline": User explicitly declined the action
-- "cancel": User dismissed without making an explicit choice*/
+/// The user action in response to the elicitation.
+/// - "accept": User submitted the form/confirmed the action
+/// - "decline": User explicitly declined the action
+/// - "cancel": User dismissed without making an explicit choice
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1089,6 +1060,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ElicitResultAction {
 pub enum ElicitResultContentValue {
     Boolean(bool),
     Integer(i64),
+    Number(f64),
     String(::alloc::string::String),
 }
 impl ::core::fmt::Display for ElicitResultContentValue {
@@ -1096,6 +1068,7 @@ impl ::core::fmt::Display for ElicitResultContentValue {
         match self {
             Self::Boolean(x) => x.fmt(f),
             Self::Integer(x) => x.fmt(f),
+            Self::Number(x) => x.fmt(f),
             Self::String(x) => x.fmt(f),
         }
     }
@@ -1110,16 +1083,21 @@ impl ::core::convert::From<i64> for ElicitResultContentValue {
         Self::Integer(value)
     }
 }
-/**The contents of a resource, embedded into a prompt or tool call result.
-
-It is up to the client how best to render embedded resources for the benefit
-of the LLM and/or the user.*/
+impl ::core::convert::From<f64> for ElicitResultContentValue {
+    fn from(value: f64) -> Self {
+        Self::Number(value)
+    }
+}
+/// The contents of a resource, embedded into a prompt or tool call result.
+///
+/// It is up to the client how best to render embedded resources for the benefit
+/// of the LLM and/or the user.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct EmbeddedResource {
     ///Optional annotations for the client.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -1351,7 +1329,7 @@ pub struct GetPromptResult {
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     pub messages: ::alloc::vec::Vec<PromptMessage>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -1367,7 +1345,7 @@ pub struct ImageContent {
     pub annotations: ::core::option::Option<Annotations>,
     ///The base64-encoded image data.
     pub data: ::alloc::string::String,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -1432,12 +1410,12 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ImageContentType {
 pub struct Implementation {
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     pub version: ::alloc::string::String,
@@ -1509,12 +1487,12 @@ pub struct InitializeRequestParams {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InitializeResult {
     pub capabilities: ServerCapabilities,
-    /**Instructions describing how to use the server and its features.
-
-    This can be used by clients to improve the LLM's understanding of available tools, resources, etc. It can be thought of like a "hint" to the model. For example, this information MAY be added to the system prompt.*/
+    /// Instructions describing how to use the server and its features.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available tools, resources, etc. It can be thought of like a "hint" to the model. For example, this information MAY be added to the system prompt.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub instructions: ::core::option::Option<::alloc::string::String>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -1584,7 +1562,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for InitializedNotificati
 ///`InitializedNotificationParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InitializedNotificationParams {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -1770,7 +1748,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for JsonrpcNotificationJs
 ///`JsonrpcNotificationParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcNotificationParams {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -1847,7 +1825,7 @@ pub struct JsonrpcRequestParams {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct JsonrpcRequestParamsMeta {
     ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
@@ -1970,23 +1948,23 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListPromptsRequestMet
 ///`ListPromptsRequestParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ListPromptsRequestParams {
-    /**An opaque token representing the current pagination position.
-    If provided, the server should return results starting after this cursor.*/
+    /// An opaque token representing the current pagination position.
+    /// If provided, the server should return results starting after this cursor.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
 ///The server's response to a prompts/list request from the client.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListPromptsResult {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -2051,23 +2029,23 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListResourceTemplates
 ///`ListResourceTemplatesRequestParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ListResourceTemplatesRequestParams {
-    /**An opaque token representing the current pagination position.
-    If provided, the server should return results starting after this cursor.*/
+    /// An opaque token representing the current pagination position.
+    /// If provided, the server should return results starting after this cursor.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
 ///The server's response to a resources/templates/list request from the client.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourceTemplatesResult {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -2133,23 +2111,23 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListResourcesRequestM
 ///`ListResourcesRequestParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ListResourcesRequestParams {
-    /**An opaque token representing the current pagination position.
-    If provided, the server should return results starting after this cursor.*/
+    /// An opaque token representing the current pagination position.
+    /// If provided, the server should return results starting after this cursor.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
 ///The server's response to a resources/list request from the client.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListResourcesResult {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -2157,13 +2135,13 @@ pub struct ListResourcesResult {
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     pub resources: ::alloc::vec::Vec<Resource>,
 }
-/**Sent from the server to request a list of root URIs from the client. Roots allow
-servers to ask for specific directories or files to operate on. A common example
-for roots is providing a set of repositories or directories a server should operate
-on.
-
-This request is typically used when the server needs to understand the file system
-structure or access specific locations that the client has permission to read from.*/
+/// Sent from the server to request a list of root URIs from the client. Roots allow
+/// servers to ask for specific directories or files to operate on. A common example
+/// for roots is providing a set of repositories or directories a server should operate
+/// on.
+///
+/// This request is typically used when the server needs to understand the file system
+/// structure or access specific locations that the client has permission to read from.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsRequest {
     pub method: ListRootsRequestMethod,
@@ -2228,7 +2206,7 @@ pub struct ListRootsRequestParams {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsRequestParamsMeta {
     ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
@@ -2240,12 +2218,12 @@ pub struct ListRootsRequestParamsMeta {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-/**The client's response to a roots/list request from the server.
-This result contains an array of Root objects, each representing a root directory
-or file that the server can operate on.*/
+/// The client's response to a roots/list request from the server.
+/// This result contains an array of Root objects, each representing a root directory
+/// or file that the server can operate on.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListRootsResult {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -2311,23 +2289,23 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ListToolsRequestMetho
 ///`ListToolsRequestParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ListToolsRequestParams {
-    /**An opaque token representing the current pagination position.
-    If provided, the server should return results starting after this cursor.*/
+    /// An opaque token representing the current pagination position.
+    /// If provided, the server should return results starting after this cursor.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
 ///The server's response to a tools/list request from the client.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ListToolsResult {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -2335,10 +2313,10 @@ pub struct ListToolsResult {
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     pub tools: ::alloc::vec::Vec<Tool>,
 }
-/**The severity of a log message.
-
-These map to syslog message severities, as specified in RFC-5424:
-https://datatracker.ietf.org/doc/html/rfc5424#section-6.2.1*/
+/// The severity of a log message.
+///
+/// These map to syslog message severities, as specified in RFC-5424:
+/// <https://datatracker.ietf.org/doc/html/rfc5424#section-6.2.1>
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2477,65 +2455,65 @@ pub struct LoggingMessageNotificationParams {
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub logger: ::core::option::Option<::alloc::string::String>,
 }
-/**Hints to use for model selection.
-
-Keys not declared here are currently left unspecified by the spec and are up
-to the client to interpret.*/
+/// Hints to use for model selection.
+///
+/// Keys not declared here are currently left unspecified by the spec and are up
+/// to the client to interpret.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ModelHint {
-    /**A hint for a model name.
-
-    The client SHOULD treat this as a substring of a model name; for example:
-     - `claude-3-5-sonnet` should match `claude-3-5-sonnet-20241022`
-     - `sonnet` should match `claude-3-5-sonnet-20241022`, `claude-3-sonnet-20240229`, etc.
-     - `claude` should match any Claude model
-
-    The client MAY also map the string to a different provider's model name or a different model family, as long as it fills a similar niche; for example:
-     - `gemini-1.5-flash` could match `claude-3-haiku-20240307`*/
+    /// A hint for a model name.
+    ///
+    /// The client SHOULD treat this as a substring of a model name; for example:
+    ///  - `claude-3-5-sonnet` should match `claude-3-5-sonnet-20241022`
+    ///  - `sonnet` should match `claude-3-5-sonnet-20241022`, `claude-3-sonnet-20240229`, etc.
+    ///  - `claude` should match any Claude model
+    ///
+    /// The client MAY also map the string to a different provider's model name or a different model family, as long as it fills a similar niche; for example:
+    ///  - `gemini-1.5-flash` could match `claude-3-haiku-20240307`
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::alloc::string::String>,
 }
-/**The server's preferences for model selection, requested of the client during sampling.
-
-Because LLMs can vary along multiple dimensions, choosing the "best" model is
-rarely straightforward.  Different models excel in different areas—some are
-faster but less capable, others are more capable but more expensive, and so
-on. This interface allows servers to express their priorities across multiple
-dimensions to help clients make an appropriate selection for their use case.
-
-These preferences are always advisory. The client MAY ignore them. It is also
-up to the client to decide how to interpret these preferences and how to
-balance them against other considerations.*/
+/// The server's preferences for model selection, requested of the client during sampling.
+///
+/// Because LLMs can vary along multiple dimensions, choosing the "best" model is
+/// rarely straightforward.  Different models excel in different areas—some are
+/// faster but less capable, others are more capable but more expensive, and so
+/// on. This interface allows servers to express their priorities across multiple
+/// dimensions to help clients make an appropriate selection for their use case.
+///
+/// These preferences are always advisory. The client MAY ignore them. It is also
+/// up to the client to decide how to interpret these preferences and how to
+/// balance them against other considerations.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ModelPreferences {
-    /**How much to prioritize cost when selecting a model. A value of 0 means cost
-    is not important, while a value of 1 means cost is the most important
-    factor.*/
+    /// How much to prioritize cost when selecting a model. A value of 0 means cost
+    /// is not important, while a value of 1 means cost is the most important
+    /// factor.
     #[serde(
         rename = "costPriority",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub cost_priority: ::core::option::Option<f64>,
-    /**Optional hints to use for model selection.
-
-    If multiple hints are specified, the client MUST evaluate them in order
-    (such that the first match is taken).
-
-    The client SHOULD prioritize these hints over the numeric priorities, but
-    MAY still use the priorities to select from ambiguous matches.*/
+    /// Optional hints to use for model selection.
+    ///
+    /// If multiple hints are specified, the client MUST evaluate them in order
+    /// (such that the first match is taken).
+    ///
+    /// The client SHOULD prioritize these hints over the numeric priorities, but
+    /// MAY still use the priorities to select from ambiguous matches.
     #[serde(default, skip_serializing_if = "::alloc::vec::Vec::is_empty")]
     pub hints: ::alloc::vec::Vec<ModelHint>,
-    /**How much to prioritize intelligence and capabilities when selecting a
-    model. A value of 0 means intelligence is not important, while a value of 1
-    means intelligence is the most important factor.*/
+    /// How much to prioritize intelligence and capabilities when selecting a
+    /// model. A value of 0 means intelligence is not important, while a value of 1
+    /// means intelligence is the most important factor.
     #[serde(
         rename = "intelligencePriority",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub intelligence_priority: ::core::option::Option<f64>,
-    /**How much to prioritize sampling speed (latency) when selecting a model. A
-    value of 0 means speed is not important, while a value of 1 means speed is
-    the most important factor.*/
+    /// How much to prioritize sampling speed (latency) when selecting a model. A
+    /// value of 0 means speed is not important, while a value of 1 means speed is
+    /// the most important factor.
     #[serde(
         rename = "speedPriority",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -2552,7 +2530,7 @@ pub struct Notification {
 ///`NotificationParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct NotificationParams {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -2637,23 +2615,23 @@ pub struct PaginatedRequest {
 ///`PaginatedRequestParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct PaginatedRequestParams {
-    /**An opaque token representing the current pagination position.
-    If provided, the server should return results starting after this cursor.*/
+    /// An opaque token representing the current pagination position.
+    /// If provided, the server should return results starting after this cursor.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
 ///`PaginatedResult`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct PaginatedResult {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
-    /**An opaque token representing the pagination position after the last returned result.
-    If present, there may be more results available.*/
+    /// An opaque token representing the pagination position after the last returned result.
+    /// If present, there may be more results available.
     #[serde(
         rename = "nextCursor",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -2725,7 +2703,7 @@ pub struct PingRequestParams {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PingRequestParamsMeta {
     ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
@@ -2736,19 +2714,6 @@ pub struct PingRequestParamsMeta {
     pub progress_token: ::core::option::Option<ProgressToken>,
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
-}
-/**Restricted schema definitions that only allow primitive types
-without nested objects or arrays.*/
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
-pub struct PrimitiveSchemaDefinition {
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_0: ::core::option::Option<StringSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_1: ::core::option::Option<NumberSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_2: ::core::option::Option<BooleanSchema>,
-    #[serde(flatten, skip_serializing_if = "::core::option::Option::is_none")]
-    pub subtype_3: ::core::option::Option<EnumSchema>,
 }
 ///An out-of-band notification used to inform the receiver of a progress update for a long-running request.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -2847,7 +2812,7 @@ pub struct Prompt {
     ///An optional description of what this prompt provides
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -2856,12 +2821,12 @@ pub struct Prompt {
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
@@ -2876,12 +2841,12 @@ pub struct PromptArgument {
     ///Whether this argument must be provided.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub required: ::core::option::Option<bool>,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
@@ -2944,7 +2909,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for PromptListChangedNoti
 ///`PromptListChangedNotificationParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptListChangedNotificationParams {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -2954,10 +2919,10 @@ pub struct PromptListChangedNotificationParams {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-/**Describes a message returned as part of a prompt.
-
-This is similar to `SamplingMessage`, but also supports the embedding of
-resources from the MCP server.*/
+/// Describes a message returned as part of a prompt.
+///
+/// This is similar to `SamplingMessage`, but also supports the embedding of
+/// resources from the MCP server.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PromptMessage {
     pub content: ContentBlock,
@@ -2968,12 +2933,12 @@ pub struct PromptMessage {
 pub struct PromptReference {
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
@@ -3089,7 +3054,7 @@ pub struct ReadResourceRequestParams {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ReadResourceResult {
     pub contents: ::alloc::vec::Vec<ReadResourceResultContentsItem>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -3152,7 +3117,7 @@ pub struct RequestParams {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RequestParamsMeta {
     ///If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
@@ -3170,12 +3135,12 @@ pub struct Resource {
     ///Optional annotations for the client.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
-    /**A description of what this resource represents.
-
-    This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
+    /// A description of what this resource represents.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -3190,17 +3155,17 @@ pub struct Resource {
     pub mime_type: ::core::option::Option<::alloc::string::String>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
-
-    This can be used by Hosts to display file sizes and estimate context window usage.*/
+    /// The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
+    ///
+    /// This can be used by Hosts to display file sizes and estimate context window usage.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub size: ::core::option::Option<i64>,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     ///The URI of this resource.
@@ -3209,7 +3174,7 @@ pub struct Resource {
 ///The contents of a specific resource or sub-resource.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceContents {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -3225,20 +3190,20 @@ pub struct ResourceContents {
     ///The URI of this resource.
     pub uri: ::alloc::string::String,
 }
-/**A resource that the server is capable of reading, included in a prompt or tool call result.
-
-Note: resource links returned by tools are not guaranteed to appear in the results of `resources/list` requests.*/
+/// A resource that the server is capable of reading, included in a prompt or tool call result.
+///
+/// Note: resource links returned by tools are not guaranteed to appear in the results of `resources/list` requests.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceLink {
     ///Optional annotations for the client.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
-    /**A description of what this resource represents.
-
-    This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
+    /// A description of what this resource represents.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -3253,17 +3218,17 @@ pub struct ResourceLink {
     pub mime_type: ::core::option::Option<::alloc::string::String>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
-
-    This can be used by Hosts to display file sizes and estimate context window usage.*/
+    /// The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
+    ///
+    /// This can be used by Hosts to display file sizes and estimate context window usage.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub size: ::core::option::Option<i64>,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "type")]
@@ -3377,7 +3342,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ResourceListChangedNo
 ///`ResourceListChangedNotificationParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ResourceListChangedNotificationParams {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -3393,12 +3358,12 @@ pub struct ResourceTemplate {
     ///Optional annotations for the client.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
-    /**A description of what this template is for.
-
-    This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.*/
+    /// A description of what this template is for.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available resources. It can be thought of like a "hint" to the model.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -3413,12 +3378,12 @@ pub struct ResourceTemplate {
     pub mime_type: ::core::option::Option<::alloc::string::String>,
     ///Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: ::alloc::string::String,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     ///A URI template (according to RFC 6570) that can be used to construct resource URIs.
@@ -3542,7 +3507,7 @@ pub struct ResourceUpdatedNotificationParams {
 ///`Result`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Result {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -3606,26 +3571,26 @@ impl ::core::convert::TryFrom<::alloc::string::String> for Role {
 ///Represents a root directory or file that the server can operate on.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Root {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
-    /**An optional name for the root. This can be used to provide a human-readable
-    identifier for the root, which may be useful for display purposes or for
-    referencing the root in other parts of the application.*/
+    /// An optional name for the root. This can be used to provide a human-readable
+    /// identifier for the root, which may be useful for display purposes or for
+    /// referencing the root in other parts of the application.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::alloc::string::String>,
-    /**The URI identifying the root. This *must* start with file:// for now.
-    This restriction may be relaxed in future versions of the protocol to allow
-    other URI schemes.*/
+    /// The URI identifying the root. This *must* start with file:// for now.
+    /// This restriction may be relaxed in future versions of the protocol to allow
+    /// other URI schemes.
     pub uri: ::alloc::string::String,
 }
-/**A notification from the client to the server, informing it that the list of roots has changed.
-This notification should be sent whenever the client adds, removes, or modifies any root.
-The server should then request an updated list of roots using the ListRootsRequest.*/
+/// A notification from the client to the server, informing it that the list of roots has changed.
+/// This notification should be sent whenever the client adds, removes, or modifies any root.
+/// The server should then request an updated list of roots using the ListRootsRequest.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RootsListChangedNotification {
     pub method: RootsListChangedNotificationMethod,
@@ -3682,7 +3647,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for RootsListChangedNotif
 ///`RootsListChangedNotificationParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct RootsListChangedNotificationParams {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -3853,71 +3818,6 @@ impl ::core::convert::From<ListRootsRequest> for ServerRequest {
 impl ::core::convert::From<ElicitRequest> for ServerRequest {
     fn from(value: ElicitRequest) -> Self {
         Self::ElicitRequest(value)
-    }
-}
-///`ServerResult`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
-#[serde(untagged)]
-pub enum ServerResult {
-    Result(Result),
-    InitializeResult(InitializeResult),
-    ListResourcesResult(ListResourcesResult),
-    ListResourceTemplatesResult(ListResourceTemplatesResult),
-    ReadResourceResult(ReadResourceResult),
-    ListPromptsResult(ListPromptsResult),
-    GetPromptResult(GetPromptResult),
-    ListToolsResult(ListToolsResult),
-    CallToolResult(CallToolResult),
-    CompleteResult(CompleteResult),
-}
-impl ::core::convert::From<Result> for ServerResult {
-    fn from(value: Result) -> Self {
-        Self::Result(value)
-    }
-}
-impl ::core::convert::From<InitializeResult> for ServerResult {
-    fn from(value: InitializeResult) -> Self {
-        Self::InitializeResult(value)
-    }
-}
-impl ::core::convert::From<ListResourcesResult> for ServerResult {
-    fn from(value: ListResourcesResult) -> Self {
-        Self::ListResourcesResult(value)
-    }
-}
-impl ::core::convert::From<ListResourceTemplatesResult> for ServerResult {
-    fn from(value: ListResourceTemplatesResult) -> Self {
-        Self::ListResourceTemplatesResult(value)
-    }
-}
-impl ::core::convert::From<ReadResourceResult> for ServerResult {
-    fn from(value: ReadResourceResult) -> Self {
-        Self::ReadResourceResult(value)
-    }
-}
-impl ::core::convert::From<ListPromptsResult> for ServerResult {
-    fn from(value: ListPromptsResult) -> Self {
-        Self::ListPromptsResult(value)
-    }
-}
-impl ::core::convert::From<GetPromptResult> for ServerResult {
-    fn from(value: GetPromptResult) -> Self {
-        Self::GetPromptResult(value)
-    }
-}
-impl ::core::convert::From<ListToolsResult> for ServerResult {
-    fn from(value: ListToolsResult) -> Self {
-        Self::ListToolsResult(value)
-    }
-}
-impl ::core::convert::From<CallToolResult> for ServerResult {
-    fn from(value: CallToolResult) -> Self {
-        Self::CallToolResult(value)
-    }
-}
-impl ::core::convert::From<CompleteResult> for ServerResult {
-    fn from(value: CompleteResult) -> Self {
-        Self::CompleteResult(value)
     }
 }
 ///A request from the client to the server, to enable or adjust logging.
@@ -4172,7 +4072,7 @@ pub struct TextContent {
     ///Optional annotations for the client.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<Annotations>,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -4234,7 +4134,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for TextContentType {
 ///`TextResourceContents`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct TextResourceContents {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -4255,19 +4155,19 @@ pub struct TextResourceContents {
 ///Definition for a tool the client can call.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Tool {
-    /**Optional additional tool information.
-
-    Display name precedence order is: title, annotations.title, then name.*/
+    /// Optional additional tool information.
+    ///
+    /// Display name precedence order is: title, annotations.title, then name.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub annotations: ::core::option::Option<ToolAnnotations>,
-    /**A human-readable description of the tool.
-
-    This can be used by clients to improve the LLM's understanding of available tools. It can be thought of like a "hint" to the model.*/
+    /// A human-readable description of the tool.
+    ///
+    /// This can be used by clients to improve the LLM's understanding of available tools. It can be thought of like a "hint" to the model.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub description: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "inputSchema")]
     pub input_schema: ToolInputSchema,
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -4281,61 +4181,61 @@ pub struct Tool {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub output_schema: ::core::option::Option<ToolOutputSchema>,
-    /**Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
-    even by those unfamiliar with domain-specific terminology.
-
-    If not provided, the name should be used for display (except for Tool,
-    where `annotations.title` should be given precedence over using `name`,
-    if present).*/
+    /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
+    /// even by those unfamiliar with domain-specific terminology.
+    ///
+    /// If not provided, the name should be used for display (except for Tool,
+    /// where `annotations.title` should be given precedence over using `name`,
+    /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
 }
-/**Additional properties describing a Tool to clients.
-
-NOTE: all properties in ToolAnnotations are **hints**.
-They are not guaranteed to provide a faithful description of
-tool behavior (including descriptive properties like `title`).
-
-Clients should never make tool use decisions based on ToolAnnotations
-received from untrusted servers.*/
+/// Additional properties describing a Tool to clients.
+///
+/// NOTE: all properties in ToolAnnotations are **hints**.
+/// They are not guaranteed to provide a faithful description of
+/// tool behavior (including descriptive properties like `title`).
+///
+/// Clients should never make tool use decisions based on ToolAnnotations
+/// received from untrusted servers.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
 pub struct ToolAnnotations {
-    /**If true, the tool may perform destructive updates to its environment.
-    If false, the tool performs only additive updates.
-
-    (This property is meaningful only when `readOnlyHint == false`)
-
-    Default: true*/
+    /// If true, the tool may perform destructive updates to its environment.
+    /// If false, the tool performs only additive updates.
+    ///
+    /// (This property is meaningful only when `readOnlyHint == false`)
+    ///
+    /// Default: true
     #[serde(
         rename = "destructiveHint",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub destructive_hint: ::core::option::Option<bool>,
-    /**If true, calling the tool repeatedly with the same arguments
-    will have no additional effect on the its environment.
-
-    (This property is meaningful only when `readOnlyHint == false`)
-
-    Default: false*/
+    /// If true, calling the tool repeatedly with the same arguments
+    /// will have no additional effect on the its environment.
+    ///
+    /// (This property is meaningful only when `readOnlyHint == false`)
+    ///
+    /// Default: false
     #[serde(
         rename = "idempotentHint",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub idempotent_hint: ::core::option::Option<bool>,
-    /**If true, this tool may interact with an "open world" of external
-    entities. If false, the tool's domain of interaction is closed.
-    For example, the world of a web search tool is open, whereas that
-    of a memory tool is not.
-
-    Default: true*/
+    /// If true, this tool may interact with an "open world" of external
+    /// entities. If false, the tool's domain of interaction is closed.
+    /// For example, the world of a web search tool is open, whereas that
+    /// of a memory tool is not.
+    ///
+    /// Default: true
     #[serde(
         rename = "openWorldHint",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub open_world_hint: ::core::option::Option<bool>,
-    /**If true, the tool does not modify its environment.
-
-    Default: false*/
+    /// If true, the tool does not modify its environment.
+    ///
+    /// Default: false
     #[serde(
         rename = "readOnlyHint",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -4414,7 +4314,7 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ToolListChangedNotifi
 ///`ToolListChangedNotificationParams`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolListChangedNotificationParams {
-    ///See [General fields: `_meta`](/specification/2025-06-18/basic/index#meta) for notes on `_meta` usage.
+    ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
         rename = "_meta",
         default,
@@ -4424,8 +4324,8 @@ pub struct ToolListChangedNotificationParams {
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
-/**An optional JSON Schema object defining the structure of the tool's output returned in
-the structuredContent field of a CallToolResult.*/
+/// An optional JSON Schema object defining the structure of the tool's output returned in
+/// the structuredContent field of a CallToolResult.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct ToolOutputSchema {
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
