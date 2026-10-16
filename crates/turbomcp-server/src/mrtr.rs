@@ -349,6 +349,91 @@ impl PendingRequests {
     }
 }
 
+/// What a typed elicitation ([`ClientHandle::elicit_as`]) came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Elicited<T> {
+    /// The user submitted the form; here is what they entered.
+    Accepted(T),
+    /// The user explicitly declined.
+    Declined,
+    /// The user dismissed the form without choosing.
+    Cancelled,
+}
+
+impl<T> Elicited<T> {
+    /// The answer, if the user gave one.
+    pub fn accepted(self) -> Option<T> {
+        match self {
+            Self::Accepted(answer) => Some(answer),
+            _ => None,
+        }
+    }
+}
+
+/// `T`'s schema in the shape an elicitation form takes: subschemas inlined
+/// (a form has no `$ref`), the generator's bookkeeping (`$schema`, `title`)
+/// dropped, and an `Option<…>` field collapsed to its type (it is optional
+/// by being absent from `required`, and a form field has one type).
+fn form_schema<T: schemars::JsonSchema>() -> Value {
+    let generator = schemars::generate::SchemaSettings::draft2020_12()
+        .with(|s| s.inline_subschemas = true)
+        .into_generator();
+    let mut schema = generator.into_root_schema_for::<T>().to_value();
+    if let Some(root) = schema.as_object_mut() {
+        root.remove("$schema");
+        root.remove("title");
+        if let Some(Value::Object(properties)) = root.get_mut("properties") {
+            for property in properties.values_mut() {
+                collapse_nullable(property);
+            }
+        }
+    }
+    schema
+}
+
+/// `{"type": ["T", "null"]}` → `{"type": "T"}` (and `null` out of its
+/// `enum`), and an `anyOf` of one schema and `{"type": "null"}` → that
+/// schema; a number's `format`
+/// (`uint32`, …) dropped, which a form's number field doesn't have.
+fn collapse_nullable(property: &mut Value) {
+    let Some(map) = property.as_object_mut() else {
+        return;
+    };
+    if let Some(Value::Array(types)) = map.get("type") {
+        let non_null: Vec<Value> = types.iter().filter(|t| *t != "null").cloned().collect();
+        if let [only] = non_null.as_slice() {
+            map.insert("type".into(), only.clone());
+        }
+    }
+    if let Some(Value::Array(options)) = map.get("anyOf") {
+        let non_null: Vec<&Value> = options
+            .iter()
+            .filter(|o| o.get("type").and_then(Value::as_str) != Some("null"))
+            .collect();
+        if non_null.len() == 1
+            && non_null.len() < options.len()
+            && let Some(inner) = non_null[0].as_object().cloned()
+        {
+            map.remove("anyOf");
+            for (key, value) in inner {
+                map.entry(key).or_insert(value);
+            }
+        }
+    }
+    // An optional enum lists `null` among its options; a form's options are
+    // the values a user can pick.
+    if let Some(Value::Array(options)) = map.get_mut("enum") {
+        options.retain(|o| !o.is_null());
+    }
+    if matches!(
+        map.get("type").and_then(Value::as_str),
+        Some("integer" | "number")
+    ) {
+        map.remove("format");
+    }
+}
+
 #[cfg(test)]
 impl PendingRequests {
     /// [`complete`](Self::complete) from wherever the request went (tests of
@@ -589,6 +674,56 @@ impl ClientHandle {
             )
             .await?;
         checked_outcome(&params, &raw)
+    }
+
+    /// Ask the user for a `T`, with a form generated from `T`'s schema, and
+    /// parse the answer into it: what [`elicit`](Self::elicit) does with a
+    /// hand-written schema and a JSON read-back.
+    ///
+    /// ```ignore
+    /// #[derive(serde::Deserialize, schemars::JsonSchema)]
+    /// struct Booking {
+    ///     /// Check-in date.
+    ///     date: String,
+    ///     nights: u32,
+    /// }
+    ///
+    /// match ctx.client.elicit_as::<Booking>("booking", "Book a room").await? {
+    ///     Elicited::Accepted(booking) => { /* … */ }
+    ///     Elicited::Declined | Elicited::Cancelled => { /* … */ }
+    ///     _ => {}
+    /// }
+    /// ```
+    ///
+    /// `T` must be a flat struct of the form subset's fields: strings (with
+    /// `format` for email, URI, date), numbers, booleans, string enums, and
+    /// multi-selects of a string enum. `Option<…>` fields are optional.
+    ///
+    /// # Errors
+    /// As [`elicit`](Self::elicit), plus a `T` whose schema a form can't
+    /// render (an invalid-params error naming the field), and an accepted
+    /// answer that doesn't parse into `T`.
+    pub async fn elicit_as<T>(
+        &self,
+        key: &str,
+        message: impl Into<String>,
+    ) -> McpResult<Elicited<T>>
+    where
+        T: serde::de::DeserializeOwned + schemars::JsonSchema,
+    {
+        let params = neutral::ElicitParams::new(message, form_schema::<T>());
+        let outcome = self.elicit(key, params).await?;
+        Ok(match outcome.action {
+            neutral::ElicitAction::Accept => {
+                let answer =
+                    serde_json::from_value(Value::Object(outcome.content)).map_err(|e| {
+                        McpError::internal(format!("the elicited answer doesn't fit the form: {e}"))
+                    })?;
+                Elicited::Accepted(answer)
+            }
+            neutral::ElicitAction::Decline => Elicited::Declined,
+            neutral::ElicitAction::Cancel => Elicited::Cancelled,
+        })
     }
 
     /// Which capability a *form*-mode elicitation needs from this client.
@@ -1220,6 +1355,39 @@ fn parse_elicit_outcome(raw: &Value) -> McpResult<neutral::ElicitOutcome> {
 
 #[cfg(test)]
 mod tests {
+
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code)] // only its schema is used
+    struct Flat {
+        /// Your name.
+        name: String,
+        age: Option<u8>,
+        agree: bool,
+    }
+
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code)] // only its schema is used
+    struct Nested {
+        address: Flat,
+    }
+
+    #[test]
+    fn a_form_schema_is_flat_and_a_nested_type_is_refused() {
+        let flat = neutral::ElicitParams::new("q", crate::mrtr::form_schema::<Flat>());
+        assert!(flat.validate().is_ok(), "{:?}", flat.requested_schema);
+        assert_eq!(
+            flat.requested_schema["properties"]["age"]["type"],
+            "integer"
+        );
+        assert_eq!(
+            flat.requested_schema["properties"]["name"]["description"],
+            "Your name."
+        );
+        let nested = neutral::ElicitParams::new("q", crate::mrtr::form_schema::<Nested>());
+        let refused = nested.validate().unwrap_err();
+        assert!(refused.contains("address"), "{refused}");
+    }
+
     use super::*;
 
     /// A minimal schema inside the form subset, for the tests that care about

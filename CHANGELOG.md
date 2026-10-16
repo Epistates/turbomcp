@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Results carry `_meta`: `CallToolResult`, `ReadResourceResult`,
+  `GetPromptResult`, `CompleteResult` and the four list results have a
+  `meta` map (`with_meta_entry`), sent on every revision and read back by
+  the client. Keys under `io.modelcontextprotocol/` stay the framework's: a
+  handler's (or an upstream's, through the gateway) are not sent, so none
+  can claim another server's `serverInfo`.
+- Typed elicitation: `ctx.client.elicit_as::<T>(key, message)` asks with a
+  form generated from `T`'s schema (inlined, optional fields and enums
+  made form-shaped) and returns `Elicited<T>` (`Accepted(T)`, `Declined`,
+  `Cancelled`). The `elicitation` example uses it.
+
 - `#[server]` on a generic impl (`impl<S: Store> App<S>`): every generated
   impl repeats its generics and where-clause.
 - Attribute values are expressions: `description`, `title`, `mime_type` and

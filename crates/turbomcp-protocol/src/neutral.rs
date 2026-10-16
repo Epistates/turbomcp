@@ -438,12 +438,24 @@ pub struct ListToolsResult {
     pub next_cursor: Option<String>,
     /// Cache policy (SEP-2549); `None` = the server's configured default.
     pub cache: Option<CachePolicy>,
+    /// The result's `_meta` (empty = absent on the wire). Keys under
+    /// `io.modelcontextprotocol/` belong to the protocol and the framework
+    /// sets them, so a handler's are not sent.
+    pub meta: Map<String, Value>,
 }
 
 impl ListToolsResult {
+    /// Add one entry to the result's `_meta` (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// A single-page result over `tools`.
     pub fn new(tools: Vec<Tool>) -> Self {
         Self {
+            meta: Map::new(),
             tools,
             next_cursor: None,
             cache: None,
@@ -496,12 +508,24 @@ pub struct CallToolResult {
     pub is_error: bool,
     /// Optional structured result conforming to the tool's output schema.
     pub structured_content: Option<Value>,
+    /// The result's `_meta` (empty = absent on the wire). Keys under
+    /// `io.modelcontextprotocol/` belong to the protocol and the framework
+    /// sets them, so a handler's are not sent.
+    pub meta: Map<String, Value>,
 }
 
 impl CallToolResult {
+    /// Add one entry to the result's `_meta` (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// A successful result carrying the given content blocks (text, image, audio).
     pub fn new(content: Vec<Content>) -> Self {
         Self {
+            meta: Map::new(),
             content,
             is_error: false,
             structured_content: None,
@@ -511,6 +535,7 @@ impl CallToolResult {
     /// A successful result carrying a single text block.
     pub fn text(s: impl Into<String>) -> Self {
         Self {
+            meta: Map::new(),
             content: alloc::vec![Content::text(s)],
             is_error: false,
             structured_content: None,
@@ -520,6 +545,7 @@ impl CallToolResult {
     /// A failed result (`is_error = true`) carrying a single text block.
     pub fn error(s: impl Into<String>) -> Self {
         Self {
+            meta: Map::new(),
             content: alloc::vec![Content::text(s)],
             is_error: true,
             structured_content: None,
@@ -558,6 +584,9 @@ impl CallToolResult {
     ///
     /// # Errors
     /// When [`is_error`](Self::is_error) is set.
+    // Both sides are the same value: boxing the error would only make every
+    // caller unbox it.
+    #[allow(clippy::result_large_err)]
     pub fn into_result(self) -> Result<Self, Self> {
         if self.is_error { Err(self) } else { Ok(self) }
     }
@@ -1042,12 +1071,24 @@ pub struct ListResourcesResult {
     pub next_cursor: Option<String>,
     /// Cache policy (SEP-2549); `None` = the server's configured default.
     pub cache: Option<CachePolicy>,
+    /// The result's `_meta` (empty = absent on the wire). Keys under
+    /// `io.modelcontextprotocol/` belong to the protocol and the framework
+    /// sets them, so a handler's are not sent.
+    pub meta: Map<String, Value>,
 }
 
 impl ListResourcesResult {
+    /// Add one entry to the result's `_meta` (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// A single-page result over `resources`.
     pub fn new(resources: Vec<Resource>) -> Self {
         Self {
+            meta: Map::new(),
             resources,
             next_cursor: None,
             cache: None,
@@ -1076,12 +1117,24 @@ pub struct ReadResourceResult {
     pub contents: Vec<ResourceContents>,
     /// Cache policy (SEP-2549); `None` = the server's configured default.
     pub cache: Option<CachePolicy>,
+    /// The result's `_meta` (empty = absent on the wire). Keys under
+    /// `io.modelcontextprotocol/` belong to the protocol and the framework
+    /// sets them, so a handler's are not sent.
+    pub meta: Map<String, Value>,
 }
 
 impl ReadResourceResult {
+    /// Add one entry to the result's `_meta` (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// A result carrying the given contents.
     pub fn new(contents: Vec<ResourceContents>) -> Self {
         Self {
+            meta: Map::new(),
             contents,
             cache: None,
         }
@@ -1111,6 +1164,7 @@ impl ReadResourceResult {
     /// A result carrying a single text item.
     pub fn text(uri: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
+            meta: Map::new(),
             contents: alloc::vec![ResourceContents::text(uri, text)],
             cache: None,
         }
@@ -1221,12 +1275,24 @@ pub struct ListResourceTemplatesResult {
     pub next_cursor: Option<String>,
     /// Cache policy (SEP-2549); `None` = the server's configured default.
     pub cache: Option<CachePolicy>,
+    /// The result's `_meta` (empty = absent on the wire). Keys under
+    /// `io.modelcontextprotocol/` belong to the protocol and the framework
+    /// sets them, so a handler's are not sent.
+    pub meta: Map<String, Value>,
 }
 
 impl ListResourceTemplatesResult {
+    /// Add one entry to the result's `_meta` (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// A single-page result over `resource_templates`.
     pub fn new(resource_templates: Vec<ResourceTemplate>) -> Self {
         Self {
+            meta: Map::new(),
             resource_templates,
             next_cursor: None,
             cache: None,
@@ -1436,12 +1502,24 @@ pub struct ListPromptsResult {
     pub next_cursor: Option<String>,
     /// Cache policy (SEP-2549); `None` = the server's configured default.
     pub cache: Option<CachePolicy>,
+    /// The result's `_meta` (empty = absent on the wire). Keys under
+    /// `io.modelcontextprotocol/` belong to the protocol and the framework
+    /// sets them, so a handler's are not sent.
+    pub meta: Map<String, Value>,
 }
 
 impl ListPromptsResult {
+    /// Add one entry to the result's `_meta` (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// A single-page result over `prompts`.
     pub fn new(prompts: Vec<Prompt>) -> Self {
         Self {
+            meta: Map::new(),
             prompts,
             next_cursor: None,
             cache: None,
@@ -1470,12 +1548,24 @@ pub struct GetPromptResult {
     pub description: Option<String>,
     /// The messages.
     pub messages: Vec<PromptMessage>,
+    /// The result's `_meta` (empty = absent on the wire). Keys under
+    /// `io.modelcontextprotocol/` belong to the protocol and the framework
+    /// sets them, so a handler's are not sent.
+    pub meta: Map<String, Value>,
 }
 
 impl GetPromptResult {
+    /// Add one entry to the result's `_meta` (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// A result carrying the given messages.
     pub fn new(messages: Vec<PromptMessage>) -> Self {
         Self {
+            meta: Map::new(),
             description: None,
             messages,
         }
@@ -2900,12 +2990,24 @@ pub struct CompleteResult {
     pub total: Option<u32>,
     /// Whether more values exist beyond those returned.
     pub has_more: Option<bool>,
+    /// The result's `_meta` (empty = absent on the wire). Keys under
+    /// `io.modelcontextprotocol/` belong to the protocol and the framework
+    /// sets them, so a handler's are not sent.
+    pub meta: Map<String, Value>,
 }
 
 impl CompleteResult {
+    /// Add one entry to the result's `_meta` (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
     /// A result carrying the given values.
     pub fn new(values: Vec<String>) -> Self {
         Self {
+            meta: Map::new(),
             values,
             total: None,
             has_more: None,
@@ -3415,6 +3517,33 @@ impl From<v0728::SubscriptionFilter> for SubscriptionFilter {
     }
 }
 
+/// A result's `_meta` as sent: without the `io.modelcontextprotocol/` keys,
+/// which are the protocol's and which the framework sets itself (a handler,
+/// or an upstream relayed through a gateway, must not claim a
+/// `serverInfo` or a `related-task`).
+fn outgoing_meta(mut meta: Map<String, Value>) -> Map<String, Value> {
+    meta.retain(|key, _| !key.starts_with("io.modelcontextprotocol/"));
+    meta
+}
+
+/// [`outgoing_meta`] in the `2026-07-28` result shape.
+fn result_meta(meta: Map<String, Value>) -> Option<v0728::ResultMetaObject> {
+    let meta = outgoing_meta(meta);
+    (!meta.is_empty()).then(|| v0728::ResultMetaObject {
+        io_modelcontextprotocol_server_info: None,
+        extra: meta,
+    })
+}
+
+/// A received result's `_meta`, every key included.
+fn incoming_meta(meta: Option<v0728::ResultMetaObject>) -> Map<String, Value> {
+    meta.and_then(|m| match serde_json::to_value(m) {
+        Ok(Value::Object(map)) => Some(map),
+        _ => None,
+    })
+    .unwrap_or_default()
+}
+
 impl From<ListToolsResult> for v0728::ListToolsResult {
     fn from(r: ListToolsResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
@@ -3423,7 +3552,7 @@ impl From<ListToolsResult> for v0728::ListToolsResult {
                 CacheScope::Public => v0728::ListToolsResultCacheScope::Public,
                 CacheScope::Private => v0728::ListToolsResultCacheScope::Private,
             },
-            meta: None,
+            meta: result_meta(r.meta),
             next_cursor: r.next_cursor,
             result_type: result_type::COMPLETE.to_string(),
             tools: r.tools.into_iter().map(Into::into).collect(),
@@ -3437,7 +3566,7 @@ impl From<CallToolResult> for v0728::CallToolResult {
         v0728::CallToolResult {
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: Some(r.is_error),
-            meta: None,
+            meta: result_meta(r.meta),
             result_type: result_type::COMPLETE.to_string(),
             structured_content: r.structured_content,
         }
@@ -3546,7 +3675,7 @@ impl From<ListResourcesResult> for v0728::ListResourcesResult {
                 CacheScope::Public => v0728::ListResourcesResultCacheScope::Public,
                 CacheScope::Private => v0728::ListResourcesResultCacheScope::Private,
             },
-            meta: None,
+            meta: result_meta(r.meta),
             next_cursor: r.next_cursor,
             resources: r.resources.into_iter().map(Into::into).collect(),
             result_type: result_type::COMPLETE.to_string(),
@@ -3564,7 +3693,7 @@ impl From<ReadResourceResult> for v0728::ReadResourceResult {
                 CacheScope::Private => v0728::ReadResourceResultCacheScope::Private,
             },
             contents: r.contents.into_iter().map(Into::into).collect(),
-            meta: None,
+            meta: result_meta(r.meta),
             result_type: result_type::COMPLETE.to_string(),
             ttl_ms: cache.ttl_ms,
         }
@@ -3594,7 +3723,7 @@ impl From<ListResourceTemplatesResult> for v0728::ListResourceTemplatesResult {
                 CacheScope::Public => v0728::ListResourceTemplatesResultCacheScope::Public,
                 CacheScope::Private => v0728::ListResourceTemplatesResultCacheScope::Private,
             },
-            meta: None,
+            meta: result_meta(r.meta),
             next_cursor: r.next_cursor,
             resource_templates: r.resource_templates.into_iter().map(Into::into).collect(),
             result_type: result_type::COMPLETE.to_string(),
@@ -3655,7 +3784,7 @@ impl From<ListPromptsResult> for v0728::ListPromptsResult {
                 CacheScope::Public => v0728::ListPromptsResultCacheScope::Public,
                 CacheScope::Private => v0728::ListPromptsResultCacheScope::Private,
             },
-            meta: None,
+            meta: result_meta(r.meta),
             next_cursor: r.next_cursor,
             prompts: r.prompts.into_iter().map(Into::into).collect(),
             result_type: result_type::COMPLETE.to_string(),
@@ -3669,7 +3798,7 @@ impl From<GetPromptResult> for v0728::GetPromptResult {
         v0728::GetPromptResult {
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
-            meta: None,
+            meta: result_meta(r.meta),
             result_type: result_type::COMPLETE.to_string(),
         }
     }
@@ -3686,7 +3815,7 @@ impl From<CompleteResult> for v0728::CompleteResult {
                 total: r.total.map(i64::from),
                 values: r.values,
             },
-            meta: None,
+            meta: result_meta(r.meta),
             result_type: result_type::COMPLETE.to_string(),
         }
     }
@@ -3894,7 +4023,7 @@ impl From<Icon> for legacy::Icon {
 impl From<ListToolsResult> for legacy::ListToolsResult {
     fn from(r: ListToolsResult) -> Self {
         legacy::ListToolsResult {
-            meta: Map::new(),
+            meta: outgoing_meta(r.meta),
             next_cursor: r.next_cursor,
             tools: r.tools.into_iter().map(Into::into).collect(),
         }
@@ -3912,7 +4041,7 @@ impl From<CallToolResult> for legacy::CallToolResult {
         legacy::CallToolResult {
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: Some(r.is_error),
-            meta: Map::new(),
+            meta: outgoing_meta(r.meta),
             structured_content,
         }
     }
@@ -4015,7 +4144,7 @@ impl From<ResourceContents> for legacy::EmbeddedResourceResource {
 impl From<ListResourcesResult> for legacy::ListResourcesResult {
     fn from(r: ListResourcesResult) -> Self {
         legacy::ListResourcesResult {
-            meta: Map::new(),
+            meta: outgoing_meta(r.meta),
             next_cursor: r.next_cursor,
             resources: r.resources.into_iter().map(Into::into).collect(),
         }
@@ -4026,7 +4155,7 @@ impl From<ReadResourceResult> for legacy::ReadResourceResult {
     fn from(r: ReadResourceResult) -> Self {
         legacy::ReadResourceResult {
             contents: r.contents.into_iter().map(Into::into).collect(),
-            meta: Map::new(),
+            meta: outgoing_meta(r.meta),
         }
     }
 }
@@ -4049,7 +4178,7 @@ impl From<ResourceTemplate> for legacy::ResourceTemplate {
 impl From<ListResourceTemplatesResult> for legacy::ListResourceTemplatesResult {
     fn from(r: ListResourceTemplatesResult) -> Self {
         legacy::ListResourceTemplatesResult {
-            meta: Map::new(),
+            meta: outgoing_meta(r.meta),
             next_cursor: r.next_cursor,
             resource_templates: r.resource_templates.into_iter().map(Into::into).collect(),
         }
@@ -4103,7 +4232,7 @@ impl From<PromptMessage> for legacy::PromptMessage {
 impl From<ListPromptsResult> for legacy::ListPromptsResult {
     fn from(r: ListPromptsResult) -> Self {
         legacy::ListPromptsResult {
-            meta: Map::new(),
+            meta: outgoing_meta(r.meta),
             next_cursor: r.next_cursor,
             prompts: r.prompts.into_iter().map(Into::into).collect(),
         }
@@ -4115,7 +4244,7 @@ impl From<GetPromptResult> for legacy::GetPromptResult {
         legacy::GetPromptResult {
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
-            meta: Map::new(),
+            meta: outgoing_meta(r.meta),
         }
     }
 }
@@ -4131,7 +4260,7 @@ impl From<CompleteResult> for legacy::CompleteResult {
                 total: r.total.map(i64::from),
                 values: r.values,
             },
-            meta: Map::new(),
+            meta: outgoing_meta(r.meta),
         }
     }
 }
@@ -4226,6 +4355,7 @@ impl From<v0728::Icon> for Icon {
 impl From<v0728::ListToolsResult> for ListToolsResult {
     fn from(r: v0728::ListToolsResult) -> Self {
         ListToolsResult {
+            meta: incoming_meta(r.meta),
             tools: r.tools.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: Some(CachePolicy::from_wire(
@@ -4242,6 +4372,7 @@ impl From<v0728::ListToolsResult> for ListToolsResult {
 impl From<v0728::CallToolResult> for CallToolResult {
     fn from(r: v0728::CallToolResult) -> Self {
         CallToolResult {
+            meta: incoming_meta(r.meta),
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: r.is_error.unwrap_or(false),
             structured_content: r.structured_content,
@@ -4337,6 +4468,7 @@ impl From<v0728::ReadResourceResultContentsItem> for ResourceContents {
 impl From<v0728::ListResourcesResult> for ListResourcesResult {
     fn from(r: v0728::ListResourcesResult) -> Self {
         ListResourcesResult {
+            meta: incoming_meta(r.meta),
             resources: r.resources.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: Some(CachePolicy::from_wire(
@@ -4353,6 +4485,7 @@ impl From<v0728::ListResourcesResult> for ListResourcesResult {
 impl From<v0728::ReadResourceResult> for ReadResourceResult {
     fn from(r: v0728::ReadResourceResult) -> Self {
         ReadResourceResult {
+            meta: incoming_meta(r.meta),
             contents: r.contents.into_iter().map(Into::into).collect(),
             cache: Some(CachePolicy::from_wire(
                 r.ttl_ms,
@@ -4383,6 +4516,7 @@ impl From<v0728::ResourceTemplate> for ResourceTemplate {
 impl From<v0728::ListResourceTemplatesResult> for ListResourceTemplatesResult {
     fn from(r: v0728::ListResourceTemplatesResult) -> Self {
         ListResourceTemplatesResult {
+            meta: incoming_meta(r.meta),
             resource_templates: r.resource_templates.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: Some(CachePolicy::from_wire(
@@ -4441,6 +4575,7 @@ impl From<v0728::PromptMessage> for PromptMessage {
 impl From<v0728::ListPromptsResult> for ListPromptsResult {
     fn from(r: v0728::ListPromptsResult) -> Self {
         ListPromptsResult {
+            meta: incoming_meta(r.meta),
             prompts: r.prompts.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: Some(CachePolicy::from_wire(
@@ -4457,6 +4592,7 @@ impl From<v0728::ListPromptsResult> for ListPromptsResult {
 impl From<v0728::GetPromptResult> for GetPromptResult {
     fn from(r: v0728::GetPromptResult) -> Self {
         GetPromptResult {
+            meta: incoming_meta(r.meta),
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
         }
@@ -4466,6 +4602,7 @@ impl From<v0728::GetPromptResult> for GetPromptResult {
 impl From<v0728::CompleteResult> for CompleteResult {
     fn from(r: v0728::CompleteResult) -> Self {
         CompleteResult {
+            meta: incoming_meta(r.meta),
             values: r.completion.values,
             total: r
                 .completion
@@ -4554,6 +4691,7 @@ impl From<legacy::Icon> for Icon {
 impl From<legacy::ListToolsResult> for ListToolsResult {
     fn from(r: legacy::ListToolsResult) -> Self {
         ListToolsResult {
+            meta: r.meta,
             tools: r.tools.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             // The 2025-11-25 wire has no cache fields (SEP-2549 is draft-only).
@@ -4565,6 +4703,7 @@ impl From<legacy::ListToolsResult> for ListToolsResult {
 impl From<legacy::CallToolResult> for CallToolResult {
     fn from(r: legacy::CallToolResult) -> Self {
         CallToolResult {
+            meta: r.meta,
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: r.is_error.unwrap_or(false),
             structured_content: r.structured_content.map(|o| Value::Object(o.0)),
@@ -4660,6 +4799,7 @@ impl From<legacy::ReadResourceResultContentsItem> for ResourceContents {
 impl From<legacy::ListResourcesResult> for ListResourcesResult {
     fn from(r: legacy::ListResourcesResult) -> Self {
         ListResourcesResult {
+            meta: r.meta,
             resources: r.resources.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: None,
@@ -4670,6 +4810,7 @@ impl From<legacy::ListResourcesResult> for ListResourcesResult {
 impl From<legacy::ReadResourceResult> for ReadResourceResult {
     fn from(r: legacy::ReadResourceResult) -> Self {
         ReadResourceResult {
+            meta: r.meta,
             contents: r.contents.into_iter().map(Into::into).collect(),
             cache: None,
         }
@@ -4694,6 +4835,7 @@ impl From<legacy::ResourceTemplate> for ResourceTemplate {
 impl From<legacy::ListResourceTemplatesResult> for ListResourceTemplatesResult {
     fn from(r: legacy::ListResourceTemplatesResult) -> Self {
         ListResourceTemplatesResult {
+            meta: r.meta,
             resource_templates: r.resource_templates.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: None,
@@ -4746,6 +4888,7 @@ impl From<legacy::PromptMessage> for PromptMessage {
 impl From<legacy::ListPromptsResult> for ListPromptsResult {
     fn from(r: legacy::ListPromptsResult) -> Self {
         ListPromptsResult {
+            meta: r.meta,
             prompts: r.prompts.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
             cache: None,
@@ -4756,6 +4899,7 @@ impl From<legacy::ListPromptsResult> for ListPromptsResult {
 impl From<legacy::GetPromptResult> for GetPromptResult {
     fn from(r: legacy::GetPromptResult) -> Self {
         GetPromptResult {
+            meta: r.meta,
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
         }
@@ -4765,6 +4909,7 @@ impl From<legacy::GetPromptResult> for GetPromptResult {
 impl From<legacy::CompleteResult> for CompleteResult {
     fn from(r: legacy::CompleteResult) -> Self {
         CompleteResult {
+            meta: r.meta,
             values: r.completion.values,
             total: r
                 .completion

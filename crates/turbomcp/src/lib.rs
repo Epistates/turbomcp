@@ -240,7 +240,7 @@ pub use turbomcp_server::{
 };
 
 pub use turbomcp_server::{
-    Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, ExpiredSession,
+    Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, Elicited, ExpiredSession,
     GetPromptContext, Image, InputWaiter, IntoCallToolResult, IntoGetPromptResult,
     IntoReadResourceResult, IntoServerBuilder, Json, LegacySessionAdapter, ListPromptsContext,
     ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, LocalBus, LogSender,
@@ -540,10 +540,10 @@ pub mod prelude {
     pub use crate::neutral;
     pub use turbomcp_core::{Implementation, LogLevel, McpError, McpResult, RequestContext};
     pub use turbomcp_server::{
-        Audio, CallToolContext, CompleteContext, GetPromptContext, Image, IntoServerBuilder, Json,
-        ListPromptsContext, ListResourceTemplatesContext, ListResourcesContext, ListToolsContext,
-        McpServerCore, Params, ReadResourceContext, ServerBuilder, WithCompletions, WithPrompts,
-        WithResources, WithTools,
+        Audio, CallToolContext, CompleteContext, Elicited, GetPromptContext, Image,
+        IntoServerBuilder, Json, ListPromptsContext, ListResourceTemplatesContext,
+        ListResourcesContext, ListToolsContext, McpServerCore, Params, ReadResourceContext,
+        ServerBuilder, WithCompletions, WithPrompts, WithResources, WithTools,
     };
     pub use turbomcp_service::io::stdio;
 

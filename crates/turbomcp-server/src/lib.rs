@@ -74,7 +74,7 @@ pub use extension::{
 };
 pub use intercept::Interceptor;
 pub use logging::LogSender;
-pub use mrtr::ClientHandle;
+pub use mrtr::{ClientHandle, Elicited};
 pub use progress::ProgressReporter;
 pub use response::{
     Audio, Image, IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult, Json, Params,

@@ -3188,6 +3188,7 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "regex",
+ "schemars",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",

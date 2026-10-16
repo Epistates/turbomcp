@@ -1,7 +1,8 @@
 //! # Elicitation (v4)
 //!
 //! A tool that asks the user for confirmation before acting, via
-//! `ctx.client.elicit(…)`. The same handler works on **both protocol
+//! `ctx.client.elicit_as::<T>(…)` (the form from `T`'s schema, the answer
+//! parsed into `T`; `ctx.client.elicit(…)` takes a schema by hand). The same handler works on **both protocol
 //! versions** without changes:
 //!
 //! - `2026-07-28` (MRTR, SEP-2322): the first call answers
@@ -13,8 +14,15 @@
 //!
 //! Run with: `cargo run -p turbomcp --example elicitation`
 
-use serde_json::json;
 use turbomcp::prelude::*;
+
+/// The form: its schema is generated from the type, and the answer parses
+/// back into it.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct Confirm {
+    /// Delete it?
+    ok: bool,
+}
 
 #[derive(Clone)]
 struct FileManager;
@@ -22,29 +30,19 @@ struct FileManager;
 #[server(name = "file-manager", version = "1.0.0")]
 impl FileManager {
     /// Delete a path — but only after the user confirms.
-    #[tool(description = "Delete a path after user confirmation")]
+    #[tool]
     async fn delete(&self, ctx: &CallToolContext, path: String) -> McpResult<String> {
-        let outcome = ctx
+        // Stable key: on `2026-07-28` the re-executed call finds its answer
+        // under it.
+        let answer = ctx
             .client
-            .elicit(
-                "confirm_delete", // stable key: MRTR re-execution finds the answer here
-                neutral::ElicitParams::new(
-                    format!("Really delete {path}?"),
-                    json!({
-                        "type": "object",
-                        "properties": { "ok": { "type": "boolean", "title": "Confirm" } },
-                        "required": ["ok"],
-                    }),
-                ),
-            )
+            .elicit_as::<Confirm>("confirm_delete", format!("Really delete {path}?"))
             .await?;
-
-        if outcome.accepted() && outcome.content.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-            // Side effects belong AFTER the elicit: on the draft this line
+        match answer {
+            // Side effects belong AFTER the elicit: on `2026-07-28` this line
             // runs exactly once, in the retry execution.
-            Ok(format!("deleted {path}"))
-        } else {
-            Ok(format!("kept {path}"))
+            Elicited::Accepted(Confirm { ok: true }) => Ok(format!("deleted {path}")),
+            _ => Ok(format!("kept {path}")),
         }
     }
 }
