@@ -371,9 +371,11 @@ impl ClientBuilder {
     where
         T: Transport,
     {
-        let cache = self
-            .response_cache
-            .then(|| Arc::new(ResponseCache::new(!transport.allows_response_cache())));
+        let cache = self.response_cache.then(|| {
+            Arc::new(ResponseCache::new(
+                !transport.capabilities().single_principal,
+            ))
+        });
         let conn = Connection::connect_with_cache(
             transport,
             (self.request_timeout, self.input_timeout),

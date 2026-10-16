@@ -213,8 +213,9 @@ pub async fn connect_websocket(url: &str) -> Result<WebSocketClientTransport, Ws
 impl Transport for WebSocketClientTransport {
     type Error = WsError;
 
-    fn network(&self) -> Option<turbomcp_service::NetworkFacts> {
-        self.link.network()
+    /// One principal: a WebSocket authenticates once, at its upgrade.
+    fn capabilities(&self) -> turbomcp_service::TransportCapabilities {
+        self.link.capabilities()
     }
 
     fn invalid_frame(error: WsError) -> Result<InvalidFrame, WsError> {

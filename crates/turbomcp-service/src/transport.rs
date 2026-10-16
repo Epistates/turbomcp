@@ -5,6 +5,20 @@
 //! directly, so the trait uses return-position `impl Future` (native AFIT/RPITIT)
 //! rather than boxed futures — no per-message allocation, fully monomorphized.
 //!
+//! # Implementing one
+//!
+//! Three methods: [`send`](Transport::send), [`recv`](Transport::recv) and
+//! [`close`](Transport::close). Everything else is defaulted and optional:
+//! [`capabilities`](Transport::capabilities) (the connection carried, whether
+//! it is Streamable HTTP, whether it has one principal),
+//! [`invalid_frame`](Transport::invalid_frame) (framing that can skip a bad
+//! frame), [`graceful_shutdown`](Transport::graceful_shutdown), and the
+//! `*_with` forms that carry typed facts beside a frame, as an
+//! `http::Request`'s extensions do. Facts a transport observes ride on the
+//! frame ([`RelatedRequest`], [`TransportFailure`]); facts it is told ride on
+//! the send ([`WireVersion`], [`ParamHeaders`]). A transport ignores facts it
+//! has no use for.
+//!
 //! # The production parity contract
 //!
 //! Every bundled server transport — stdio ([`io::LineTransport`](crate::io::LineTransport)),
@@ -83,40 +97,19 @@ pub trait Transport: Send + 'static {
     /// Transport-specific failure (I/O, protocol framing).
     type Error: core::error::Error + Send + Sync + 'static;
 
-    /// Whether this transport guarantees one stable principal, so a client
-    /// may cache `cacheScope: "private"` results; otherwise it caches only
-    /// `"public"` ones.
-    fn allows_response_cache(&self) -> bool {
-        true
+    /// What this transport is and can do, for the driver above it: the
+    /// connection it carries, whether it is Streamable HTTP, whether it has
+    /// one principal. The default is a plain channel with one principal and
+    /// nothing to say about its connection.
+    fn capabilities(&self) -> TransportCapabilities {
+        TransportCapabilities::default()
     }
 
-    /// The connection this transport carries, for the network attributes
-    /// telemetry records. A server's serve loop attaches it to every request
-    /// it reads; a client hands it to its observers. `None` (the default)
-    /// says nothing.
-    fn network(&self) -> Option<crate::NetworkFacts> {
-        None
-    }
-
-    /// Whether messages ride HTTP requests, so the header-level features of
-    /// Streamable HTTP apply: `MCP-Protocol-Version`, `x-mcp-header`
-    /// mirroring. Only Streamable HTTP says yes.
-    fn carries_headers(&self) -> bool {
-        false
-    }
-
-    /// What this transport observed locally about the request `id` when it
-    /// answered it with a synthesized error (the HTTP status, a stream that
-    /// ended early). Read beside the response, never from it, so a peer can't
-    /// forge one through JSON-RPC data.
-    fn take_failure(&mut self, _id: &RequestId) -> Option<TransportFailure> {
-        None
-    }
-
-    /// Send one frame with facts for the transport alone: the revision it goes
-    /// out under ([`WireVersion`]), the `Mcp-Param-*` mirrors ([`ParamHeaders`]).
-    /// A transport with nowhere to put them ignores them, which is the
-    /// default.
+    /// Send one frame with typed facts for the transport alone, as a
+    /// `http::Request`'s extensions are for its client: the revision it goes
+    /// out under ([`WireVersion`]), the `Mcp-Param-*` mirrors
+    /// ([`ParamHeaders`]). A transport with nowhere to put them ignores
+    /// them, which is the default.
     fn send_with(
         &mut self,
         msg: JsonRpcMessage,
@@ -152,9 +145,12 @@ pub trait Transport: Send + 'static {
     /// Must be cancel safe — see the [trait docs](Transport#cancel-safety).
     fn recv(&mut self) -> impl Future<Output = Result<Option<JsonRpcMessage>, Self::Error>> + Send;
 
-    /// Receive the next frame with what the transport knows about it beside
-    /// the message: [`RelatedRequest`] when it arrived in response to one of
-    /// this side's requests. The default knows nothing extra.
+    /// Receive the next frame with typed facts the transport observed beside
+    /// the message: [`RelatedRequest`] when it arrived on one of this side's
+    /// requests' streams, [`TransportFailure`] when the transport answered a
+    /// request itself with an error (an HTTP status, a stream that ended
+    /// early). Facts ride beside the message, never in it, so a peer can't
+    /// forge one through JSON-RPC data. The default knows nothing extra.
     ///
     /// Must be cancel safe, as [`recv`](Self::recv).
     fn recv_with(
@@ -182,6 +178,65 @@ pub trait Transport: Send + 'static {
         Self: Sized,
     {
         self.close()
+    }
+}
+
+/// What a [`Transport`] is and can do: the facts a driver needs once, at
+/// connect time, rather than per frame.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct TransportCapabilities {
+    /// The connection it carries, for the network attributes telemetry
+    /// records: a server's serve loop attaches it to every request it reads,
+    /// a client hands it to its observers.
+    pub network: Option<crate::NetworkFacts>,
+    /// Messages ride Streamable HTTP requests, so the spec's header-level
+    /// rules apply: `MCP-Protocol-Version`, and `x-mcp-header` mirroring
+    /// (with the tool rejections that go with it).
+    pub streamable_http: bool,
+    /// The connection has one principal throughout, so a client may cache
+    /// `cacheScope: "private"` results; otherwise it caches only `"public"`
+    /// ones.
+    pub single_principal: bool,
+}
+
+impl Default for TransportCapabilities {
+    fn default() -> Self {
+        Self {
+            network: None,
+            streamable_http: false,
+            single_principal: true,
+        }
+    }
+}
+
+impl TransportCapabilities {
+    /// A plain channel with one principal.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The connection it carries.
+    #[must_use]
+    pub fn with_network(mut self, network: crate::NetworkFacts) -> Self {
+        self.network = Some(network);
+        self
+    }
+
+    /// It is Streamable HTTP.
+    #[must_use]
+    pub fn streamable_http(mut self) -> Self {
+        self.streamable_http = true;
+        self
+    }
+
+    /// It may carry more than one principal (a bearer source handing out
+    /// different callers' tokens).
+    #[must_use]
+    pub fn shared_principal(mut self) -> Self {
+        self.single_principal = false;
+        self
     }
 }
 

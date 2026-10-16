@@ -215,8 +215,9 @@ impl Connection {
         let shutdown = tokio_util::sync::CancellationToken::new();
         let done = tokio_util::sync::CancellationToken::new();
         let negotiated = Arc::new(Mutex::new(ProtocolVersion::LATEST));
-        let carries_headers = transport.carries_headers();
-        let network = transport.network();
+        let caps = transport.capabilities();
+        let carries_headers = caps.streamable_http;
+        let network = caps.network;
         let progress = Arc::new(ProgressRoutes::default());
         let subscriptions = Arc::new(SubscriptionRoutes::default());
         let (inbound_tx, inbound) = watch::channel(Answering::default());
@@ -669,7 +670,7 @@ async fn actor<T>(
     let _pending = ClearOnDrop(Arc::clone(&state.pending));
     let mut dispatch = Dispatch::new(
         &state.handler,
-        transport.carries_headers(),
+        transport.capabilities().streamable_http,
         turbomcp_core::CancellationToken::new(),
     );
     loop {
@@ -794,13 +795,7 @@ async fn actor<T>(
                         let related = facts
                             .get::<turbomcp_service::RelatedRequest>()
                             .map(|r| r.0.clone());
-                        let failure = match &msg {
-                            JsonRpcMessage::Response(r) => r
-                                .id
-                                .as_ref()
-                                .and_then(|id| transport.take_failure(id)),
-                            _ => None,
-                        };
+                        let failure = facts.get::<turbomcp_service::TransportFailure>().cloned();
                         if let Some(reply) =
                             route_inbound(msg, failure, related.as_ref(), &state, &mut dispatch)
                         {

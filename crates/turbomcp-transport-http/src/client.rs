@@ -762,31 +762,25 @@ fn default_http_client(
 impl Transport for HttpClientTransport {
     type Error = HttpClientError;
 
-    /// Without a bearer source the connection has one principal (none). A
-    /// bearer source may hand out different principals' tokens, so the
-    /// client then keeps only results the server marked `cacheScope:
-    /// "public"`.
-    fn allows_response_cache(&self) -> bool {
-        self.shared.bearer.is_none()
-    }
-
-    fn network(&self) -> Option<turbomcp_service::NetworkFacts> {
-        let url = reqwest::Url::parse(&self.shared.url).ok()?;
-        let facts = turbomcp_service::NetworkFacts::http(None);
-        Some(match url.host_str() {
-            Some(host) => facts.with_peer(host, url.port_or_known_default()),
-            None => facts,
-        })
-    }
-
-    /// The negotiated version becomes `MCP-Protocol-Version` and the
-    /// `#[mcp_header]` mirrors become `Mcp-Param-*`.
-    fn carries_headers(&self) -> bool {
-        true
-    }
-
-    fn take_failure(&mut self, id: &RequestId) -> Option<TransportFailure> {
-        self.shared.failures.lock().remove(id)
+    /// Streamable HTTP: the negotiated version becomes
+    /// `MCP-Protocol-Version` and the `#[mcp_header]` mirrors become
+    /// `Mcp-Param-*`. Without a bearer source the connection has one
+    /// principal (none); a bearer source may hand out different principals'
+    /// tokens, so the client then keeps only results the server marked
+    /// `cacheScope: "public"`.
+    fn capabilities(&self) -> turbomcp_service::TransportCapabilities {
+        let mut caps = turbomcp_service::TransportCapabilities::new().streamable_http();
+        if self.shared.bearer.is_some() {
+            caps = caps.shared_principal();
+        }
+        if let Ok(url) = reqwest::Url::parse(&self.shared.url) {
+            let facts = turbomcp_service::NetworkFacts::http(None);
+            caps = caps.with_network(match url.host_str() {
+                Some(host) => facts.with_peer(host, url.port_or_known_default()),
+                None => facts,
+            });
+        }
+        caps
     }
 
     async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
@@ -930,6 +924,14 @@ impl Transport for HttpClientTransport {
             let mut facts = Extensions::new();
             if let Some(id) = related {
                 facts.insert(turbomcp_service::RelatedRequest(id));
+            }
+            // An error this transport answered itself carries what it saw
+            // (the HTTP status, a lost stream) beside it.
+            if let JsonRpcMessage::Response(response) = &msg
+                && let Some(id) = &response.id
+                && let Some(failure) = self.shared.failures.lock().remove(id)
+            {
+                facts.insert(failure);
             }
             (msg, facts)
         }))

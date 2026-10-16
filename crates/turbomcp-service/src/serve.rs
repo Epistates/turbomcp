@@ -256,7 +256,7 @@ where
         scope_rules,
     } = config;
     let capacity = max_in_flight.max(1);
-    let network = transport.network();
+    let network = transport.capabilities().network;
 
     // In-process connection identity: lets the dispatcher scope in-flight
     // request cancellation to this connection. Needs only process-uniqueness

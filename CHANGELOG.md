@@ -1300,6 +1300,15 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `Transport` is three required methods (`send`, `recv`,
+  `close`) and its HTTP-specific methods are gone: `network`,
+  `carries_headers` and `allows_response_cache` are one
+  `capabilities() -> TransportCapabilities` (its `network`,
+  `streamable_http` and `single_principal`), and `take_failure` is a
+  `TransportFailure` fact on the inbound frame (`recv_with`), beside
+  `RelatedRequest`. As in rmcp and hyper/tower, what is HTTP's travels as
+  typed facts rather than as trait methods every transport must know of.
+
 - **Breaking:** one configuration surface. `ServerBuilder`'s settings write a
   `ServerConfig` and the dispatcher is built from it; `VersionDispatcher`'s
   own setters are gone (`VersionDispatcher::new` keeps the defaults,

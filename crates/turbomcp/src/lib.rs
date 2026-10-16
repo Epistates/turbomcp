@@ -147,7 +147,7 @@ pub use turbomcp_core::codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
 pub use turbomcp_service::{
     CancellationToken, Delivery, EndedSession, McpService, NetworkFacts, Peer, PeerClosed, Pipe,
     ProtocolError, Serve, ServeConfig, ServerHandle, SessionEndReason, SessionObserver,
-    SessionStreams, StartedSession, Transport, serve, serve_with,
+    SessionStreams, StartedSession, Transport, TransportCapabilities, serve, serve_with,
 };
 
 /// RPC middleware: [`tower::Layer`]s over the `Service<McpRequest>` seam,

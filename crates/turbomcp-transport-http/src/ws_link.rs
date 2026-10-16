@@ -246,8 +246,8 @@ where
 {
     type Error = WsError;
 
-    fn network(&self) -> Option<turbomcp_service::NetworkFacts> {
-        Some(self.network.clone())
+    fn capabilities(&self) -> turbomcp_service::TransportCapabilities {
+        turbomcp_service::TransportCapabilities::new().with_network(self.network.clone())
     }
 
     fn invalid_frame(error: WsError) -> Result<InvalidFrame, WsError> {

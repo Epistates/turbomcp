@@ -59,7 +59,8 @@ pub use serve::{ReplyQueued, ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
 pub use session_observer::{EndedSession, SessionEndReason, SessionObserver, StartedSession};
 pub use transport::{
-    HttpFailure, ParamHeaders, RelatedRequest, Transport, TransportFailure, WireVersion,
+    HttpFailure, ParamHeaders, RelatedRequest, Transport, TransportCapabilities, TransportFailure,
+    WireVersion,
 };
 
 pub use turbomcp_core::CancellationToken;

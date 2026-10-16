@@ -267,8 +267,8 @@ where
 {
     type Error = StdioError;
 
-    fn network(&self) -> Option<crate::NetworkFacts> {
-        Some(crate::NetworkFacts::pipe())
+    fn capabilities(&self) -> crate::TransportCapabilities {
+        crate::TransportCapabilities::new().with_network(crate::NetworkFacts::pipe())
     }
 
     fn invalid_frame(error: Self::Error) -> Result<InvalidFrame, Self::Error> {

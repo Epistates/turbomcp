@@ -69,8 +69,8 @@ pub fn pair() -> (MemoryTransport, MemoryTransport) {
 impl Transport for MemoryTransport {
     type Error = MemoryError;
 
-    fn network(&self) -> Option<NetworkFacts> {
-        Some(NetworkFacts::pipe())
+    fn capabilities(&self) -> crate::TransportCapabilities {
+        crate::TransportCapabilities::new().with_network(NetworkFacts::pipe())
     }
 
     fn invalid_frame(error: MemoryError) -> Result<InvalidFrame, MemoryError> {
