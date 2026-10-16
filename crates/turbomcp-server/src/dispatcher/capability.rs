@@ -482,22 +482,14 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
     match method {
         methods::request::TOOLS_LIST => {
             // Core Tasks (`2025-11-25`) advertise each tool's `taskSupport`.
-            let task_support = if W::VERSION.has_core_tasks() && shared.tasks.is_some() {
-                match super::legacy_tasks::any_tool_declares_task_support(&server, router, &ctx)
-                    .await
-                {
-                    Ok(any_declared) => Some(any_declared),
-                    Err(e) => return error_response_for(id, &W::VERSION, &e),
-                }
-            } else {
-                None
-            };
+            let task_support = (W::VERSION.has_core_tasks() && shared.tasks.is_some())
+                .then_some(shared.undeclared_tasks);
             let fut = router
                 .dispatch_list_tools(server, ListToolsContext::new(ctx.clone()), list_params)
                 .map(|fut| match task_support {
-                    Some(any_declared) => fut
+                    Some(undeclared) => fut
                         .map(move |r| {
-                            r.map(|r| super::legacy_tasks::with_task_support(r, any_declared))
+                            r.map(|r| super::legacy_tasks::with_task_support(r, undeclared))
                         })
                         .boxed(),
                     None => fut,
@@ -575,14 +567,40 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 Ok(h) => h,
                 Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
-            let fut = router.dispatch_read_resource(
-                server,
-                ReadResourceContext::new(ctx.clone())
-                    .with_client(handle.clone())
-                    .with_progress(progress_reporter::<W>(req, &ctx))
-                    .with_log(log_sender::<W>(&ctx, router.has_logging())),
-                params,
-            );
+            let uri = params.uri.clone();
+            // A result that answered a retry depended on what the client was
+            // asked and said: "Results from requests that include
+            // `inputResponses` or `requestState` MUST NOT be cached", so it
+            // gets no lifetime, whatever the default.
+            let retried = req.params.as_ref().is_some_and(|p| {
+                p.get("inputResponses").is_some() || p.get("requestState").is_some()
+            });
+            let fut = router
+                .dispatch_read_resource(
+                    server,
+                    ReadResourceContext::new(ctx.clone())
+                        .with_client(handle.clone())
+                        .with_progress(progress_reporter::<W>(req, &ctx))
+                        .with_log(log_sender::<W>(&ctx, router.has_logging())),
+                    params,
+                )
+                .map(|f| {
+                    async move {
+                        let mut read = f.await?;
+                        // "Servers MUST NOT return an empty `contents` array
+                        // for a non-existent resource": an empty read is a
+                        // missing one.
+                        if read.contents.is_empty() {
+                            return Err(McpError::resource_not_found(uri));
+                        }
+                        if retried {
+                            *neutral::Cacheable::cache_policy_mut(&mut read) =
+                                Some(neutral::CachePolicy::NO_CACHE);
+                        }
+                        Ok(read)
+                    }
+                    .boxed()
+                });
             let fut = with_cache_default(fut, shared.cache.resources_read);
             finish_mrtr::<_, W::ReadResource>(
                 id,
@@ -838,7 +856,7 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     };
     shared
         .validators
-        .validate(&tool.input_schema, arguments)
+        .input(&tool.name, &tool.input_schema, arguments)
         .map_err(|e| match e {
             // Arguments that miss the schema are a tool execution error the
             // model can read and correct (tools.mdx: "Input validation errors").

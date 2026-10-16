@@ -94,6 +94,8 @@ impl<S> core::fmt::Debug for VersionDispatcher<S> {
 #[derive(Clone)]
 struct Shared {
     sessions: Arc<dyn SessionBackend>,
+    /// `sessions` is a custom backend, which keeps its own eviction policy.
+    custom_sessions: bool,
     tasks: Option<Arc<dyn TaskBackend>>,
     inflight: Arc<InFlightRegistry>,
     subs: Arc<SubscriptionRegistry>,
@@ -122,6 +124,11 @@ struct Shared {
     bus: Option<crate::bus::Installed>,
     /// Replace internal errors' text with a logged reference.
     mask_internal_errors: bool,
+    /// The most a call may take before it is cancelled and answered with a
+    /// timeout. `None`: no limit beyond the client's own.
+    call_timeout: Option<std::time::Duration>,
+    /// `2025-11-25` `execution.taskSupport` for a tool that declares none.
+    undeclared_tasks: TaskSupport,
 }
 
 /// What a server runs when a client's roots change. See
@@ -438,6 +445,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
             supported,
             shared: Shared {
                 sessions: Arc::new(SessionStore::default()),
+                custom_sessions: false,
                 tasks: None,
                 inflight: Arc::new(InFlightRegistry::default()),
                 subs: Arc::new(SubscriptionRegistry::default()),
@@ -453,6 +461,8 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 session_observer: None,
                 bus: None,
                 mask_internal_errors: false,
+                call_timeout: None,
+                undeclared_tasks: TaskSupport::Optional,
             },
         }
     }
@@ -463,7 +473,37 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn with_visibility(mut self, policy: Arc<dyn crate::VisibilityPolicy>) -> Self {
         self.shared.visibility = Some(policy);
+        self.warn_on_public_per_caller_results();
         self
+    }
+
+    /// A visibility policy makes lists and reads a function of the caller,
+    /// and a `public` cache scope lets a shared cache hand one caller's
+    /// answer to another ("Servers MUST NOT rely on cacheScope alone"). Said
+    /// once, whichever of the two settings comes second.
+    fn warn_on_public_per_caller_results(&self) {
+        if self.shared.visibility.is_none() {
+            return;
+        }
+        let c = &self.shared.cache;
+        let public = [
+            ("tools/list", c.tools_list),
+            ("resources/list", c.resources_list),
+            ("resources/templates/list", c.resource_templates_list),
+            ("resources/read", c.resources_read),
+            ("prompts/list", c.prompts_list),
+        ]
+        .into_iter()
+        .filter(|(_, p)| p.scope == turbomcp_protocol::neutral::CacheScope::Public)
+        .map(|(m, _)| m)
+        .collect::<Vec<_>>();
+        if !public.is_empty() {
+            tracing::warn!(
+                ?public,
+                "a public cache policy beside a visibility policy: a shared cache may serve \
+                 one caller's filtered result to another; use a private scope for these"
+            );
+        }
     }
 
     /// Observe `notifications/roots/list_changed`. See
@@ -481,7 +521,11 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         mut self,
         observer: Arc<dyn turbomcp_service::SessionObserver>,
     ) -> Self {
-        self.shared.session_observer = Some(observer);
+        // Observers accumulate: each one added is told.
+        self.shared.session_observer = Some(match self.shared.session_observer.take() {
+            Some(earlier) => Arc::new(crate::builder::SessionObservers([earlier, observer])),
+            None => observer,
+        });
         self
     }
 
@@ -523,6 +567,33 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         DispatcherSessionTerminator {
             shared: self.shared.clone(),
         }
+    }
+
+    /// The `2025-11-25` `execution.taskSupport` of a tool that declares none
+    /// (default `optional`: Tasks on means every tool may run as one). Set
+    /// [`TaskSupport::Forbidden`] to make tasks opt-in per tool
+    /// (`#[tool(task)]`), the spec's own default.
+    #[must_use]
+    pub fn undeclared_task_support(mut self, support: TaskSupport) -> Self {
+        self.shared.undeclared_tasks = support;
+        self
+    }
+
+    /// Cancel a call that runs longer than `limit`, and answer it with a
+    /// timeout error (`-32000`), freeing the slot it held. See
+    /// [`ServerBuilder::call_timeout`](crate::ServerBuilder::call_timeout).
+    #[must_use]
+    pub fn call_timeout(mut self, limit: std::time::Duration) -> Self {
+        self.shared.call_timeout = Some(limit);
+        self
+    }
+
+    /// Keep up to `capacity` compiled tool schemas. See
+    /// [`ServerBuilder::schema_cache_capacity`](crate::ServerBuilder::schema_cache_capacity).
+    #[must_use]
+    pub fn schema_cache_capacity(mut self, capacity: u64) -> Self {
+        self.shared.validators = Arc::new(crate::catalog::Validators::with_capacity(capacity));
+        self
     }
 
     /// Mask internal errors. See
@@ -570,6 +641,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn with_cache_policy(mut self, cache: impl Into<CachePolicies>) -> Self {
         self.shared.cache = cache.into();
+        self.warn_on_public_per_caller_results();
         self
     }
 
@@ -626,7 +698,11 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// driven inside a tokio runtime (all bundled transports do this).
     #[must_use]
     pub fn with_task_support(mut self) -> Self {
-        self.shared.tasks = Some(Arc::new(TaskStore::default()));
+        // A backend set already (`with_task_backend`) is the store; this
+        // only turns Tasks on, whichever of the two came first.
+        if self.shared.tasks.is_none() {
+            self.shared.tasks = Some(Arc::new(TaskStore::default()));
+        }
         self
     }
 
@@ -657,6 +733,11 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// default of an hour. Call at build time, before serving.
     #[must_use]
     pub fn with_session_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+        // A custom backend owns its own eviction policy, whichever of the two
+        // was set first.
+        if self.shared.custom_sessions {
+            return self;
+        }
         self.shared.sessions = Arc::new(
             SessionStore::with_capacity(SessionStore::DEFAULT_CAPACITY)
                 .with_idle_timeout(Some(timeout)),
@@ -674,7 +755,11 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// only to the bundled store).
     #[must_use]
     pub fn with_session_backend(mut self, backend: Arc<dyn SessionBackend>) -> Self {
+        self.shared
+            .subs
+            .set_route_capacity(backend.capacity().unwrap_or(0));
         self.shared.sessions = backend;
+        self.shared.custom_sessions = true;
         self
     }
 
@@ -726,9 +811,26 @@ impl<S: McpServerCore> Service<McpRequest> for VersionDispatcher<S> {
         // that is the session where there is one.
         let tracked = match &msg {
             JsonRpcMessage::Request(req) if msg.has_valid_version() => {
-                let cancel = CancellationToken::new();
-                let guard = cancel_scope(&ext)
-                    .map(|scope| shared.inflight.register(scope, &req.id, cancel.clone()));
+                // A child of the connection's own: when the peer hangs up,
+                // every call it left in flight stops with it.
+                let cancel = ext
+                    .get::<turbomcp_core::ConnectionClosed>()
+                    .map_or_else(CancellationToken::new, |closed| closed.0.child_token());
+                let guard = match cancel_scope(&ext) {
+                    Some(scope) => match shared.inflight.register(scope, &req.id, cancel.clone()) {
+                        Some(guard) => Some(guard),
+                        None => {
+                            let reply = error_response(
+                                req.id.clone(),
+                                &McpError::invalid_request(
+                                    "a request with this id is already in flight",
+                                ),
+                            );
+                            return Box::pin(async move { Ok(Some(reply)) });
+                        }
+                    },
+                    None => None,
+                };
                 Some((cancel, guard))
             }
             _ => None,
@@ -795,6 +897,8 @@ async fn handle<S: McpServerCore>(
             // logs) stops when it is answered: see `RequestLifetime`.
             let (lifetime, _ended) = crate::subscriptions::RequestLifetime::start();
             let ext = ext.with(lifetime);
+            let call_timeout = shared.call_timeout;
+            let id = req.id.clone();
             let dispatch = handle_request(
                 server,
                 &router,
@@ -810,10 +914,25 @@ async fn handle<S: McpServerCore>(
             // handler: one that notices `ctx.cancellation` returns in the very
             // poll the token fires, and an unbiased pick would answer it about
             // half the time.
+            let limit = async {
+                match call_timeout {
+                    Some(limit) => tokio::time::sleep(limit).await,
+                    None => std::future::pending().await,
+                }
+            };
             let out = tokio::select! {
                 biased;
                 () = cancel.cancelled() => return Ok(None),
                 out = dispatch => out,
+                () = limit => {
+                    // The handler is dropped here; firing the token tells
+                    // anything it spawned to stop too.
+                    cancel.cancel();
+                    return Ok(Some(error_response(
+                        id,
+                        &McpError::timeout("the call exceeded the server's time limit"),
+                    )));
+                }
             };
             if cancel.is_cancelled() {
                 return Ok(None);
@@ -832,7 +951,11 @@ async fn handle<S: McpServerCore>(
             // A client→server response answers a server-initiated inline bidi
             // request (legacy elicitation/sampling/roots): route it to the
             // awaiting handler. Unsolicited responses are ignored.
-            if !shared.pending.complete(resp) {
+            let from: Vec<&str> = [session_id(&ext), connection_id(&ext)]
+                .into_iter()
+                .flatten()
+                .collect();
+            if !shared.pending.complete(resp, &from) {
                 tracing::debug!("ignoring unsolicited client->server response");
             }
             Ok(None)
@@ -898,6 +1021,14 @@ fn handle_notification(shared: &Shared, n: &JsonRpcNotification, ext: &Extension
         // logged and dropped: a server could learn the client's roots, cache
         // them, and never hear that they moved — which is the entire purpose
         // of `roots.listChanged`, and the reason a client declares it.
+        // `2026-07-28` removed it (roots ride each request there): on that
+        // wire it is an unknown notification, like the removed requests.
+        methods::notification::ROOTS_LIST_CHANGED
+            if version::request_protocol_version(n.params.as_ref())
+                .is_some_and(|v| !v.is_stateful()) =>
+        {
+            tracing::debug!("roots/list_changed on the stateless wire; ignored");
+        }
         methods::notification::ROOTS_LIST_CHANGED => match &shared.roots_changed {
             Some(handler) => handler(&notification_context(n, ext)),
             None => tracing::debug!("roots changed, but no observer is registered"),
@@ -1122,21 +1253,8 @@ async fn handle_request<S: McpServerCore>(
                             Ok(prepared) => prepared,
                             Err(response) => return Ok(*response),
                         };
-                        let any_declared = if tool.task_support.is_some() {
-                            true
-                        } else {
-                            match legacy_tasks::any_tool_declares_task_support(
-                                &server, router, &ctx,
-                            )
-                            .await
-                            {
-                                Ok(any) => any,
-                                Err(e) => {
-                                    return Ok(error_response_for(id, &revision.version(), &e));
-                                }
-                            }
-                        };
-                        let support = legacy_tasks::effective_task_support(&tool, any_declared);
+                        let support =
+                            legacy_tasks::effective_task_support(&tool, shared.undeclared_tasks);
                         let as_task = has_task_field(req.params.as_ref());
                         // tasks.mdx §Tool-Level Negotiation: a `forbidden` tool
                         // invoked as a task SHOULD get `-32601`, and a

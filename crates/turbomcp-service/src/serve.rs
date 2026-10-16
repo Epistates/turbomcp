@@ -66,6 +66,13 @@ pub struct ServeConfig {
     /// On shutdown, how long in-flight handlers have to finish and flush before
     /// they are aborted. Default: 30s.
     pub drain_timeout: Duration,
+    /// After the peer closes its end (EOF), how long in-flight handlers keep
+    /// running before their cancellation fires. A script that writes its
+    /// requests and closes stdin still reads the answers, so EOF alone is not
+    /// "nobody is listening"; a handler still going after this is told to
+    /// stop, so the server exits promptly instead of at the drain deadline.
+    /// Default: 2s.
+    pub eof_grace: Duration,
     /// How long one outbound frame may wait on the transport before the peer
     /// is treated as gone (it stopped reading). Default: 30s.
     pub write_timeout: Duration,
@@ -93,6 +100,7 @@ impl Default for ServeConfig {
             max_in_flight: 1024,
             max_control_in_flight: 64,
             drain_timeout: Duration::from_secs(30),
+            eof_grace: Duration::from_secs(2),
             write_timeout: Duration::from_secs(30),
             shutdown: CancellationToken::new(),
             identity: None,
@@ -142,6 +150,7 @@ where
         max_in_flight,
         max_control_in_flight,
         drain_timeout,
+        eof_grace,
         write_timeout,
         shutdown,
         identity,
@@ -166,6 +175,9 @@ where
     // `tx` below is what keeps it open, and dropping `tx` is what closes it.
     let peer = Peer::new(connection_id.clone(), &tx);
     let limiter = Arc::new(Semaphore::new(capacity));
+    // Fired at EOF: see `ConnectionClosed`.
+    let closed = turbomcp_core::CancellationToken::new();
+    let mut eof = false;
     let controls = Arc::new(Semaphore::new(max_control_in_flight.max(1)));
     let mut handlers: JoinSet<()> = JoinSet::new();
     // `svc` is always the instance most recently driven to readiness; we call a
@@ -217,9 +229,20 @@ where
                         }
                         Err(e) => break Err(ProtocolError::Transport(e.to_string())),
                     },
-                    Ok(None) => break Ok(()), // clean EOF
+                    Ok(None) => {
+                        // Clean EOF: the peer is gone, so nothing it left in
+                        // flight can be answered. Stop it now rather than
+                        // after the drain deadline.
+                        eof = true;
+                        break Ok(());
+                    }
                     Ok(Some(msg)) => {
-                        let permit = if matches!(msg, JsonRpcMessage::Request(_)) {
+                        // `ping` "MUST respond promptly", so it never waits on
+                        // (or is refused by) the application budget a server
+                        // busy with long calls has exhausted.
+                        let application = matches!(&msg, JsonRpcMessage::Request(r)
+                            if r.method != "ping");
+                        let permit = if application {
                             match Arc::clone(&limiter).try_acquire_owned() {
                                 Ok(permit) => permit,
                                 Err(_) => {
@@ -265,7 +288,8 @@ where
                         // the reader, which also has to keep writing.
                         let mut request = McpRequest::new(msg)
                             .with(connection_id.clone())
-                            .with(peer.clone());
+                            .with(peer.clone())
+                            .with(turbomcp_core::ConnectionClosed(closed.clone()));
                         if let Some(identity) = &identity {
                             request.extensions.insert(identity.clone());
                         }
@@ -322,6 +346,11 @@ where
         handlers.abort_all();
         return result;
     }
+    // At EOF the handlers get `eof_grace` to answer, then their
+    // cancellation: see `eof_grace`.
+    let grace = tokio::time::sleep(if eof { eof_grace } else { drain_timeout });
+    tokio::pin!(grace);
+    let mut graced = !eof;
 
     // Drain, phase 1: in-flight handlers may still emit server-initiated
     // messages (progress, inline bidi requests) through their `Peer`, so the
@@ -342,6 +371,10 @@ where
                 }
             }
             Some(_joined) = handlers.join_next() => {}
+            () = &mut grace, if !graced => {
+                graced = true;
+                closed.cancel();
+            }
             () = tokio::time::sleep_until(deadline) => {
                 handlers.abort_all();
                 break;

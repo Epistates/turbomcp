@@ -40,6 +40,7 @@ oauth = ["client", "dep:turbomcp-auth", "turbomcp-auth/oauth-client"]
 websocket = ["axum?/ws", "dep:tokio-tungstenite"]
 
 [dependencies]
+parking_lot = { workspace = true }
 turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-service = { workspace = true }
 http = { workspace = true }

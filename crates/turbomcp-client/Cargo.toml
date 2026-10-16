@@ -13,6 +13,7 @@ keywords = ["mcp", "client", "llm", "ai"]
 categories = ["network-programming", "asynchronous", "api-bindings"]
 
 [dependencies]
+parking_lot = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
 turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-protocol = { workspace = true }

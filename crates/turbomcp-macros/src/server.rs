@@ -1119,11 +1119,17 @@ fn gen_core_impl(
 
 fn gen_tools_impl(self_ty: &Type, tools: &[Handler]) -> TokenStream {
     let arg_structs = tools.iter().map(|t| gen_args_struct(self_ty, t));
-    let list_entries = tools.iter().map(|t| gen_tool_list_entry(self_ty, t));
+    // Marking any tool `#[tool(task)]` makes tasks opt-in for this server:
+    // the rest say `forbidden` themselves (the spec's default), as data on
+    // each tool, so it holds wherever the tools are served, mounted included.
+    let opt_in = tools.iter().any(|t| t.task);
+    let list_entries = tools
+        .iter()
+        .map(|t| gen_tool_list_entry(self_ty, t, opt_in));
     let call_arms = tools.iter().map(|t| gen_tool_call_arm(self_ty, t));
     let lookup_arms = tools.iter().map(|t| {
         let name = t.wire_name();
-        let entry = gen_tool_list_entry(self_ty, t);
+        let entry = gen_tool_list_entry(self_ty, t, opt_in);
         quote!(#name => Some(#entry),)
     });
 
@@ -1213,7 +1219,7 @@ fn gen_args_struct(self_ty: &Type, t: &Handler) -> TokenStream {
     }
 }
 
-fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
+fn gen_tool_list_entry(self_ty: &Type, t: &Handler, opt_in: bool) -> TokenStream {
     let ident = args_struct_ident(self_ty, t);
     let name = t.wire_name();
     let desc = t
@@ -1221,7 +1227,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
         .as_ref()
         .map(|d| quote!(.with_description(#d)));
     let header_marks = t.args.iter().filter(|a| a.is_header).map(|a| {
-        let prop = a.ident.to_string();
+        let prop = a.ident.unraw().to_string();
         // Spanned at the parameter's type, so a `#[mcp_header] lat: f64` is
         // an error on `f64` naming the rule, not a tool that every conforming
         // HTTP client has to drop from `tools/list`.
@@ -1246,13 +1252,15 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
     });
     // `#[tool(task)]` advertises per-tool task support: `Optional`, or
     // `Required` for `task = "required"`.
-    let task_support = t.task.then(|| {
-        if t.task_required {
+    let task_support = if t.task {
+        Some(if t.task_required {
             quote!(.with_task_support(::turbomcp::neutral::TaskSupport::Required))
         } else {
             quote!(.with_task_support(::turbomcp::neutral::TaskSupport::Optional))
-        }
-    });
+        })
+    } else {
+        opt_in.then(|| quote!(.with_task_support(::turbomcp::neutral::TaskSupport::Forbidden)))
+    };
     let title = t.title.as_ref().map(|s| quote!(.with_title(#s)));
     // Behavior hints (`read_only`, `destructive`, …) → `ToolAnnotations`.
     let annotations = t.hints.any().then(|| {
@@ -1559,7 +1567,7 @@ fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
         .map(|d| quote!(.with_description(#d)));
     let title = p.title.as_ref().map(|t| quote!(.with_title(#t)));
     let args = p.args.iter().map(|a| {
-        let arg_name = a.ident.to_string();
+        let arg_name = a.ident.unraw().to_string();
         let req = (!a.is_option).then(|| quote!(.required(true)));
         let adesc = a
             .description
@@ -1576,7 +1584,7 @@ fn gen_prompt_get_arm(p: &Handler) -> TokenStream {
     let method = &p.method;
     let extracts = p.args.iter().map(|a| {
         let ident = &a.ident;
-        let arg_name = a.ident.to_string();
+        let arg_name = a.ident.unraw().to_string();
         if a.is_option {
             quote! {
                 let #ident: ::core::option::Option<::std::string::String> =

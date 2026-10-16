@@ -49,6 +49,19 @@ pub(super) async fn legacy_context(
     if state.owner != identity.principal_key() {
         return Err(ProtocolError::UnknownSession(sid.to_owned()));
     }
+    // A session speaks the revision it negotiated. A request that states
+    // another was routed by that claim, so its result would take the other
+    // revision's shape while its handler saw this one's: refuse it instead.
+    if let Some(stated) = version::request_protocol_version(req.params.as_ref())
+        && stated != state.version
+    {
+        let err = McpError::invalid_request(format!(
+            "this request states protocol version {stated}, but its session negotiated {}",
+            state.version
+        ))
+        .to_jsonrpc_error(&state.version);
+        return Ok(Err(JsonRpcResponse::error(req.id.clone(), err).into()));
+    }
     let mut ctx = RequestContext::new(state.version.clone())
         .with_client_info(state.client_info.clone())
         .with_identity(identity);
@@ -68,14 +81,6 @@ pub(super) async fn legacy_context(
     Ok(Ok(ctx))
 }
 
-#[derive(Deserialize)]
-struct RawClientInfo {
-    name: String,
-    version: String,
-    #[serde(default)]
-    title: Option<String>,
-}
-
 /// Build the per-request context from the wire frame and what its transport
 /// attached: version, the draft's per-request client info/capabilities (`_meta`
 /// keys), propagated user `_meta`, and the transport's identity and facts.
@@ -93,13 +98,13 @@ pub(super) fn build_context(req: &JsonRpcRequest, ext: &Extensions) -> RequestCo
     {
         ctx.trace_context = turbomcp_core::meta::extract_trace_context(meta);
         let (consumed, propagated) = turbomcp_core::meta::partition(meta.clone());
+        // Everything the client said about itself, `description`, `icons`
+        // and `websiteUrl` included (in `Implementation::extra`).
         if let Some(info) = consumed
             .get(meta::keys::CLIENT_INFO)
-            .and_then(|v| serde_json::from_value::<RawClientInfo>(v.clone()).ok())
+            .and_then(|v| serde_json::from_value::<Implementation>(v.clone()).ok())
         {
-            let mut implementation = Implementation::new(info.name, info.version);
-            implementation.title = info.title;
-            ctx = ctx.with_client_info(implementation);
+            ctx = ctx.with_client_info(info);
         }
         if let Some(caps) = consumed.get(meta::keys::CLIENT_CAPABILITIES) {
             ctx.client_capabilities = Some(caps.clone());

@@ -314,6 +314,7 @@ pub(super) fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>
         ProtocolError::Transport(_)
         | ProtocolError::ServerShuttingDown
         | ProtocolError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+        ProtocolError::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let error = err.to_jsonrpc_error();
@@ -322,10 +323,29 @@ pub(super) fn protocol_error_response(err: &ProtocolError, id: Option<RequestId>
         None => JsonRpcResponse::error_without_id(error),
     };
     let mut response = (status, Json(body)).into_response();
-    if matches!(err, ProtocolError::Unavailable(_)) {
+    if matches!(
+        err,
+        ProtocolError::Unavailable(_) | ProtocolError::RateLimited(_)
+    ) {
         response
             .headers_mut()
             .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rate_limited_refusal_is_429_with_retry_after() {
+        let response = protocol_error_response(&ProtocolError::RateLimited("quota".into()), None);
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(response.headers().contains_key(header::RETRY_AFTER));
+
+        let response = protocol_error_response(&ProtocolError::Unavailable("down".into()), None);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.headers().contains_key(header::RETRY_AFTER));
+    }
 }

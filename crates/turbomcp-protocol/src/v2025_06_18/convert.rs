@@ -31,9 +31,9 @@ use alloc::vec::Vec;
 use crate::v2025_06_18::types as v06;
 use crate::v2025_11_25::types as v11;
 
-/// `$schema` has no declared home on the `2025-06-18` `inputSchema`, but the
-/// node is an open JSON Schema, so the keyword rides in the catch-all rather
-/// than being dropped.
+/// `$schema` has no declared home on the `2025-06-18` tool schemas. A
+/// `2025-06-18` server may still send one in the open part, so a client lifts
+/// it back out; the server never sends one (see the step-down below).
 const SCHEMA_KEYWORD: &str = "$schema";
 
 // ---- shared shapes -------------------------------------------------------------
@@ -521,20 +521,21 @@ impl From<v06::ContentBlock> for v11::ContentBlock {
 // ---- tools ---------------------------------------------------------------------
 
 impl From<v11::ToolInputSchema> for v06::ToolInputSchema {
-    /// `$schema` moves into the catch-all rather than being dropped: the node
-    /// is an open JSON Schema on both revisions, `2025-06-18` simply doesn't
-    /// name the keyword.
+    /// Drops `$schema`. `2025-11-25` (SEP-1613) defaults tool schemas to
+    /// JSON Schema 2020-12 and schemars names it; `2025-06-18` names no
+    /// dialect, and a client validating with a draft-07 default (Ajv's) fails
+    /// to compile a schema that points at the 2020-12 meta-schema. Without the
+    /// marker the client reads the schema in its own dialect; the keywords a
+    /// generated schema uses (`$ref` by JSON pointer into `$defs`, `oneOf`,
+    /// `const`) mean the same in both.
     fn from(s: v11::ToolInputSchema) -> Self {
         let v11::ToolInputSchema {
             properties,
             required,
-            schema,
+            schema: _,
             type_,
-            mut extra,
+            extra,
         } = s;
-        if let Some(schema) = schema {
-            extra.insert(SCHEMA_KEYWORD.into(), schema.into());
-        }
         Self {
             properties: properties.map(Into::into),
             required,
@@ -566,17 +567,15 @@ impl From<v06::ToolInputSchema> for v11::ToolInputSchema {
 }
 
 impl From<v11::ToolOutputSchema> for v06::ToolOutputSchema {
+    /// Drops `$schema`, as the input schema does.
     fn from(s: v11::ToolOutputSchema) -> Self {
         let v11::ToolOutputSchema {
             properties,
             required,
-            schema,
+            schema: _,
             type_,
-            mut extra,
+            extra,
         } = s;
-        if let Some(schema) = schema {
-            extra.insert(SCHEMA_KEYWORD.into(), schema.into());
-        }
         Self {
             properties: properties.map(Into::into),
             required,

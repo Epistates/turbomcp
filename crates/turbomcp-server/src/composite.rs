@@ -149,6 +149,11 @@ trait Mounted: Send + Sync + 'static {
         ctx: CallToolContext,
         params: neutral::CallToolParams,
     ) -> Option<BoxFuture<'static, McpResult<neutral::CallToolResult>>>;
+    fn lookup_tool(
+        &self,
+        ctx: ListToolsContext,
+        name: String,
+    ) -> Option<BoxFuture<'static, McpResult<Option<neutral::Tool>>>>;
     fn list_resources(
         &self,
         ctx: ListResourcesContext,
@@ -184,6 +189,11 @@ trait Mounted: Send + Sync + 'static {
         ctx: GetPromptContext,
         params: neutral::GetPromptParams,
     ) -> Option<BoxFuture<'static, McpResult<neutral::GetPromptResult>>>;
+    fn lookup_prompt(
+        &self,
+        ctx: ListPromptsContext,
+        name: String,
+    ) -> Option<BoxFuture<'static, McpResult<Option<neutral::Prompt>>>>;
     fn complete(
         &self,
         ctx: CompleteContext,
@@ -239,6 +249,13 @@ impl<S: McpServerCore> Mounted for Erased<S> {
         neutral::CallToolResult
     );
     forward!(
+        lookup_tool,
+        dispatch_lookup_tool,
+        ListToolsContext,
+        String,
+        Option<neutral::Tool>
+    );
+    forward!(
         list_resources,
         dispatch_list_resources,
         ListResourcesContext,
@@ -286,6 +303,13 @@ impl<S: McpServerCore> Mounted for Erased<S> {
         GetPromptContext,
         neutral::GetPromptParams,
         neutral::GetPromptResult
+    );
+    forward!(
+        lookup_prompt,
+        dispatch_lookup_prompt,
+        ListPromptsContext,
+        String,
+        Option<neutral::Prompt>
     );
     forward!(
         complete,
@@ -768,119 +792,94 @@ impl CompositeServer {
         Some((mount, name.to_owned()))
     }
 
-    /// Whether any mount is flat — i.e. whether an unprefixed name could belong
-    /// to something. When none is, an unroutable name is unroutable immediately
-    /// and no list is needed.
-    fn has_flat(&self) -> bool {
-        self.inner.mounts.iter().any(|m| m.prefix.is_none())
-    }
-
     /// Resolve a caller-visible name to the mount serving it and the name that
-    /// mount knows it by.
-    ///
-    /// **A flat mount exposing the name exactly wins over splitting it at the
-    /// first separator.** `#[tool(name = "git__status")]` is legal, and
-    /// the split sent it to a mount prefixed `git` that had never heard of
-    /// `status`, so a tool `tools/list` advertised could not be called. Two
-    /// mounts claiming one caller-visible name is already a listing error
-    /// (see `claim`), so preferring the exact match cannot mask a collision.
-    ///
-    /// The flat lookup runs only when a flat mount exists; a purely prefixed
-    /// composite still resolves by string split, with no list at all.
+    /// mount knows it by, for a call: a flat mount's exact name first, then
+    /// the prefix split (the mount itself answers a name it doesn't serve).
     async fn resolve<'a, T, F>(
         &'a self,
         name: &str,
-        list: F,
+        lookup: F,
     ) -> McpResult<Option<(&'a Mount, String)>>
     where
-        F: FnMut(&'a Mount, neutral::ListParams) -> Option<BoxFuture<'static, McpResult<T>>>,
-        T: Names,
+        F: FnMut(&'a Mount, String) -> Option<BoxFuture<'static, McpResult<Option<T>>>>,
     {
-        if self.has_flat()
-            && let Some(mount) = Self::flat_owner(&self.inner.mounts, name, list).await?
-        {
+        if let Some((mount, _)) = self.flat_owner(name, lookup).await? {
             return Ok(Some((mount, name.to_owned())));
         }
         Ok(self.route(name))
     }
 
-    /// Find the flat mount exposing `name`, by asking each what it currently
-    /// serves.
+    /// The component a caller-visible name resolves to, as the dispatcher
+    /// looks it up before a call: the flat mount exposing it, else the
+    /// prefixed mount's own lookup, renamed to the name the caller used.
+    async fn lookup<'a, T, F>(
+        &'a self,
+        name: String,
+        mut lookup: F,
+        rename: impl FnOnce(&mut T, String),
+    ) -> McpResult<Option<T>>
+    where
+        F: FnMut(&'a Mount, String) -> Option<BoxFuture<'static, McpResult<Option<T>>>>,
+    {
+        if let Some((_, found)) = self.flat_owner(&name, &mut lookup).await? {
+            return Ok(Some(found));
+        }
+        let Some((mount, own)) = self.route(&name) else {
+            return Ok(None);
+        };
+        let Some(fut) = lookup(mount, own) else {
+            return Ok(None);
+        };
+        Ok(fut.await?.map(|mut found| {
+            rename(&mut found, name);
+            found
+        }))
+    }
+
+    /// The flat mount exposing `name`, and the component it exposes, by
+    /// asking each flat mount's own lookup.
     ///
-    /// A flat mount's names are not derivable from the name itself, and they are
-    /// not fixed either — visibility policies and dynamic catalogues both make
-    /// the answer request-dependent — so the only correct source is the list for
-    /// *this* request.
+    /// **A flat mount exposing the name exactly wins over splitting it at the
+    /// first separator.** `#[tool(name = "git__status")]` is legal, and
+    /// the split sent it to a mount prefixed `git` that had never heard of
+    /// `status`, so a tool `tools/list` advertised could not be called.
+    ///
+    /// A flat mount's names are not derivable from the name itself, and they
+    /// are not fixed either: visibility policies and dynamic catalogues both
+    /// make the answer request-dependent. So each flat mount is asked for
+    /// *this* request through its lookup, an indexed `match` for a
+    /// `#[server]` and a list walk only for a server that doesn't override
+    /// it. Every flat mount is asked, so two exposing one name is an error,
+    /// not a first-wins. With no flat mount nothing is asked at all.
     ///
     /// The obvious alternative, dispatching to each mount until one does not
     /// answer "unknown tool", is **unsound**: a tool-level failure is a
     /// `CallToolResult` with `is_error`, indistinguishable from not knowing the
     /// name, so a call that genuinely ran and failed would be re-dispatched to
-    /// the next server — running its side effects a second time.
+    /// the next server, running its side effects a second time.
     async fn flat_owner<'a, T, F>(
-        mounts: &'a [Mount],
+        &'a self,
         name: &str,
-        mut list: F,
-    ) -> McpResult<Option<&'a Mount>>
+        mut lookup: F,
+    ) -> McpResult<Option<(&'a Mount, T)>>
     where
-        F: FnMut(&'a Mount, neutral::ListParams) -> Option<BoxFuture<'static, McpResult<T>>>,
-        T: Names,
+        F: FnMut(&'a Mount, String) -> Option<BoxFuture<'static, McpResult<Option<T>>>>,
     {
         let mut owner = None;
-        for mount in mounts.iter().filter(|m| m.prefix.is_none()) {
-            let mut params = neutral::ListParams::default();
-            let mut cursors = std::collections::HashSet::new();
-            loop {
-                let Some(fut) = list(mount, params) else {
-                    break;
-                };
-                let page = fut.await?;
-                if page.has(name) {
-                    if owner.is_some() {
-                        return Err(McpError::internal(format!(
-                            "ambiguous flat component: {name}"
-                        )));
-                    }
-                    owner = Some(mount);
-                    break;
+        for mount in self.inner.mounts.iter().filter(|m| m.prefix.is_none()) {
+            let Some(fut) = lookup(mount, name.to_owned()) else {
+                continue;
+            };
+            if let Some(found) = fut.await? {
+                if owner.is_some() {
+                    return Err(McpError::internal(format!(
+                        "ambiguous flat component: {name}"
+                    )));
                 }
-                let Some(cursor) = page.next().map(str::to_owned) else {
-                    break;
-                };
-                if !cursors.insert(cursor.clone()) || cursors.len() > 10_000 {
-                    return Err(McpError::internal(
-                        "flat catalog pagination did not terminate",
-                    ));
-                }
-                params = neutral::ListParams::with_cursor(cursor);
+                owner = Some((mount, found));
             }
         }
         Ok(owner)
-    }
-}
-
-/// A list result that can say whether it contains a given component name — the
-/// one thing [`CompositeServer::flat_owner`] needs from it.
-trait Names {
-    fn has(&self, name: &str) -> bool;
-    fn next(&self) -> Option<&str>;
-}
-
-impl Names for neutral::ListToolsResult {
-    fn next(&self) -> Option<&str> {
-        self.next_cursor.as_deref()
-    }
-    fn has(&self, name: &str) -> bool {
-        self.tools.iter().any(|t| t.name == name)
-    }
-}
-
-impl Names for neutral::ListPromptsResult {
-    fn next(&self) -> Option<&str> {
-        self.next_cursor.as_deref()
-    }
-    fn has(&self, name: &str) -> bool {
-        self.prompts.iter().any(|p| p.name == name)
     }
 }
 
@@ -986,6 +985,22 @@ impl McpServerCore for CompositeServer {
 }
 
 impl WithTools for CompositeServer {
+    /// Routed, not listed: the flat mounts' own lookups, else the prefixed
+    /// mount's. Every `tools/call` looks its tool up first, so a list walk
+    /// here would cost each call the whole composed catalogue.
+    async fn lookup_tool(
+        &self,
+        ctx: &ListToolsContext,
+        name: String,
+    ) -> McpResult<Option<neutral::Tool>> {
+        self.lookup(
+            name,
+            |mount, name| mount.server.lookup_tool(ctx.clone(), name),
+            |tool, name| tool.name = name,
+        )
+        .await
+    }
+
     async fn list_tools(
         &self,
         ctx: &ListToolsContext,
@@ -1038,13 +1053,12 @@ impl WithTools for CompositeServer {
         ctx: &CallToolContext,
         mut params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
-        // A name with no prefix — or one a flat mount exposes verbatim — only
-        // that mount's current list can resolve.
+        // A name a flat mount exposes verbatim only that mount can confirm.
         let routed = self
-            .resolve(&params.name, |mount, page| {
+            .resolve(&params.name, |mount, name| {
                 mount
                     .server
-                    .list_tools(ListToolsContext::new(ctx.base.clone()), page)
+                    .lookup_tool(ListToolsContext::new(ctx.base.clone()), name)
             })
             .await?;
         let Some((mount, name)) = routed else {
@@ -1217,6 +1231,20 @@ impl WithResources for CompositeServer {
 }
 
 impl WithPrompts for CompositeServer {
+    /// Routed like [`lookup_tool`](WithTools::lookup_tool).
+    async fn lookup_prompt(
+        &self,
+        ctx: &ListPromptsContext,
+        name: String,
+    ) -> McpResult<Option<neutral::Prompt>> {
+        self.lookup(
+            name,
+            |mount, name| mount.server.lookup_prompt(ctx.clone(), name),
+            |prompt, name| prompt.name = name,
+        )
+        .await
+    }
+
     async fn list_prompts(
         &self,
         ctx: &ListPromptsContext,
@@ -1245,10 +1273,10 @@ impl WithPrompts for CompositeServer {
         mut params: neutral::GetPromptParams,
     ) -> McpResult<neutral::GetPromptResult> {
         let routed = self
-            .resolve(&params.name, |mount, page| {
+            .resolve(&params.name, |mount, name| {
                 mount
                     .server
-                    .list_prompts(ListPromptsContext::new(ctx.base.clone()), page)
+                    .lookup_prompt(ListPromptsContext::new(ctx.base.clone()), name)
             })
             .await?;
         let Some((mount, name)) = routed else {
@@ -1280,10 +1308,10 @@ impl WithCompletions for CompositeServer {
             // it, so completion and the call it completes for agree on the owner.
             neutral::CompletionReference::Prompt { name } => {
                 let routed = self
-                    .resolve(name, |mount, page| {
+                    .resolve(name, |mount, name| {
                         mount
                             .server
-                            .list_prompts(ListPromptsContext::new(ctx.base.clone()), page)
+                            .lookup_prompt(ListPromptsContext::new(ctx.base.clone()), name)
                     })
                     .await?;
                 let Some((mount, own)) = routed else {

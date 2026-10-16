@@ -72,7 +72,7 @@ pub use subscriptions::ServerNotifier;
 pub use task_handle::{TaskHandle, TaskLink, TaskSlot};
 pub use tasks::{
     InputWaiter, NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus,
-    TaskStore, TaskUpdate,
+    TaskStore, TaskUpdate, quota_key, ttl_elapsed,
 };
 pub use traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
 pub use uri_template::{UriTemplate, UriTemplateError};
@@ -100,10 +100,11 @@ pub mod __macro_support {
     /// Close a generated object schema to additional properties. A tool
     /// `inputSchema` forbids unknown arguments — the function-calling norm (it
     /// keeps models from inventing parameters) and what the official MCP
-    /// conformance suite's json-schema-2020-12 scenario checks. Schema-only:
-    /// deserialization stays lenient (unknown args are still ignored, not an
-    /// error). No-op unless the root is an `object` that hasn't already set
-    /// `additionalProperties`.
+    /// conformance suite's json-schema-2020-12 scenario checks. The
+    /// dispatcher validates arguments against this schema, so an unknown
+    /// argument is answered as invalid arguments (a tool error the model can
+    /// correct), not silently dropped. No-op unless the root is an `object`
+    /// that hasn't already set `additionalProperties`.
     #[must_use]
     pub fn close_object_schema(mut v: Value) -> Value {
         if let Some(obj) = v.as_object_mut()
@@ -318,6 +319,176 @@ mod tests {
             .await
             .unwrap()
             .expect("request should produce a response")
+    }
+
+    /// The `2026-07-28` request envelope's fields must have the schema's
+    /// types: `clientCapabilities` an object, not `null`.
+    #[tokio::test]
+    async fn a_mistyped_envelope_field_is_refused() {
+        let mut svc = dispatcher();
+        let resp = call(
+            &mut svc,
+            JsonRpcRequest::new(
+                1,
+                "tools/list",
+                Some(json!({ "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": null,
+                }})),
+            ),
+        )
+        .await;
+        let JsonRpcMessage::Response(r) = resp else {
+            panic!()
+        };
+        let err = r.error.expect("refused");
+        assert_eq!(err.code, turbomcp_core::codes::INVALID_PARAMS);
+        assert_eq!(
+            err.data.unwrap()["missingField"],
+            "io.modelcontextprotocol/clientCapabilities"
+        );
+    }
+
+    /// A second request under an id still in flight on the same connection
+    /// is refused, rather than taking over the first's cancellation.
+    #[tokio::test]
+    async fn a_duplicate_in_flight_id_is_refused() {
+        let mut svc = dispatcher();
+        let conn = turbomcp_core::ConnectionId::new("dup-conn");
+        let req = || {
+            turbomcp_core::McpRequest::new(JsonRpcRequest::new(
+                7,
+                "tools/list",
+                Some(json!({ "_meta": draft_meta() })),
+            ))
+            .with(conn.clone())
+        };
+        // The first is registered when called, before it is polled.
+        let first = svc.ready().await.unwrap().call(req());
+        let second = svc.ready().await.unwrap().call(req()).await.unwrap();
+        let Some(JsonRpcMessage::Response(r)) = second else {
+            panic!()
+        };
+        assert_eq!(
+            r.error.expect("refused").code,
+            turbomcp_core::codes::INVALID_REQUEST
+        );
+        let Some(JsonRpcMessage::Response(r)) = first.await.unwrap() else {
+            panic!()
+        };
+        assert!(r.error.is_none(), "the first still answers");
+    }
+
+    /// A session speaks the revision it negotiated: a request stating
+    /// another is refused rather than answered in the other's shape.
+    #[tokio::test]
+    async fn a_request_stating_another_revision_than_its_session_is_refused() {
+        let mut svc = crate::LegacySessionAdapter::new(dispatcher());
+        let init = |id| {
+            JsonRpcRequest::new(
+                id,
+                "initialize",
+                Some(json!({
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": { "name": "c", "version": "1" },
+                })),
+            )
+        };
+        svc.ready()
+            .await
+            .unwrap()
+            .call(init(1).into())
+            .await
+            .unwrap();
+        let resp = svc
+            .ready()
+            .await
+            .unwrap()
+            .call(
+                JsonRpcRequest::new(
+                    2,
+                    "tools/list",
+                    Some(json!({ "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": "2025-11-25"
+                    }})),
+                )
+                .into(),
+            )
+            .await
+            .unwrap();
+        let Some(JsonRpcMessage::Response(r)) = resp else {
+            panic!()
+        };
+        assert_eq!(
+            r.error.expect("refused").code,
+            turbomcp_core::codes::INVALID_REQUEST
+        );
+    }
+
+    /// What a server says about itself beyond name and version
+    /// (`description`, `websiteUrl`) reaches the client on both handshakes.
+    #[tokio::test]
+    async fn implementation_extras_reach_the_wire() {
+        #[derive(Clone)]
+        struct Described;
+        impl McpServerCore for Described {
+            fn server_info(&self) -> Implementation {
+                let mut info = Implementation::new("described", "1.0.0");
+                info.extra
+                    .insert("description".into(), json!("A server with a story"));
+                info.extra
+                    .insert("websiteUrl".into(), json!("https://example.com"));
+                info
+            }
+        }
+        let mut svc = VersionDispatcher::new(Described, MethodRouter::new());
+        let discover = svc
+            .ready()
+            .await
+            .unwrap()
+            .call(
+                JsonRpcRequest::new(1, "server/discover", Some(json!({ "_meta": draft_meta() })))
+                    .into(),
+            )
+            .await
+            .unwrap();
+        let Some(JsonRpcMessage::Response(r)) = discover else {
+            panic!()
+        };
+        let info = &r.result.unwrap()["_meta"]["io.modelcontextprotocol/serverInfo"];
+        assert_eq!(info["description"], "A server with a story");
+        assert_eq!(info["websiteUrl"], "https://example.com");
+
+        let mut svc = crate::LegacySessionAdapter::new(VersionDispatcher::new(
+            Described,
+            MethodRouter::new(),
+        ));
+        let init = svc
+            .ready()
+            .await
+            .unwrap()
+            .call(
+                JsonRpcRequest::new(
+                    2,
+                    "initialize",
+                    Some(json!({
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "clientInfo": { "name": "c", "version": "1" },
+                    })),
+                )
+                .into(),
+            )
+            .await
+            .unwrap();
+        let Some(JsonRpcMessage::Response(r)) = init else {
+            panic!()
+        };
+        assert_eq!(
+            r.result.unwrap()["serverInfo"]["description"],
+            "A server with a story"
+        );
     }
 
     #[tokio::test]

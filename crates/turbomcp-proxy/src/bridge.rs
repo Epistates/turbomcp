@@ -23,7 +23,9 @@
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use tokio::sync::Notify;
 use turbomcp_client::{
@@ -79,7 +81,7 @@ impl Bridge {
         let mut hasher = DefaultHasher::new();
         format!("{question:?}").hash(&mut hasher);
         let digest = hasher.finish();
-        let mut asked = self.inner.asked.lock().expect("bridge lock");
+        let mut asked = self.inner.asked.lock();
         let n = asked.entry(digest).or_insert(0);
         *n += 1;
         format!("upstream.{kind}.{digest:016x}.{n}")
@@ -149,7 +151,6 @@ impl SamplingHandler for Bridge {
         params: neutral::CreateMessageParams,
     ) -> ClientResult<neutral::CreateMessageResult> {
         let key = self.key("sample", &params);
-        #[allow(deprecated)] // Deprecated upstream, still in every revision.
         let asked = self.inner.handle.create_message(&key, params).await;
         self.settle(asked).await.map_err(|e| self.client_error(&e))
     }
@@ -163,7 +164,6 @@ impl SamplingHandler for Bridge {
 impl RootsHandler for Bridge {
     async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>> {
         let key = self.key("roots", &"roots/list");
-        #[allow(deprecated)] // Deprecated upstream, still in every revision.
         let asked = self.inner.handle.list_roots(&key).await;
         self.settle(asked).await.map_err(|e| self.client_error(&e))
     }

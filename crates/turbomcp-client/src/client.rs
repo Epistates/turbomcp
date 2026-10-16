@@ -18,7 +18,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -960,7 +962,7 @@ impl Client {
         // block the rest. Applying that everywhere dropped perfectly good
         // tools over stdio. (Last-seen page wins; tools paginate cleanly.)
         let mirrors_headers = self.version.is_stateless() && self.conn.carries_headers();
-        let mut known = self.tools.lock().expect("tool facts poisoned");
+        let mut known = self.tools.lock();
         result.tools.retain(|tool| {
             let headers = if mirrors_headers {
                 match header_params_from_schema(&tool.input_schema) {
@@ -1224,7 +1226,6 @@ impl Client {
             client
                 .tools
                 .lock()
-                .expect("tool facts poisoned")
                 .get(name)
                 .map(|facts| facts.task_support)
         };
@@ -1317,7 +1318,6 @@ impl Client {
         let Some(validator) = self
             .tools
             .lock()
-            .expect("tool facts poisoned")
             .get(name)
             .and_then(|facts| facts.output.clone())
         else {
@@ -1347,7 +1347,7 @@ impl Client {
         arguments: &Map<String, Value>,
     ) -> (Map<String, Value>, Extensions) {
         let mut mirrors = std::collections::BTreeMap::new();
-        if let Some(facts) = self.tools.lock().expect("tool facts poisoned").get(name) {
+        if let Some(facts) = self.tools.lock().get(name) {
             for param in &facts.headers {
                 let mut value: Option<&Value> = None;
                 for (i, segment) in param.path.iter().enumerate() {

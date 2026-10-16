@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ServerBuilder::call_timeout`: a call still running after the limit is
+  cancelled (its handler dropped, its cancellation fired) and answered with
+  a timeout error, so a hung handler can't hold an admission slot forever.
+- `ServerBuilder::undeclared_task_support`: the `2025-11-25`
+  `execution.taskSupport` of a tool that declares none once Tasks are on
+  (`optional` by default; `forbidden` makes tasks opt-in per tool). A
+  `#[server]` that marks any tool `#[tool(task)]` declares `forbidden` on
+  its other tools itself, so the opt-in holds wherever it is mounted.
+- `ServerBuilder::schema_cache_capacity` (default 256 compiled tool
+  schemas), for a gateway offering more distinct schemas than that.
+- `McpError::url_elicitation_required` (`-32042`), and `McpError::Rpc`
+  returned from a `#[tool]` is answered as that JSON-RPC error rather than
+  as a tool error: the explicit way for a tool to say the call could not be
+  made.
+- `SessionStore::with_owner_quota`, `SessionState::{peer_address,
+  quota_key}`, `SessionBackend::capacity` and `ProtocolError::RateLimited`
+  (HTTP `429` + `Retry-After`); see Security.
+- `TaskStore::with_max_result_bytes` (`DEFAULT_MAX_RESULT_BYTES`, 16 MiB),
+  `NewTask::with_quota_key`, and `quota_key`/`ttl_elapsed` for a custom
+  Tasks front-end.
+- `ServeConfig::eof_grace` (default 2 s) and `ConnectionClosed`: when the
+  peer closes its end, in-flight handlers get the grace to answer and are
+  then cancelled, so a stdio server "exits promptly when its standard input
+  is closed" instead of at the drain deadline.
+- `turbomcp_service::client_key` (and `NetworkFacts::client_key`): what a
+  per-client limit counts an address against, an IPv6 client by its `/64`.
+- `neutral::is_object_root` and `meta::is_prefixed_key`.
 - `turbomcp-auth` feature `jwt` (on by default): `JwtValidator`,
   `IssuerValidators`, the JWKS sources and `Algorithm`. Off, a
   `ResourceServer` over introspection or your own `BearerValidator`, or
@@ -353,6 +380,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- One caller can no longer fill the session table. `SessionStore` holds
+  at most `DEFAULT_OWNER_QUOTA` (1024) sessions per owner, the
+  authenticated principal or else the client address (an IPv6 client by its
+  `/64`), and refuses more with `429`; anonymous `initialize`s from one
+  address used to take all 16,384 slots and lock every other client out
+  for the idle hour. Anonymous callers' running tasks are likewise counted
+  per client address, not against one shared anonymous owner.
+- The legacy notification route table no longer evicts. It is bounded by
+  the session store's capacity and refuses a route rather than pushing out
+  a live session's, which let a flood of sessions silently cut real ones
+  off from `list_changed` and `resources/updated`.
+- A response to a server-to-client request (inline elicitation, sampling,
+  roots) is accepted only from the session or connection the request went
+  to: a request id leaked through a log or a shared proxy no longer lets
+  another client answer a different user's elicitation.
+- A second request under an id still in flight on the same connection is
+  refused (the spec's "MUST NOT match the ID of any other request"), rather
+  than taking over the first's cancellation.
+- Tool schemas are compiled within a budget (depth 64, 20,000 values), as
+  the spec's "Composition-Keyword Resource Use" advises: a gateway compiles
+  schemas an upstream wrote. An unknown `$schema` is reported as an
+  unsupported dialect. (`pattern` was already time-bounded by the regex
+  engine's backtrack limit.)
+- A task keeps at most 16 MiB of serialized result for `tasks/result`
+  (`TaskStore::with_max_result_bytes`); a larger one fails the task with an
+  error saying so, rather than being held for up to twice its TTL.
 - **Breaking:** machine authorization binds its credentials to one
   authorization server. `MachineAuthorization::new`,
   `EnterpriseAuthorization::new` and the gateway's `ServiceAccount::new`
@@ -488,6 +541,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A hand-written tool schema whose root omits `type` (or lists several)
+  was advertised as an empty object, every property dropped, while calls
+  were still validated against the real schema; it now reaches the wire
+  with `type: "object"` and everything else. A root typed anything else is
+  refused when called, naming the tool, as the server's error.
+- Embedded resources always name their MIME type ("MUST include … the
+  appropriate MIME type"): contents without one are labelled `text/plain`
+  or `application/octet-stream`.
+- `2025-06-18` clients get tool schemas without `$schema`: that revision
+  names no dialect, and a draft-07 validator (Ajv's default) fails to
+  compile a schema pointing at the 2020-12 meta-schema. Elicitation
+  requests to them carry no `mode`, which that revision doesn't have.
+- `Composite` routes `tools/call` and `prompts/get` through its mounts'
+  own lookups. It listed the whole composed catalogue before every call
+  (and every flat mount again to route it), so a gateway over a large
+  upstream paid a catalogue walk per call and mounted interceptors saw
+  `tools/list` traffic nobody sent.
+- Tasks: an authenticated caller's `2025-11-25` tasks outlive the session
+  that created them (tasks belong to the authorization context), a task
+  still running at its TTL is stopped and failed then, `tasks/list` pages
+  by a keyset cursor so a task collected between pages doesn't push another
+  out unseen, and `notifications/tasks/status` is sent as status changes.
+  The draft extension requires `inputResponses` on an update and sends a
+  subscriber the state of tasks that changed before it subscribed.
+- A tool's `execution.taskSupport` no longer depends on the rest of the
+  catalogue: inferring it made one tool's declaration change every other
+  tool's, cost a full listing per call, and let a caller tell whether a
+  tool hidden from it declared support.
+- `ping` is answered promptly under load: it no longer waits on (or is
+  refused by) the application concurrency budget.
+- A session refuses a request that states another revision than the one it
+  negotiated (its result would take the other revision's shape), and the
+  stdio adapter routes such a request to the session instead of answering
+  "not initialized".
+- `clientInfo`/`serverInfo` keep `description`, `icons` and `websiteUrl` on
+  both handshakes.
+- The `2026-07-28` envelope's fields must have the schema's types: a `null`
+  `clientCapabilities` is refused as missing.
+- `roots/list_changed` on `2026-07-28`, where it was removed, is ignored as
+  an unknown notification.
+- `resources/read` answers an empty `contents` as not found ("MUST NOT
+  return an empty `contents` array for a non-existent resource"), and a
+  read that answered a retry with input responses is never cached.
+- A code `2026-07-28` forbids (`-32002`, `-32042`, an undefined
+  `-32020..-32099`) is sent there as its nearest allowed code; the stateful
+  revisions get it as sent.
+- `#[prompt]` and `#[mcp_header]` arguments with a raw identifier
+  (`r#type`) are named without the `r#`.
+- `ClientHandle::create_message` and `list_roots` no longer carry
+  `#[deprecated]`: `2026-07-28` deprecates them, but they are first-class
+  on the stateful revisions, and the mark warned every server using them
+  there.
+- A visibility policy together with a `public` cache scope is warned
+  about once (a shared cache would hand one caller's answer to another).
+- `McpError::with_data` on a variant other than `Rpc` makes it an `Rpc`
+  with that variant's code and message; it panicked in debug builds and did
+  nothing in release.
 - `2026-07-28` header mirroring: a tool argument that is `null` has no
   `Mcp-Param-*` header ("Client MUST omit the header … Server MUST NOT
   expect the header"), but the server answered every such call `400
@@ -840,6 +950,14 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** `SessionStore` refuses a caller's sessions beyond its
+  owner quota with `SessionError::QuotaExceeded` (`429`); raise it with
+  `with_owner_quota` where many clients share an address.
+- **Breaking:** a tool with no `execution.taskSupport` declaration gets the
+  server's fixed default (`ServerBuilder::undeclared_task_support`) instead
+  of one inferred from the other tools.
+- Registries use `parking_lot` locks, which don't poison: one panic while
+  holding a lock no longer takes every later request down with it.
 - **Breaking:** `with_extension` refuses a colliding registration with a
   panic at build time: a second extension with the same id, a method the
   core protocol defines on a revision the extension speaks (an extension

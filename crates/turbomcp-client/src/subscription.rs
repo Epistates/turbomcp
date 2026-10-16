@@ -13,7 +13,9 @@
 
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::task::{Context, Poll};
 
 use serde_json::Value;
@@ -119,10 +121,7 @@ impl Drop for RouteGuard {
 
 impl SubscriptionRoutes {
     fn remove(&self, id: &RequestId) -> Option<Route> {
-        self.routes
-            .lock()
-            .expect("subscription routes poisoned")
-            .remove(id)
+        self.routes.lock().remove(id)
     }
 
     /// Route `id`'s notifications, before the request that opens it is sent:
@@ -137,10 +136,7 @@ impl SubscriptionRoutes {
     ) {
         let (events, events_rx) = mpsc::channel(SUBSCRIPTION_QUEUE);
         let (end, end_rx) = oneshot::channel();
-        self.routes
-            .lock()
-            .expect("subscription routes poisoned")
-            .insert(id.clone(), Route { events, end });
+        self.routes.lock().insert(id.clone(), Route { events, end });
         (
             RouteGuard {
                 routes: Arc::clone(self),
@@ -164,7 +160,7 @@ impl SubscriptionRoutes {
         else {
             return;
         };
-        let routes = self.routes.lock().expect("subscription routes poisoned");
+        let routes = self.routes.lock();
         let Some(route) = routes.get(&id) else {
             return;
         };
@@ -192,8 +188,7 @@ impl SubscriptionRoutes {
 
     /// The connection is gone: every subscription on it is lost.
     pub(crate) fn lose_all(&self) {
-        let routes =
-            std::mem::take(&mut *self.routes.lock().expect("subscription routes poisoned"));
+        let routes = std::mem::take(&mut *self.routes.lock());
         for route in routes.into_values() {
             let _ = route.end.send(SubscriptionEnd::Lost);
         }

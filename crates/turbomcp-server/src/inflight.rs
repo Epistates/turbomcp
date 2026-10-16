@@ -26,7 +26,9 @@
 //! registry needs no cap of its own.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use turbomcp_core::{CancellationToken, RequestId};
 
@@ -41,22 +43,28 @@ pub(crate) struct InFlightRegistry {
 
 impl InFlightRegistry {
     /// Track a request and hand back a guard that deregisters on drop (normal
-    /// completion, cancellation, or panic alike).
+    /// completion, cancellation, or panic alike). `None` when the scope
+    /// already has a request in flight under `id`: "the request ID MUST NOT
+    /// match the ID of any other request the sender has issued and not yet
+    /// received a response for", and accepting it would let the second
+    /// replace the first's cancellation and the first's guard remove the
+    /// second's.
     pub(crate) fn register(
         self: &Arc<Self>,
         connection: &str,
         id: &RequestId,
         token: CancellationToken,
-    ) -> InFlightGuard {
+    ) -> Option<InFlightGuard> {
         let key = (connection.to_owned(), id.clone());
-        self.map
-            .lock()
-            .expect("inflight lock poisoned")
-            .insert(key.clone(), token);
-        InFlightGuard {
+        let mut map = self.map.lock();
+        if map.contains_key(&key) {
+            return None;
+        }
+        map.insert(key.clone(), token);
+        Some(InFlightGuard {
             registry: Arc::clone(self),
             key,
-        }
+        })
     }
 
     /// Fire every token registered under `scope`: its session ended, and a
@@ -64,7 +72,7 @@ impl InFlightRegistry {
     /// such a call may outlive its response (a disconnect doesn't cancel on
     /// the session wires), so this is what ends it.
     pub(crate) fn cancel_scope(&self, scope: &str) -> usize {
-        let map = self.map.lock().expect("inflight lock poisoned");
+        let map = self.map.lock();
         let mut fired = 0;
         for ((owner, _), token) in map.iter() {
             if owner == scope {
@@ -79,12 +87,7 @@ impl InFlightRegistry {
     /// Unknown ids are ignored per spec ("fire and forget").
     pub(crate) fn cancel(&self, connection: &str, id: &RequestId) -> bool {
         let key = (connection.to_owned(), id.clone());
-        let found = self
-            .map
-            .lock()
-            .expect("inflight lock poisoned")
-            .get(&key)
-            .cloned();
+        let found = self.map.lock().get(&key).cloned();
         match found {
             Some(token) => {
                 token.cancel();
@@ -96,7 +99,7 @@ impl InFlightRegistry {
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.map.lock().expect("inflight lock poisoned").len()
+        self.map.lock().len()
     }
 }
 
@@ -108,11 +111,7 @@ pub(crate) struct InFlightGuard {
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
-        self.registry
-            .map
-            .lock()
-            .expect("inflight lock poisoned")
-            .remove(&self.key);
+        self.registry.map.lock().remove(&self.key);
     }
 }
 

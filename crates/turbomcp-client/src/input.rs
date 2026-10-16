@@ -20,7 +20,9 @@
 //! [`RelatedRequest`]: turbomcp_service::RelatedRequest
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use turbomcp_core::RequestId;
@@ -62,8 +64,8 @@ pub(crate) enum Answerer {
 
 impl InputRoutes {
     /// The routes, with lapsed provisional ones gone.
-    fn routes(&self) -> std::sync::MutexGuard<'_, HashMap<RouteKey, Route>> {
-        let mut routes = self.routes.lock().expect("input routes poisoned");
+    fn routes(&self) -> parking_lot::MutexGuard<'_, HashMap<RouteKey, Route>> {
+        let mut routes = self.routes.lock();
         let now = Instant::now();
         routes.retain(|_, route| route.provisional_until.is_none_or(|until| until > now));
         routes
@@ -110,10 +112,7 @@ impl InputRoutes {
 
     /// Whether any call has its own handlers.
     pub(crate) fn is_empty(&self) -> bool {
-        self.routes
-            .lock()
-            .expect("input routes poisoned")
-            .is_empty()
+        self.routes.lock().is_empty()
     }
 
     /// Who answers a request that arrived `related` to one of ours or to

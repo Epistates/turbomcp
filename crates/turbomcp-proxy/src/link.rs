@@ -3,8 +3,10 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -143,10 +145,8 @@ impl Drop for Lease {
 
 impl Drop for Link {
     fn drop(&mut self) {
-        if let Ok(tasks) = self.tasks.get_mut() {
-            for task in tasks.drain(..) {
-                task.abort();
-            }
+        for task in self.tasks.get_mut().drain(..) {
+            task.abort();
         }
     }
 }
@@ -228,7 +228,7 @@ impl Link {
                         let _ = tap.send(change);
                     }
                 });
-                self.tasks.lock().expect("link tasks").push(task);
+                self.tasks.lock().push(task);
             }
             Err(e) => tracing::warn!(
                 upstream = %label,
@@ -282,7 +282,7 @@ impl Link {
                 }
             }
         });
-        self.tasks.lock().expect("link tasks").push(task);
+        self.tasks.lock().push(task);
     }
 }
 
@@ -336,13 +336,12 @@ impl<T: Clone> Catalog<T> {
     }
 
     fn invalidate(&self) {
-        *self.cached.lock().expect("catalog lock") = None;
+        *self.cached.lock() = None;
     }
 
     fn fresh(&self) -> Option<Arc<HashMap<String, T>>> {
         self.cached
             .lock()
-            .expect("catalog lock")
             .as_ref()
             .filter(|(at, _)| at.elapsed() < self.ttl)
             .map(|(_, map)| Arc::clone(map))
@@ -363,7 +362,7 @@ impl<T: Clone> Catalog<T> {
             return Ok(map);
         }
         let map = Arc::new(fetch().await?);
-        *self.cached.lock().expect("catalog lock") = Some((Instant::now(), Arc::clone(&map)));
+        *self.cached.lock() = Some((Instant::now(), Arc::clone(&map)));
         Ok(map)
     }
 
@@ -383,7 +382,6 @@ impl<T: Clone> Catalog<T> {
         let recent = self
             .cached
             .lock()
-            .expect("catalog lock")
             .as_ref()
             .is_some_and(|(at, _)| at.elapsed() < MISS_REFETCH_AFTER);
         if recent {

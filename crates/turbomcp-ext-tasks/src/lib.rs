@@ -113,6 +113,9 @@ pub struct TasksExtension {
     poll_interval_ms: Option<i64>,
     capacity: usize,
     owner_limit: usize,
+    /// `store` is a caller's backend, with its own limits: the bundled
+    /// store's knobs leave it alone.
+    custom_backend: bool,
 }
 
 impl core::fmt::Debug for TasksExtension {
@@ -137,6 +140,7 @@ impl Default for TasksExtension {
             poll_interval_ms: Some(DEFAULT_POLL_INTERVAL_MS),
             capacity: TaskStore::DEFAULT_CAPACITY,
             owner_limit: TaskStore::DEFAULT_OWNER_LIMIT,
+            custom_backend: false,
         }
     }
 }
@@ -208,23 +212,27 @@ impl TasksExtension {
     /// Bound the number of tasks the bundled registry holds (default: 1024).
     /// When it is full the oldest finished task makes room; when every task
     /// is still running, taskification degrades gracefully — the next
-    /// eligible `tools/call` runs synchronously instead of failing. Replaces
-    /// a [`backend`](Self::backend).
+    /// eligible `tools/call` runs synchronously instead of failing. A
+    /// [`backend`](Self::backend), set before or after, keeps its own limits.
     #[must_use]
     pub fn capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity;
-        self.store = Arc::new(self.bundled_store());
+        if !self.custom_backend {
+            self.store = Arc::new(self.bundled_store());
+        }
         self
     }
 
     /// Bound how many tasks one principal may have running at once in the
     /// bundled registry (default: 64), so a single caller cannot take every
-    /// slot. Past it, that caller's eligible calls run synchronously.
-    /// Replaces a [`backend`](Self::backend).
+    /// slot. Past it, that caller's eligible calls run synchronously. A
+    /// [`backend`](Self::backend), set before or after, keeps its own limits.
     #[must_use]
     pub fn owner_limit(mut self, limit: usize) -> Self {
         self.owner_limit = limit;
-        self.store = Arc::new(self.bundled_store());
+        if !self.custom_backend {
+            self.store = Arc::new(self.bundled_store());
+        }
         self
     }
 
@@ -236,6 +244,7 @@ impl TasksExtension {
     #[must_use]
     pub fn backend(mut self, backend: Arc<dyn TaskBackend>) -> Self {
         self.store = backend;
+        self.custom_backend = true;
         self
     }
 
@@ -402,6 +411,12 @@ impl Extension for TasksExtension {
         self.subs.forget_gone(self.store.as_ref()).await;
         self.subs
             .subscribe(peer, subscription_id, &ids, &owner(context));
+        // Registered first, then each task's current state: a task that
+        // changed (or finished) before the subscription was in place would
+        // otherwise never be announced to a client relying on notifications.
+        for id in &ids {
+            subs::push_status(&self.subs, self.store.as_ref(), id).await;
+        }
     }
 
     fn on_unsubscribe(
@@ -424,7 +439,11 @@ impl Extension for TasksExtension {
         let cancel = run.cancel_token();
         // SEP-2663: a task MUST be durably created before `CreateTaskResult`
         // returns: create it, then spawn the call.
-        let new_task = NewTask::new(self.ttl_ms).with_poll_interval_ms(self.poll_interval_ms);
+        // Anonymous callers share an owner; their running limit is counted
+        // per client address instead, so one can't spend everyone's.
+        let new_task = NewTask::new(self.ttl_ms)
+            .with_poll_interval_ms(self.poll_interval_ms)
+            .with_quota_key(turbomcp_server::quota_key(&context));
         let task = match self
             .store
             .create(&owner(&context), new_task, cancel.clone())
@@ -460,6 +479,7 @@ impl Extension for TasksExtension {
         let store = Arc::clone(&self.store);
         let subs = Arc::clone(&self.subs);
         let task_id = task.task_id.clone();
+        let ttl = task.ttl_ms;
         let span = tracing::info_span!("mcp.task", "mcp.task.id" = %task_id);
         let work = async move {
             // A panic would otherwise unwind this task with the record still
@@ -473,6 +493,11 @@ impl Extension for TasksExtension {
                 // could be seen: dropping the call aborts it, as on
                 // `2025-11-25` and for any cancelled request.
                 () = cancel.cancelled() => return,
+                // Out of time: stop the work and fail the task now.
+                () = turbomcp_server::ttl_elapsed(ttl) => {
+                    cancel.cancel();
+                    TaskOutcome::expired(ttl.unwrap_or_default())
+                }
                 out = turbomcp_service::catch_panic(run.run()) => match out {
                     Ok(Ok(result)) => TaskOutcome::Completed(result),
                     Ok(Err(err)) => TaskOutcome::Error(err),
@@ -537,12 +562,35 @@ impl Extension for TasksExtension {
             // observable status change (eventual consistency); here delivery
             // is synchronous, which is strictly stronger.
             methods::TASKS_UPDATE => {
-                let responses = request
+                // `inputResponses` is required: a malformed update is an
+                // error, not an empty answer acknowledged as delivered.
+                let parsed = request
                     .params
                     .as_ref()
-                    .and_then(|p| serde_json::from_value::<UpdateTaskParams>(p.clone()).ok())
-                    .map(|p| p.input_responses)
-                    .unwrap_or_default();
+                    .map(|p| serde_json::from_value::<UpdateTaskParams>(p.clone()));
+                let responses = match parsed {
+                    Some(Ok(p)) => p.input_responses,
+                    Some(Err(e)) => {
+                        return error(
+                            id,
+                            JsonRpcError {
+                                code: turbomcp_core::codes::INVALID_PARAMS,
+                                message: format!("invalid tasks/update params: {e}"),
+                                data: None,
+                            },
+                        );
+                    }
+                    None => {
+                        return error(
+                            id,
+                            JsonRpcError {
+                                code: turbomcp_core::codes::INVALID_PARAMS,
+                                message: "tasks/update requires inputResponses".to_owned(),
+                                data: None,
+                            },
+                        );
+                    }
+                };
                 match self.store.provide_input(&owner, &task_id, &responses).await {
                     Ok(changed) => {
                         if changed {

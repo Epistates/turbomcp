@@ -1071,3 +1071,103 @@ async fn a_read_goes_to_the_mount_the_policy_judged() {
     let error = unknown.error.expect("not found, not the vault's secret");
     assert!(!error.message.contains("secret"), "{error:?}");
 }
+
+/// Counts its `tools/list` calls, and indexes its catalogue so finding a tool
+/// needs no list.
+#[derive(Clone)]
+struct Indexed {
+    lists: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl McpServerCore for Indexed {
+    fn server_info(&self) -> Implementation {
+        Implementation::new("indexed", "1.0.0")
+    }
+}
+
+impl WithTools for Indexed {
+    async fn lookup_tool(
+        &self,
+        _ctx: &ListToolsContext,
+        name: String,
+    ) -> McpResult<Option<neutral::Tool>> {
+        Ok((name == "find").then(|| neutral::Tool::new("find", json!({ "type": "object" }))))
+    }
+
+    async fn list_tools(
+        &self,
+        _ctx: &ListToolsContext,
+        _params: neutral::ListParams,
+    ) -> McpResult<neutral::ListToolsResult> {
+        self.lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+            "find",
+            json!({ "type": "object" }),
+        )]))
+    }
+
+    async fn call_tool(
+        &self,
+        _ctx: &CallToolContext,
+        params: neutral::CallToolParams,
+    ) -> McpResult<neutral::CallToolResult> {
+        Ok(neutral::CallToolResult::text(format!(
+            "found via {}",
+            params.name
+        )))
+    }
+}
+
+/// A `tools/call` through a composite asks the mounts' lookups, not their
+/// lists. It used to list the whole composed catalogue before every call (and
+/// list every flat mount again to route it), so a gateway over a large
+/// upstream paid a catalogue walk per call, and an interceptor on a mount saw
+/// `tools/list` traffic nobody sent.
+#[tokio::test]
+async fn a_call_through_a_composite_lists_nothing() {
+    let lists = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let indexed = || {
+        ServerBuilder::new(Indexed {
+            lists: lists.clone(),
+        })
+        .with_tools()
+    };
+    let mut svc = connect(
+        Composite::new(Implementation::new("gateway", "1.0.0"))
+            .mount_flat(indexed())
+            .expect("mount flat")
+            .mount("idx", indexed())
+            .expect("mount idx"),
+    )
+    .await;
+
+    for (id, name) in [(2, "find"), (3, "idx__find")] {
+        let called = result(
+            &mut svc,
+            JsonRpcRequest::new(
+                id,
+                request::TOOLS_CALL,
+                Some(json!({ "name": name, "arguments": {} })),
+            ),
+        )
+        .await;
+        assert_eq!(text(&called), "found via find", "calling `{name}`");
+    }
+    for name in ["lost", "idx__lost"] {
+        let err = error(
+            &mut svc,
+            JsonRpcRequest::new(
+                4,
+                request::TOOLS_CALL,
+                Some(json!({ "name": name, "arguments": {} })),
+            ),
+        )
+        .await;
+        assert_eq!(err.code, codes::INVALID_PARAMS, "calling `{name}`");
+    }
+    assert_eq!(
+        lists.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no call may list a mount"
+    );
+}

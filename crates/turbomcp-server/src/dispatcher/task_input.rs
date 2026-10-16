@@ -25,7 +25,9 @@
 //! a stateful `2025-11-25` session's requests already must.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use serde_json::{Map, Value};
 use turbomcp_core::{CancellationToken, JsonRpcMessage, JsonRpcRequest, RequestId};
@@ -69,8 +71,8 @@ impl TaskInputRelay {
         }
     }
 
-    fn tasks(&self) -> std::sync::MutexGuard<'_, HashMap<String, Relayed>> {
-        self.tasks.lock().expect("task input relay poisoned")
+    fn tasks(&self) -> parking_lot::MutexGuard<'_, HashMap<String, Relayed>> {
+        self.tasks.lock()
     }
 
     /// Relay `task_id`'s input requests until the returned guard drops, which
@@ -168,7 +170,9 @@ impl TaskInputRelay {
         };
         for (key, request) in sends {
             let id = RequestId::from(format!("srv-{}", uuid::Uuid::new_v4()));
-            let (answer, guard) = self.pending.register(id.clone());
+            // Any of the owner's streams may carry the answer: a task's
+            // `tasks/result` call can come from a later session.
+            let (answer, guard) = self.pending.register(id.clone(), None);
             if stream
                 .send(related_request(id, &request, task_id))
                 .await

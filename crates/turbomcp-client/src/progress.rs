@@ -7,8 +7,10 @@
 //! spares the caller demultiplexing a global handler by hand.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+
+use parking_lot::Mutex;
 
 use serde_json::Value;
 use tokio::sync::watch;
@@ -41,11 +43,7 @@ pub(crate) struct Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        self.routes
-            .routes
-            .lock()
-            .expect("progress routes poisoned")
-            .remove(&self.token);
+        self.routes.routes.lock().remove(&self.token);
     }
 }
 
@@ -57,7 +55,6 @@ impl ProgressRoutes {
         let (tick, ticks) = watch::channel(());
         self.routes
             .lock()
-            .expect("progress routes poisoned")
             .insert(token.clone(), Route { callback, tick });
         Registration {
             token,
@@ -76,7 +73,7 @@ impl ProgressRoutes {
         };
         // The user's callback runs outside the lock.
         let callback = {
-            let routes = self.routes.lock().expect("progress routes poisoned");
+            let routes = self.routes.lock();
             let Some(route) = routes.get(token) else {
                 return false;
             };

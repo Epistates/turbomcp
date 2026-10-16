@@ -937,3 +937,114 @@ async fn a_control_burst_backpressures_instead_of_disconnecting() {
         .unwrap()
         .expect("the connection survived the burst");
 }
+
+/// `ping` "MUST respond promptly": a server whose application budget is spent
+/// on long calls still answers it, from the control budget.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ping_is_answered_at_capacity() {
+    let gate = Arc::new(Semaphore::new(0));
+    let started = Arc::new(AtomicUsize::new(0));
+    let service = GatedService {
+        gate: Arc::clone(&gate),
+        started: Arc::clone(&started),
+        fast_method: Some("ping"),
+    };
+    let (in_tx, in_rx) = mpsc::channel(8);
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+    let config = ServeConfig {
+        max_in_flight: 1,
+        ..ServeConfig::default()
+    };
+    let driver = tokio::spawn(serve_with(
+        MockTransport::new(in_rx, out_tx),
+        service,
+        config,
+    ));
+
+    in_tx.send(request(1, "slow")).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while started.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the slow call holds the only slot");
+    in_tx.send(request(2, "ping")).await.unwrap();
+    let pong = tokio::time::timeout(Duration::from_secs(5), out_rx.recv())
+        .await
+        .expect("ping answered")
+        .unwrap();
+    assert_eq!(reply_id(&pong), Some(RequestId::from(2i64)));
+    assert!(
+        matches!(&pong, JsonRpcMessage::Response(r) if r.error.is_none()),
+        "{pong:?}"
+    );
+
+    gate.add_permits(1);
+    drop(in_tx);
+    driver.await.unwrap().expect("clean shutdown on EOF");
+}
+
+/// Waits on the connection's `ConnectionClosed` token and records that it saw
+/// it fire.
+#[derive(Clone)]
+struct WatchesClose {
+    saw_close: Arc<AtomicUsize>,
+}
+
+impl Service<McpRequest> for WatchesClose {
+    type Response = Option<JsonRpcMessage>;
+    type Error = ProtocolError;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: McpRequest) -> Self::Future {
+        let closed = request
+            .extensions
+            .get::<turbomcp_core::ConnectionClosed>()
+            .cloned();
+        let saw_close = Arc::clone(&self.saw_close);
+        Box::pin(async move {
+            if let Some(closed) = closed {
+                closed.0.cancelled().await;
+                saw_close.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(None)
+        })
+    }
+}
+
+/// A peer that hangs up and leaves a call running: after the EOF grace the
+/// call sees its connection close, instead of running out the drain deadline
+/// ("servers SHOULD exit promptly when their standard input is closed").
+/// Calls that answer within the grace still get their answer out: a script
+/// that writes its requests and closes stdin still reads stdout.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn eof_cancels_what_is_in_flight() {
+    let saw_close = Arc::new(AtomicUsize::new(0));
+    let (in_tx, in_rx) = mpsc::channel(8);
+    let (out_tx, _out_rx) = mpsc::unbounded_channel();
+    let config = ServeConfig {
+        drain_timeout: Duration::from_secs(30),
+        eof_grace: Duration::from_millis(100),
+        ..ServeConfig::default()
+    };
+    let driver = tokio::spawn(serve_with(
+        MockTransport::new(in_rx, out_tx),
+        WatchesClose {
+            saw_close: Arc::clone(&saw_close),
+        },
+        config,
+    ));
+    in_tx.send(request(1, "long")).await.unwrap();
+    drop(in_tx);
+    tokio::time::timeout(Duration::from_secs(5), driver)
+        .await
+        .expect("exits promptly, well inside the drain deadline")
+        .unwrap()
+        .expect("clean EOF");
+    assert_eq!(saw_close.load(Ordering::SeqCst), 1);
+}

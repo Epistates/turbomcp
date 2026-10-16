@@ -83,7 +83,7 @@ pub use http::HttpJwks;
 #[cfg(feature = "http-jwks")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http-jwks")))]
 mod http {
-    use std::sync::RwLock;
+    use parking_lot::RwLock;
     use std::time::{Duration, Instant};
 
     use futures::future::BoxFuture;
@@ -114,11 +114,7 @@ mod http {
                 .field("refresh_cooldown", &self.refresh_cooldown)
                 .field(
                     "cached_keys",
-                    &self
-                        .cache
-                        .read()
-                        .ok()
-                        .and_then(|c| c.as_ref().map(|c| c.set.keys.len())),
+                    &self.cache.read().as_ref().map(|c| c.set.keys.len()),
                 )
                 .finish_non_exhaustive()
         }
@@ -168,7 +164,7 @@ mod http {
 
         /// The cached set if it is younger than `max_age`.
         fn cached_within(&self, max_age: Duration) -> Option<JwkSet> {
-            let guard = self.cache.read().expect("jwks cache poisoned");
+            let guard = self.cache.read();
             guard
                 .as_ref()
                 .filter(|c| c.fetched.elapsed() < max_age)
@@ -217,7 +213,7 @@ mod http {
                     .map_err(AuthError::Unavailable)?,
             )
             .map_err(|e| AuthError::Unavailable(format!("JWKS decode failed: {e}")))?;
-            *self.cache.write().expect("jwks cache poisoned") = Some(Cached {
+            *self.cache.write() = Some(Cached {
                 set: set.clone(),
                 fetched: Instant::now(),
             });

@@ -86,7 +86,8 @@ fn icons_are_dropped_from_every_type_that_carries_them() {
 }
 
 /// A tool schema that uses JSON Schema keywords the wire struct doesn't name —
-/// `$defs`, `additionalProperties`, `$schema` — must survive intact.
+/// `$defs`, `additionalProperties` — must survive intact. `$schema` is the
+/// exception: it is dropped on this revision.
 ///
 /// This is the case that made the codegen's schema-opening heuristic wrong for
 /// this revision: `2025-06-18` describes `inputSchema` without a `$schema`
@@ -114,9 +115,9 @@ fn an_input_schema_keeps_the_keywords_the_struct_does_not_name() {
     );
     assert_eq!(emitted["properties"]["q"]["$ref"], "#/$defs/Query");
     assert_eq!(emitted["additionalProperties"], false);
-    assert_eq!(
-        emitted["$schema"], "https://json-schema.org/draft/2020-12/schema",
-        "`$schema` has no declared field here, so it must ride in the open part"
+    assert!(
+        emitted.get("$schema").is_none(),
+        "2025-06-18 names no dialect; a draft-07 client can't compile a 2020-12 marker: {emitted}"
     );
     assert_eq!(emitted["required"], json!(["q"]));
 }

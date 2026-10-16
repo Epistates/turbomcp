@@ -59,9 +59,16 @@ pub trait McpServerCore: Clone + Send + Sync + 'static {
 
 /// Implement to serve tools (`tools/list`, `tools/call`).
 pub trait WithTools: McpServerCore {
-    /// Look up an executable component independently of list pagination.
-    /// Override for an indexed/dynamic catalog. The default follows bounded,
-    /// advancing pages and propagates lookup errors; absence is explicit.
+    /// The tool a `tools/call` names, as `tools/list` would describe it to
+    /// this caller, or `None` for no such tool.
+    ///
+    /// Every call is looked up first: its input schema validates the
+    /// arguments, and its metadata feeds scopes, visibility and task support.
+    /// `None` answers the call with the spec's unknown-tool error, so a tool
+    /// served but never listed must be returned here. The default walks
+    /// `list_tools` (bounded, advancing pages); `#[server]` generates an
+    /// indexed override, and a hand-written catalogue of any size should
+    /// provide one.
     fn lookup_tool(
         &self,
         ctx: &ListToolsContext,
@@ -104,13 +111,14 @@ pub trait WithTools: McpServerCore {
 /// Implement to serve resources (`resources/list`, `resources/read`, and
 /// optionally `resources/templates/list`).
 pub trait WithResources: McpServerCore {
-    /// Look up an executable component independently of list pagination.
-    /// Override for an indexed/dynamic catalog. The default follows bounded,
-    /// advancing pages and propagates lookup errors; absence is explicit.
+    /// The resource template matching `uri`, or `None`. Consulted, after
+    /// [`lookup_resource`](Self::lookup_resource), to find the component a
+    /// visibility policy judges a read by. The default walks
+    /// `list_resource_templates`; `#[server]` generates an override.
     fn lookup_resource_template(
         &self,
         ctx: &ListResourceTemplatesContext,
-        name: String,
+        uri: String,
     ) -> impl Future<Output = McpResult<Option<neutral::ResourceTemplate>>> + Send {
         async move {
             crate::catalog::find(
@@ -118,21 +126,23 @@ pub trait WithResources: McpServerCore {
                     let page = self.list_resource_templates(ctx, params).await?;
                     Ok((page.resource_templates, page.next_cursor))
                 },
-                |tool: &neutral::ResourceTemplate| {
-                    crate::__macro_support::match_uri_template(&tool.uri_template, &name).is_some()
+                |template: &neutral::ResourceTemplate| {
+                    crate::__macro_support::match_uri_template(&template.uri_template, &uri)
+                        .is_some()
                 },
             )
             .await
         }
     }
 
-    /// Look up an executable component independently of list pagination.
-    /// Override for an indexed/dynamic catalog. The default follows bounded,
-    /// advancing pages and propagates lookup errors; absence is explicit.
+    /// The resource listed at exactly `uri`, or `None`. Consulted to find the
+    /// component a visibility policy judges a read by; without a policy a
+    /// read reaches [`read_resource`](Self::read_resource) either way. The
+    /// default walks `list_resources`; `#[server]` generates an override.
     fn lookup_resource(
         &self,
         ctx: &ListResourcesContext,
-        name: String,
+        uri: String,
     ) -> impl Future<Output = McpResult<Option<neutral::Resource>>> + Send {
         async move {
             crate::catalog::find(
@@ -140,7 +150,7 @@ pub trait WithResources: McpServerCore {
                     let page = self.list_resources(ctx, params).await?;
                     Ok((page.resources, page.next_cursor))
                 },
-                |tool: &neutral::Resource| tool.uri == name,
+                |resource: &neutral::Resource| resource.uri == uri,
             )
             .await
         }
@@ -174,9 +184,9 @@ pub trait WithResources: McpServerCore {
 
 /// Implement to serve prompts (`prompts/list`, `prompts/get`).
 pub trait WithPrompts: McpServerCore {
-    /// Look up an executable component independently of list pagination.
-    /// Override for an indexed/dynamic catalog. The default follows bounded,
-    /// advancing pages and propagates lookup errors; absence is explicit.
+    /// The prompt a `prompts/get` names, as `prompts/list` would describe it
+    /// to this caller, or `None` for no such prompt. The default walks
+    /// `list_prompts`; `#[server]` generates an indexed override.
     fn lookup_prompt(
         &self,
         ctx: &ListPromptsContext,
@@ -188,7 +198,7 @@ pub trait WithPrompts: McpServerCore {
                     let page = self.list_prompts(ctx, params).await?;
                     Ok((page.prompts, page.next_cursor))
                 },
-                |tool: &neutral::Prompt| tool.name == name,
+                |prompt: &neutral::Prompt| prompt.name == name,
             )
             .await
         }

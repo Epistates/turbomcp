@@ -43,6 +43,12 @@ impl Renamed {
     async fn summarize(&self, text: String) -> McpResult<String> {
         Ok(format!("summary: {text}"))
     }
+
+    /// A raw-identifier prompt argument: the client names it `type`.
+    #[prompt]
+    async fn classify(&self, r#type: String) -> McpResult<String> {
+        Ok(format!("type: {type_}", type_ = r#type))
+    }
 }
 
 /// A second server in the same module, sharing a tool name with the first.
@@ -183,4 +189,32 @@ async fn two_servers_in_one_module_may_share_a_tool_name() {
     let b = call(Other.into_server().build(), draft("tools/call", params)).await;
     assert_eq!(a["result"]["content"][0]["text"], "plain");
     assert_eq!(b["result"]["content"][0]["text"], "other");
+}
+
+/// A raw-identifier prompt argument is listed and looked up without its
+/// `r#`, like a raw-identifier tool name.
+#[tokio::test]
+async fn a_raw_identifier_prompt_argument_drops_its_prefix() {
+    let body = call(
+        Renamed.into_server().build(),
+        draft("prompts/list", Map::new()),
+    )
+    .await;
+    let classify = body["result"]["prompts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "classify")
+        .expect("listed")
+        .clone();
+    assert_eq!(classify["arguments"][0]["name"], "type", "{classify}");
+
+    let mut params = Map::new();
+    params.insert("name".into(), json!("classify"));
+    params.insert("arguments".into(), json!({ "type": "bug" }));
+    let body = call(Renamed.into_server().build(), draft("prompts/get", params)).await;
+    assert_eq!(
+        body["result"]["messages"][0]["content"]["text"], "type: bug",
+        "got {body}"
+    );
 }

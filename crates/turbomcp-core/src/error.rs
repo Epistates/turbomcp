@@ -148,14 +148,20 @@ pub enum McpError {
     /// Not a valid request object at all (a wrong `jsonrpc` version, or a
     /// request the connection cannot carry). JSON-RPC `-32600`, HTTP 400.
     InvalidRequest(String),
-    /// Any other JSON-RPC error, sent exactly as given on every revision: a
-    /// code of your own on the `-32000..-32019` floor the spec leaves to
-    /// implementations, an error with a `data` payload no variant models, or
-    /// an error forwarded from another server
-    /// ([`from_jsonrpc`](Self::from_jsonrpc)). HTTP status follows the code.
+    /// Any other JSON-RPC error, sent as given: a code of your own on the
+    /// `-32000..-32019` floor the spec leaves to implementations, an error
+    /// with a `data` payload no variant models, or an error forwarded from
+    /// another server ([`from_jsonrpc`](Self::from_jsonrpc)). HTTP status
+    /// follows the code. The one exception is a code `2026-07-28` forbids,
+    /// which that revision gets as its nearest allowed code (see
+    /// [`jsonrpc_code`](Self::jsonrpc_code)).
+    ///
+    /// Returned from a `#[tool]`, this is a protocol error (a JSON-RPC
+    /// error response), not a tool error the model reads: the explicit way to
+    /// say the call could not be made, as `-32042` URL elicitation requires.
     ///
     /// Prefer a named variant where one fits: those render the code each
-    /// revision expects, and this does not translate.
+    /// revision expects.
     Rpc {
         /// The JSON-RPC error code.
         code: i32,
@@ -247,23 +253,40 @@ impl McpError {
         }
     }
 
-    /// Set the `data` of an [`McpError::Rpc`].
-    ///
-    /// # Panics
-    /// On any other variant (in debug builds; release builds leave it
-    /// unchanged): their `data` is what the spec defines for their code, so
-    /// replacing it would send a malformed error. Use [`rpc`](Self::rpc) to
-    /// build an error with a payload of your own.
+    /// Attach `data`. An [`McpError::Rpc`] takes it as is. Any other variant
+    /// carries the `data` the spec defines for its code, so attaching your
+    /// own makes it an `Rpc` with the code it has on the current revision and
+    /// the same message: the same in debug and release builds, where this
+    /// used to panic in one and silently do nothing in the other.
     #[must_use]
-    pub fn with_data(mut self, value: serde_json::Value) -> Self {
-        match &mut self {
-            Self::Rpc { data, .. } => *data = Some(value),
-            other => debug_assert!(
-                false,
-                "with_data on {other:?}: only McpError::rpc(…) carries data of your own"
-            ),
+    pub fn with_data(self, value: serde_json::Value) -> Self {
+        match self {
+            Self::Rpc { code, message, .. } => Self::Rpc {
+                code,
+                message,
+                data: Some(value),
+            },
+            other => Self::Rpc {
+                code: other.jsonrpc_code(&crate::ProtocolVersion::LATEST),
+                message: other.to_string(),
+                data: Some(value),
+            },
         }
-        self
+    }
+
+    /// `URLElicitationRequiredError` (`-32042`, `2025-11-25`): the request
+    /// can't go ahead until the user completes the URL-mode `elicitations`
+    /// (each an `ElicitRequestURLParams` object, with its `elicitationId`).
+    /// A protocol error, so a `#[tool]` returning it is answered with it, not
+    /// with a tool error. `2026-07-28` removed the code (it asks for input
+    /// with `InputRequiredResult` instead), and gets `-32603`.
+    #[must_use]
+    pub fn url_elicitation_required(
+        message: impl Into<String>,
+        elicitations: alloc::vec::Vec<serde_json::Value>,
+    ) -> Self {
+        Self::rpc(codes::URL_ELICITATION_REQUIRED, message)
+            .with_data(serde_json::json!({ "elicitations": elicitations }))
     }
 
     /// The error a peer sent, as an `McpError`: the reverse of
@@ -377,6 +400,26 @@ impl McpError {
             Self::MissingRequiredCapability(_) => codes::MISSING_REQUIRED_CLIENT_CAPABILITY,
             Self::UnsupportedProtocolVersion { .. } => codes::UNSUPPORTED_PROTOCOL_VERSION,
             Self::InvalidRequest(_) => codes::INVALID_REQUEST,
+            // A code sent as given, except where `2026-07-28` forbids it: a
+            // relayed legacy resource-not-found becomes that revision's
+            // spelling, and the rest of what it says "MUST NOT" be emitted
+            // (`-32042`, and anything in `-32020..-32099` it did not define)
+            // is an internal error rather than a code a peer can't read.
+            Self::Rpc { code, .. } if !earlier => match *code {
+                codes::LEGACY_RESOURCE_NOT_FOUND => codes::INVALID_PARAMS,
+                codes::URL_ELICITATION_REQUIRED => codes::INTERNAL_ERROR,
+                c if (-32099..=-32020).contains(&c)
+                    && !matches!(
+                        c,
+                        codes::HEADER_MISMATCH
+                            | codes::MISSING_REQUIRED_CLIENT_CAPABILITY
+                            | codes::UNSUPPORTED_PROTOCOL_VERSION
+                    ) =>
+                {
+                    codes::INTERNAL_ERROR
+                }
+                c => c,
+            },
             Self::Rpc { code, .. } => *code,
         }
     }
@@ -773,6 +816,31 @@ mod tests {
     }
 
     /// Relaying an error on the revision it was sent on changes nothing.
+    /// "Implementations of this protocol version MUST NOT emit" `-32002`,
+    /// `-32042` or an undefined `-32020..-32099` code on `2026-07-28`; the
+    /// stateful revisions still get them as sent.
+    #[test]
+    fn codes_2026_forbids_are_never_emitted_on_it() {
+        use crate::ProtocolVersion as V;
+        let rpc = |code| McpError::rpc(code, "relayed");
+        assert_eq!(
+            rpc(-32002).jsonrpc_code(&V::V2026_07_28),
+            codes::INVALID_PARAMS
+        );
+        assert_eq!(
+            rpc(-32042).jsonrpc_code(&V::V2026_07_28),
+            codes::INTERNAL_ERROR
+        );
+        assert_eq!(
+            rpc(-32050).jsonrpc_code(&V::V2026_07_28),
+            codes::INTERNAL_ERROR
+        );
+        assert_eq!(rpc(-32021).jsonrpc_code(&V::V2026_07_28), -32021);
+        assert_eq!(rpc(-31000).jsonrpc_code(&V::V2026_07_28), -31000);
+        assert_eq!(rpc(-32042).jsonrpc_code(&V::V2025_11_25), -32042);
+        assert_eq!(rpc(-32002).jsonrpc_code(&V::V2025_11_25), -32002);
+    }
+
     #[test]
     fn from_jsonrpc_is_lossless_on_the_same_revision() {
         for v in crate::ProtocolVersion::SUPPORTED {

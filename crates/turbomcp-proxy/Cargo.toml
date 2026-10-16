@@ -25,6 +25,7 @@ oauth = ["http", "turbomcp-auth/oauth-client", "turbomcp-transport-http/oauth"]
 websocket = ["http", "turbomcp-transport-http/websocket"]
 
 [dependencies]
+parking_lot = { workspace = true }
 turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-protocol = { workspace = true }
 turbomcp-service = { workspace = true }

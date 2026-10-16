@@ -70,7 +70,6 @@ impl Upstairs {
             )
             .await?;
         let who = confirmed.content.get("who").and_then(Value::as_str);
-        #[allow(deprecated)]
         let reply = ctx
             .client
             .create_message(
@@ -90,7 +89,6 @@ impl Upstairs {
             }
             other => format!("{other:?}"),
         };
-        #[allow(deprecated)]
         let roots = ctx.client.list_roots("roots").await?;
         let roots: Vec<&str> = roots.iter().map(|r| r.uri.as_str()).collect();
         Ok(format!(

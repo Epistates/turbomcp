@@ -1,11 +1,14 @@
 //! [`ServerBuilder`]: assemble a server value and the capabilities it implements
 //! into a [`VersionDispatcher`] ready to hand to a transport.
 //!
-//! The builder is deliberately transport- and codec-agnostic: it produces the
-//! `tower::Service<McpRequest>` and nothing more. Codec selection, RPC
-//! middleware stacks (`with_rpc_middleware`), and extensions (`with_extension`)
-//! attach at the transport/facade layer and land in Phases 4/8 — adding them
-//! here now would be infrastructure with no consumer.
+//! The builder is transport- and codec-agnostic: it produces the
+//! `tower::Service<McpRequest>`, and [`layer`](ServerBuilder::layer) /
+//! [`serve`](ServerBuilder::serve) hand that to RPC middleware and a
+//! transport.
+//!
+//! Dispatcher settings are recorded by name and applied in order by
+//! [`build`](ServerBuilder::build), each through the [`VersionDispatcher`]
+//! method of the same meaning, so a setting is defined in exactly one place.
 //!
 //! [`ServerBuilder::new`] (or [`IntoServerBuilder::into_server`], the same
 //! thing as a method) starts from the capabilities the server registers
@@ -30,19 +33,10 @@ use crate::traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, 
 /// the trait objects behind them.
 impl<S> core::fmt::Debug for ServerBuilder<S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let settings: Vec<&str> = self.settings.iter().map(|(name, _)| *name).collect();
         f.debug_struct("ServerBuilder")
             .field("router", &self.router)
-            .field("tasks", &self.tasks)
-            .field("strict_elicitation_keys", &self.strict_elicitation_keys)
-            .field("session_idle_timeout", &self.session_idle_timeout)
-            .field("custom_session_backend", &self.session_backend.is_some())
-            .field("custom_task_backend", &self.task_backend.is_some())
-            .field("extensions", &self.extensions.len())
-            .field("response_cache", &self.cache.is_some())
-            // Never the key itself: it signs resumable MRTR state.
-            .field("state_key", &self.state_key.is_some())
-            .field("visibility_policy", &self.visibility.is_some())
-            .field("mask_internal_errors", &self.mask_internal_errors)
+            .field("settings", &settings)
             .finish_non_exhaustive()
     }
 }
@@ -51,22 +45,15 @@ impl<S> core::fmt::Debug for ServerBuilder<S> {
 pub struct ServerBuilder<S> {
     server: S,
     router: MethodRouter<S>,
-    tasks: bool,
-    strict_elicitation_keys: bool,
-    session_idle_timeout: Option<std::time::Duration>,
-    session_backend: Option<Arc<dyn SessionBackend>>,
-    task_backend: Option<Arc<dyn TaskBackend>>,
-    extensions: Vec<Arc<dyn Extension>>,
-    cache: Option<CachePolicies>,
-    state_key: Option<([u8; 32], Vec<[u8; 32]>)>,
-    request_state_limit: Option<usize>,
-    request_state_ttl: Option<std::time::Duration>,
-    visibility: Option<Arc<dyn crate::VisibilityPolicy>>,
-    roots_changed: Option<Arc<crate::dispatcher::RootsChangedHandler>>,
-    session_observer: Option<Arc<dyn turbomcp_service::SessionObserver>>,
-    notification_bus: Option<Arc<dyn crate::NotificationBus>>,
-    mask_internal_errors: bool,
+    /// Dispatcher settings, by the builder method that made them, applied in
+    /// order by [`build`](Self::build). Recorded rather than applied so a
+    /// builder about to be mounted, whose dispatcher is the composite's, can
+    /// be refused by name instead of silently losing them.
+    settings: Vec<(&'static str, Setting<S>)>,
 }
+
+/// One recorded dispatcher setting.
+type Setting<S> = Box<dyn FnOnce(VersionDispatcher<S>) -> VersionDispatcher<S> + Send>;
 
 impl<S: McpServerCore> ServerBuilder<S> {
     /// Start from `server` with the capabilities it registers
@@ -76,46 +63,19 @@ impl<S: McpServerCore> ServerBuilder<S> {
         Self {
             server,
             router: S::register(MethodRouter::new()),
-            tasks: false,
-            strict_elicitation_keys: false,
-            session_idle_timeout: None,
-            session_backend: None,
-            task_backend: None,
-            extensions: Vec::new(),
-            cache: None,
-            state_key: None,
-            request_state_limit: None,
-            request_state_ttl: None,
-            visibility: None,
-            roots_changed: None,
-            session_observer: None,
-            notification_bus: None,
-            mask_internal_errors: false,
+            settings: Vec::new(),
         }
     }
 
-    /// Start from a server and a pre-built router (what the `#[server]` macro
-    /// emits once it has registered every discovered capability).
+    /// Start from a server and a router built for it elsewhere: a server
+    /// whose capabilities are known only at run time (a proxied upstream's,
+    /// say) rather than from [`McpServerCore::register`].
     #[must_use]
     pub fn from_parts(server: S, router: MethodRouter<S>) -> Self {
         Self {
             server,
             router,
-            tasks: false,
-            strict_elicitation_keys: false,
-            session_idle_timeout: None,
-            session_backend: None,
-            task_backend: None,
-            extensions: Vec::new(),
-            cache: None,
-            state_key: None,
-            request_state_limit: None,
-            request_state_ttl: None,
-            visibility: None,
-            roots_changed: None,
-            session_observer: None,
-            notification_bus: None,
-            mask_internal_errors: false,
+            settings: Vec::new(),
         }
     }
 
@@ -124,9 +84,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// for a uniform policy, or a [`CachePolicies`] for per-capability
     /// control. See [`VersionDispatcher::with_cache_policy`].
     #[must_use]
-    pub fn cache_policy(mut self, cache: impl Into<CachePolicies>) -> Self {
-        self.cache = Some(cache.into());
-        self
+    pub fn cache_policy(self, cache: impl Into<CachePolicies>) -> Self {
+        let cache = cache.into();
+        self.setting("cache_policy", move |d| d.with_cache_policy(cache))
     }
 
     /// Expire a legacy (`2025-11-25`) session not used within `timeout`
@@ -136,9 +96,10 @@ impl<S: McpServerCore> ServerBuilder<S> {
     ///
     /// [`SessionStore::DEFAULT_IDLE_TIMEOUT`]: crate::SessionStore::DEFAULT_IDLE_TIMEOUT
     #[must_use]
-    pub fn session_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
-        self.session_idle_timeout = Some(timeout);
-        self
+    pub fn session_idle_timeout(self, timeout: std::time::Duration) -> Self {
+        self.setting("session_idle_timeout", move |d| {
+            d.with_session_idle_timeout(timeout)
+        })
     }
 
     /// Enable core Tasks (`2025-11-25`): task-augmented `tools/call` plus
@@ -146,9 +107,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// [`VersionDispatcher::with_task_support`]. Meaningful only alongside a
     /// registered tools capability.
     #[must_use]
-    pub fn with_tasks(mut self) -> Self {
-        self.tasks = true;
-        self
+    pub fn with_tasks(self) -> Self {
+        self.setting("with_tasks", VersionDispatcher::with_task_support)
     }
 
     /// Enable core Tasks backed by a custom [`TaskBackend`] instead of the
@@ -158,9 +118,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// be handed the same backend (`TasksExtension::backend`), so one
     /// registry fronts both wires.
     #[must_use]
-    pub fn with_task_backend(mut self, backend: Arc<dyn TaskBackend>) -> Self {
-        self.task_backend = Some(backend);
-        self
+    pub fn with_task_backend(self, backend: Arc<dyn TaskBackend>) -> Self {
+        self.setting("with_task_backend", move |d| d.with_task_backend(backend))
     }
 
     /// Store legacy (`2025-11-25`) session state in a custom
@@ -173,18 +132,21 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// (eviction policy belongs to the backend). See
     /// [`VersionDispatcher::with_session_backend`].
     #[must_use]
-    pub fn with_session_backend(mut self, backend: Arc<dyn SessionBackend>) -> Self {
-        self.session_backend = Some(backend);
-        self
+    pub fn with_session_backend(self, backend: Arc<dyn SessionBackend>) -> Self {
+        self.setting("with_session_backend", move |d| {
+            d.with_session_backend(backend)
+        })
     }
 
     /// Opt in to strict elicitation keys: reusing an `elicit` key with a
     /// different request shape in one handler execution is an error, not a
     /// warning. See [`VersionDispatcher::strict_elicitation_keys`].
     #[must_use]
-    pub fn strict_elicitation_keys(mut self) -> Self {
-        self.strict_elicitation_keys = true;
-        self
+    pub fn strict_elicitation_keys(self) -> Self {
+        self.setting(
+            "strict_elicitation_keys",
+            VersionDispatcher::strict_elicitation_keys,
+        )
     }
 
     /// Enable the `logging` capability: handlers gain a live `ctx.log` when
@@ -204,9 +166,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// declared methods on the modern (`2026-07-28`) path. The reference
     /// extension is the draft Tasks extension (`turbomcp-ext-tasks`).
     #[must_use]
-    pub fn with_extension(mut self, extension: Arc<dyn Extension>) -> Self {
-        self.extensions.push(extension);
-        self
+    pub fn with_extension(self, extension: Arc<dyn Extension>) -> Self {
+        self.setting("with_extension", move |d| d.with_extension(extension))
     }
 
     /// Install a [`VisibilityPolicy`](crate::VisibilityPolicy) — progressive
@@ -235,9 +196,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// See [the module docs](crate::visibility) for the cost (one list per
     /// guarded call) and for writing a policy of your own.
     #[must_use]
-    pub fn with_visibility(mut self, policy: Arc<dyn crate::VisibilityPolicy>) -> Self {
-        self.visibility = Some(policy);
-        self
+    pub fn with_visibility(self, policy: Arc<dyn crate::VisibilityPolicy>) -> Self {
+        self.setting("with_visibility", move |d| d.with_visibility(policy))
     }
 
     /// Run `handler` when a client reports that its roots changed
@@ -257,11 +217,11 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// roots moved (identity and trace context from the notification's `_meta`).
     #[must_use]
     pub fn on_roots_changed(
-        mut self,
+        self,
         handler: impl Fn(&turbomcp_core::RequestContext) + Send + Sync + 'static,
     ) -> Self {
-        self.roots_changed = Some(Arc::new(handler));
-        self
+        let handler: Arc<crate::dispatcher::RootsChangedHandler> = Arc::new(handler);
+        self.setting("on_roots_changed", move |d| d.on_roots_changed(handler))
     }
 
     /// Tell `observer` when each stateful session ends, and how long it
@@ -269,15 +229,8 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// `mcp.server.session.duration` from it, and a per-session proxy
     /// upstream closes on it. Observers accumulate: each one added is told.
     #[must_use]
-    pub fn observe_sessions(
-        mut self,
-        observer: Arc<dyn turbomcp_service::SessionObserver>,
-    ) -> Self {
-        self.session_observer = Some(match self.session_observer.take() {
-            Some(earlier) => Arc::new(SessionObservers([earlier, observer])),
-            None => observer,
-        });
-        self
+    pub fn observe_sessions(self, observer: Arc<dyn turbomcp_service::SessionObserver>) -> Self {
+        self.setting("observe_sessions", move |d| d.observe_sessions(observer))
     }
 
     /// Run every operation through `interceptor`, inside any added before
@@ -294,9 +247,45 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// it, and every replica delivers what it carries to the subscriptions
     /// it holds. See [the `bus` module](crate::bus).
     #[must_use]
-    pub fn with_notification_bus(mut self, bus: Arc<dyn crate::NotificationBus>) -> Self {
-        self.notification_bus = Some(bus);
-        self
+    pub fn with_notification_bus(self, bus: Arc<dyn crate::NotificationBus>) -> Self {
+        self.setting("with_notification_bus", move |d| {
+            d.with_notification_bus(bus)
+        })
+    }
+
+    /// The `2025-11-25` `execution.taskSupport` a tool that declares none
+    /// gets once Tasks are on (default `optional`, every tool may run as a
+    /// task). `TaskSupport::Forbidden` makes tasks opt-in per tool
+    /// (`#[tool(task)]`), which is the spec's own default. See
+    /// [`VersionDispatcher::undeclared_task_support`].
+    #[must_use]
+    pub fn undeclared_task_support(self, support: turbomcp_protocol::neutral::TaskSupport) -> Self {
+        self.setting("undeclared_task_support", move |d| {
+            d.undeclared_task_support(support)
+        })
+    }
+
+    /// Cancel any call still running after `limit` and answer it with a
+    /// timeout error (`-32000`), so a hung handler can't hold an admission
+    /// slot for ever. The handler is dropped and its cancellation fires.
+    /// Applies to each request, so a multi-round (`2026-07-28`) call gets
+    /// `limit` per round, and a task-augmented call to returning its task, not
+    /// to the task's work (whose bound is its TTL). Default: no limit.
+    #[must_use]
+    pub fn call_timeout(self, limit: std::time::Duration) -> Self {
+        self.setting("call_timeout", move |d| d.call_timeout(limit))
+    }
+
+    /// How many compiled tool schemas to keep (default 256). Every
+    /// `tools/call` validates its arguments, and a structured result its
+    /// output, against a validator compiled once per distinct schema; a
+    /// server or gateway offering more distinct schemas than this recompiles
+    /// on churn.
+    #[must_use]
+    pub fn schema_cache_capacity(self, capacity: u64) -> Self {
+        self.setting("schema_cache_capacity", move |d| {
+            d.schema_cache_capacity(capacity)
+        })
     }
 
     /// Send clients a reference instead of an internal error's text.
@@ -310,9 +299,11 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// meant the model to read (`McpError::tool_execution_failed`, invalid
     /// arguments) are unchanged.
     #[must_use]
-    pub fn mask_internal_errors(mut self) -> Self {
-        self.mask_internal_errors = true;
-        self
+    pub fn mask_internal_errors(self) -> Self {
+        self.setting(
+            "mask_internal_errors",
+            VersionDispatcher::mask_internal_errors,
+        )
     }
 
     /// Register the `tools/*` capability (requires `S: WithTools`).
@@ -404,12 +395,14 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// still can't cross principals or requests, since both are bound into it.
     #[must_use]
     pub fn with_state_keys(
-        mut self,
+        self,
         current: [u8; 32],
         previous: impl IntoIterator<Item = [u8; 32]>,
     ) -> Self {
-        self.state_key = Some((current, previous.into_iter().collect()));
-        self
+        let previous: Vec<[u8; 32]> = previous.into_iter().collect();
+        self.setting("with_state_keys", move |d| {
+            d.with_state_keys(current, previous)
+        })
     }
 
     /// Cap the serialized MRTR `requestState` at `bytes` (default 256 KiB).
@@ -420,18 +413,16 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// this setting. The state is signed, not encrypted: the client can read
     /// it.
     #[must_use]
-    pub fn request_state_limit(mut self, bytes: usize) -> Self {
-        self.request_state_limit = Some(bytes);
-        self
+    pub fn request_state_limit(self, bytes: usize) -> Self {
+        self.setting("request_state_limit", move |d| d.request_state_limit(bytes))
     }
 
     /// How long an issued MRTR `requestState` stays redeemable (default ten
     /// minutes): the bound on how long a client may take to answer, and on how
     /// long a captured state could be replayed.
     #[must_use]
-    pub fn request_state_ttl(mut self, ttl: std::time::Duration) -> Self {
-        self.request_state_ttl = Some(ttl);
-        self
+    pub fn request_state_ttl(self, ttl: std::time::Duration) -> Self {
+        self.setting("request_state_ttl", move |d| d.request_state_ttl(ttl))
     }
 
     /// The server and its capability registrations, dropping everything else.
@@ -444,79 +435,21 @@ impl<S: McpServerCore> ServerBuilder<S> {
         (self.server, self.router)
     }
 
-    /// The name of a dispatcher-level setting made on this builder, if any.
-    ///
-    /// Every field here besides `server`/`router` configures the *dispatcher*,
-    /// not the server, so a builder that is about to be mounted (where the
-    /// dispatcher belongs to the composite) must carry none of them. Listed
-    /// explicitly rather than by a `..` catch-all: a new setting should make
-    /// this fail to compile until someone decides which side it belongs on.
+    /// The name of a dispatcher-level setting made on this builder, if any:
+    /// a builder about to be mounted (where the dispatcher belongs to the
+    /// composite) must carry none.
     pub(crate) fn dispatcher_setting(&self) -> Option<&'static str> {
-        let Self {
-            server: _,
-            router: _,
-            tasks,
-            strict_elicitation_keys,
-            session_idle_timeout,
-            session_backend,
-            task_backend,
-            extensions,
-            cache,
-            state_key,
-            request_state_limit,
-            request_state_ttl,
-            visibility,
-            roots_changed,
-            session_observer,
-            notification_bus,
-            mask_internal_errors,
-        } = self;
-        if *tasks {
-            return Some("with_tasks");
-        }
-        if *strict_elicitation_keys {
-            return Some("strict_elicitation_keys");
-        }
-        if session_idle_timeout.is_some() {
-            return Some("session_idle_timeout");
-        }
-        if session_backend.is_some() {
-            return Some("with_session_backend");
-        }
-        if task_backend.is_some() {
-            return Some("with_task_backend");
-        }
-        if !extensions.is_empty() {
-            return Some("with_extension");
-        }
-        if cache.is_some() {
-            return Some("cache_policy");
-        }
-        if state_key.is_some() {
-            return Some("with_state_key");
-        }
-        if request_state_limit.is_some() {
-            return Some("request_state_limit");
-        }
-        if request_state_ttl.is_some() {
-            return Some("request_state_ttl");
-        }
-        if visibility.is_some() {
-            return Some("with_visibility");
-        }
-        if roots_changed.is_some() {
-            return Some("on_roots_changed");
-        }
-        if session_observer.is_some() {
-            return Some("observe_sessions");
-        }
-        if notification_bus.is_some() {
-            return Some("with_notification_bus");
-        }
-        if *mask_internal_errors {
-            return Some("mask_internal_errors");
-        }
-        None
+        self.settings.first().map(|(name, _)| *name)
+    }
+
+    /// Record a dispatcher setting made by the builder method `name`.
+    fn setting(
+        mut self,
+        name: &'static str,
+        apply: impl FnOnce(VersionDispatcher<S>) -> VersionDispatcher<S> + Send + 'static,
+    ) -> Self {
+        self.settings.push((name, Box::new(apply)));
+        self
     }
 
     /// Wrap the server in RPC middleware: `layer` is a [`tower::Layer`] over
@@ -547,51 +480,10 @@ impl<S: McpServerCore> ServerBuilder<S> {
     /// Finish: produce the `tower::Service<McpRequest>` for this server.
     #[must_use]
     pub fn build(self) -> VersionDispatcher<S> {
-        let mut dispatcher = VersionDispatcher::new(self.server, self.router);
-        if let Some(backend) = self.task_backend {
-            dispatcher = dispatcher.with_task_backend(backend);
-        } else if self.tasks {
-            dispatcher = dispatcher.with_task_support();
-        }
-        if self.strict_elicitation_keys {
-            dispatcher = dispatcher.strict_elicitation_keys();
-        }
-        if let Some(backend) = self.session_backend {
-            dispatcher = dispatcher.with_session_backend(backend);
-        } else if let Some(timeout) = self.session_idle_timeout {
-            dispatcher = dispatcher.with_session_idle_timeout(timeout);
-        }
-        for extension in self.extensions {
-            dispatcher = dispatcher.with_extension(extension);
-        }
-        if let Some(cache) = self.cache {
-            dispatcher = dispatcher.with_cache_policy(cache);
-        }
-        if let Some((current, previous)) = self.state_key {
-            dispatcher = dispatcher.with_state_keys(current, previous);
-        }
-        if let Some(bytes) = self.request_state_limit {
-            dispatcher = dispatcher.request_state_limit(bytes);
-        }
-        if let Some(ttl) = self.request_state_ttl {
-            dispatcher = dispatcher.request_state_ttl(ttl);
-        }
-        if let Some(policy) = self.visibility {
-            dispatcher = dispatcher.with_visibility(policy);
-        }
-        if let Some(observer) = self.session_observer {
-            dispatcher = dispatcher.observe_sessions(observer);
-        }
-        if let Some(bus) = self.notification_bus {
-            dispatcher = dispatcher.with_notification_bus(bus);
-        }
-        if let Some(handler) = self.roots_changed {
-            dispatcher = dispatcher.on_roots_changed(handler);
-        }
-        if self.mask_internal_errors {
-            dispatcher = dispatcher.mask_internal_errors();
-        }
-        dispatcher
+        self.settings.into_iter().fold(
+            VersionDispatcher::new(self.server, self.router),
+            |d, (_, apply)| apply(d),
+        )
     }
 }
 
@@ -607,7 +499,7 @@ pub trait IntoServerBuilder: McpServerCore + Sized {
 impl<S: McpServerCore> IntoServerBuilder for S {}
 
 /// Two session observers, told in the order they were added.
-struct SessionObservers([Arc<dyn turbomcp_service::SessionObserver>; 2]);
+pub(crate) struct SessionObservers(pub(crate) [Arc<dyn turbomcp_service::SessionObserver>; 2]);
 
 impl turbomcp_service::SessionObserver for SessionObservers {
     fn session_ended(&self, session: &turbomcp_service::EndedSession<'_>) {

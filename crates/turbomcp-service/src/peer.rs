@@ -24,7 +24,9 @@
 //! endpoint and attaches it to that endpoint's requests.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use tokio::sync::mpsc;
 use turbomcp_core::{CancellationToken, ConnectionId, JsonRpcMessage};
@@ -230,10 +232,8 @@ impl SessionStreams {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Registered>> {
-        self.streams
-            .lock()
-            .expect("session stream registry poisoned")
+    fn lock(&self) -> parking_lot::MutexGuard<'_, HashMap<String, Registered>> {
+        self.streams.lock()
     }
 }
 

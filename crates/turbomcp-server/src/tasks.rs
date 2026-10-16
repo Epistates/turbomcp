@@ -27,7 +27,9 @@
 //! as an unknown one does.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -67,14 +69,18 @@ impl TaskStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TaskOwner {
-    /// A `2025-11-25` session. Its tasks end with it
+    /// An anonymous `2025-11-25` session. Its tasks end with it
     /// ([`end_session`](TaskBackend::end_session)).
     Session(String),
-    /// An authenticated `2026-07-28` caller, by
+    /// An authenticated caller, on either revision, by
     /// [`Identity::principal_key`](turbomcp_core::Identity::principal_key).
+    /// Tasks are bound to the authorization context, not to a connection, so
+    /// on `2025-11-25` they outlive the session that created them: the same
+    /// principal reconnecting finds them.
     Principal(String),
     /// An unauthenticated `2026-07-28` caller. With nothing to tell them
-    /// apart, anonymous callers share one owner.
+    /// apart, anonymous callers share one owner (their running limit is
+    /// counted per client address; see [`NewTask::quota_key`]).
     Anonymous,
 }
 
@@ -96,6 +102,10 @@ pub struct NewTask {
     /// The polling interval to suggest, in milliseconds; `None` leaves it to
     /// the backend.
     pub poll_interval_ms: Option<i64>,
+    /// Who the per-owner running limit counts this task against, when that
+    /// isn't simply its owner: the client's address for an anonymous caller,
+    /// so one anonymous client can't use up the slots all of them share.
+    pub quota_key: Option<String>,
 }
 
 impl NewTask {
@@ -106,7 +116,15 @@ impl NewTask {
         Self {
             ttl_ms,
             poll_interval_ms: None,
+            quota_key: None,
         }
+    }
+
+    /// Count this task's running slot against `key` rather than its owner.
+    #[must_use]
+    pub fn with_quota_key(mut self, key: Option<String>) -> Self {
+        self.quota_key = key;
+        self
     }
 
     /// Suggest this polling interval instead of the backend's.
@@ -180,6 +198,47 @@ pub enum TaskOutcome {
     },
     /// It failed with this JSON-RPC error; the task is `failed`.
     Error(JsonRpcError),
+}
+
+impl TaskOutcome {
+    /// A task that ran out its TTL (`ttl_ms`) before it finished: `failed`.
+    #[must_use]
+    pub fn expired(ttl_ms: i64) -> Self {
+        Self::Error(expired_error(ttl_ms))
+    }
+}
+
+fn expired_error(ttl_ms: i64) -> JsonRpcError {
+    JsonRpcError {
+        code: turbomcp_core::codes::INTERNAL_ERROR,
+        message: format!("the task did not finish within its TTL of {ttl_ms} ms"),
+        data: None,
+    }
+}
+
+/// What an unauthenticated caller's running tasks count against: its
+/// address ([`turbomcp_service::client_key`]), where the transport knows one
+/// (see [`NewTask::quota_key`]). An authenticated caller is its own owner, so
+/// `None`.
+#[must_use]
+pub fn quota_key(ctx: &turbomcp_core::RequestContext) -> Option<String> {
+    if ctx.identity.principal_key().is_some() {
+        return None;
+    }
+    ctx.extensions
+        .get::<turbomcp_service::NetworkFacts>()
+        .and_then(turbomcp_service::NetworkFacts::client_key)
+}
+
+/// Resolves when a task created with `ttl_ms` runs out of it; never, for an
+/// unlimited one. A Tasks front-end races its work against this, so a task
+/// still running at its TTL is stopped and failed then, not whenever someone
+/// next happens to ask the store about it.
+pub async fn ttl_elapsed(ttl_ms: Option<i64>) {
+    match ttl_ms.and_then(|ms| u64::try_from(ms).ok()) {
+        Some(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Resolves to the client's answer to one input request (its result, or the
@@ -344,6 +403,8 @@ impl Inputs {
 
 struct Entry {
     owner: TaskOwner,
+    /// What its running slot counts against, when not its owner.
+    quota_key: Option<String>,
     status: TaskStatus,
     status_message: Option<String>,
     created_wall: OffsetDateTime,
@@ -443,6 +504,7 @@ pub struct TaskStore {
     capacity: usize,
     owner_limit: usize,
     poll_interval_ms: Option<i64>,
+    max_result_bytes: usize,
     ids: IdGenerator,
 }
 
@@ -452,7 +514,8 @@ impl core::fmt::Debug for TaskStore {
             .field("capacity", &self.capacity)
             .field("owner_limit", &self.owner_limit)
             .field("poll_interval_ms", &self.poll_interval_ms)
-            .field("live", &self.inner.lock().map(|m| m.len()).unwrap_or(0))
+            .field("max_result_bytes", &self.max_result_bytes)
+            .field("live", &self.inner.lock().len())
             .finish_non_exhaustive()
     }
 }
@@ -464,6 +527,7 @@ impl Default for TaskStore {
             capacity: Self::DEFAULT_CAPACITY,
             owner_limit: Self::DEFAULT_OWNER_LIMIT,
             poll_interval_ms: Some(Self::DEFAULT_POLL_INTERVAL_MS),
+            max_result_bytes: Self::DEFAULT_MAX_RESULT_BYTES,
             ids: Arc::new(|| uuid::Uuid::new_v4().to_string()),
         }
     }
@@ -477,6 +541,19 @@ impl TaskStore {
     /// The polling interval suggested when the front-end names none, in
     /// milliseconds.
     pub const DEFAULT_POLL_INTERVAL_MS: i64 = 500;
+    /// The largest result (serialized) a task keeps for `tasks/result`, by
+    /// default: 16 MiB.
+    pub const DEFAULT_MAX_RESULT_BYTES: usize = 16 * 1024 * 1024;
+
+    /// Keep at most `bytes` of serialized result per task. A larger result
+    /// fails the task with an error saying so, rather than holding it for
+    /// up to twice the TTL; capacity bounds how many tasks the store keeps,
+    /// this bounds how much each costs.
+    #[must_use]
+    pub fn with_max_result_bytes(mut self, bytes: usize) -> Self {
+        self.max_result_bytes = bytes;
+        self
+    }
 
     /// Hold at most `capacity` tasks. When full, the oldest finished task makes
     /// room; a store full of running tasks refuses new ones.
@@ -515,26 +592,20 @@ impl TaskStore {
         self
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Entry>> {
-        self.inner.lock().expect("task store lock poisoned")
+    fn lock(&self) -> parking_lot::MutexGuard<'_, HashMap<String, Entry>> {
+        self.inner.lock()
     }
 
     /// The store, with every task that ran out its TTL failed and every
     /// finished one past retention gone.
-    fn live(&self) -> std::sync::MutexGuard<'_, HashMap<String, Entry>> {
+    fn live(&self) -> parking_lot::MutexGuard<'_, HashMap<String, Entry>> {
         let mut map = self.lock();
         let now = Instant::now();
         for entry in map.values_mut() {
             if entry.overdue(now) {
                 entry.cancel.cancel();
-                let ttl = entry.ttl_ms.unwrap_or_default();
-                let message = format!("the task did not finish within its TTL of {ttl} ms");
-                let error = JsonRpcError {
-                    code: turbomcp_core::codes::INTERNAL_ERROR,
-                    message: message.clone(),
-                    data: None,
-                };
-                entry.finish(TaskStatus::Failed, Some(message), Err(error));
+                let error = expired_error(entry.ttl_ms.unwrap_or_default());
+                entry.finish(TaskStatus::Failed, Some(error.message.clone()), Err(error));
             }
         }
         map.retain(|_, entry| !entry.collectable(now));
@@ -565,7 +636,11 @@ impl TaskBackend for TaskStore {
         let mut map = self.live();
         let running = map
             .values()
-            .filter(|e| &e.owner == owner && !e.status.is_terminal())
+            .filter(|e| !e.status.is_terminal())
+            .filter(|e| match &task.quota_key {
+                Some(key) => e.quota_key.as_ref() == Some(key),
+                None => &e.owner == owner,
+            })
             .count();
         if running >= self.owner_limit {
             return Err(TaskError::OwnerLimitReached);
@@ -594,6 +669,7 @@ impl TaskBackend for TaskStore {
         let now_wall = OffsetDateTime::now_utc();
         let entry = Entry {
             owner: owner.clone(),
+            quota_key: task.quota_key,
             status: TaskStatus::Working,
             status_message: None,
             created_wall: now_wall,
@@ -620,6 +696,24 @@ impl TaskBackend for TaskStore {
         if entry.status.is_terminal() {
             return;
         }
+        let too_big = match &outcome {
+            TaskOutcome::Completed(v) | TaskOutcome::FailedResult { result: v, .. } => {
+                serde_json::to_vec(v).map_or(usize::MAX, |b| b.len()) > self.max_result_bytes
+            }
+            TaskOutcome::Error(_) => false,
+        };
+        let outcome = if too_big {
+            TaskOutcome::Error(JsonRpcError {
+                code: turbomcp_core::codes::INTERNAL_ERROR,
+                message: format!(
+                    "the task's result exceeds the {} bytes a task may keep",
+                    self.max_result_bytes
+                ),
+                data: None,
+            })
+        } else {
+            outcome
+        };
         let (status, message, outcome) = match outcome {
             TaskOutcome::Completed(v) => (TaskStatus::Completed, None, Ok(v)),
             TaskOutcome::FailedResult { result, message } => {
@@ -666,21 +760,35 @@ impl TaskBackend for TaskStore {
         cursor: Option<&str>,
         page_size: usize,
     ) -> Result<(Vec<TaskSnapshot>, Option<String>), TaskError> {
-        let offset = match cursor {
-            None => 0,
-            Some(c) => c.parse::<usize>().map_err(|_| TaskError::InvalidCursor)?,
+        // A keyset cursor, `{created-nanos}:{id}` of the last task returned:
+        // an offset shifted whenever a task was collected between pages, and
+        // skipped the one behind it ("tasks/list MUST include every
+        // retrievable task").
+        let after = match cursor {
+            None => None,
+            Some(c) => {
+                let (nanos, id) = c.split_once(':').ok_or(TaskError::InvalidCursor)?;
+                let nanos = nanos
+                    .parse::<i128>()
+                    .map_err(|_| TaskError::InvalidCursor)?;
+                Some((nanos, id.to_owned()))
+            }
         };
         let map = self.live();
-        let mut all: Vec<(&String, &Entry)> =
-            map.iter().filter(|(_, e)| &e.owner == owner).collect();
-        all.sort_by_key(|(_, e)| e.created);
-        let page: Vec<TaskSnapshot> = all
+        let key = |id: &String, e: &Entry| (e.created_wall.unix_timestamp_nanos(), id.clone());
+        let mut all: Vec<((i128, String), &Entry)> = map
             .iter()
-            .skip(offset)
-            .take(page_size)
-            .map(|(id, e)| e.snapshot(id))
+            .filter(|(_, e)| &e.owner == owner)
+            .map(|(id, e)| (key(id, e), e))
+            .filter(|(k, _)| after.as_ref().is_none_or(|after| k > after))
             .collect();
-        let next = (offset + page.len() < all.len()).then(|| (offset + page.len()).to_string());
+        all.sort_by(|a, b| a.0.cmp(&b.0));
+        let more = all.len() > page_size;
+        all.truncate(page_size);
+        let next = more
+            .then(|| all.last().map(|((nanos, id), _)| format!("{nanos}:{id}")))
+            .flatten();
+        let page = all.iter().map(|((_, id), e)| e.snapshot(id)).collect();
         Ok((page, next))
     }
 
@@ -843,6 +951,69 @@ mod tests {
         s.create(owner, NewTask::new(ttl_ms), CancellationToken::new())
             .await
             .unwrap()
+    }
+
+    /// A result over the byte bound fails its task with an error saying so,
+    /// instead of being kept for `tasks/result`.
+    #[tokio::test]
+    async fn an_oversized_result_fails_the_task() {
+        let s = TaskStore::default().with_max_result_bytes(16);
+        let task = create(&s, &sess(), None).await;
+        s.complete(
+            &task.task_id,
+            TaskOutcome::Completed(json!({ "text": "far more than sixteen bytes" })),
+        )
+        .await;
+        let got = s.get(&sess(), &task.task_id).await.unwrap();
+        assert_eq!(got.status, TaskStatus::Failed);
+        assert!(matches!(got.outcome, Some(Err(e)) if e.message.contains("16 bytes")));
+    }
+
+    /// Pages pick up after the last task returned, so one collected between
+    /// pages doesn't push another off the end of the earlier page unseen.
+    #[tokio::test]
+    async fn list_pages_survive_a_task_leaving_between_them() {
+        let s = TaskStore::default();
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            ids.push(create(&s, &sess(), None).await.task_id);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        let (first, cursor) = s.list(&sess(), None, 2).await.unwrap();
+        assert_eq!(first.len(), 2);
+        // The first task leaves (cancelled, then collected by capacity).
+        s.lock().remove(&ids[0]);
+        let (second, cursor) = s.list(&sess(), cursor.as_deref(), 2).await.unwrap();
+        assert_eq!(
+            second.iter().map(|t| t.task_id.clone()).collect::<Vec<_>>(),
+            ids[2..].to_vec()
+        );
+        assert!(cursor.is_none());
+        assert_eq!(
+            s.list(&sess(), Some("garbage"), 2).await.unwrap_err(),
+            TaskError::InvalidCursor
+        );
+    }
+
+    /// Anonymous callers share an owner, but each client address has its own
+    /// running limit: one can't spend the slots of the others.
+    #[tokio::test]
+    async fn the_running_limit_counts_against_the_quota_key() {
+        let s = TaskStore::default().with_owner_limit(1);
+        let anon = TaskOwner::Anonymous;
+        let at = |addr: &str| NewTask::new(None).with_quota_key(Some(addr.to_owned()));
+        s.create(&anon, at("10.0.0.1"), CancellationToken::new())
+            .await
+            .expect("first from one address");
+        assert_eq!(
+            s.create(&anon, at("10.0.0.1"), CancellationToken::new())
+                .await
+                .unwrap_err(),
+            TaskError::OwnerLimitReached
+        );
+        s.create(&anon, at("10.0.0.2"), CancellationToken::new())
+            .await
+            .expect("another address has slots of its own");
     }
 
     #[tokio::test]

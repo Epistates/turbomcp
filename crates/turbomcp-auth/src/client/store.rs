@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use futures::future::BoxFuture;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use super::TokenSet;
 use super::registration::ClientCredentials;
@@ -60,24 +60,15 @@ impl core::fmt::Debug for MemoryCredentialStore {
     /// so none of it belongs in a log line.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MemoryCredentialStore")
-            .field(
-                "clients",
-                &self.clients.lock().map(|c| c.len()).unwrap_or(0),
-            )
-            .field("tokens", &self.tokens.lock().map(|t| t.len()).unwrap_or(0))
+            .field("clients", &self.clients.lock().len())
+            .field("tokens", &self.tokens.lock().len())
             .finish()
     }
 }
 
 impl CredentialStore for MemoryCredentialStore {
     fn load_client<'a>(&'a self, issuer: &'a str) -> BoxFuture<'a, Option<ClientCredentials>> {
-        Box::pin(async move {
-            self.clients
-                .lock()
-                .expect("credential store lock poisoned")
-                .get(issuer)
-                .cloned()
-        })
+        Box::pin(async move { self.clients.lock().get(issuer).cloned() })
     }
 
     fn store_client<'a>(
@@ -88,7 +79,6 @@ impl CredentialStore for MemoryCredentialStore {
         Box::pin(async move {
             self.clients
                 .lock()
-                .expect("credential store lock poisoned")
                 .insert(issuer.to_owned(), credentials.clone());
         })
     }
@@ -101,7 +91,6 @@ impl CredentialStore for MemoryCredentialStore {
         Box::pin(async move {
             self.tokens
                 .lock()
-                .expect("credential store lock poisoned")
                 .get(&(issuer.to_owned(), resource.to_owned()))
                 .cloned()
         })
@@ -116,21 +105,14 @@ impl CredentialStore for MemoryCredentialStore {
         Box::pin(async move {
             self.tokens
                 .lock()
-                .expect("credential store lock poisoned")
                 .insert((issuer.to_owned(), resource.to_owned()), tokens.clone());
         })
     }
 
     fn clear<'a>(&'a self, issuer: &'a str) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            self.clients
-                .lock()
-                .expect("credential store lock poisoned")
-                .remove(issuer);
-            self.tokens
-                .lock()
-                .expect("credential store lock poisoned")
-                .retain(|(iss, _), _| iss != issuer);
+            self.clients.lock().remove(issuer);
+            self.tokens.lock().retain(|(iss, _), _| iss != issuer);
         })
     }
 }

@@ -153,7 +153,11 @@ fn every_content_variant() -> Vec<neutral::Content> {
         neutral::Content::text("hello"),
         neutral::Content::image("aW1n", "image/png"),
         neutral::Content::audio("YXVk", "audio/wav"),
-        neutral::Content::resource(neutral::ResourceContents::text("file:///a.txt", "body")),
+        // Embedded contents always carry a MIME type on the wire (a missing
+        // one is filled in), so the lossless fixture names it.
+        neutral::Content::resource(
+            neutral::ResourceContents::text("file:///a.txt", "body").with_mime_type("text/plain"),
+        ),
         neutral::Content::resource_link(
             neutral::Resource::new("file:///b.txt", "b").with_mime_type("text/plain"),
         ),

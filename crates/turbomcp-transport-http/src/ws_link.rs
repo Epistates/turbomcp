@@ -10,7 +10,9 @@
 //! on every outbound write, so a connection with steady outbound traffic was
 //! never probed at all.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -99,11 +101,11 @@ pub(crate) struct CloseWith(Arc<Mutex<Option<(u16, &'static str)>>>);
 impl CloseWith {
     #[cfg(feature = "server")]
     pub(crate) fn set(&self, code: u16, reason: &'static str) {
-        *self.0.lock().expect("close code lock") = Some((code, reason));
+        *self.0.lock() = Some((code, reason));
     }
 
     fn get(&self) -> Option<(u16, &'static str)> {
-        *self.0.lock().expect("close code lock")
+        *self.0.lock()
     }
 }
 

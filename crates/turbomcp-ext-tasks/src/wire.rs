@@ -189,8 +189,9 @@ pub struct UpdateTaskParams {
     /// The task to update.
     #[serde(rename = "taskId")]
     pub task_id: String,
-    /// Responses keyed by their outstanding `inputRequests` key.
-    #[serde(rename = "inputResponses", default)]
+    /// Responses keyed by their outstanding `inputRequests` key. Required by
+    /// SEP-2663: an update without it is malformed, not empty.
+    #[serde(rename = "inputResponses")]
     pub input_responses: Map<String, Value>,
 }
 

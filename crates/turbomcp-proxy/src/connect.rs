@@ -134,8 +134,9 @@ struct SlotSource(crate::link::Subject);
 #[async_trait::async_trait]
 impl turbomcp_transport_http::oauth::SubjectSource for SlotSource {
     async fn subject_token(&self) -> Option<zeroize::Zeroizing<String>> {
-        let slot = self.0.lock().ok()?;
-        slot.as_ref()
+        self.0
+            .lock()
+            .as_ref()
             .map(|token| zeroize::Zeroizing::new(token.secret().to_owned()))
     }
 }

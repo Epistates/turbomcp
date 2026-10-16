@@ -22,7 +22,9 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
@@ -170,8 +172,8 @@ impl InMemoryEventStore {
         self
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), StreamLog>> {
-        self.streams.lock().expect("event store poisoned")
+    fn lock(&self) -> parking_lot::MutexGuard<'_, HashMap<(String, String), StreamLog>> {
+        self.streams.lock()
     }
 
     /// Drop expired finished streams, then the oldest finished (or, failing
@@ -328,7 +330,6 @@ impl ResumableStreams {
         }));
         self.live
             .lock()
-            .expect("resumable streams poisoned")
             .insert((session.to_owned(), stream.clone()), Arc::clone(&live));
         Recorder {
             streams: self.clone(),
@@ -352,7 +353,6 @@ impl ResumableStreams {
         let live = self
             .live
             .lock()
-            .expect("resumable streams poisoned")
             .get(&(session.to_owned(), stream.to_owned()))
             .cloned();
         let Some(live) = live else {
@@ -457,7 +457,6 @@ impl Recorder {
         self.streams
             .live
             .lock()
-            .expect("resumable streams poisoned")
             .remove(&(self.session.clone(), self.stream.clone()));
     }
 }

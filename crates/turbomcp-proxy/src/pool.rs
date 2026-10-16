@@ -1,7 +1,9 @@
 //! Which upstream connection serves a call: [`UpstreamKey`], and the pool
 //! of connections it keys.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::Duration;
 
 use tokio::sync::OnceCell;
@@ -146,12 +148,12 @@ impl Pool {
         for _ in 0..2 {
             let cell = self.links.get_with(key.clone(), Cell::default);
             if self.for_callers {
-                *cell.subject.lock().expect("subject slot") = token.cloned();
+                *cell.subject.lock() = token.cloned();
             }
             let link = cell
                 .link
                 .get_or_try_init(|| async {
-                    let spare = self.spare.lock().expect("pool spare").take();
+                    let spare = self.spare.lock().take();
                     match spare {
                         Some(link) if link.is_alive() => Ok(link),
                         _ => {
@@ -195,7 +197,7 @@ impl Pool {
             .links
             .iter()
             .filter_map(|(_, cell)| cell.link.get().cloned())
-            .chain(self.spare.lock().expect("pool spare").take())
+            .chain(self.spare.lock().take())
             .collect();
         futures::future::join_all(links.iter().map(|link| link.shutdown())).await;
         self.links.invalidate_all();

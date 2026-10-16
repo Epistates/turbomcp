@@ -32,9 +32,10 @@
 //! resource-not-found. A distinct "forbidden" answer would disclose the very
 //! existence the policy is hiding.
 //!
-//! That guarantee costs a list per call: the policy decides on a component's
-//! metadata, and a `tools/call` carries only a name. The cost is paid only when
-//! a policy is installed.
+//! The policy decides on a component's metadata and a call carries only a
+//! name, so the component is looked up first, through the capability's
+//! `lookup_*`. A `#[server]` (and a `Composite` over them) answers that from
+//! an index; a hand-written server that doesn't override it pays a list walk.
 //!
 //! # What the policy can't see is hidden
 //!

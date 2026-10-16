@@ -1,7 +1,9 @@
 //! [`RemoteServer`]: an upstream MCP server, served as if it were local.
 
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::Duration;
 
 use tokio::sync::broadcast;
@@ -433,7 +435,7 @@ impl RemoteServer {
     ) -> Result<Self, ProxyError> {
         let once = Mutex::new(Some(transport));
         Self::dial(label, move || {
-            let transport = once.lock().ok().and_then(|mut slot| slot.take());
+            let transport = once.lock().take();
             async move {
                 transport.ok_or_else(|| {
                     std::io::Error::other("the transport given to `RemoteServer::over` closed")

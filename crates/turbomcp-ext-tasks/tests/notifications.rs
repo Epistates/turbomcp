@@ -171,6 +171,11 @@ async fn listen_then_cancel_pushes_notifications_tasks() {
         ack.params.as_ref().unwrap()["notifications"]["taskIds"][0],
         task_id
     );
+    // Then each subscribed task's state as it stands, so a change that beat
+    // the subscription is not lost.
+    let snapshot = as_notification(rx.recv().await.expect("initial snapshot"));
+    assert_eq!(snapshot.method, "notifications/tasks");
+    assert_eq!(snapshot.params.as_ref().unwrap()["status"], "working");
 
     // 3. Cancel the task → a `notifications/tasks` push for the cancelled state.
     let _ack = call_some(
@@ -306,6 +311,7 @@ async fn a_cancelled_listen_stops_task_notifications() {
     .await;
     let ack = as_notification(rx.recv().await.expect("ack"));
     assert_eq!(ack.method, "notifications/subscriptions/acknowledged");
+    let _snapshot = rx.recv().await.expect("initial snapshot");
 
     // The client ends the subscription by cancelling its listen request.
     let cancel = JsonRpcNotification::new(

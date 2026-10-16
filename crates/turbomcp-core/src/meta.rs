@@ -90,10 +90,18 @@ pub fn missing_request_envelope_field(params: Option<&Value>) -> Option<&'static
         // likely to have forgotten and the one that identifies the wire.
         return Some(keys::PROTOCOL_VERSION);
     };
-    if !meta.contains_key(keys::PROTOCOL_VERSION) {
+    // Present and of the type the schema requires: a `null` or a string
+    // where an object belongs is as absent as a missing key.
+    if !meta
+        .get(keys::PROTOCOL_VERSION)
+        .is_some_and(Value::is_string)
+    {
         return Some(keys::PROTOCOL_VERSION);
     }
-    if !meta.contains_key(keys::CLIENT_CAPABILITIES) {
+    if !meta
+        .get(keys::CLIENT_CAPABILITIES)
+        .is_some_and(Value::is_object)
+    {
         return Some(keys::CLIENT_CAPABILITIES);
     }
     None
@@ -115,6 +123,36 @@ pub fn is_framework_key(key: &str) -> bool {
             | keys::CLIENT_CAPABILITIES
             | keys::LOG_LEVEL
     )
+}
+
+/// Whether `key` is a `_meta` key with a prefix, by the spec's naming rules:
+/// a prefix of dot-separated labels (each starting with a letter, ending with
+/// a letter or digit, hyphens inside) and a slash, then a non-empty name that
+/// begins and ends alphanumeric with `-`, `_` or `.` inside. Extension
+/// identifiers "MUST follow the `_meta` key naming rules, with a mandatory
+/// prefix" (`io.modelcontextprotocol/tasks`, `com.example/ui`).
+#[must_use]
+pub fn is_prefixed_key(key: &str) -> bool {
+    let Some((prefix, name)) = key.split_once('/') else {
+        return false;
+    };
+    let label = |l: &str| {
+        let bytes = l.as_bytes();
+        matches!(bytes.first(), Some(b) if b.is_ascii_alphabetic())
+            && matches!(bytes.last(), Some(b) if b.is_ascii_alphanumeric())
+            && bytes
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+    };
+    let name_ok = {
+        let bytes = name.as_bytes();
+        matches!(bytes.first(), Some(b) if b.is_ascii_alphanumeric())
+            && matches!(bytes.last(), Some(b) if b.is_ascii_alphanumeric())
+            && bytes
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    };
+    !prefix.is_empty() && prefix.split('.').all(label) && name_ok
 }
 
 /// Extract the per-request protocol version from a `_meta` map (draft model).
@@ -196,6 +234,31 @@ pub fn extract_trace_context(meta: &Map<String, Value>) -> Option<TraceContext> 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn prefixed_keys_follow_the_naming_rules() {
+        for good in [
+            "io.modelcontextprotocol/tasks",
+            "com.example/ui",
+            "com.example-co.mcp/a.b_c-d",
+            "x/y",
+        ] {
+            assert!(is_prefixed_key(good), "{good}");
+        }
+        for bad in [
+            "tasks",
+            "/tasks",
+            "com.example/",
+            "com..example/x",
+            "1com.example/x",
+            "com.example-/x",
+            "com.example/-x",
+            "com.example/x/y",
+            "com.example/x y",
+        ] {
+            assert!(!is_prefixed_key(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn extracts_draft_version() {

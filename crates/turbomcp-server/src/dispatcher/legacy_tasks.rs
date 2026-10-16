@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use turbomcp_core::meta::keys::RELATED_TASK;
 use turbomcp_core::{
     CancellationToken, Extensions, JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
-    McpError, McpResult, ProtocolVersion, RequestContext, RequestId,
+    McpError, ProtocolVersion, RequestContext, RequestId,
 };
 use turbomcp_protocol::methods;
 use turbomcp_protocol::neutral::{self, TaskSupport};
@@ -18,7 +18,7 @@ use turbomcp_protocol::v2025_11_25::types as legacy;
 use turbomcp_service::Peer;
 use turbomcp_service::catch_panic;
 
-use crate::context::{CallToolContext, ListToolsContext};
+use crate::context::CallToolContext;
 use crate::mrtr::ClientHandle;
 use crate::router::MethodRouter;
 use crate::subscriptions::Route;
@@ -49,9 +49,14 @@ const DEFAULT_TTL_MS: i64 = 300_000; // 5 minutes
 /// `ttl` duration"), in milliseconds.
 const MAX_TTL_MS: i64 = 3_600_000; // 1 hour
 
-/// A session's tasks are its own.
-pub(super) fn owner(sid: &str) -> TaskOwner {
-    TaskOwner::Session(sid.to_owned())
+/// Whose a `2025-11-25` task is: the authenticated principal's, so it
+/// outlives the session (tasks belong to the authorization context, and the
+/// spec's own pattern is to disconnect and come back for the result), else
+/// the anonymous session's, which ends with it.
+pub(super) fn owner(sid: &str, ext: &Extensions) -> TaskOwner {
+    ext.get::<turbomcp_core::Identity>()
+        .and_then(turbomcp_core::Identity::principal_key)
+        .map_or_else(|| TaskOwner::Session(sid.to_owned()), TaskOwner::Principal)
 }
 
 /// Whether a `tools/call` request asks for task-augmented execution. The
@@ -113,6 +118,8 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let sid = session_id(&ctx.extensions).unwrap_or_default().to_owned();
     let mut ctx = ctx;
     ctx.cancellation = token.clone();
+    let task_owner = owner(&sid, &ctx.extensions);
+    let quota = crate::tasks::quota_key(&ctx);
     // The call outlives its request: what it sends on the call's behalf may
     // go on until the task ends, and no further.
     let (lifetime, ended) = crate::subscriptions::RequestLifetime::start();
@@ -145,25 +152,40 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
 
     let ttl_ms = task_meta.ttl.unwrap_or(DEFAULT_TTL_MS).min(MAX_TTL_MS);
     let snap = match store
-        .create(&owner(&sid), NewTask::new(Some(ttl_ms)), token.clone())
+        .create(
+            &task_owner,
+            NewTask::new(Some(ttl_ms)).with_quota_key(quota),
+            token.clone(),
+        )
         .await
     {
         Ok(s) => s,
         Err(e) => return task_error_response(id, &e),
     };
-    let tracked = relay.track(&snap.task_id, Arc::clone(store), owner(&sid), route);
+    let status = StatusNotices {
+        route: route.clone(),
+        store: Arc::clone(store),
+        owner: task_owner.clone(),
+    };
+    let tracked = relay.track(&snap.task_id, Arc::clone(store), task_owner, route);
     let hook_relay = Arc::clone(relay);
+    let hook_status = status.clone();
     let _ = slot.set(
         TaskLink::new(Arc::clone(store), snap.task_id.clone(), token.clone()).on_change(
             move |task_id| {
                 let relay = Arc::clone(&hook_relay);
-                async move { relay.deliver(&task_id).await }
+                let status = hook_status.clone();
+                async move {
+                    relay.deliver(&task_id).await;
+                    status.send(&task_id).await;
+                }
             },
         ),
     );
 
     let store = Arc::clone(store);
     let task_id = snap.task_id.clone();
+    let ttl = snap.ttl_ms;
     let span = tracing::info_span!("mcp.task", "mcp.task.id" = %task_id);
     let work = async move {
         let _tracked = tracked;
@@ -172,6 +194,14 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
             () = token.cancelled() => {
                 // `tasks/cancel` (or expiry purge) already transitioned the
                 // record; dropping `fut` aborts the handler.
+            }
+            // Out of time: stop the work and fail the task now.
+            () = crate::tasks::ttl_elapsed(ttl) => {
+                token.cancel();
+                store
+                    .complete(&task_id, TaskOutcome::expired(ttl.unwrap_or_default()))
+                    .await;
+                status.send(&task_id).await;
             }
             // A panic would otherwise unwind this task with the record still
             // `working`, and `tasks/result` would block until the TTL: every
@@ -206,6 +236,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
                     }
                 };
                 store.complete(&task_id, outcome).await;
+                status.send(&task_id).await;
             }
         }
     };
@@ -223,45 +254,17 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     )
 }
 
-/// Whether any tool in the catalogue declares its own task support.
+/// The task support `tool` actually has on a server with Tasks enabled: its
+/// own declaration, else the server's default for undeclared tools
+/// ([`VersionDispatcher::undeclared_task_support`]). A fixed default, never
+/// inferred from the rest of the catalogue: that made one tool's declaration
+/// change every other tool's, cost a full catalogue listing per call, and
+/// let a caller tell from an undeclared tool whether a tool hidden from it
+/// declared support.
 ///
-/// That decides what an undeclared tool gets once Tasks are on: when some tool
-/// opts in individually (`#[tool(task)]`) the rest are `forbidden`, and when
-/// none does, Tasks were switched on for every tool and each is `optional`.
-/// Asked of the whole catalogue, not one page, so every page of `tools/list`
-/// and the `tools/call` gate agree.
-pub(super) async fn any_tool_declares_task_support<S: McpServerCore>(
-    server: &S,
-    router: &MethodRouter<S>,
-    ctx: &RequestContext,
-) -> McpResult<bool> {
-    let found = crate::catalog::find(
-        |params| {
-            let listed = router.dispatch_list_tools(
-                server.clone(),
-                ListToolsContext::new(ctx.clone()),
-                params,
-            );
-            async move {
-                let page = listed
-                    .ok_or_else(|| McpError::method_not_found(methods::request::TOOLS_LIST))?
-                    .await?;
-                Ok((page.tools, page.next_cursor))
-            }
-        },
-        |tool: &neutral::Tool| tool.task_support.is_some(),
-    )
-    .await?;
-    Ok(found.is_some())
-}
-
-/// The task support `tool` actually has on a server with Tasks enabled.
-pub(super) fn effective_task_support(tool: &neutral::Tool, any_declared: bool) -> TaskSupport {
-    tool.task_support.unwrap_or(if any_declared {
-        TaskSupport::Forbidden
-    } else {
-        TaskSupport::Optional
-    })
+/// [`VersionDispatcher::undeclared_task_support`]: crate::VersionDispatcher::undeclared_task_support
+pub(super) fn effective_task_support(tool: &neutral::Tool, undeclared: TaskSupport) -> TaskSupport {
+    tool.task_support.unwrap_or(undeclared)
 }
 
 /// Spell out every tool's effective task support. The conversion layer can't
@@ -269,10 +272,10 @@ pub(super) fn effective_task_support(tool: &neutral::Tool, any_declared: bool) -
 /// after the visibility filter, on the same path every other list takes.
 pub(super) fn with_task_support(
     mut result: neutral::ListToolsResult,
-    any_declared: bool,
+    undeclared: TaskSupport,
 ) -> neutral::ListToolsResult {
     for tool in &mut result.tools {
-        tool.task_support = Some(effective_task_support(tool, any_declared));
+        tool.task_support = Some(effective_task_support(tool, undeclared));
     }
     result
 }
@@ -292,7 +295,7 @@ pub(super) async fn handle_tasks_method(
                 .as_ref()
                 .and_then(|p| p.get("cursor"))
                 .and_then(Value::as_str);
-            match store.list(&owner(sid), cursor, TASKS_PAGE_SIZE).await {
+            match store.list(&owner(sid, ext), cursor, TASKS_PAGE_SIZE).await {
                 Ok((page, next_cursor)) => ok_value(
                     id,
                     &legacy::ListTasksResult {
@@ -306,7 +309,7 @@ pub(super) async fn handle_tasks_method(
         }
         methods::request::TASKS_GET => match parse_task_id(req.params.as_ref()) {
             Err(e) => error_response(id, &e),
-            Ok(tid) => match store.get(&owner(sid), &tid).await {
+            Ok(tid) => match store.get(&owner(sid, ext), &tid).await {
                 Ok(s) => ok_value(
                     id,
                     &legacy::GetTaskResult {
@@ -326,7 +329,7 @@ pub(super) async fn handle_tasks_method(
         },
         methods::request::TASKS_CANCEL => match parse_task_id(req.params.as_ref()) {
             Err(e) => error_response(id, &e),
-            Ok(tid) => match store.cancel(&owner(sid), &tid).await {
+            Ok(tid) => match store.cancel(&owner(sid, ext), &tid).await {
                 Ok(s) => ok_value(
                     id,
                     &legacy::CancelTaskResult {
@@ -348,7 +351,7 @@ pub(super) async fn handle_tasks_method(
             Err(e) => error_response(id, &e),
             // Blocks until the task is terminal, then answers exactly what the
             // underlying request would have (spec §Result Retrieval).
-            Ok(tid) => match await_result((store, relay), &owner(sid), &tid, ext).await {
+            Ok(tid) => match await_result((store, relay), &owner(sid, ext), &tid, ext).await {
                 // "The `tasks/result` operation MUST include this metadata in
                 // its response, as the result structure itself does not contain
                 // the task ID."
@@ -420,6 +423,38 @@ fn to_wire_status(s: TaskStatus) -> legacy::TaskStatus {
         TaskStatus::Completed => legacy::TaskStatus::Completed,
         TaskStatus::Failed => legacy::TaskStatus::Failed,
         TaskStatus::Cancelled => legacy::TaskStatus::Cancelled,
+    }
+}
+
+/// Sends `notifications/tasks/status` for one task to its requestor
+/// ("receivers MAY send" it whenever the status changes; the requestor
+/// "MUST NOT rely on" it, so it is offered, never awaited). It carries no
+/// related-task `_meta`: the spec says this one SHOULD NOT.
+#[derive(Clone)]
+struct StatusNotices {
+    route: Route,
+    store: Arc<dyn TaskBackend>,
+    owner: TaskOwner,
+}
+
+impl StatusNotices {
+    async fn send(&self, task_id: &str) {
+        let Ok(snapshot) = self.store.get(&self.owner, task_id).await else {
+            return;
+        };
+        let (Some(peer), Ok(params)) = (
+            self.route.peer(),
+            serde_json::to_value(to_wire_task(&snapshot)),
+        ) else {
+            return;
+        };
+        peer.offer(
+            turbomcp_core::JsonRpcNotification::new(
+                methods::notification::TASKS_STATUS,
+                Some(params),
+            )
+            .into(),
+        );
     }
 }
 

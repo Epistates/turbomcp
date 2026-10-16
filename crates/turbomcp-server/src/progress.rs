@@ -18,7 +18,9 @@
 //! valid throughout the task lifetime", so notifications keep going too.
 
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use turbomcp_core::{JsonRpcNotification, meta};
 use turbomcp_protocol::methods;
 
@@ -146,7 +148,7 @@ impl ProgressReporter {
         });
 
         {
-            let mut last = inner.last.lock().expect("progress guard poisoned");
+            let mut last = inner.last.lock();
             if last.is_some_and(|prev| progress <= prev) {
                 tracing::warn!(
                     progress,

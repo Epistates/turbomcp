@@ -357,11 +357,18 @@ const CLIENT_METHODS: [&str; 3] = [
 /// call.
 ///
 /// # Panics
-/// On a second extension with the same id, a method the core protocol
+/// On an id that isn't a prefixed `_meta` key, a second extension with the
+/// same id, a method the core protocol
 /// defines on a revision `new` speaks, or a method another extension
 /// already claims on a revision both speak.
 pub(crate) fn check_registration(existing: &[Arc<dyn Extension>], new: &dyn Extension) {
     let id = new.id();
+    assert!(
+        turbomcp_core::meta::is_prefixed_key(id),
+        "extension id `{id}` must follow the `_meta` key naming rules with a prefix \
+         (`com.example/name`): extension identifiers MUST, so peers can tell \
+         vendors apart"
+    );
     assert!(
         !existing.iter().any(|e| e.id() == id),
         "extension `{id}` is registered twice"

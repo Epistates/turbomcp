@@ -103,7 +103,11 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
                     from_legacy_impl(params.client_info),
                     client_capabilities,
                 )
-                .with_owner(ext.get::<Identity>().and_then(Identity::principal_key)),
+                .with_owner(ext.get::<Identity>().and_then(Identity::principal_key))
+                .with_peer_address(
+                    ext.get::<turbomcp_service::NetworkFacts>()
+                        .and_then(|facts| facts.peer_address.clone()),
+                ),
             )
             .await?;
     }
@@ -208,21 +212,42 @@ fn build_legacy_capabilities<S: McpServerCore>(
     }
 }
 
+/// `i` on a wire: every field the wire models (`description`, `icons`,
+/// `websiteUrl` ride in [`Implementation::extra`]) is carried, which was not
+/// the case when only name, title and version were copied across.
+fn impl_to_wire<W: serde::de::DeserializeOwned>(
+    i: Implementation,
+    minimal: impl FnOnce(Implementation) -> W,
+) -> W {
+    match serde_json::to_value(&i).and_then(serde_json::from_value::<W>) {
+        Ok(wire) => wire,
+        // A malformed extra (an `icons` that isn't a list of icons) costs the
+        // extras, not the handshake.
+        Err(_) => minimal(i),
+    }
+}
+
 fn to_legacy_impl(i: Implementation) -> legacy::Implementation {
-    legacy::Implementation {
+    impl_to_wire(i, |i| legacy::Implementation {
         description: None,
         icons: Vec::new(),
         name: i.name,
         title: i.title,
         version: i.version,
         website_url: None,
-    }
+    })
 }
 
+/// A peer's `Implementation`, keeping what it said beyond name, title and
+/// version (in [`Implementation::extra`]).
 fn from_legacy_impl(i: legacy::Implementation) -> Implementation {
-    let mut out = Implementation::new(i.name, i.version);
-    out.title = i.title;
-    out
+    serde_json::to_value(&i)
+        .and_then(serde_json::from_value)
+        .unwrap_or_else(|_| {
+            let mut out = Implementation::new(i.name, i.version);
+            out.title = i.title;
+            out
+        })
 }
 
 // ---- response builders -------------------------------------------------------
@@ -354,12 +379,12 @@ pub(super) fn stamp_server_info(msg: &mut JsonRpcMessage, identity: Implementati
 }
 
 fn to_draft_impl(i: Implementation) -> v0728::Implementation {
-    v0728::Implementation {
+    impl_to_wire(i, |i| v0728::Implementation {
         description: None,
         icons: Vec::new(),
         name: i.name,
         title: i.title,
         version: i.version,
         website_url: None,
-    }
+    })
 }

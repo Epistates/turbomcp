@@ -27,8 +27,10 @@
 //! happens on this path — handlers written for MRTR re-entry work unchanged.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+
+use parking_lot::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
@@ -292,21 +294,24 @@ const BIDI_TIMEOUT: Duration = Duration::from_secs(120);
 /// the awaiting handler finishes (or is dropped by cancellation).
 #[derive(Default)]
 pub(crate) struct PendingRequests {
-    map: Mutex<HashMap<RequestId, oneshot::Sender<JsonRpcResponse>>>,
+    map: Mutex<HashMap<RequestId, PendingEntry>>,
 }
 
+/// A pending request's answer scope and the handler awaiting its response.
+type PendingEntry = (Option<String>, oneshot::Sender<JsonRpcResponse>);
+
 impl PendingRequests {
-    /// Await the response to server→client request `id`; the guard forgets
+    /// Await the response to server→client request `id`, sent to `scope`
+    /// (the session, else the connection, it went out on; `None` for one any
+    /// of the owner's streams may answer, as a task's can); the guard forgets
     /// it when dropped.
     pub(crate) fn register(
         self: &Arc<Self>,
         id: RequestId,
+        scope: Option<String>,
     ) -> (oneshot::Receiver<JsonRpcResponse>, PendingGuard) {
         let (tx, rx) = oneshot::channel();
-        self.map
-            .lock()
-            .expect("pending map poisoned")
-            .insert(id.clone(), tx);
+        self.map.lock().insert(id.clone(), (scope, tx));
         (
             rx,
             PendingGuard {
@@ -316,19 +321,48 @@ impl PendingRequests {
         )
     }
 
-    /// Deliver a client response to its awaiting handler. `false` if nothing
-    /// was waiting (late, duplicate, or unsolicited — ignored per JSON-RPC).
-    pub(crate) fn complete(&self, response: JsonRpcResponse) -> bool {
+    /// Deliver a client response, arriving from the session or connection
+    /// `from`, to its awaiting handler. `false` if nothing was waiting (late,
+    /// duplicate, unsolicited) or the request went to someone else: ids are
+    /// unguessable, but one leaked through a log or a shared proxy must not
+    /// let another client answer a different user's elicitation.
+    pub(crate) fn complete(&self, response: JsonRpcResponse, from: &[&str]) -> bool {
         // An id-less error answers a frame the client couldn't read; there is
         // no request of ours to hand it to.
         let Some(id) = &response.id else {
             return false;
         };
-        let sender = self.map.lock().expect("pending map poisoned").remove(id);
+        let sender = {
+            let mut map = self.map.lock();
+            let ours = map
+                .get(id)
+                .is_some_and(|(scope, _)| scope.as_deref().is_none_or(|s| from.contains(&s)));
+            if !ours {
+                return false;
+            }
+            map.remove(id)
+        };
         match sender {
-            Some(tx) => tx.send(response).is_ok(),
+            Some((_, tx)) => tx.send(response).is_ok(),
             None => false,
         }
+    }
+}
+
+#[cfg(test)]
+impl PendingRequests {
+    /// [`complete`](Self::complete) from wherever the request went (tests of
+    /// what happens after delivery).
+    pub(crate) fn complete_unscoped(&self, response: JsonRpcResponse) -> bool {
+        let Some(scope) = response
+            .id
+            .as_ref()
+            .and_then(|id| self.map.lock().get(id).map(|(scope, _)| scope.clone()))
+        else {
+            return false;
+        };
+        let from: Vec<&str> = scope.as_deref().into_iter().collect();
+        self.complete(response, &from)
     }
 }
 
@@ -339,11 +373,7 @@ pub(crate) struct PendingGuard {
 
 impl Drop for PendingGuard {
     fn drop(&mut self) {
-        self.pending
-            .map
-            .lock()
-            .expect("pending map poisoned")
-            .remove(&self.id);
+        self.pending.map.lock().remove(&self.id);
     }
 }
 
@@ -553,7 +583,11 @@ impl ClientHandle {
     ) -> McpResult<neutral::ElicitOutcome> {
         self.prepare_elicit(&params)?;
         let raw = self
-            .obtain(key, self.form_capability(), elicit_request_value(&params))
+            .obtain(
+                key,
+                self.form_capability(),
+                elicit_request_value(&params, &self.inner.version),
+            )
             .await?;
         checked_outcome(&params, &raw)
     }
@@ -736,7 +770,7 @@ impl ClientHandle {
         }
         for (key, params) in &requests {
             if !self.inner.responses.contains_key(*key) {
-                self.record(key, elicit_request_value(params))?;
+                self.record(key, elicit_request_value(params, &self.inner.version))?;
             }
         }
         Err(self.abort())
@@ -747,13 +781,16 @@ impl ClientHandle {
     /// The conversation is rendered for *this session's* revision: `2025-06-18`
     /// has no multi-block messages and no agentic sampling, so a request that
     /// needs either is refused here rather than being truncated into something
-    /// the model would answer wrongly. Functional on all three revisions
-    /// despite the upstream deprecation marking (AUDIT F10).
+    /// the model would answer wrongly.
+    ///
+    /// `2026-07-28` deprecates sampling (SEP-2577); on `2025-06-18` and
+    /// `2025-11-25` it is a first-class feature, so this carries no
+    /// `#[deprecated]` mark, which would warn every server that uses it on the
+    /// revisions where it isn't.
     ///
     /// # Errors
     /// A conversation this revision can't carry, the client not declaring
     /// `sampling`, or as [`elicit`](Self::elicit).
-    #[deprecated(note = "marked deprecated upstream; still functional in every version")]
     pub async fn create_message(
         &self,
         key: &str,
@@ -796,7 +833,9 @@ impl ClientHandle {
     /// # Errors
     /// As [`elicit`](Self::elicit): the client not declaring `roots`, the
     /// client failing to answer, or (on `2026-07-28`) the input-required abort.
-    #[deprecated(note = "marked deprecated upstream; still functional in every version")]
+    ///
+    /// Deprecated by `2026-07-28` (SEP-2577), first-class before it; like
+    /// [`create_message`](Self::create_message), it carries no `#[deprecated]`.
     pub async fn list_roots(&self, key: &str) -> McpResult<Vec<neutral::Root>> {
         let raw = self
             .request_raw(key, request::ROOTS_LIST, "roots", json!({}))
@@ -818,7 +857,7 @@ impl ClientHandle {
     pub fn store_state<T: Serialize>(&self, value: &T) -> McpResult<()> {
         let value = serde_json::to_value(value)
             .map_err(|e| McpError::internal(format!("serialize state: {e}")))?;
-        *self.inner.state_out.lock().expect("state lock poisoned") = Some(value);
+        *self.inner.state_out.lock() = Some(value);
         Ok(())
     }
 
@@ -827,7 +866,7 @@ impl ClientHandle {
     /// # Panics
     /// If another thread panicked while holding this handle's state.
     pub fn clear_state(&self) {
-        *self.inner.state_out.lock().expect("state lock poisoned") = None;
+        *self.inner.state_out.lock() = None;
     }
 
     /// The verified `requestState` data from the retry request, if any.
@@ -914,7 +953,7 @@ impl ClientHandle {
                 Err(self.abort())
             }
             HandleMode::Bidi { pending } => {
-                send_and_await(&self.inner.route, pending, request).await
+                send_and_await(&self.inner.route, pending, request, &self.inner.version).await
             }
             // Taskified call: publish to the task and await `tasks/update`.
             HandleMode::TaskMediated { slot } => match slot.get() {
@@ -933,11 +972,7 @@ impl ClientHandle {
     /// request shape in one execution is a warning by default, or a hard error
     /// when strict keys are enabled (PLAN §4.5.2 item 4).
     fn record(&self, key: &str, request: Value) -> McpResult<()> {
-        let mut collected = self
-            .inner
-            .collected
-            .lock()
-            .expect("collected lock poisoned");
+        let mut collected = self.inner.collected.lock();
         if let Some(previous) = collected.get(key)
             && previous != &request
         {
@@ -966,11 +1001,7 @@ impl ClientHandle {
 
     /// The recorded input requests (dispatcher: `InputRequiredResult` assembly).
     pub(crate) fn collected(&self) -> BTreeMap<String, Value> {
-        self.inner
-            .collected
-            .lock()
-            .expect("collected lock poisoned")
-            .clone()
+        self.inner.collected.lock().clone()
     }
 
     /// The state to sign into this turn's `requestState`: the handler's own
@@ -980,12 +1011,7 @@ impl ClientHandle {
     /// stored nothing and no question has been answered yet — so a first-round
     /// abort with no stored state still emits just `inputRequests`, as before.
     pub(crate) fn state_out(&self) -> Option<Value> {
-        let handler = self
-            .inner
-            .state_out
-            .lock()
-            .expect("state lock poisoned")
-            .clone();
+        let handler = self.inner.state_out.lock().clone();
         StateEnvelope::join(handler, &self.inner.responses)
     }
 }
@@ -1062,6 +1088,7 @@ async fn send_and_await(
     route: &Route,
     pending: &Arc<PendingRequests>,
     request: Value,
+    version: &ProtocolVersion,
 ) -> McpResult<Value> {
     let method = request
         .get("method")
@@ -1072,7 +1099,7 @@ async fn send_and_await(
 
     // A uuid id can't collide with client-issued ids and can't be guessed.
     let id = RequestId::from(format!("srv-{}", uuid::Uuid::new_v4()));
-    let (rx, _guard) = pending.register(id.clone());
+    let (rx, _guard) = pending.register(id.clone(), route.scope());
 
     let writer = route.peer().ok_or_else(|| {
         McpError::transport(
@@ -1090,10 +1117,8 @@ async fn send_and_await(
         .map_err(|_| McpError::transport("server→client request dropped"))?;
     match (response.result, response.error) {
         (Some(result), None) => Ok(result),
-        (_, Some(e)) => Err(McpError::internal(format!(
-            "client answered input request with error {}: {}",
-            e.code, e.message
-        ))),
+        // The client's own error, as it sent it, for the handler to act on.
+        (_, Some(e)) => Err(McpError::from_jsonrpc(&e, version)),
         _ => Err(McpError::internal(
             "client answered input request with an empty response",
         )),
@@ -1107,15 +1132,17 @@ fn sampling_err(e: neutral::SamplingError) -> McpError {
     McpError::invalid_params(format!("sampling/createMessage: {e}"))
 }
 
-fn elicit_request_value(params: &neutral::ElicitParams) -> Value {
-    json!({
-        "method": request::ELICITATION_CREATE,
-        "params": {
-            "mode": "form",
-            "message": params.message,
-            "requestedSchema": params.requested_schema,
-        },
-    })
+fn elicit_request_value(params: &neutral::ElicitParams, version: &ProtocolVersion) -> Value {
+    let mut wire = json!({
+        "message": params.message,
+        "requestedSchema": params.requested_schema,
+    });
+    // `2025-06-18` predates elicitation modes: its request is just a message
+    // and a schema, and a strict client of it would refuse an unknown `mode`.
+    if *version != ProtocolVersion::V2025_06_18 {
+        wire["mode"] = json!("form");
+    }
+    json!({ "method": request::ELICITATION_CREATE, "params": wire })
 }
 
 /// The wire `InputRequest` object for a URL-mode elicitation. `elicitation_id`
@@ -1420,7 +1447,7 @@ mod tests {
         let params = req.params.clone().expect("params");
         assert_eq!(params["mode"], "url");
         assert_eq!(params["elicitationId"], "eid-1");
-        pending.complete(JsonRpcResponse::success(
+        pending.complete_unscoped(JsonRpcResponse::success(
             req.id,
             json!({ "action": "accept" }),
         ));
@@ -1458,7 +1485,7 @@ mod tests {
             .as_str()
             .expect("a minted elicitationId");
         assert!(!id.is_empty());
-        pending.complete(JsonRpcResponse::success(
+        pending.complete_unscoped(JsonRpcResponse::success(
             req.id,
             json!({ "action": "accept" }),
         ));
@@ -1637,31 +1664,51 @@ mod tests {
     /// interesting case is the *second* delivery for one id: the entry is
     /// removed on the first, so a duplicate (or a replayed) response can't
     /// resolve a later, unrelated wait that reused the id.
+    /// An answer counts only from where the request went: the session, or
+    /// the connection, it was sent on.
+    #[tokio::test]
+    async fn an_answer_from_elsewhere_is_ignored() {
+        let pending = Arc::new(PendingRequests::default());
+        let id = RequestId::from("srv-scoped");
+        let (rx, _guard) = pending.register(id.clone(), Some("session-a".into()));
+        assert!(!pending.complete(
+            JsonRpcResponse::success(id.clone(), json!({ "from": "b" })),
+            &["session-b", "conn-b"]
+        ));
+        assert!(pending.complete(
+            JsonRpcResponse::success(id, json!({ "from": "a" })),
+            &["session-a", "conn-a"]
+        ));
+        assert_eq!(rx.await.unwrap().result, Some(json!({ "from": "a" })));
+    }
+
     #[tokio::test]
     async fn pending_requests_deliver_once_and_ignore_the_rest() {
         let pending = Arc::new(PendingRequests::default());
         let id = RequestId::from("srv-1");
 
         assert!(
-            !pending.complete(JsonRpcResponse::success(id.clone(), json!({}))),
+            !pending.complete_unscoped(JsonRpcResponse::success(id.clone(), json!({}))),
             "nothing registered → dropped"
         );
 
-        let (rx, guard) = pending.register(id.clone());
-        assert!(pending.complete(JsonRpcResponse::success(id.clone(), json!({ "ok": true }))));
+        let (rx, guard) = pending.register(id.clone(), None);
+        assert!(
+            pending.complete_unscoped(JsonRpcResponse::success(id.clone(), json!({ "ok": true })))
+        );
         assert_eq!(rx.await.unwrap().result, Some(json!({ "ok": true })));
         assert!(
-            !pending.complete(JsonRpcResponse::success(id.clone(), json!({}))),
+            !pending.complete_unscoped(JsonRpcResponse::success(id.clone(), json!({}))),
             "the entry is consumed by the first delivery"
         );
         drop(guard);
 
         // The guard's job: a handler that goes away (cancelled, timed out)
         // must not leave its slot behind for a late response to land in.
-        let (_rx, guard) = pending.register(id.clone());
+        let (_rx, guard) = pending.register(id.clone(), None);
         drop(guard);
         assert!(
-            !pending.complete(JsonRpcResponse::success(id, json!({}))),
+            !pending.complete_unscoped(JsonRpcResponse::success(id, json!({}))),
             "dropping the guard unregisters the wait"
         );
     }
@@ -1718,7 +1765,7 @@ mod tests {
         });
 
         let req = next_request(&mut rx).await;
-        pending.complete(JsonRpcResponse::error(
+        pending.complete_unscoped(JsonRpcResponse::error(
             req.id,
             turbomcp_core::JsonRpcError {
                 code: turbomcp_core::codes::METHOD_NOT_FOUND,
@@ -1727,12 +1774,16 @@ mod tests {
             },
         ));
 
+        // The client's error itself, code and all, for the handler to act on
+        // (and to relay unchanged).
         let err = task.await.unwrap().expect_err("the client refused");
-        let msg = err.to_string();
-        assert!(msg.contains("-32601"), "no code in: {msg}");
+        assert_eq!(
+            err.jsonrpc_code(&ProtocolVersion::V2025_11_25),
+            turbomcp_core::codes::METHOD_NOT_FOUND
+        );
         assert!(
-            msg.contains("elicitation unsupported"),
-            "no reason in: {msg}"
+            err.to_string().contains("elicitation unsupported"),
+            "no reason in: {err}"
         );
     }
 
@@ -1749,7 +1800,7 @@ mod tests {
         });
 
         let req = next_request(&mut rx).await;
-        pending.complete(JsonRpcResponse {
+        pending.complete_unscoped(JsonRpcResponse {
             jsonrpc: "2.0".into(),
             id: Some(req.id),
             result: None,
@@ -1818,14 +1869,14 @@ mod tests {
             rx.try_recv().is_err(),
             "the second request must wait for the first to be answered"
         );
-        pending.complete(JsonRpcResponse::success(
+        pending.complete_unscoped(JsonRpcResponse::success(
             first.id,
             json!({ "action": "accept", "content": { "n": 1 } }),
         ));
 
         let second = next_request(&mut rx).await;
         assert_eq!(second.params.as_ref().unwrap()["message"], "B");
-        pending.complete(JsonRpcResponse::success(
+        pending.complete_unscoped(JsonRpcResponse::success(
             second.id,
             json!({ "action": "decline" }),
         ));
@@ -1906,7 +1957,6 @@ mod tests {
     /// have not declared support for tool use." The capability a request needs
     /// depends on what the request carries, so it is read off the params.
     #[tokio::test]
-    #[allow(deprecated)] // still functional on both wires; see the method docs
     async fn tool_enabled_sampling_needs_the_declared_sub_capability() {
         let plain = ClientHandle::mrtr(
             Route::default(),
@@ -1977,7 +2027,6 @@ mod tests {
     /// A request carrying both tools and `includeContext` needs both promises;
     /// only `sampling.tools` used to be checked.
     #[tokio::test]
-    #[allow(deprecated)]
     async fn a_request_needing_two_sampling_capabilities_checks_both() {
         let tools_only = ClientHandle::mrtr(
             Route::default(),
@@ -2214,7 +2263,6 @@ mod tests {
     /// wires got the `2025-11-25` shape: a `2025-06-18` client was handed
     /// `tools`, `toolChoice` and content arrays its schema does not define.
     #[tokio::test]
-    #[allow(deprecated)] // still functional on every wire; see the method docs
     async fn the_2025_06_18_wire_refuses_what_it_cannot_express() {
         let caps = json!({ "sampling": { "tools": {}, "context": {} } });
         let older = ClientHandle::bidi(
@@ -2266,7 +2314,6 @@ mod tests {
 
     /// The spec's two tool-use MUSTs are enforced before anything is sent.
     #[tokio::test]
-    #[allow(deprecated)] // still functional on every wire; see the method docs
     async fn an_unbalanced_tool_conversation_never_reaches_the_client() {
         let handle = ClientHandle::mrtr(
             Route::default(),
@@ -2407,7 +2454,6 @@ mod tests {
     /// Both are gated on the client's declared capability and both record the
     /// spec's method name — a typo here is a request no client can answer.
     #[tokio::test]
-    #[allow(deprecated)] // functional in both versions; see the method docs
     async fn sampling_and_roots_record_their_spec_methods() {
         let handle = ClientHandle::mrtr(
             Route::default(),

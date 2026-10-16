@@ -393,6 +393,43 @@ impl Tool {
     }
 }
 
+/// Whether a tool `inputSchema` describes an object at its root, as every
+/// revision requires (`inputSchema: { type: "object", … }`).
+///
+/// A root that omits `type` (`{"properties": {…}}`, a bare `oneOf`) or lists
+/// several including `"object"` qualifies: the wire gets `type: "object"`
+/// and a `tools/call`'s arguments are always an object, so validation reads
+/// the same. A root typed anything else can't accept arguments at all; the
+/// server refuses calls to such a tool as its own error.
+pub fn is_object_root(schema: &Value) -> bool {
+    match schema {
+        Value::Bool(accepts) => *accepts,
+        Value::Object(map) => admits_object(map),
+        _ => false,
+    }
+}
+
+fn admits_object(root: &Map<String, Value>) -> bool {
+    match root.get("type") {
+        None => true,
+        Some(Value::String(t)) => t == "object",
+        Some(Value::Array(types)) => types.iter().any(|t| t == "object"),
+        Some(_) => false,
+    }
+}
+
+/// A tool `inputSchema` as the wire spells it: `type: "object"` at the root.
+/// A root [`is_object_root`] accepts keeps every other keyword; anything else
+/// is advertised as the empty object schema (and refused when called).
+fn object_root(schema: Value) -> Value {
+    let mut root = match schema {
+        Value::Object(map) if admits_object(&map) => map,
+        _ => Map::new(),
+    };
+    root.insert("type".into(), Value::String("object".into()));
+    Value::Object(root)
+}
+
 /// Result of `tools/list`.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -939,6 +976,22 @@ impl ResourceContents {
         match &mut self {
             Self::Text { meta, .. } | Self::Blob { meta, .. } => {
                 meta.insert(key.into(), value);
+            }
+        }
+        self
+    }
+
+    /// These contents as an embedded resource carries them. Embedded
+    /// resources "MUST include … the appropriate MIME type" (prompts.mdx), but
+    /// `resources/read` contents may omit it, so contents without one are
+    /// labelled `text/plain` or `application/octet-stream`.
+    fn embedded(mut self) -> Self {
+        match &mut self {
+            Self::Text { mime_type, .. } => {
+                mime_type.get_or_insert_with(|| "text/plain".into());
+            }
+            Self::Blob { mime_type, .. } => {
+                mime_type.get_or_insert_with(|| "application/octet-stream".into());
             }
         }
         self
@@ -3228,7 +3281,7 @@ impl From<Content> for v0728::ContentBlock {
             } => v0728::ContentBlock::EmbeddedResource(v0728::EmbeddedResource {
                 annotations: annotations.map(Into::into),
                 meta: (!meta.is_empty()).then_some(v0728::MetaObject(meta)),
-                resource: contents.into(),
+                resource: contents.embedded().into(),
                 type_: v0728::EmbeddedResourceType::Resource,
             }),
             Content::ResourceLink(r) => {
@@ -3253,10 +3306,11 @@ impl From<Content> for v0728::ContentBlock {
 impl From<Tool> for v0728::Tool {
     fn from(t: Tool) -> Self {
         // The neutral `input_schema` is a JSON Schema object; deserialize it
-        // into the typed wrapper. A non-object or schema-less value falls back
-        // to an empty object schema rather than failing the conversion.
+        // into the typed wrapper with its root spelled `type: "object"`. Only a
+        // value the wrapper still can't hold (a non-string `$schema`) falls
+        // back to an empty object schema.
         let input_schema =
-            serde_json::from_value(t.input_schema).unwrap_or(v0728::ToolInputSchema {
+            serde_json::from_value(object_root(t.input_schema)).unwrap_or(v0728::ToolInputSchema {
                 schema: None,
                 type_: "object".to_string(),
                 extra: Map::new(),
@@ -3662,7 +3716,7 @@ impl From<Content> for legacy::ContentBlock {
             } => legacy::ContentBlock::EmbeddedResource(legacy::EmbeddedResource {
                 annotations: annotations.map(Into::into),
                 meta,
-                resource: contents.into(),
+                resource: contents.embedded().into(),
                 type_: legacy::EmbeddedResourceType::Resource,
             }),
             Content::ResourceLink(r) => {
@@ -3726,18 +3780,21 @@ fn object_property_schemas(mut schema: Value) -> Value {
 
 impl From<Tool> for legacy::Tool {
     fn from(t: Tool) -> Self {
-        // Deserialize the neutral JSON Schema into the (closed) legacy wrapper;
-        // a non-object value falls back to an empty object schema. `execution`
+        // Deserialize the neutral JSON Schema into the legacy wrapper with its
+        // root spelled `type: "object"`; a value the wrapper can't hold (a
+        // non-object `properties`) falls back to an empty object schema. `execution`
         // (task support) is left unset here — the dispatcher patches it when
         // the server has Tasks enabled, since a pure conversion can't know.
-        let input_schema = serde_json::from_value(object_property_schemas(t.input_schema))
-            .unwrap_or(legacy::ToolInputSchema {
-                properties: None,
-                required: Vec::new(),
-                schema: None,
-                type_: "object".to_string(),
-                extra: Map::new(),
-            });
+        let input_schema = serde_json::from_value(object_property_schemas(object_root(
+            t.input_schema,
+        )))
+        .unwrap_or(legacy::ToolInputSchema {
+            properties: None,
+            required: Vec::new(),
+            schema: None,
+            type_: "object".to_string(),
+            extra: Map::new(),
+        });
         legacy::Tool {
             annotations: t.annotations.map(Into::into),
             description: t.description,
@@ -4840,6 +4897,55 @@ mod tests {
             legacy.output_schema.expect("object schemas survive").type_,
             "object"
         );
+    }
+
+    /// A hand-written schema that leaves `type` out, or lists several, used to
+    /// fail the wire wrapper's deserialization and be advertised as an empty
+    /// object: the model saw no parameters while calls were still validated
+    /// against the real ones. The wire now gets `type: "object"` and keeps
+    /// everything else.
+    #[test]
+    fn an_untyped_input_schema_root_keeps_its_properties() {
+        for schema in [
+            json!({ "properties": { "q": { "type": "string" } }, "required": ["q"] }),
+            json!({ "type": ["object", "null"], "properties": { "q": { "type": "string" } }, "required": ["q"] }),
+        ] {
+            assert!(is_object_root(&schema), "{schema}");
+            let tool = Tool::new("search", schema);
+
+            let v = serde_json::to_value(v0728::Tool::from(tool.clone())).unwrap();
+            assert_eq!(v["inputSchema"]["type"], "object", "{v}");
+            assert_eq!(v["inputSchema"]["required"], json!(["q"]), "{v}");
+
+            let v = serde_json::to_value(legacy::Tool::from(tool)).unwrap();
+            assert_eq!(v["inputSchema"]["type"], "object", "{v}");
+            assert_eq!(v["inputSchema"]["properties"]["q"]["type"], "string", "{v}");
+        }
+
+        for schema in [json!({ "type": "string" }), json!(null), json!(false)] {
+            assert!(!is_object_root(&schema), "{schema}");
+            let v = serde_json::to_value(v0728::Tool::from(Tool::new("bad", schema))).unwrap();
+            assert_eq!(v["inputSchema"], json!({ "type": "object" }));
+        }
+    }
+
+    #[test]
+    fn an_embedded_resource_always_names_its_mime_type() {
+        let text = Content::resource(ResourceContents::text("mem://a", "hi"));
+        let blob = Content::resource(ResourceContents::blob("mem://b", "AA=="));
+        let typed = Content::resource(
+            ResourceContents::text("mem://c", "{}").with_mime_type("application/json"),
+        );
+        for (content, mime) in [
+            (text, "text/plain"),
+            (blob, "application/octet-stream"),
+            (typed, "application/json"),
+        ] {
+            let v = serde_json::to_value(v0728::ContentBlock::from(content.clone())).unwrap();
+            assert_eq!(v["resource"]["mimeType"], mime, "{v}");
+            let v = serde_json::to_value(legacy::ContentBlock::from(content)).unwrap();
+            assert_eq!(v["resource"]["mimeType"], mime, "{v}");
+        }
     }
 
     #[test]

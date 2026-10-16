@@ -22,7 +22,10 @@
 //!
 //! [`LegacySessionAdapter`]: crate::LegacySessionAdapter
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
@@ -57,6 +60,10 @@ pub struct SessionState {
     /// so a session a shared backend hands to another replica keeps it.
     #[serde(default = "SystemTime::now")]
     pub created_at: SystemTime,
+    /// The client's network address at `initialize` (after trusted-proxy
+    /// resolution), when the transport has one. `None` over a pipe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_address: Option<String>,
 }
 
 impl SessionState {
@@ -75,6 +82,7 @@ impl SessionState {
             client_capabilities,
             log_level: None,
             created_at: SystemTime::now(),
+            peer_address: None,
         }
     }
 
@@ -97,6 +105,26 @@ impl SessionState {
     pub fn with_log_level(mut self, level: Option<LogLevel>) -> Self {
         self.log_level = level;
         self
+    }
+
+    /// Record the client's network address.
+    #[must_use]
+    pub fn with_peer_address(mut self, address: Option<String>) -> Self {
+        self.peer_address = address;
+        self
+    }
+
+    /// Who this session counts against for a per-owner quota: its
+    /// [`owner`](Self::owner) principal, else its client address (keyed by
+    /// [`turbomcp_service::client_key`]: an IPv6 client by its `/64`), else
+    /// nobody (a pipe carries one client).
+    #[must_use]
+    pub fn quota_key(&self) -> Option<String> {
+        if let Some(owner) = &self.owner {
+            return Some(format!("principal:{owner}"));
+        }
+        let address = self.peer_address.as_deref()?;
+        Some(format!("ip:{}", turbomcp_service::client_key(address)))
     }
 }
 
@@ -133,11 +161,18 @@ pub enum SessionError {
     /// The store is full and will not take another session right now.
     #[error("session store at capacity ({0} sessions)")]
     AtCapacity(usize),
+    /// This caller already holds its quota of sessions
+    /// ([`SessionStore::with_owner_quota`]); answered `429`.
+    #[error("session quota reached ({0} sessions per client)")]
+    QuotaExceeded(usize),
 }
 
 impl From<SessionError> for ProtocolError {
     fn from(e: SessionError) -> Self {
-        ProtocolError::Unavailable(e.to_string())
+        match e {
+            SessionError::QuotaExceeded(_) => ProtocolError::RateLimited(e.to_string()),
+            _ => ProtocolError::Unavailable(e.to_string()),
+        }
     }
 }
 
@@ -153,10 +188,18 @@ impl From<SessionError> for ProtocolError {
 /// Sessions that expire are reported by [`sweep_expired`](Self::sweep_expired),
 /// so the dispatcher can tear down their subscription routes, `GET` streams
 /// and tasks.
+///
+/// No one caller may hold more than its quota of the table
+/// ([`DEFAULT_OWNER_QUOTA`](Self::DEFAULT_OWNER_QUOTA), keyed by
+/// [`SessionState::quota_key`]): without it, one anonymous peer could take
+/// every slot and lock everyone else out until the sessions idled away.
 pub struct SessionStore {
     cache: moka::sync::Cache<String, Arc<SessionState>>,
     capacity: usize,
     idle_timeout: Option<Duration>,
+    owner_quota: Option<usize>,
+    /// Live sessions per [`SessionState::quota_key`].
+    owners: Arc<Mutex<HashMap<String, usize>>>,
     expired: Arc<Mutex<Vec<ExpiredSession>>>,
 }
 
@@ -167,6 +210,7 @@ impl core::fmt::Debug for SessionStore {
         f.debug_struct("SessionStore")
             .field("capacity", &self.capacity)
             .field("idle_timeout", &self.idle_timeout)
+            .field("owner_quota", &self.owner_quota)
             .field("live", &self.cache.entry_count())
             .finish()
     }
@@ -180,32 +224,58 @@ impl SessionStore {
     /// re-`initialize`s.
     pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
+    /// Default most sessions one caller (principal, else client address)
+    /// may hold: a sixteenth of the default table.
+    pub const DEFAULT_OWNER_QUOTA: usize = Self::DEFAULT_CAPACITY / 16;
+
     /// A store bounded to `capacity` sessions, with the
-    /// [default idle timeout](Self::DEFAULT_IDLE_TIMEOUT).
+    /// [default idle timeout](Self::DEFAULT_IDLE_TIMEOUT) and
+    /// [owner quota](Self::DEFAULT_OWNER_QUOTA).
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
-        Self::build(capacity.max(1), Some(Self::DEFAULT_IDLE_TIMEOUT))
+        Self::build(
+            capacity.max(1),
+            Some(Self::DEFAULT_IDLE_TIMEOUT),
+            Some(Self::DEFAULT_OWNER_QUOTA),
+        )
     }
 
     /// Set the idle timeout: a session not used within `timeout` expires.
     /// `None` keeps sessions until they are deleted or the server restarts.
     #[must_use]
     pub fn with_idle_timeout(self, timeout: Option<Duration>) -> Self {
-        Self::build(self.capacity, timeout)
+        Self::build(self.capacity, timeout, self.owner_quota)
     }
 
-    fn build(capacity: usize, idle_timeout: Option<Duration>) -> Self {
+    /// Set the most sessions one caller may hold, keyed by
+    /// [`SessionState::quota_key`]: the authenticated principal, else the
+    /// client address. Raise it for a deployment where many clients share
+    /// one address (a NAT, one service account); `None` lifts it.
+    #[must_use]
+    pub fn with_owner_quota(self, quota: Option<usize>) -> Self {
+        Self::build(self.capacity, self.idle_timeout, quota.map(|q| q.max(1)))
+    }
+
+    fn build(capacity: usize, idle_timeout: Option<Duration>, owner_quota: Option<usize>) -> Self {
         let expired: Arc<Mutex<Vec<ExpiredSession>>> = Arc::default();
         let reported = Arc::clone(&expired);
+        let owners: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
+        let counted = Arc::clone(&owners);
         let mut builder = moka::sync::Cache::builder()
             // A backstop: inserts are refused at capacity first, so this
             // only trims what concurrent `initialize`s squeeze past the check.
             .max_capacity(capacity as u64)
-            .eviction_listener(move |id: Arc<String>, state, cause| {
+            .eviction_listener(move |id: Arc<String>, state: Arc<SessionState>, cause| {
+                // A replaced session is the same session (a log level set);
+                // anything else leaving the table frees its owner's slot.
+                if cause != RemovalCause::Replaced
+                    && let Some(key) = state.quota_key()
+                {
+                    release(&mut counted.lock(), &key);
+                }
                 if matches!(cause, RemovalCause::Expired | RemovalCause::Size) {
                     reported
                         .lock()
-                        .expect("expired-session list poisoned")
                         .push(ExpiredSession::new(id.as_ref().clone(), Some(state)));
                 }
             });
@@ -216,6 +286,8 @@ impl SessionStore {
             cache: builder.build(),
             capacity,
             idle_timeout,
+            owner_quota,
+            owners,
             expired,
         }
     }
@@ -223,7 +295,9 @@ impl SessionStore {
     /// Store (or replace) `state` under `id`.
     ///
     /// # Errors
-    /// [`SessionError::AtCapacity`] when the table is full and `id` is new.
+    /// [`SessionError::AtCapacity`] when the table is full and `id` is new;
+    /// [`SessionError::QuotaExceeded`] when `state`'s owner already holds its
+    /// quota.
     pub fn insert(&self, id: impl Into<String>, state: SessionState) -> Result<(), SessionError> {
         let id = id.into();
         if !self.cache.contains_key(&id) {
@@ -233,6 +307,16 @@ impl SessionStore {
             self.cache.run_pending_tasks();
             if self.cache.entry_count() >= self.capacity as u64 {
                 return Err(SessionError::AtCapacity(self.capacity));
+            }
+            if let Some(key) = state.quota_key() {
+                let mut owners = self.owners.lock();
+                // A quota is at least 1, so a refused owner already holds
+                // sessions and the entry is never left at zero.
+                let held = owners.entry(key).or_default();
+                if let Some(quota) = self.owner_quota.filter(|quota| *held >= *quota) {
+                    return Err(SessionError::QuotaExceeded(quota));
+                }
+                *held += 1;
             }
         }
         self.cache.insert(id, Arc::new(state));
@@ -254,7 +338,7 @@ impl SessionStore {
     #[must_use]
     pub fn sweep_expired(&self) -> Vec<ExpiredSession> {
         self.cache.run_pending_tasks();
-        std::mem::take(&mut *self.expired.lock().expect("expired-session list poisoned"))
+        std::mem::take(&mut *self.expired.lock())
     }
 
     /// Whether `id` is a live session (does not refresh it).
@@ -291,6 +375,16 @@ impl SessionStore {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+/// Give back one of `key`'s sessions.
+fn release(owners: &mut HashMap<String, usize>, key: &str) {
+    if let Some(held) = owners.get_mut(key) {
+        *held = held.saturating_sub(1);
+        if *held == 0 {
+            owners.remove(key);
+        }
     }
 }
 
@@ -340,6 +434,13 @@ pub trait SessionBackend: Send + Sync {
     /// Reclaim expired sessions (the dispatcher tears down each one's routes
     /// and reports how long it lived, when the state comes back with it).
     async fn sweep_expired(&self) -> Result<Vec<ExpiredSession>, SessionError>;
+
+    /// The most sessions this backend holds, when it has a bound. The
+    /// dispatcher keeps at most this many notification routes (`None`:
+    /// [`SessionStore::DEFAULT_CAPACITY`]), and never evicts one to make room.
+    fn capacity(&self) -> Option<usize> {
+        None
+    }
 }
 
 #[async_trait]
@@ -362,6 +463,10 @@ impl SessionBackend for SessionStore {
 
     async fn sweep_expired(&self) -> Result<Vec<ExpiredSession>, SessionError> {
         Ok(SessionStore::sweep_expired(self))
+    }
+
+    fn capacity(&self) -> Option<usize> {
+        Some(self.capacity)
     }
 }
 
@@ -403,6 +508,78 @@ mod tests {
         // And a deletion makes room.
         assert!(store.remove("b").is_some());
         store.insert("c", state()).unwrap();
+    }
+
+    fn from(address: &str) -> SessionState {
+        state().with_peer_address(Some(address.into()))
+    }
+
+    /// One caller can't take the table: a flood of `initialize`s from one
+    /// address used to fill it and lock everyone else out for the idle hour.
+    #[test]
+    fn one_caller_holds_at_most_its_quota() {
+        let store = SessionStore::with_capacity(16).with_owner_quota(Some(2));
+        store.insert("a", from("203.0.113.7")).unwrap();
+        store.insert("b", from("203.0.113.7")).unwrap();
+        assert_eq!(
+            store.insert("c", from("203.0.113.7")),
+            Err(SessionError::QuotaExceeded(2))
+        );
+        // Someone else is unaffected, and so is a pipe (no address).
+        store.insert("d", from("198.51.100.1")).unwrap();
+        store.insert("e", state()).unwrap();
+        store.insert("f", state()).unwrap();
+        store.insert("g", state()).unwrap();
+        // Replacing one of its own sessions takes no new slot.
+        store.insert("a", from("203.0.113.7")).unwrap();
+        // Ending one gives the slot back.
+        assert!(store.remove("b").is_some());
+        store.insert("c", from("203.0.113.7")).unwrap();
+        // The quota survives a later builder step.
+        let store = store.with_idle_timeout(None);
+        store.insert("a", from("203.0.113.7")).unwrap();
+        store.insert("b", from("203.0.113.7")).unwrap();
+        assert!(store.insert("c", from("203.0.113.7")).is_err());
+    }
+
+    #[test]
+    fn a_principal_is_one_owner_wherever_it_connects_from() {
+        let store = SessionStore::with_capacity(16).with_owner_quota(Some(1));
+        let alice = |address: &str| from(address).with_owner(Some("iss|alice".into()));
+        store.insert("a", alice("203.0.113.7")).unwrap();
+        assert!(store.insert("b", alice("198.51.100.1")).is_err());
+        // An anonymous caller on Alice's address is someone else.
+        store.insert("c", from("203.0.113.7")).unwrap();
+    }
+
+    #[test]
+    fn an_ipv6_client_counts_by_its_64() {
+        assert_eq!(
+            from("2001:db8:1:2:aaaa::1").quota_key(),
+            from("2001:db8:1:2:bbbb::9").quota_key()
+        );
+        assert_ne!(
+            from("2001:db8:1:2::1").quota_key(),
+            from("2001:db8:1:3::1").quota_key()
+        );
+        assert_eq!(
+            from("::ffff:203.0.113.7").quota_key(),
+            from("203.0.113.7").quota_key(),
+            "a v4-mapped address is the v4 client"
+        );
+        assert_eq!(state().quota_key(), None);
+    }
+
+    #[test]
+    fn a_quota_refusal_is_429_not_503() {
+        assert!(matches!(
+            ProtocolError::from(SessionError::QuotaExceeded(1)),
+            ProtocolError::RateLimited(_)
+        ));
+        assert!(matches!(
+            ProtocolError::from(SessionError::AtCapacity(1)),
+            ProtocolError::Unavailable(_)
+        ));
     }
 
     #[test]

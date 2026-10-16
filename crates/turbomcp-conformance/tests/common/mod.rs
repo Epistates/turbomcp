@@ -222,7 +222,6 @@ impl Everything {
 
     /// A tool that asks the client to sample an LLM completion.
     #[tool(description = "Request LLM sampling via the client")]
-    #[allow(deprecated)] // create_message is the sampling API; deprecation is upstream-only.
     async fn test_sampling(
         &self,
         ctx: &CallToolContext,
@@ -413,7 +412,6 @@ impl Everything {
 
     /// A2: one sampling input request, keyed `capital_question`.
     #[tool(description = "InputRequiredResult with a single sampling request")]
-    #[allow(deprecated)] // create_message is the sampling API; deprecation is upstream-only.
     async fn test_input_required_result_sampling(
         &self,
         ctx: &CallToolContext,
@@ -430,7 +428,6 @@ impl Everything {
 
     /// A3: one `roots/list` input request, keyed `client_roots`.
     #[tool(description = "InputRequiredResult with a single roots/list request")]
-    #[allow(deprecated)] // list_roots is the roots API; deprecation is upstream-only.
     async fn test_input_required_result_list_roots(
         &self,
         ctx: &CallToolContext,
@@ -476,7 +473,6 @@ impl Everything {
     /// A5: three input requests in one round trip — elicitation, sampling and
     /// `roots/list` — collected into a single `InputRequiredResult`.
     #[tool(description = "InputRequiredResult with multiple input requests")]
-    #[allow(deprecated)] // create_message is the sampling API; deprecation is upstream-only.
     async fn test_input_required_result_multiple_inputs(
         &self,
         ctx: &CallToolContext,
@@ -593,7 +589,6 @@ impl Everything {
     /// A8: asks only for sampling, so a client that declared just `sampling`
     /// still gets a well-formed `InputRequiredResult`.
     #[tool(description = "InputRequiredResult respecting declared capabilities")]
-    #[allow(deprecated)] // create_message is the sampling API; deprecation is upstream-only.
     async fn test_input_required_result_capabilities(
         &self,
         ctx: &CallToolContext,
@@ -609,7 +604,6 @@ impl Everything {
     /// not declare `sampling` is refused with
     /// `MissingRequiredClientCapabilityError` rather than being served.
     #[tool(description = "Requires the sampling client capability")]
-    #[allow(deprecated)] // create_message is the sampling API; deprecation is upstream-only.
     async fn test_missing_capability(&self, ctx: &CallToolContext) -> McpResult<String> {
         let answer = ctx
             .client

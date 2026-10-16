@@ -9,7 +9,9 @@
 //! give their request slot back the moment they become a stream.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use axum::response::Response;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -31,13 +33,13 @@ impl Admission {
 
     /// Give the request slot back.
     pub(super) fn release(&self) {
-        self.0.lock().expect("admission slot poisoned").take();
+        self.0.lock().take();
     }
 
     /// Take the request slot to hold elsewhere: a call that runs on a task of
     /// its own keeps it until the call ends, not until the response does.
     pub(super) fn take(&self) -> Option<OwnedSemaphorePermit> {
-        self.0.lock().expect("admission slot poisoned").take()
+        self.0.lock().take()
     }
 }
 
@@ -78,7 +80,7 @@ impl StreamBudget {
         let counted = if client == RateKey::Global {
             None
         } else {
-            let mut open = self.open.lock().expect("stream counts poisoned");
+            let mut open = self.open.lock();
             let count = open.entry(client.clone()).or_default();
             if *count >= self.per_client {
                 return Err(Box::new(too_many_streams()));
@@ -105,7 +107,7 @@ impl Drop for StreamSlot {
         let Some((open, client)) = self.counted.take() else {
             return;
         };
-        let mut open = open.lock().expect("stream counts poisoned");
+        let mut open = open.lock();
         if let Some(count) = open.get_mut(&client) {
             *count -= 1;
             if *count == 0 {
@@ -151,6 +153,6 @@ mod tests {
         let budget = StreamBudget::new(4, 1);
         let _a = budget.admit(RateKey::Global).unwrap();
         let _b = budget.admit(RateKey::Global).unwrap();
-        assert!(budget.open.lock().unwrap().is_empty());
+        assert!(budget.open.lock().is_empty());
     }
 }

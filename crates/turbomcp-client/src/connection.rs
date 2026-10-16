@@ -30,9 +30,9 @@
 //! `outbound.recv()` arm yields `None`, and the loop exits — closing the
 //! transport and failing any still-waiting requests with [`ClientError::Closed`].
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -112,11 +112,7 @@ impl Drop for Inner {
     fn drop(&mut self) {
         self.shutdown.cancel();
         if let Some(observer) = &self.observer {
-            let version = self
-                .negotiated
-                .lock()
-                .map(|v| v.clone())
-                .unwrap_or(ProtocolVersion::LATEST);
+            let version = self.negotiated.lock().clone();
             observer.closed(&crate::observe::ClosedSession {
                 duration: self.opened.elapsed(),
                 protocol_version: self.settled.load(Ordering::Acquire).then_some(&version),
@@ -144,10 +140,7 @@ impl core::fmt::Debug for Connection {
         f.debug_struct("Connection")
             .field("request_timeout", &self.inner.request_timeout)
             .field("closed", &self.inner.outbound.is_closed())
-            .field(
-                "in_flight",
-                &self.inner.pending.lock().map(|p| p.len()).unwrap_or(0),
-            )
+            .field("in_flight", &self.inner.pending.lock().len())
             .finish_non_exhaustive()
     }
 }
@@ -264,11 +257,7 @@ impl Connection {
     /// Record the revision the handshake settled on, so replies to
     /// server→client requests are shaped for it.
     pub(crate) fn set_negotiated_version(&self, version: ProtocolVersion) {
-        *self
-            .inner
-            .negotiated
-            .lock()
-            .expect("negotiated version mutex poisoned") = version;
+        *self.inner.negotiated.lock() = version;
         self.inner.settled.store(true, Ordering::Release);
     }
 
@@ -411,11 +400,7 @@ impl Connection {
                 .input
                 .register(RouteKey::Request(id.clone()), handlers)
         });
-        self.inner
-            .pending
-            .lock()
-            .expect("pending mutex poisoned")
-            .insert(id.clone(), reply_tx);
+        self.inner.pending.lock().insert(id.clone(), reply_tx);
 
         // The same deadline covers admission and the response. Register cleanup
         // before the first await, including a caller dropping an unsent request.
@@ -523,11 +508,7 @@ impl Connection {
     /// Drop a pending request that will never complete (timed out, or never
     /// reached the wire).
     fn forget(&self, id: &RequestId) {
-        self.inner
-            .pending
-            .lock()
-            .expect("pending mutex poisoned")
-            .remove(id);
+        self.inner.pending.lock().remove(id);
     }
 
     /// Tell the server to stop working on `id` (cancellation spec: receivers
@@ -744,11 +725,7 @@ async fn actor<T>(
     // this receiver open during transport.close allowed a late registration
     // to enqueue successfully after the only pending cleanup had already run.
     outbound.close();
-    state
-        .pending
-        .lock()
-        .expect("pending mutex poisoned")
-        .clear();
+    state.pending.lock().clear();
 
     // Shut the transport down deliberately rather than by drop. Each transport
     // owes the peer something on the way out that dropping a socket does not
@@ -955,11 +932,7 @@ fn route_inbound(
         // `2026-07-28` dropped `ping`; answering a server that sends it anyway
         // costs nothing and beats claiming the method does not exist.
         JsonRpcMessage::Request(req)
-            if dispatch.http
-                && *negotiated
-                    .lock()
-                    .expect("negotiated version mutex poisoned")
-                    == ProtocolVersion::V2026_07_28 =>
+            if dispatch.http && *negotiated.lock() == ProtocolVersion::V2026_07_28 =>
         {
             // Only a non-compliant server sends a request here, and there is
             // no way to answer it that the spec allows.
@@ -976,12 +949,7 @@ fn route_inbound(
         // server start model calls or prompt the user unasked. SEP-2260:
         // "Clients receiving server-to-client requests with no associated
         // outbound request SHOULD respond with a `-32602`."
-        JsonRpcMessage::Request(req)
-            if *negotiated
-                .lock()
-                .expect("negotiated version mutex poisoned")
-                == ProtocolVersion::V2026_07_28 =>
-        {
+        JsonRpcMessage::Request(req) if *negotiated.lock() == ProtocolVersion::V2026_07_28 => {
             tracing::debug!(method = %req.method, "unassociated server request on 2026-07-28; refused");
             Some(JsonRpcMessage::Response(JsonRpcResponse::error(
                 req.id,
@@ -1009,7 +977,7 @@ fn route_inbound(
         JsonRpcMessage::Request(req) => {
             // SEP-2260: a request that belongs to a call made with its own
             // handlers goes to them (see `crate::input`).
-            let in_flight = pending.lock().expect("pending mutex poisoned").len();
+            let in_flight = pending.lock().len();
             // The task a `2025-11-25` task's request names says whose it is
             // where no stream does (stdio, WebSocket).
             let task = req
@@ -1057,10 +1025,7 @@ fn route_inbound(
                     // Claim the id before the dispatch task starts: a server that
                     // answers its own URL-mode elicitation immediately would
                     // otherwise race the registration and lose the completion.
-                    let version = negotiated
-                        .lock()
-                        .expect("negotiated version mutex poisoned")
-                        .clone();
+                    let version = negotiated.lock().clone();
                     handler.expect_elicitation(&version, &req.method, req.params.as_ref());
                     let handlers = handler.clone();
                     let weak_out = weak_out.clone();
@@ -1157,7 +1122,7 @@ fn acknowledged_subscription_id(params: Option<&Value>) -> Option<RequestId> {
 
 /// Complete a waiting request with a successful value, if one is waiting.
 fn complete_pending_ok(id: &RequestId, value: Value, pending: &Arc<Pending>) {
-    let waiter = pending.lock().expect("pending mutex poisoned").remove(id);
+    let waiter = pending.lock().remove(id);
     if let Some(waiter) = waiter {
         let _ = waiter.send(Ok(value));
     }
@@ -1178,7 +1143,7 @@ fn invalid_from_server(bad: &InvalidFrame, pending: &Arc<Pending>) -> Option<Jso
     tracing::warn!(error = %bad, "invalid frame from server; skipping it");
     let id = bad.id.as_ref()?;
     if bad.is_response {
-        let waiter = pending.lock().expect("pending mutex poisoned").remove(id);
+        let waiter = pending.lock().remove(id);
         if let Some(waiter) = waiter {
             let _ = waiter.send(Err(ClientError::Decode(format!(
                 "the server's response was not a valid JSON-RPC message: {bad}"
@@ -1202,7 +1167,7 @@ fn complete_pending(
         tracing::warn!(error = ?resp.error, "server answered an unreadable frame");
         return;
     };
-    let waiter = pending.lock().expect("pending mutex poisoned").remove(id);
+    let waiter = pending.lock().remove(id);
     let Some(waiter) = waiter else {
         // A listen request completes at its acknowledgement; a response to it
         // afterwards is the server closing the subscription gracefully.

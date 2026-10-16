@@ -28,7 +28,9 @@
 //! store as `dyn`.
 
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -273,10 +275,7 @@ impl ClientHandlers {
             return;
         }
         if let Some(id) = params.get("elicitationId").and_then(Value::as_str) {
-            let mut outstanding = self
-                .outstanding_elicitations
-                .lock()
-                .expect("elicitation registry poisoned");
+            let mut outstanding = self.outstanding_elicitations.lock();
             // A completion is a MAY, so some ids are never claimed; a bound
             // keeps a long-lived client from holding them all.
             if outstanding.len() >= MAX_OUTSTANDING_ELICITATIONS
@@ -293,10 +292,7 @@ impl ClientHandlers {
     /// `false` covers both halves of the spec's MUST: an id the server never
     /// sent us, and one a previous notification already completed.
     pub(crate) fn claim_elicitation(&self, id: &str) -> bool {
-        self.outstanding_elicitations
-            .lock()
-            .expect("elicitation registry poisoned")
-            .remove(id)
+        self.outstanding_elicitations.lock().remove(id)
     }
 
     /// The capability declaration these handlers imply.

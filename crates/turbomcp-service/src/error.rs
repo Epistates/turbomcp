@@ -37,6 +37,12 @@ pub enum ProtocolError {
     /// store that is already struggling.
     #[error("service unavailable: {0}")]
     Unavailable(String),
+    /// This caller holds its share of something bounded (its quota of
+    /// sessions, say) and must release some or wait. The HTTP transport
+    /// answers `429` + `Retry-After`; unlike [`Unavailable`](Self::Unavailable)
+    /// the server is fine and other callers are unaffected.
+    #[error("rate limited: {0}")]
+    RateLimited(String),
     /// An unexpected internal failure (`-32603`).
     #[error("internal error: {0}")]
     Internal(String),
@@ -50,9 +56,10 @@ impl ProtocolError {
             Self::Parse(_) => turbomcp_core::codes::PARSE_ERROR,
             Self::UnknownSession(_) => turbomcp_core::codes::NO_ACTIVE_SESSION,
             // `-32000` is the implementation-defined floor.
-            Self::Transport(_) | Self::ServerShuttingDown | Self::Unavailable(_) => {
-                turbomcp_core::codes::SERVER_ERROR
-            }
+            Self::Transport(_)
+            | Self::ServerShuttingDown
+            | Self::Unavailable(_)
+            | Self::RateLimited(_) => turbomcp_core::codes::SERVER_ERROR,
             Self::Internal(_) => turbomcp_core::codes::INTERNAL_ERROR,
         }
     }

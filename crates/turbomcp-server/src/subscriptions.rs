@@ -17,14 +17,17 @@
 //! HTTP `GET` SSE stream (from the transport's [`SessionStreams`]) and falls
 //! back to the byte-pipe connection the session was last seen on (stdio).
 //! Routes without a reachable stream are kept (an HTTP client may open its
-//! `GET` stream later), bounded by [`MAX_LEGACY_ROUTES`].
+//! `GET` stream later). A route exists only for a live session and goes when
+//! the session ends, so the session store's capacity bounds the table.
 //!
 //! `*_list_changed` publishes are coalesced: bursts inside
 //! [`COALESCE_WINDOW_MS`] collapse into one notification per kind.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -82,10 +85,6 @@ impl ListChangedKind {
     }
 }
 
-/// Upper bound on tracked legacy session routes. At capacity a route with no
-/// reachable stream goes first, then the least recently seen one.
-pub(crate) const MAX_LEGACY_ROUTES: usize = 4096;
-
 /// Upper bound on the resource URIs one session (legacy `resources/subscribe`)
 /// or one `subscriptions/listen` filter may watch. Every publish scans them,
 /// so an unbounded set was memory and CPU a single peer could grow at will.
@@ -140,6 +139,11 @@ pub(crate) struct SubscriptionRegistry {
     legacy: Mutex<HashMap<String, LegacyRoute>>,
     /// One pending-flush flag per [`ListChangedKind`] slot.
     pending: [AtomicBool; 3],
+    /// The most legacy routes kept: the session backend's capacity (`0` for
+    /// [`SessionStore::DEFAULT_CAPACITY`]).
+    ///
+    /// [`SessionStore::DEFAULT_CAPACITY`]: crate::SessionStore::DEFAULT_CAPACITY
+    route_capacity: AtomicUsize,
 }
 
 impl SubscriptionRegistry {
@@ -208,17 +212,38 @@ impl SubscriptionRegistry {
     /// from what the request's transport attached. Called on every legacy
     /// dispatch so the stdio fallback stays current.
     pub(crate) fn legacy_touch(&self, session: &str, ext: &Extensions) {
-        Self::touch_route(&mut self.lock_legacy(), session, ext);
+        self.touch_route(&mut self.lock_legacy(), session, ext);
+    }
+
+    /// Bound the legacy route table at the session backend's capacity.
+    pub(crate) fn set_route_capacity(&self, capacity: usize) {
+        self.route_capacity.store(capacity, Ordering::Relaxed);
+    }
+
+    fn route_capacity(&self) -> usize {
+        match self.route_capacity.load(Ordering::Relaxed) {
+            0 => crate::SessionStore::DEFAULT_CAPACITY,
+            n => n,
+        }
     }
 
     /// [`legacy_touch`](Self::legacy_touch) under a lock the caller holds, so
     /// whatever it does to the route next can't race the route's removal (a
     /// `DELETE`, an idle sweep, another session's eviction).
+    ///
+    /// `None` when the table is full and `session` has no route yet. A route
+    /// exists only for a live session and is dropped when it ends, so the
+    /// bound (the session store's capacity) is reached only by a backend that
+    /// expires sessions without reporting them. Then the new session goes
+    /// without notifications rather than pushing out a live one's: evicting
+    /// let a flood of `initialize`s silently cut every real session's
+    /// `list_changed` and `resources/updated`.
     fn touch_route<'a>(
+        &self,
         routes: &'a mut HashMap<String, LegacyRoute>,
         session: &str,
         ext: &Extensions,
-    ) -> &'a mut LegacyRoute {
+    ) -> Option<&'a mut LegacyRoute> {
         let peer = ext.get::<Peer>();
         if !routes.contains_key(session) {
             // A byte pipe carries one session at a time. A new one on the same
@@ -229,19 +254,13 @@ impl SubscriptionRegistry {
                 routes
                     .retain(|_, route| route.connection.as_ref().map(Peer::id) != Some(peer.id()));
             }
-            if routes.len() >= MAX_LEGACY_ROUTES {
-                // A route nothing can be delivered to is dead weight; after
-                // that, the one idle longest. Evicting at random threw away
-                // live sessions' subscriptions.
-                let victim = routes
-                    .iter()
-                    .filter(|(id, route)| route.peer(id).is_none())
-                    .min_by_key(|(_, route)| route.last_seen)
-                    .or_else(|| routes.iter().min_by_key(|(_, route)| route.last_seen))
-                    .map(|(id, _)| id.clone());
-                if let Some(victim) = victim {
-                    routes.remove(&victim);
-                }
+            if routes.len() >= self.route_capacity() {
+                tracing::warn!(
+                    routes = routes.len(),
+                    "legacy notification routes at capacity; a new session gets none \
+                     (does the session backend report the sessions it expires?)"
+                );
+                return None;
             }
         }
         let route = routes
@@ -254,14 +273,15 @@ impl SubscriptionRegistry {
         if let Some(streams) = ext.get::<SessionStreams>() {
             route.streams = Some(streams.clone());
         }
-        route
+        Some(route)
     }
 
     /// Legacy `resources/subscribe`: deliver `notifications/resources/updated`
     /// for `uri` to this session.
     ///
     /// # Errors
-    /// The session already watches [`MAX_URIS_PER_SESSION`] URIs.
+    /// The session already watches [`MAX_URIS_PER_SESSION`] URIs, or the
+    /// route table is full (see [`touch_route`](Self::touch_route)).
     pub(crate) fn legacy_subscribe(
         &self,
         session: &str,
@@ -269,7 +289,9 @@ impl SubscriptionRegistry {
         uri: String,
     ) -> Result<(), McpError> {
         let mut routes = self.lock_legacy();
-        let route = Self::touch_route(&mut routes, session, ext);
+        let route = self.touch_route(&mut routes, session, ext).ok_or_else(|| {
+            McpError::internal("no notification route is available for this session")
+        })?;
         if route.uris.len() >= MAX_URIS_PER_SESSION && !route.uris.contains(&uri) {
             return Err(McpError::invalid_params(format!(
                 "this session already watches {MAX_URIS_PER_SESSION} resources; \
@@ -424,12 +446,12 @@ impl SubscriptionRegistry {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, RequestId), Subscription>> {
-        self.inner.lock().expect("subscription registry poisoned")
+    fn lock(&self) -> parking_lot::MutexGuard<'_, HashMap<(String, RequestId), Subscription>> {
+        self.inner.lock()
     }
 
-    fn lock_legacy(&self) -> std::sync::MutexGuard<'_, HashMap<String, LegacyRoute>> {
-        self.legacy.lock().expect("legacy route registry poisoned")
+    fn lock_legacy(&self) -> parking_lot::MutexGuard<'_, HashMap<String, LegacyRoute>> {
+        self.legacy.lock()
     }
 }
 
@@ -506,6 +528,16 @@ impl Route {
     pub(crate) fn until(mut self, lifetime: CancellationToken) -> Self {
         self.lifetime = Some(lifetime);
         self
+    }
+
+    /// Who a request sent along this route went to: the session, else the
+    /// connection. What [`PendingRequests`](crate::mrtr::PendingRequests)
+    /// checks an answer against.
+    pub(crate) fn scope(&self) -> Option<String> {
+        self.session
+            .as_ref()
+            .map(|(_, session)| session.as_str().to_owned())
+            .or_else(|| self.peer.as_ref().map(|p| p.id().as_str().to_owned()))
     }
 
     /// The live stream to write to right now, if any.
@@ -893,6 +925,29 @@ mod tests {
             );
         }
         assert_eq!(reg.lock().len(), 2, "a slow reader is not unsubscribed");
+    }
+
+    /// A full route table turns a new session away instead of evicting a
+    /// live one's route, which silently cut that session's notifications.
+    #[test]
+    fn a_full_route_table_refuses_rather_than_evicts() {
+        let reg = SubscriptionRegistry::default();
+        reg.set_route_capacity(2);
+        reg.legacy_subscribe("a", &Extensions::new(), "mem://a".into())
+            .unwrap();
+        reg.legacy_touch("b", &Extensions::new());
+        reg.legacy_touch("c", &Extensions::new());
+        assert!(
+            reg.legacy_subscribe("d", &Extensions::new(), "mem://d".into())
+                .is_err()
+        );
+        let routes = reg.lock_legacy();
+        assert_eq!(routes.len(), 2);
+        assert!(
+            routes["a"].uris.contains("mem://a"),
+            "a's subscription survived"
+        );
+        assert!(!routes.contains_key("c"));
     }
 
     #[tokio::test]

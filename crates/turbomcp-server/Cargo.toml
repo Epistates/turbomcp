@@ -13,6 +13,7 @@ keywords = ["mcp", "server", "llm", "ai", "tools"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
+parking_lot = { workspace = true }
 jsonschema = { workspace = true }
 moka = { workspace = true, features = ["sync"] }
 turbomcp-core = { workspace = true, features = ["std"] }

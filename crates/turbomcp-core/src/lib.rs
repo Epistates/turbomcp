@@ -41,7 +41,7 @@ pub mod scopes;
 
 pub use cancellation::CancellationToken;
 pub use context::{Extensions, Implementation, LogLevel, RequestContext, TraceContext};
-pub use envelope::{ConnectionId, McpRequest, ObservedHeaders, SessionId};
+pub use envelope::{ConnectionClosed, ConnectionId, McpRequest, ObservedHeaders, SessionId};
 pub use error::{McpError, McpResult, codes};
 pub use identity::{Claims, Identity, IdentityClaims};
 pub use jsonrpc::{

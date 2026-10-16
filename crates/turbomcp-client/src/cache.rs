@@ -13,8 +13,8 @@
 //! principal — so both `"private"` and `"public"` responses are safe to hold.
 //! `cacheScope` distinguishes *shared intermediaries*, which this is not.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -48,7 +48,7 @@ impl ResponseCache {
     /// entries are dropped on the way out.
     pub(crate) fn get(&self, method: &str, discriminator: Option<&str>) -> Option<Value> {
         let key = (method.to_owned(), discriminator.map(str::to_owned));
-        let mut entries = self.entries.lock().expect("cache mutex poisoned");
+        let mut entries = self.entries.lock();
         match entries.get(&key) {
             Some(entry) if entry.expires_at > Instant::now() => Some(entry.value.clone()),
             Some(_) => {
@@ -70,7 +70,7 @@ impl ResponseCache {
         else {
             return;
         };
-        let mut entries = self.entries.lock().expect("cache mutex poisoned");
+        let mut entries = self.entries.lock();
         if entries.len() >= MAX_ENTRIES {
             entries.retain(|_, e| e.expires_at > Instant::now());
         }
@@ -96,7 +96,7 @@ impl ResponseCache {
     /// drops templates and reads — the resource set changed under them), and
     /// `resources/updated` drops the named URI's read entry.
     pub(crate) fn on_notification(&self, method: &str, params: Option<&Value>) {
-        let mut entries = self.entries.lock().expect("cache mutex poisoned");
+        let mut entries = self.entries.lock();
         match method {
             notification::TOOLS_LIST_CHANGED => {
                 entries.retain(|(m, _), _| m != request::TOOLS_LIST);
@@ -122,7 +122,7 @@ impl ResponseCache {
 
     /// Drop every entry.
     pub(crate) fn clear(&self) {
-        self.entries.lock().expect("cache mutex poisoned").clear();
+        self.entries.lock().clear();
     }
 }
 

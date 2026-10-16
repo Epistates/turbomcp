@@ -2,7 +2,7 @@
 //! OpenTelemetry `network.*` attributes, and the address of the other end
 //! (`client.*` on a server, `server.*` on a client).
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 /// The connection a message rides, as its transport sees it.
 ///
@@ -80,5 +80,46 @@ impl NetworkFacts {
     #[must_use]
     pub fn with_socket_peer(self, addr: SocketAddr) -> Self {
         self.with_peer(addr.ip().to_string(), Some(addr.port()))
+    }
+
+    /// What a per-client limit counts this peer against: see [`client_key`].
+    #[must_use]
+    pub fn client_key(&self) -> Option<String> {
+        self.peer_address.as_deref().map(client_key)
+    }
+}
+
+/// What a per-client limit counts a client `address` against: an IPv4
+/// address as itself, an IPv4-mapped IPv6 one as the IPv4 client it is, and
+/// any other IPv6 address by its `/64`, the block one subscriber is
+/// typically handed (keying on the full address would give each client 2^64
+/// identities). Anything that isn't an IP address is its own key.
+#[must_use]
+pub fn client_key(address: &str) -> String {
+    match address.parse::<IpAddr>() {
+        Ok(IpAddr::V6(v6)) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let network = u128::from(v6) & !u128::from(u64::MAX);
+                format!("{}/64", Ipv6Addr::from(network))
+            }
+        },
+        Ok(ip) => ip.to_string(),
+        Err(_) => address.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::client_key;
+
+    #[test]
+    fn an_ipv6_client_is_keyed_by_its_64() {
+        assert_eq!(client_key("2001:db8:1:2:aaaa::1"), "2001:db8:1:2::/64");
+        assert_eq!(client_key("2001:db8:1:2:bbbb::9"), "2001:db8:1:2::/64");
+        assert_ne!(client_key("2001:db8:1:3::1"), client_key("2001:db8:1:2::1"));
+        assert_eq!(client_key("::ffff:203.0.113.7"), "203.0.113.7");
+        assert_eq!(client_key("203.0.113.7"), "203.0.113.7");
+        assert_eq!(client_key("not-an-ip"), "not-an-ip");
     }
 }

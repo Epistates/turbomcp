@@ -13,6 +13,7 @@ keywords = ["mcp", "tasks", "extension", "llm"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
+parking_lot = { workspace = true }
 turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-server = { workspace = true }
 turbomcp-service = { workspace = true }

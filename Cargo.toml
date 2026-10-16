@@ -142,6 +142,9 @@ bytes = "1.11.1"
 
 # Caching
 moka = { version = "0.12.15", default-features = false }
+# Locks that don't poison: one panic under a registry lock no longer
+# turns into a permanent outage of that registry (already linked via tokio).
+parking_lot = "0.12"
 
 # Rate limiting (lock-free GCRA, replaces hand-rolled token bucket / sliding window)
 # Without the defaults' `jitter` (rand) and `dashmap` (a second hashbrown):

@@ -20,12 +20,26 @@ use turbomcp_server::{
 #[derive(Clone)]
 struct Gated {
     gate: Arc<Semaphore>,
+    /// How many calls were dropped (stopped) before they finished.
+    stopped: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Gated {
     fn new() -> Self {
         Self {
             gate: Arc::new(Semaphore::new(0)),
+            stopped: Arc::default(),
+        }
+    }
+}
+
+/// Counts a call that is dropped before it finishes.
+struct StopGuard(Arc<std::sync::atomic::AtomicUsize>, bool);
+
+impl Drop for StopGuard {
+    fn drop(&mut self) {
+        if !self.1 {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
 }
@@ -63,7 +77,9 @@ impl WithTools for Gated {
                 .set_poll_interval(std::time::Duration::from_millis(250))
                 .await;
         }
+        let mut guard = StopGuard(Arc::clone(&self.stopped), false);
         let _permit = self.gate.acquire().await.expect("gate open");
+        guard.1 = true;
         Ok(neutral::CallToolResult::text("gate passed"))
     }
 }
@@ -446,6 +462,7 @@ async fn declared() -> DeclaredSvc {
         ServerBuilder::new(Declared)
             .with_tools()
             .with_tasks()
+            .undeclared_task_support(turbomcp_protocol::neutral::TaskSupport::Forbidden)
             .build(),
     );
     let init = svc
@@ -478,8 +495,8 @@ async fn answer(svc: &mut DeclaredSvc, req: JsonRpcRequest) -> turbomcp_core::Js
 }
 
 /// tasks.mdx §Tool-Level Negotiation: a `required` tool called without a task
-/// MUST get `-32601`, and a `forbidden` one called as a task SHOULD. With one
-/// tool declaring, an undeclared tool is `forbidden` — as `tools/list` says.
+/// MUST get `-32601`, and a `forbidden` one called as a task SHOULD. With
+/// tasks opt-in, an undeclared tool is `forbidden`, as `tools/list` says.
 #[tokio::test]
 async fn task_support_is_enforced_as_advertised() {
     let mut svc = declared().await;
@@ -622,4 +639,157 @@ async fn a_task_reports_progress_into_its_status() {
     )
     .await;
     assert_eq!(result["content"][0]["text"], "gate passed");
+}
+
+/// A task still running at its TTL is stopped then, with no one polling the
+/// store: its work is dropped, and the record reads `failed`.
+#[tokio::test]
+async fn a_task_is_stopped_at_its_ttl_without_being_polled() {
+    let server = Gated::new();
+    let mut svc = tasked(&server);
+    initialize(&mut svc).await;
+    let created = ok(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "gated", "task": { "ttl": 100 } })),
+        ),
+    )
+    .await;
+    let task_id = created["task"]["taskId"].as_str().unwrap().to_owned();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while server.stopped.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the work was stopped at its TTL");
+    let got = ok(
+        &mut svc,
+        JsonRpcRequest::new(2, "tasks/get", Some(json!({ "taskId": task_id }))),
+    )
+    .await;
+    assert_eq!(got["status"], "failed", "{got}");
+}
+
+/// Send `req` on `svc` as the authenticated `alice`.
+async fn as_alice(svc: &mut Svc, req: JsonRpcRequest) -> Value {
+    let identity = turbomcp_core::Identity::Bearer {
+        sub: "alice".into(),
+        claims: serde_json::Map::new(),
+    };
+    let request = turbomcp_core::McpRequest::new(req).with(identity);
+    match svc.ready().await.unwrap().call(request).await.unwrap() {
+        Some(JsonRpcMessage::Response(r)) => {
+            assert!(r.error.is_none(), "unexpected error: {:?}", r.error);
+            r.result.unwrap()
+        }
+        other => panic!("expected a response, got {other:?}"),
+    }
+}
+
+/// Tasks belong to the authorization context, not the connection: what an
+/// authenticated caller created in one session is there in the next, as the
+/// spec's "disconnect, come back for the result" pattern needs.
+#[tokio::test]
+async fn an_authenticated_callers_tasks_outlive_its_session() {
+    let server = Gated::new();
+    let dispatcher = ServerBuilder::new(server.clone())
+        .with_tools()
+        .with_tasks()
+        .build();
+    let mut first = LegacySessionAdapter::new(dispatcher.clone());
+    let mut second = LegacySessionAdapter::new(dispatcher);
+    let init = || {
+        JsonRpcRequest::new(
+            0,
+            "initialize",
+            Some(json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": { "name": "t", "version": "1" },
+            })),
+        )
+    };
+    as_alice(&mut first, init()).await;
+    let created = as_alice(
+        &mut first,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "gated", "task": {} })),
+        ),
+    )
+    .await;
+    let task_id = created["task"]["taskId"].as_str().unwrap().to_owned();
+
+    as_alice(&mut second, init()).await;
+    let got = as_alice(
+        &mut second,
+        JsonRpcRequest::new(2, "tasks/get", Some(json!({ "taskId": task_id }))),
+    )
+    .await;
+    assert_eq!(got["taskId"], task_id);
+    server.gate.add_permits(1);
+}
+
+/// A task's requestor hears its status change ("receivers MAY send
+/// `notifications/tasks/status`"), without the related-task `_meta` that
+/// notification SHOULD NOT carry.
+#[tokio::test]
+async fn a_finished_task_announces_its_status() {
+    let server = Gated::new();
+    let mut svc = tasked(&server);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let peer = turbomcp_service::Peer::new("status-conn", &tx);
+    let on = |req: JsonRpcRequest| {
+        turbomcp_core::McpRequest::new(req)
+            .with(peer.id().clone())
+            .with(peer.clone())
+    };
+    let init = JsonRpcRequest::new(
+        0,
+        "initialize",
+        Some(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "t", "version": "1" },
+        })),
+    );
+    svc.ready().await.unwrap().call(on(init)).await.unwrap();
+    let created = svc
+        .ready()
+        .await
+        .unwrap()
+        .call(on(JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "gated", "task": {} })),
+        )))
+        .await
+        .unwrap();
+    let Some(JsonRpcMessage::Response(created)) = created else {
+        panic!("expected CreateTaskResult")
+    };
+    let task_id = created.result.unwrap()["task"]["taskId"].clone();
+
+    server.gate.add_permits(1);
+    let status = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match rx.recv().await.expect("stream open") {
+                JsonRpcMessage::Notification(n) if n.method == "notifications/tasks/status" => {
+                    let params = n.params.unwrap();
+                    if params["status"] == "completed" {
+                        break params;
+                    }
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("completed status announced");
+    assert_eq!(status["taskId"], task_id);
+    assert!(status.get("_meta").is_none(), "{status}");
 }

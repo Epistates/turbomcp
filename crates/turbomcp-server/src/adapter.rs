@@ -28,7 +28,9 @@
 //! live sessions included.
 
 use std::future::poll_fn;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use std::task::{Context, Poll};
 
 use futures::future::BoxFuture;
@@ -60,10 +62,7 @@ pub struct LegacySessionAdapter<S> {
 impl<S> core::fmt::Debug for LegacySessionAdapter<S> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("LegacySessionAdapter")
-            .field(
-                "handshaken",
-                &self.session.session.lock().is_ok_and(|s| s.is_some()),
-            )
+            .field("handshaken", &self.session.session.lock().is_some())
             .finish_non_exhaustive()
     }
 }
@@ -76,8 +75,8 @@ struct ConnectionSession {
 }
 
 impl ConnectionSession {
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<Session>> {
-        self.session.lock().expect("session state lock poisoned")
+    fn lock(&self) -> parking_lot::MutexGuard<'_, Option<Session>> {
+        self.session.lock()
     }
 
     /// Make `session` the connection's, ending any it replaces (a client that
@@ -92,7 +91,7 @@ impl ConnectionSession {
 
 impl Drop for ConnectionSession {
     fn drop(&mut self) {
-        let session = self.session.get_mut().ok().and_then(Option::take);
+        let session = self.session.get_mut().take();
         if let (Some(end), Some(session)) = (self.end.take(), session) {
             end.end(session.id);
         }
@@ -133,7 +132,7 @@ impl<S> LegacySessionAdapter<S> {
 
     /// The handshake a message must wait behind, if one is still in flight.
     fn pending_handshake(&self) -> Option<watch::Receiver<()>> {
-        let mut gate = self.handshake.lock().expect("handshake gate poisoned");
+        let mut gate = self.handshake.lock();
         match gate.as_ref() {
             // `Err` means the sender dropped: the handshake is settled.
             Some(rx) if rx.has_changed().is_ok() => gate.clone(),
@@ -157,15 +156,24 @@ fn stamp(session: &ConnectionSession, request: &mut McpRequest) {
         JsonRpcMessage::Notification(n) => n.params.as_ref(),
         JsonRpcMessage::Response(_) => None,
     };
-    // Stamp only version-less messages: a modern stateless client sharing
-    // the pipe keeps working, per-request version wins.
-    if version::request_protocol_version(params).is_none() {
-        meta::set_request_meta(
-            msg,
-            meta::keys::PROTOCOL_VERSION,
-            json!(session.version.as_str()),
-        );
-        request.extensions.insert(SessionId::new(session.id));
+    // A modern stateless client sharing the pipe keeps working: a request
+    // stating a stateless revision is left alone. One stating a stateful
+    // revision still belongs to this session, which then refuses it if the
+    // revision isn't the one it negotiated; without the session id it was
+    // answered "not initialized", which is not what was wrong.
+    match version::request_protocol_version(params) {
+        None => {
+            meta::set_request_meta(
+                msg,
+                meta::keys::PROTOCOL_VERSION,
+                json!(session.version.as_str()),
+            );
+            request.extensions.insert(SessionId::new(session.id));
+        }
+        Some(stated) if stated.is_stateful() => {
+            request.extensions.insert(SessionId::new(session.id));
+        }
+        Some(_) => {}
     }
 }
 
@@ -208,7 +216,7 @@ where
             msg.extensions.insert(SessionId::new(candidate.as_str()));
             let session = Arc::clone(&self.session);
             let (done, waiters) = watch::channel(());
-            *self.handshake.lock().expect("handshake gate poisoned") = Some(waiters);
+            *self.handshake.lock() = Some(waiters);
             let fut = self.inner.call(msg);
             return Box::pin(async move {
                 // Dropped on every way out, after the outcome is committed.

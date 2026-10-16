@@ -15,8 +15,8 @@
 //! Task-status notifications are spec-**optional** — clients MUST be able to
 //! poll `tasks/get` regardless — so a missing subscription simply means no push.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 use serde_json::{Value, json};
 use turbomcp_core::{ConnectionId, JsonRpcNotification, RequestId};
@@ -149,8 +149,8 @@ impl TaskSubscriptions {
         });
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Topic>> {
-        self.inner.lock().expect("task subscriptions poisoned")
+    fn lock(&self) -> parking_lot::MutexGuard<'_, HashMap<String, Topic>> {
+        self.inner.lock()
     }
 }
 

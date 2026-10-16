@@ -152,6 +152,14 @@ id_type! {
     SessionId
 }
 
+/// Fired when the connection a request arrived on is gone: the peer closed
+/// its end (stdio EOF, a WebSocket close), so nobody is left to read an
+/// answer. The dispatcher derives each request's cancellation from it, so an
+/// in-flight handler stops then rather than running out the drain, which is
+/// what lets a server "exit promptly when its standard input is closed".
+#[derive(Clone, Debug)]
+pub struct ConnectionClosed(pub crate::CancellationToken);
+
 /// The `Mcp-Param-{name}` headers that arrived with a Streamable HTTP request,
 /// from the lowercased `{name}` to the raw value (`None` when the value wasn't
 /// visible ASCII).

@@ -36,6 +36,7 @@ introspection = [
 ]
 
 [dependencies]
+parking_lot = { workspace = true }
 subtle = { workspace = true }
 zeroize = { workspace = true, features = ["serde"] }
 turbomcp-core = { workspace = true }

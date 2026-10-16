@@ -30,10 +30,10 @@
 //! [`Connection`](turbomcp_client::Connection) emits into the one HTTP actually listens
 //! for.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -110,16 +110,16 @@ async fn recover_session(shared: &Arc<Shared>, sent: Option<&str>) -> Result<boo
     let _single_flight = shared.recovery.lock().await;
     // Whoever held the lock first may have replaced the session already, in
     // which case this request only needs re-sending against the new one.
-    let current = shared.session.lock().expect("session mutex").clone();
+    let current = shared.session.lock().clone();
     if let Some(current) = &current
         && Some(current.as_str()) != sent
     {
         return Ok(true);
     }
-    let Some(handshake) = shared.handshake.lock().expect("handshake lock").clone() else {
+    let Some(handshake) = shared.handshake.lock().clone() else {
         return Ok(false);
     };
-    *shared.session.lock().expect("session mutex") = None;
+    *shared.session.lock() = None;
     reinitialize(shared, &handshake).await?;
     Ok(true)
 }
@@ -159,7 +159,7 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
     else {
         return Err("re-initialize established no session".into());
     };
-    *shared.session.lock().expect("session mutex") = Some(sid.clone());
+    *shared.session.lock() = Some(sid.clone());
     // Drain the body so the connection can be reused; the frames are a repeat
     // of a handshake the client has already processed.
     let _ = bounded_body(resp, &shared.limits).await;
@@ -177,7 +177,7 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
         .header(CONTENT_TYPE, "application/json")
         .header(headers::SESSION_ID, sid)
         .body(initialized);
-    if let Some(version) = shared.version.lock().expect("version mutex").clone() {
+    if let Some(version) = shared.version.lock().clone() {
         req = req.header(headers::PROTOCOL_VERSION, version);
     }
     if let Some(source) = &shared.bearer
@@ -249,9 +249,13 @@ impl BearerSource for Zeroizing<String> {
 
 /// A token that can be replaced in place — the shape a refresh loop wants.
 #[async_trait::async_trait]
-impl BearerSource for Mutex<Option<Zeroizing<String>>> {
+impl BearerSource for std::sync::Mutex<Option<Zeroizing<String>>> {
     async fn bearer(&self) -> Option<Zeroizing<String>> {
-        self.lock().expect("bearer mutex poisoned").clone()
+        // The caller's own lock: a panic in the refresh loop that holds it
+        // must not also take every request down.
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -335,15 +339,15 @@ impl Shared {
     /// finished has no entry, which is the "cancelled too late" race the spec
     /// requires both sides to tolerate.
     fn abort_post(&self, id: &RequestId) {
-        self.failures.lock().expect("failure lock").remove(id);
-        if let Some(token) = self.posts.lock().expect("posts mutex poisoned").remove(id) {
+        self.failures.lock().remove(id);
+        if let Some(token) = self.posts.lock().remove(id) {
             token.cancel();
         }
     }
 
     /// Deregister a finished POST.
     fn finish_post(&self, id: &RequestId) {
-        self.posts.lock().expect("posts mutex poisoned").remove(id);
+        self.posts.lock().remove(id);
     }
 
     /// Attach `Authorization: Bearer …` when a token is available.
@@ -429,12 +433,10 @@ impl fmt::Debug for HttpClientTransport {
                     .shared
                     .session
                     .lock()
-                    .map_or("<poisoned>", |s| if s.is_some() { "<set>" } else { "none" }),
+                    .as_ref()
+                    .map_or("none", |_| "<set>"),
             )
-            .field(
-                "in_flight_posts",
-                &self.shared.posts.lock().map(|p| p.len()).unwrap_or(0),
-            )
+            .field("in_flight_posts", &self.shared.posts.lock().len())
             .finish_non_exhaustive()
     }
 }
@@ -587,11 +589,7 @@ impl Transport for HttpClientTransport {
     }
 
     fn take_failure(&mut self, id: &RequestId) -> Option<TransportFailure> {
-        self.shared
-            .failures
-            .lock()
-            .expect("failure lock")
-            .remove(id)
+        self.shared.failures.lock().remove(id)
     }
 
     async fn send(&mut self, msg: JsonRpcMessage) -> Result<(), Self::Error> {
@@ -624,7 +622,6 @@ impl Transport for HttpClientTransport {
                 .shared
                 .version
                 .lock()
-                .expect("version mutex")
                 .as_deref()
                 .is_none_or(|v| v == ProtocolVersion::V2026_07_28.as_str());
             if stream_close_cancels {
@@ -636,7 +633,7 @@ impl Transport for HttpClientTransport {
         if let JsonRpcMessage::Request(r) = &msg
             && r.method == request::INITIALIZE
         {
-            *self.shared.handshake.lock().expect("handshake lock") = Some(msg.clone());
+            *self.shared.handshake.lock() = Some(msg.clone());
         }
 
         // Learn the negotiated version here, in send order, not in the spawned
@@ -659,11 +656,7 @@ impl Transport for HttpClientTransport {
         let cancel = match &msg {
             JsonRpcMessage::Request(r) => {
                 let token = CancellationToken::new();
-                shared
-                    .posts
-                    .lock()
-                    .expect("posts mutex poisoned")
-                    .insert(r.id.clone(), token.clone());
+                shared.posts.lock().insert(r.id.clone(), token.clone());
                 Some((r.id.clone(), token))
             }
             _ => None,
@@ -728,7 +721,7 @@ impl Transport for HttpClientTransport {
         self.shared.tasks.close();
         self.shared.tasks.wait().await;
         // Best-effort session termination (the spec's explicit DELETE).
-        let sid = self.shared.session.lock().expect("session mutex").clone();
+        let sid = self.shared.session.lock().clone();
         if let Some(sid) = sid {
             let mut req = self
                 .shared
@@ -739,7 +732,7 @@ impl Transport for HttpClientTransport {
             // "the client MUST include the `MCP-Protocol-Version` header on all
             // subsequent requests" — a strict server refuses the DELETE
             // without it, and the session outlives the client.
-            if let Some(version) = self.shared.version.lock().expect("version mutex").clone() {
+            if let Some(version) = self.shared.version.lock().clone() {
                 req = req.header(headers::PROTOCOL_VERSION, version);
             }
             // Authenticated too: on a server that requires a bearer, an
@@ -799,7 +792,6 @@ async fn post_and_pump(
                     shared
                         .failures
                         .lock()
-                        .expect("failure lock")
                         .insert(id.clone(), TransportFailure::StreamLost);
                 }
                 TransportFailure::StreamLost.to_string()
@@ -895,7 +887,7 @@ async fn pump(
         if let Some(token) = &token {
             attempt = attempt.bearer_auth(token.as_str());
         }
-        let sent_session = shared.session.lock().expect("session mutex").clone();
+        let sent_session = shared.session.lock().clone();
         if let Some(sid) = &sent_session {
             attempt = attempt.header(headers::SESSION_ID, sid);
         }
@@ -967,7 +959,7 @@ async fn pump(
             }
         }
         if let JsonRpcMessage::Request(r) = &msg {
-            shared.failures.lock().expect("failure lock").insert(
+            shared.failures.lock().insert(
                 r.id.clone(),
                 TransportFailure::Http(HttpFailure {
                     status: status.as_u16(),
@@ -986,7 +978,7 @@ async fn pump(
         .get(headers::SESSION_ID)
         .and_then(|v| v.to_str().ok())
     {
-        *shared.session.lock().expect("session mutex") = Some(sid.to_string());
+        *shared.session.lock() = Some(sid.to_string());
     }
 
     // The standalone stream belongs to the stateful transport, so open it as
@@ -1003,7 +995,7 @@ async fn pump(
         .as_deref()
         .map(ProtocolVersion::from_wire)
         .is_some_and(|v| v.is_stateful())
-        || shared.session.lock().expect("session mutex").is_some();
+        || shared.session.lock().is_some();
     // The handshake's own stream opens once its answer is read, so that the
     // negotiated version is known and the stream's GET can carry it; any
     // other request opens it straight away.
@@ -1070,7 +1062,7 @@ fn learn_negotiated_version(shared: &Shared, sent: &JsonRpcMessage, frame: &Json
             .and_then(|result| result.get("protocolVersion"))
             .and_then(serde_json::Value::as_str)
     {
-        *shared.version.lock().expect("version mutex") = Some(version.to_owned());
+        *shared.version.lock() = Some(version.to_owned());
     }
 }
 
@@ -1160,7 +1152,7 @@ async fn pump_sse(
             .get(&shared.url)
             .header(ACCEPT, "text/event-stream")
             .header(headers::LAST_EVENT_ID, id);
-        if let Some(sid) = shared.session.lock().expect("session mutex").clone() {
+        if let Some(sid) = shared.session.lock().clone() {
             get = get.header(headers::SESSION_ID, sid);
         }
         if let Some(version) = version {
@@ -1225,11 +1217,11 @@ async fn listen(shared: Arc<Shared>) {
             .http
             .get(&shared.url)
             .header(ACCEPT, "text/event-stream");
-        let sent_session = shared.session.lock().expect("session mutex").clone();
+        let sent_session = shared.session.lock().clone();
         if let Some(sid) = &sent_session {
             req = req.header(headers::SESSION_ID, sid);
         }
-        if let Some(v) = shared.version.lock().expect("version mutex").clone() {
+        if let Some(v) = shared.version.lock().clone() {
             req = req.header(headers::PROTOCOL_VERSION, v);
         }
         if let Some(id) = &last_event_id {
@@ -1353,7 +1345,7 @@ fn resolve_protocol_version(
     // `2026-07-28`, and the fallback `initialize` went out claiming it — a
     // strict legacy server refuses exactly that.
     if matches!(msg, JsonRpcMessage::Request(r) if r.method == request::INITIALIZE) {
-        *shared.version.lock().expect("version mutex") = None;
+        *shared.version.lock() = None;
         return None;
     }
     let version = explicit.map(|v| v.as_str().to_owned()).or_else(|| {
@@ -1368,7 +1360,7 @@ fn resolve_protocol_version(
         .map(str::to_owned)
     });
 
-    let mut last = shared.version.lock().expect("version mutex");
+    let mut last = shared.version.lock();
     match version {
         Some(v) => {
             *last = Some(v.clone());
