@@ -10,6 +10,7 @@
 //! [`MethodRouter`]: crate::MethodRouter
 
 use core::future::Future;
+use std::sync::Arc;
 
 use turbomcp_core::{Implementation, McpResult, ProtocolVersion};
 use turbomcp_protocol::neutral;
@@ -104,11 +105,15 @@ pub trait WithTools: McpServerCore {
     /// `list_tools` (bounded, advancing pages); `#[server]` generates an
     /// indexed override, and a hand-written catalogue of any size should
     /// provide one.
+    ///
+    /// Shared, not copied: a tool every call looks up is one allocation for
+    /// the server's life (as `#[server]`'s are), and the dispatcher reuses
+    /// its compiled input schema while the same `Arc` comes back.
     fn lookup_tool(
         &self,
         ctx: &ListToolsContext,
         name: String,
-    ) -> impl Future<Output = McpResult<Option<neutral::Tool>>> + Send {
+    ) -> impl Future<Output = McpResult<Option<Arc<neutral::Tool>>>> + Send {
         async move {
             crate::catalog::find(
                 |params| async move {
@@ -118,6 +123,7 @@ pub trait WithTools: McpServerCore {
                 |tool: &neutral::Tool| tool.name == name,
             )
             .await
+            .map(|found| found.map(Arc::new))
         }
     }
 

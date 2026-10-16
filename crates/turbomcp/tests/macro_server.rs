@@ -308,8 +308,10 @@ async fn metadata_returns_independent_copies_and_lookup_matches_catalog() {
         assert_eq!(lookup.input_schema, tool.input_schema);
         assert_eq!(lookup.output_schema, tool.output_schema);
         assert_eq!(lookup.meta, tool.meta);
+        // Shared, so an edit copies (`Arc::make_mut`) and leaves the
+        // server's own definition alone.
         let mut edited = lookup;
-        edited.input_schema = json!({"type":"null"});
+        std::sync::Arc::make_mut(&mut edited).input_schema = json!({"type":"null"});
         let fresh = Demo
             .lookup_tool(&ctx, tool.name.clone())
             .await

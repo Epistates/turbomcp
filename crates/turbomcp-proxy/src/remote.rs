@@ -1026,7 +1026,7 @@ impl WithTools for RemoteServer {
         &self,
         ctx: &ListToolsContext,
         name: String,
-    ) -> McpResult<Option<neutral::Tool>> {
+    ) -> McpResult<Option<Arc<neutral::Tool>>> {
         let link = self.link(&ctx.base).await?;
         let client = &link.client;
         link.tools
@@ -1037,7 +1037,7 @@ impl WithTools for RemoteServer {
                     .map_err(|e| self.upstream_error(&link, &e))?;
                 Ok(tools
                     .into_iter()
-                    .map(|t| (t.name.clone(), self.downstream_tool(t)))
+                    .map(|t| (t.name.clone(), Arc::new(self.downstream_tool(t))))
                     .collect())
             })
             .await

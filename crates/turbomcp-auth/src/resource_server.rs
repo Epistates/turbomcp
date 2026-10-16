@@ -188,7 +188,7 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
             }
             AuthDecision::Allow(turbomcp_core::Identity::Bearer {
                 sub: principal.subject,
-                claims: principal.claims,
+                claims: principal.claims.into(),
             })
         })
     }

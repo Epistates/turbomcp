@@ -105,7 +105,11 @@ fn as_caller(id: i64, method: &str, params: Value, scopes: &str) -> McpRequest {
     }
     request.with(turbomcp::Identity::Bearer {
         sub: "alice".into(),
-        claims: json!({ "scope": scopes }).as_object().unwrap().clone(),
+        claims: json!({ "scope": scopes })
+            .as_object()
+            .unwrap()
+            .clone()
+            .into(),
     })
 }
 

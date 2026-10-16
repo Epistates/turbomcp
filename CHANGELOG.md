@@ -1300,6 +1300,18 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** the per-call path stops copying what doesn't change.
+  `Claims` is `Arc<Map<…>>` (build one from a map with `.into()`), and
+  `RequestContext::client_info` / `client_capabilities` are
+  `Option<Arc<…>>`, so the context clones a call makes share them;
+  `WithTools::lookup_tool` returns `Arc<neutral::Tool>` (as does
+  `CallAugmentRequest::tool`), so a `#[server]` tool is one allocation for
+  the server's life, and the dispatcher keeps each shared tool's compiled
+  input validator by its identity instead of hashing and comparing its
+  schema on every call. On the dispatch benchmark: an authenticated
+  `tools/call` 13.1 µs → 3.9 µs, a tool with a 30-field schema 21.1 µs →
+  4.4 µs, the plain call 5.5 µs → 4.0 µs (`dispatch/tools_call_*`).
+
 - **Breaking:** `Transport` is three required methods (`send`, `recv`,
   `close`) and its HTTP-specific methods are gone: `network`,
   `carries_headers` and `allows_response_cache` are one

@@ -90,7 +90,7 @@ fn identity_request() -> McpRequest {
     let claims = json!({ "email": "a@b.example", "scope": "read" });
     McpRequest::new(JsonRpcRequest::new(1, "tools/call", None)).with(Identity::Bearer {
         sub: "alice".into(),
-        claims: claims.as_object().unwrap().clone(),
+        claims: claims.as_object().unwrap().clone().into(),
     })
 }
 

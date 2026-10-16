@@ -327,7 +327,7 @@ async fn another_issuer_cannot_read_update_or_cancel_a_task() {
         match issuer {
             Some(issuer) => request.with(Identity::Bearer {
                 sub: "alice".into(),
-                claims: json!({ "iss": issuer }).as_object().unwrap().clone(),
+                claims: json!({ "iss": issuer }).as_object().unwrap().clone().into(),
             }),
             None => request,
         }

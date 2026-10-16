@@ -744,7 +744,7 @@ pub(super) async fn call_prepared_tool<S: McpServerCore, W: WireFamily>(
     shared: &Shared,
     id: RequestId,
     params: neutral::CallToolParams,
-    tool: neutral::Tool,
+    tool: Arc<neutral::Tool>,
 ) -> JsonRpcMessage {
     let sealer = &shared.sealer;
     let pending = &shared.pending;
@@ -807,7 +807,7 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     ctx: &RequestContext,
     shared: &Shared,
     id: RequestId,
-) -> Result<(neutral::CallToolParams, neutral::Tool), Box<JsonRpcMessage>> {
+) -> Result<(neutral::CallToolParams, Arc<neutral::Tool>), Box<JsonRpcMessage>> {
     if W::MRTR {
         validate_mrtr_envelope(req).map_err(|e| error_response_for(id.clone(), &W::VERSION, &e))?;
     }
@@ -876,7 +876,7 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     };
     shared
         .validators
-        .input(&tool.name, &tool.input_schema, arguments)
+        .input_for(&tool, arguments)
         .map_err(|e| match e {
             // Arguments that miss the schema are a tool execution error the
             // model can read and correct (tools.mdx: "Input validation errors").

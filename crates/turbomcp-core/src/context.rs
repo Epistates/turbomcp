@@ -213,11 +213,13 @@ impl fmt::Debug for Extensions {
 pub struct RequestContext {
     /// Negotiated/declared protocol version for this request.
     pub protocol_version: ProtocolVersion,
-    /// Client implementation identity, if known.
-    pub client_info: Option<Implementation>,
+    /// Client implementation identity, if known. Shared, not copied, by
+    /// every clone of the context.
+    pub client_info: Option<Arc<Implementation>>,
     /// Raw advertised client capabilities (version-specific typed access is
     /// provided one layer up via per-RPC context types / [`Extensions`]).
-    pub client_capabilities: Option<Value>,
+    /// Shared, not copied, by every clone of the context.
+    pub client_capabilities: Option<Arc<Value>>,
     /// Requested logging level, if set.
     pub log_level: Option<LogLevel>,
     /// W3C trace context, if present.
@@ -278,8 +280,8 @@ impl RequestContext {
 
     /// Builder: set the client implementation identity.
     #[must_use]
-    pub fn with_client_info(mut self, info: Implementation) -> Self {
-        self.client_info = Some(info);
+    pub fn with_client_info(mut self, info: impl Into<Arc<Implementation>>) -> Self {
+        self.client_info = Some(info.into());
         self
     }
 
@@ -299,8 +301,8 @@ impl RequestContext {
 
     /// Builder: set the client's capabilities as it declared them.
     #[must_use]
-    pub fn with_client_capabilities(mut self, capabilities: Value) -> Self {
-        self.client_capabilities = Some(capabilities);
+    pub fn with_client_capabilities(mut self, capabilities: impl Into<Arc<Value>>) -> Self {
+        self.client_capabilities = Some(capabilities.into());
         self
     }
 

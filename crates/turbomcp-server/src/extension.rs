@@ -142,7 +142,7 @@ pub struct CallAugmentRequest {
     pub run: CallRunner,
     /// The tool being called, as the server lists it: its `task_support`
     /// says whether it may (or must) run as a task.
-    pub tool: turbomcp_protocol::neutral::Tool,
+    pub tool: std::sync::Arc<turbomcp_protocol::neutral::Tool>,
 }
 
 /// The result of offering a `subscriptions/listen` request to an extension

@@ -129,7 +129,7 @@ async fn caller(remote: &RemoteServer, name: &'static str, authenticated: bool) 
             if authenticated {
                 req.with(Identity::Bearer {
                     sub: name.into(),
-                    claims: Map::new(),
+                    claims: Map::new().into(),
                 })
             } else {
                 req

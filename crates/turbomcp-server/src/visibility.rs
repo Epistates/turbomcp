@@ -275,14 +275,14 @@ pub(crate) fn filter_prompts(
 mod tests {
     use super::*;
     use serde_json::json;
-    use turbomcp_core::{Claims, Identity, ProtocolVersion};
+    use turbomcp_core::{Identity, ProtocolVersion};
 
     fn caller(scopes: &str) -> RequestContext {
-        let mut claims = Claims::new();
+        let mut claims = serde_json::Map::new();
         claims.insert("scope".into(), json!(scopes));
         RequestContext::new(ProtocolVersion::V2025_11_25).with_identity(Identity::Bearer {
             sub: "alice".into(),
-            claims,
+            claims: claims.into(),
         })
     }
 

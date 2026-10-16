@@ -15,8 +15,11 @@ use alloc::vec::Vec;
 use core::fmt;
 use serde_json::{Map, Value};
 
-/// A bag of validated identity claims (e.g. decoded JWT/PASETO body).
-pub type Claims = Map<String, Value>;
+/// A bag of validated identity claims (e.g. decoded JWT/PASETO body),
+/// shared rather than copied: a request's context is cloned several times on
+/// its way to a handler, and a JWT body runs to kilobytes. Build one from a
+/// map with `.into()`.
+pub type Claims = Arc<Map<String, Value>>;
 
 /// Escape hatch for identity shapes that don't fit the common variants.
 ///
@@ -168,11 +171,11 @@ mod tests {
 
     #[test]
     fn debug_does_not_leak_claim_values() {
-        let mut claims = Claims::new();
+        let mut claims = serde_json::Map::new();
         claims.insert("email".into(), json!("secret@example.com"));
         let id = Identity::Bearer {
             sub: "user-1".into(),
-            claims,
+            claims: claims.into(),
         };
         let dbg = format!("{id:?}");
         assert!(dbg.contains("user-1"));
@@ -182,12 +185,12 @@ mod tests {
 
     #[test]
     fn dpop_identity_exposes_subject_and_redacts_claims() {
-        let mut claims = Claims::new();
+        let mut claims = serde_json::Map::new();
         claims.insert("email".into(), json!("secret@example.com"));
         let id = Identity::Dpop {
             sub: "user-2".into(),
             jkt: "thumb-1".into(),
-            claims,
+            claims: claims.into(),
         };
         assert_eq!(id.subject(), Some("user-2"));
         assert!(id.is_authenticated());
@@ -230,30 +233,30 @@ mod tests {
     #[test]
     fn granted_scopes_reads_scp_array_and_merges_with_scope_string() {
         // `scp` array alone (Azure-style).
-        let mut claims = Claims::new();
+        let mut claims = serde_json::Map::new();
         claims.insert("scp".into(), json!(["mcp:use", "admin"]));
         let id = Identity::Bearer {
             sub: "u".into(),
-            claims,
+            claims: claims.into(),
         };
         assert!(id.has_scopes(&["mcp:use", "admin"]));
         assert!(!id.has_scopes(&["other"]));
 
         // Both `scope` (space-delimited) and `scp` (array) contribute.
-        let mut claims = Claims::new();
+        let mut claims = serde_json::Map::new();
         claims.insert("scope".into(), json!("read write"));
         claims.insert("scp".into(), json!(["admin"]));
         let id = Identity::Bearer {
             sub: "u".into(),
-            claims,
+            claims: claims.into(),
         };
         assert!(id.has_scopes(&["read", "write", "admin"]));
         // Non-string entries in `scp` are skipped, not an error.
-        let mut claims = Claims::new();
+        let mut claims = serde_json::Map::new();
         claims.insert("scp".into(), json!(["ok", 42]));
         let id = Identity::Bearer {
             sub: "u".into(),
-            claims,
+            claims: claims.into(),
         };
         assert_eq!(id.granted_scopes(), ["ok"]);
     }

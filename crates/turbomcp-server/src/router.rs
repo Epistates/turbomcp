@@ -110,7 +110,7 @@ handler_slot!(
     LookupToolHandler<S>,
     ListToolsContext,
     String,
-    Option<neutral::Tool>
+    Option<Arc<neutral::Tool>>
 );
 
 handler_slot!(
@@ -343,7 +343,7 @@ impl<S: McpServerCore> MethodRouter<S> {
         lookup_tool,
         ListToolsContext,
         String,
-        Option<neutral::Tool>
+        Option<Arc<neutral::Tool>>
     );
 
     /// An empty router — no capabilities registered.

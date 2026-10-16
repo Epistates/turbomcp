@@ -3,6 +3,7 @@
 //! dispatch paths.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -65,7 +66,7 @@ pub(super) async fn legacy_context(
     let mut ctx = RequestContext::new(state.version.clone())
         .with_client_info(state.client_info.clone())
         .with_identity(identity);
-    ctx.client_capabilities = Some(state.client_capabilities.clone());
+    ctx.client_capabilities = Some(Arc::new(state.client_capabilities.clone()));
     ctx.log_level = state.log_level;
     ctx.extensions = ext.clone();
     if let Some(m) = req
@@ -107,7 +108,7 @@ pub(super) fn build_context(req: &JsonRpcRequest, ext: &Extensions) -> RequestCo
             ctx = ctx.with_client_info(info);
         }
         if let Some(caps) = consumed.get(meta::keys::CLIENT_CAPABILITIES) {
-            ctx.client_capabilities = Some(caps.clone());
+            ctx.client_capabilities = Some(Arc::new(caps.clone()));
         }
         ctx = ctx.with_propagated_meta(propagated);
     }

@@ -8,8 +8,8 @@ use tower::{Service, ServiceExt};
 use turbomcp::neutral::{CallToolParams, CallToolResult};
 use turbomcp::prelude::*;
 use turbomcp::{
-    CallToolContext, Claims, Identity, JsonRpcMessage, JsonRpcRequest, LegacySessionAdapter,
-    McpRequest, ProtocolVersion, RequestContext, WithTools,
+    CallToolContext, Identity, JsonRpcMessage, JsonRpcRequest, LegacySessionAdapter, McpRequest,
+    ProtocolVersion, RequestContext, WithTools,
 };
 use turbomcp_service::ScopeChallenge;
 
@@ -40,11 +40,11 @@ impl Guarded {
 fn ctx(scope: Option<&str>) -> CallToolContext {
     let identity = match scope {
         Some(s) => {
-            let mut claims = Claims::new();
+            let mut claims = serde_json::Map::new();
             claims.insert("scope".into(), json!(s));
             Identity::Bearer {
                 sub: "u".into(),
-                claims,
+                claims: claims.into(),
             }
         }
         None => Identity::Anonymous,
@@ -108,7 +108,11 @@ async fn through_the_dispatcher_a_denial_is_a_tool_error() {
     ))
     .with(Identity::Bearer {
         sub: "u".into(),
-        claims: json!({ "scope": "read" }).as_object().unwrap().clone(),
+        claims: json!({ "scope": "read" })
+            .as_object()
+            .unwrap()
+            .clone()
+            .into(),
     });
     let Some(JsonRpcMessage::Response(r)) = svc.ready().await.unwrap().call(request).await.unwrap()
     else {
@@ -132,7 +136,11 @@ async fn unscoped_tool_allows_anyone() {
 fn reader() -> Identity {
     Identity::Bearer {
         sub: "u".into(),
-        claims: json!({ "scope": "read" }).as_object().unwrap().clone(),
+        claims: json!({ "scope": "read" })
+            .as_object()
+            .unwrap()
+            .clone()
+            .into(),
     }
 }
 

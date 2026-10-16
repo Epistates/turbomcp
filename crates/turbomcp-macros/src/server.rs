@@ -1606,19 +1606,19 @@ fn gen_tools_impl(target: &Target, tools: &[Handler]) -> TokenStream {
         quote! {
             #[doc(hidden)]
             #[allow(non_snake_case)]
-            fn #f() -> &'static ::turbomcp::neutral::Tool #entry
+            fn #f() -> &'static ::std::sync::Arc<::turbomcp::neutral::Tool> #entry
         }
     });
     let inherent = target.head(None);
     let list_entries = tools.iter().map(|t| {
         let f = tool_fn(t);
-        quote!(::core::clone::Clone::clone(Self::#f()))
+        quote!(::core::clone::Clone::clone(&**Self::#f()))
     });
     let call_arms = tools.iter().map(|t| gen_tool_call_arm(self_ty, t));
     let lookup_arms = tools.iter().map(|t| {
         let name = t.wire_name();
         let f = tool_fn(t);
-        quote!(#name => Some(::core::clone::Clone::clone(Self::#f())),)
+        quote!(#name => Some(::std::sync::Arc::clone(Self::#f())),)
     });
 
     quote! {
@@ -1630,7 +1630,7 @@ fn gen_tools_impl(target: &Target, tools: &[Handler]) -> TokenStream {
 
         #head {
             async fn lookup_tool(&self, _ctx: &::turbomcp::ListToolsContext, name: String)
-                -> ::turbomcp::McpResult<Option<::turbomcp::neutral::Tool>> {
+                -> ::turbomcp::McpResult<Option<::std::sync::Arc<::turbomcp::neutral::Tool>>> {
                 Ok(match name.as_str() { #(#lookup_arms)* _ => None })
             }
             async fn list_tools(
@@ -1801,7 +1801,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler, opt_in: bool) -> TokenStream
         .map(|s| quote!(__schema = ::turbomcp::__macros::extend_object_schema(__schema, #s);));
     quote! {
         {
-            static __TOOL: ::std::sync::LazyLock<::turbomcp::neutral::Tool> = ::std::sync::LazyLock::new(|| {
+            static __TOOL: ::std::sync::LazyLock<::std::sync::Arc<::turbomcp::neutral::Tool>> = ::std::sync::LazyLock::new(|| {
             let mut __schema = ::turbomcp::__macros::close_object_schema(
                 ::turbomcp::__macros::normalize_input_schema(
                     ::turbomcp::__macros::serde_json::to_value(
@@ -1813,8 +1813,8 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler, opt_in: bool) -> TokenStream
             );
             #schema_extend
             #(#header_marks)*
-            ::turbomcp::neutral::Tool::new(#name, __schema)
-                #desc #title #annotations #output_schema #task_support #tags #scopes #extras
+            ::std::sync::Arc::new(::turbomcp::neutral::Tool::new(#name, __schema)
+                #desc #title #annotations #output_schema #task_support #tags #scopes #extras)
             });
             &*__TOOL
         }

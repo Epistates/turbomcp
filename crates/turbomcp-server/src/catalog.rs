@@ -2,7 +2,7 @@
 use serde_json::Value;
 use std::collections::HashSet;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use turbomcp_core::{McpError, McpResult};
 use turbomcp_protocol::neutral;
 
@@ -93,7 +93,23 @@ fn within_budget(schema: &Value) -> bool {
 /// (no serialization, no allocation) and a hit is confirmed by comparing the
 /// schema itself: a hash collision costs a recompile, never the wrong
 /// validator.
-pub(crate) struct Validators(moka::sync::Cache<u64, Arc<(Value, Arc<jsonschema::Validator>)>>);
+///
+/// A tool shared as an `Arc` (every `#[server]` tool, a gateway's while its
+/// catalogue is fresh) skips even that: its input validator is also kept by
+/// the tool's address, beside a `Weak` to it. A held `Weak` keeps the
+/// allocation from being freed or reused, so while the `Weak` upgrades to
+/// this very `Arc` the schema is the one compiled, and a call neither hashes
+/// nor compares it.
+pub(crate) struct Validators {
+    by_schema: moka::sync::Cache<u64, Arc<BySchema>>,
+    by_tool: moka::sync::Cache<usize, Arc<ByTool>>,
+}
+
+/// A compiled validator and the schema it was compiled from.
+type BySchema = (Value, Arc<jsonschema::Validator>);
+
+/// A compiled input validator and the shared tool it belongs to.
+type ByTool = (Weak<neutral::Tool>, Arc<jsonschema::Validator>);
 impl Default for Validators {
     fn default() -> Self {
         Self::with_capacity(DEFAULT_SCHEMA_CACHE)
@@ -101,22 +117,42 @@ impl Default for Validators {
 }
 impl Validators {
     pub(crate) fn with_capacity(capacity: u64) -> Self {
-        Self(moka::sync::Cache::new(capacity))
+        Self {
+            by_schema: moka::sync::Cache::new(capacity),
+            by_tool: moka::sync::Cache::new(capacity),
+        }
     }
 
-    /// Validate a `tools/call`'s arguments against the tool's `inputSchema`.
+    /// Validate a `tools/call`'s arguments against the tool's `inputSchema`:
+    /// the validator found by the tool's identity while that `Arc` lives, by
+    /// its schema otherwise.
     ///
     /// A root that can't describe an object is the server's bug (the spec
     /// types `inputSchema` as `type: "object"`): every call would fail, so it
     /// is refused as one, naming the tool, rather than read by the model as
     /// bad arguments.
-    pub(crate) fn input(&self, tool: &str, schema: &Value, arguments: &Value) -> McpResult<()> {
-        if !neutral::is_object_root(schema) {
+    pub(crate) fn input_for(&self, tool: &Arc<neutral::Tool>, arguments: &Value) -> McpResult<()> {
+        let key = Arc::as_ptr(tool) as usize;
+        if let Some(entry) = self.by_tool.get(&key)
+            && entry
+                .0
+                .upgrade()
+                .is_some_and(|live| Arc::ptr_eq(&live, tool))
+        {
+            return check(&entry.1, arguments);
+        }
+        if !neutral::is_object_root(&tool.input_schema) {
             return Err(McpError::internal(format!(
-                "tool `{tool}` has an inputSchema whose root is not `type: \"object\"`"
+                "tool `{}` has an inputSchema whose root is not `type: \"object\"`",
+                tool.name
             )));
         }
-        self.validate(schema, arguments)
+        let validator = self.validator(&tool.input_schema)?;
+        self.by_tool.insert(
+            key,
+            Arc::new((Arc::downgrade(tool), Arc::clone(&validator))),
+        );
+        check(&validator, arguments)
     }
 
     pub(crate) fn output(
@@ -141,25 +177,36 @@ impl Validators {
     }
 
     pub(crate) fn validate(&self, schema: &Value, value: &Value) -> McpResult<()> {
+        check(&*self.validator(schema)?, value)
+    }
+
+    /// The compiled validator for `schema`, from the cache or compiled now.
+    fn validator(&self, schema: &Value) -> McpResult<Arc<jsonschema::Validator>> {
         let key = {
             use std::hash::Hasher as _;
             let mut hasher = std::hash::DefaultHasher::new();
             hash_value(schema, &mut hasher);
             hasher.finish()
         };
-        let validator = match self.0.get(&key).filter(|entry| entry.0 == *schema) {
-            Some(entry) => Arc::clone(&entry.1),
-            None => {
-                let v = Arc::new(compile(schema)?);
-                self.0
-                    .insert(key, Arc::new((schema.clone(), Arc::clone(&v))));
-                v
-            }
-        };
-        validator
-            .validate(value)
-            .map_err(|e| McpError::invalid_params(format!("invalid arguments (inputSchema): {e}")))
+        Ok(
+            match self.by_schema.get(&key).filter(|entry| entry.0 == *schema) {
+                Some(entry) => Arc::clone(&entry.1),
+                None => {
+                    let v = Arc::new(compile(schema)?);
+                    self.by_schema
+                        .insert(key, Arc::new((schema.clone(), Arc::clone(&v))));
+                    v
+                }
+            },
+        )
     }
+}
+
+/// `value` against a compiled `validator`.
+fn check(validator: &jsonschema::Validator, value: &Value) -> McpResult<()> {
+    validator
+        .validate(value)
+        .map_err(|e| McpError::invalid_params(format!("invalid arguments (inputSchema): {e}")))
 }
 
 /// Compile `schema` within the budget. An unknown `$schema` is reported as an
@@ -187,22 +234,59 @@ mod tests {
     use super::*;
     use serde_json::{Map, json};
 
+    /// Validate `arguments` for a tool `name` with `schema`, as a call would.
+    fn input(v: &Validators, name: &str, schema: &Value, arguments: &Value) -> McpResult<()> {
+        v.input_for(
+            &Arc::new(neutral::Tool::new(name, schema.clone())),
+            arguments,
+        )
+    }
+
+    /// The fast path answers for the very tool it compiled, never for
+    /// another `Arc`: a tool rebuilt with a stricter schema is validated
+    /// against that one.
+    #[test]
+    fn a_shared_tools_validator_follows_the_tool() {
+        let v = Validators::default();
+        let loose = Arc::new(neutral::Tool::new("t", json!({ "type": "object" })));
+        v.input_for(&loose, &json!({})).unwrap();
+        v.input_for(&loose, &json!({})).unwrap();
+        let strict = Arc::new(neutral::Tool::new(
+            "t",
+            json!({ "type": "object", "required": ["q"] }),
+        ));
+        assert!(matches!(
+            v.input_for(&strict, &json!({})),
+            Err(McpError::InvalidParams(_))
+        ));
+        drop(loose);
+        let again = Arc::new(neutral::Tool::new(
+            "t",
+            json!({ "type": "object", "required": ["z"] }),
+        ));
+        assert!(v.input_for(&again, &json!({})).is_err());
+    }
+
     #[test]
     fn an_untyped_object_root_validates_its_properties() {
         let v = Validators::default();
         let schema = json!({ "properties": { "q": { "type": "string" } }, "required": ["q"] });
-        v.input("search", &schema, &json!({ "q": "x" })).unwrap();
+        input(&v, "search", &schema, &json!({ "q": "x" })).unwrap();
         assert!(matches!(
-            v.input("search", &schema, &json!({})),
+            input(&v, "search", &schema, &json!({})),
             Err(McpError::InvalidParams(_))
         ));
     }
 
     #[test]
     fn a_non_object_root_is_the_servers_error() {
-        let err = Validators::default()
-            .input("bad", &json!({ "type": "string" }), &json!({}))
-            .unwrap_err();
+        let err = input(
+            &Validators::default(),
+            "bad",
+            &json!({ "type": "string" }),
+            &json!({}),
+        )
+        .unwrap_err();
         assert!(matches!(err, McpError::Internal(_)), "{err:?}");
         assert!(err.to_string().contains("`bad`"), "{err}");
     }
@@ -210,9 +294,7 @@ mod tests {
     #[test]
     fn an_unknown_dialect_says_so() {
         let schema = json!({ "$schema": "https://example.com/my-dialect", "type": "object" });
-        let err = Validators::default()
-            .input("t", &schema, &json!({}))
-            .unwrap_err();
+        let err = input(&Validators::default(), "t", &schema, &json!({})).unwrap_err();
         assert!(matches!(err, McpError::Internal(_)), "{err:?}");
         assert!(
             err.to_string().contains("unsupported JSON Schema dialect"),
@@ -226,18 +308,14 @@ mod tests {
         for _ in 0..MAX_SCHEMA_DEPTH {
             deep = json!({ "type": "object", "properties": { "x": deep } });
         }
-        let err = Validators::default()
-            .input("deep", &deep, &json!({}))
-            .unwrap_err();
+        let err = input(&Validators::default(), "deep", &deep, &json!({})).unwrap_err();
         assert!(err.to_string().contains("validation budget"), "{err}");
 
         let wide: Map<String, Value> = (0..MAX_SCHEMA_NODES)
             .map(|i| (format!("p{i}"), json!({ "type": "string" })))
             .collect();
         let wide = json!({ "type": "object", "properties": wide });
-        let err = Validators::default()
-            .input("wide", &wide, &json!({}))
-            .unwrap_err();
+        let err = input(&Validators::default(), "wide", &wide, &json!({})).unwrap_err();
         assert!(err.to_string().contains("validation budget"), "{err}");
     }
 

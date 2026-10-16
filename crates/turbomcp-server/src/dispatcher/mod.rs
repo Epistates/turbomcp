@@ -91,7 +91,7 @@ pub enum Cancellation {
 pub struct VersionDispatcher<S> {
     server: S,
     router: Arc<MethodRouter<S>>,
-    supported: Vec<ProtocolVersion>,
+    supported: Arc<[ProtocolVersion]>,
     shared: Shared,
 }
 
@@ -474,7 +474,7 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     /// for assembling a dispatcher by hand.)
     #[must_use]
     pub fn with_config(server: S, router: MethodRouter<S>, config: ServerConfig) -> Self {
-        let supported = server.supported_versions().to_vec();
+        let supported: Arc<[ProtocolVersion]> = server.supported_versions().into();
         let pending = Arc::new(PendingRequests::with_timeout(config.inline_request_timeout));
         let router = Arc::new(router);
         // The server hears when a resource gains its first subscriber and
@@ -716,7 +716,7 @@ impl<S: McpServerCore> Service<McpRequest> for VersionDispatcher<S> {
 async fn handle<S: McpServerCore>(
     server: S,
     router: Arc<MethodRouter<S>>,
-    supported: Vec<ProtocolVersion>,
+    supported: Arc<[ProtocolVersion]>,
     shared: Shared,
     msg: JsonRpcMessage,
     ext: Extensions,

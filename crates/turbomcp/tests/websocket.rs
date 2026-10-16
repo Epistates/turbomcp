@@ -177,7 +177,7 @@ impl HttpAuthenticator for Tokens {
             }
             AuthDecision::Allow(Identity::Bearer {
                 sub: "tester".into(),
-                claims,
+                claims: claims.into(),
             })
         })
     }

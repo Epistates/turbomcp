@@ -501,7 +501,7 @@ struct Inner {
     route: Route,
     /// The client's declared capabilities (gates which input requests may be
     /// sent — SEP-2322 MUST). `None` = nothing declared.
-    client_capabilities: Option<Value>,
+    client_capabilities: Option<Arc<Value>>,
     /// `inputResponses` carried by this (retry) request.
     responses: BTreeMap<String, Value>,
     /// Input requests recorded by the handler this execution (key → wire
@@ -562,7 +562,7 @@ impl ClientHandle {
     /// A draft-path MRTR handle for one request (re)execution.
     pub(crate) fn mrtr(
         route: Route,
-        client_capabilities: Option<Value>,
+        client_capabilities: Option<Arc<Value>>,
         responses: BTreeMap<String, Value>,
         state_in: Option<Value>,
         strict_keys: bool,
@@ -607,7 +607,7 @@ impl ClientHandle {
     /// (tasks.mdx §Input Required Status). `version` is the wire the requests
     /// are shaped for.
     pub(crate) fn task_mediated(
-        client_capabilities: Option<Value>,
+        client_capabilities: Option<Arc<Value>>,
         slot: crate::task_handle::TaskSlot,
         version: ProtocolVersion,
     ) -> Self {
@@ -633,7 +633,7 @@ impl ClientHandle {
     pub(crate) fn bidi(
         route: Route,
         pending: Arc<PendingRequests>,
-        client_capabilities: Option<Value>,
+        client_capabilities: Option<Arc<Value>>,
         version: ProtocolVersion,
     ) -> Self {
         Self {
@@ -1045,7 +1045,7 @@ impl ClientHandle {
         let declared = self.inner.client_capabilities.as_ref().is_some_and(|caps| {
             capability
                 .split('.')
-                .try_fold(caps, |node, segment| node.get(segment))
+                .try_fold(&**caps, |node, segment| node.get(segment))
                 .is_some()
         });
         if declared {
@@ -1550,7 +1550,7 @@ mod tests {
     async fn elicit_without_declared_capability_is_an_error_not_an_abort() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({})),
+            Some(Arc::new(json!({}))),
             BTreeMap::new(),
             None,
             false,
@@ -1571,7 +1571,7 @@ mod tests {
         let handle = ClientHandle::mrtr(
             Route::default(),
             // URL mode is declared explicitly; bare `elicitation` is form.
-            Some(json!({ "elicitation": { "url": {} } })),
+            Some(Arc::new(json!({ "elicitation": { "url": {} } }))),
             BTreeMap::new(),
             None,
             false,
@@ -1713,7 +1713,7 @@ mod tests {
     async fn strict_keys_reject_shape_conflict() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             BTreeMap::new(),
             None,
             true,
@@ -1902,11 +1902,11 @@ mod tests {
             Arc::clone(&pending),
             // A fully-capable client, URL mode included — the bidi tests drive
             // both elicitation modes.
-            Some(json!({
+            Some(Arc::new(json!({
                 "elicitation": { "form": {}, "url": {} },
                 "sampling": { "context": {}, "tools": {} },
                 "roots": {}
-            })),
+            }))),
             ProtocolVersion::V2025_11_25,
         );
         (handle, pending, rx, tx)
@@ -1989,7 +1989,7 @@ mod tests {
         let handle = ClientHandle::bidi(
             Route::default(),
             pending,
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             ProtocolVersion::V2025_11_25,
         );
         let err = handle
@@ -2065,7 +2065,7 @@ mod tests {
     async fn elicit_all_records_every_missing_request_in_one_abort() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             BTreeMap::from([("first".to_owned(), json!({ "action": "accept" }))]),
             None,
             false,
@@ -2094,7 +2094,7 @@ mod tests {
     async fn elicit_all_returns_inline_once_every_answer_is_present() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             BTreeMap::from([
                 (
                     "a".to_owned(),
@@ -2130,7 +2130,7 @@ mod tests {
     async fn tool_enabled_sampling_needs_the_declared_sub_capability() {
         let plain = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "sampling": {} })),
+            Some(Arc::new(json!({ "sampling": {} }))),
             BTreeMap::new(),
             None,
             false,
@@ -2178,7 +2178,7 @@ mod tests {
         // And a client that declared tools gets them.
         let agentic = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "sampling": { "tools": {} } })),
+            Some(Arc::new(json!({ "sampling": { "tools": {} } }))),
             BTreeMap::new(),
             None,
             false,
@@ -2200,7 +2200,7 @@ mod tests {
     async fn a_request_needing_two_sampling_capabilities_checks_both() {
         let tools_only = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "sampling": { "tools": {} } })),
+            Some(Arc::new(json!({ "sampling": { "tools": {} } }))),
             BTreeMap::new(),
             None,
             false,
@@ -2228,7 +2228,7 @@ mod tests {
         let answered = |content: Value| {
             ClientHandle::mrtr(
                 Route::default(),
-                Some(json!({ "elicitation": {} })),
+                Some(Arc::new(json!({ "elicitation": {} }))),
                 BTreeMap::from([(
                     "age".to_owned(),
                     json!({ "action": "accept", "content": content }),
@@ -2252,7 +2252,7 @@ mod tests {
         // A decline carries no content to check.
         let declined = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             BTreeMap::from([("age".to_owned(), json!({ "action": "decline" }))]),
             None,
             false,
@@ -2272,7 +2272,7 @@ mod tests {
     async fn elicit_all_refuses_an_unrenderable_form_like_elicit_does() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             BTreeMap::new(),
             None,
             false,
@@ -2306,7 +2306,7 @@ mod tests {
     async fn a_url_only_client_is_not_sent_a_form() {
         let url_only = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": { "url": {} } })),
+            Some(Arc::new(json!({ "elicitation": { "url": {} } }))),
             BTreeMap::new(),
             None,
             false,
@@ -2327,7 +2327,7 @@ mod tests {
         ] {
             let handle = ClientHandle::mrtr(
                 Route::default(),
-                Some(caps.clone()),
+                Some(Arc::new(caps.clone())),
                 BTreeMap::new(),
                 None,
                 false,
@@ -2348,7 +2348,7 @@ mod tests {
         let older = ClientHandle::bidi(
             Route::default(),
             Arc::new(PendingRequests::default()),
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             ProtocolVersion::V2025_06_18,
         );
         let err = older
@@ -2368,7 +2368,9 @@ mod tests {
     async fn an_unrenderable_elicitation_is_refused_before_it_is_sent() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": { "form": {}, "url": {} } })),
+            Some(Arc::new(
+                json!({ "elicitation": { "form": {}, "url": {} } }),
+            )),
             BTreeMap::new(),
             None,
             false,
@@ -2438,7 +2440,7 @@ mod tests {
         let older = ClientHandle::bidi(
             Route::default(),
             Arc::new(PendingRequests::default()),
-            Some(caps.clone()),
+            Some(Arc::new(caps.clone())),
             ProtocolVersion::V2025_06_18,
         );
         let multi = neutral::SamplingMessage::new(
@@ -2467,7 +2469,7 @@ mod tests {
         let newer = ClientHandle::bidi(
             Route::default(),
             Arc::new(PendingRequests::default()),
-            Some(caps),
+            Some(Arc::new(caps)),
             ProtocolVersion::V2025_11_25,
         );
         for params in [
@@ -2487,7 +2489,7 @@ mod tests {
     async fn an_unbalanced_tool_conversation_never_reaches_the_client() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "sampling": { "tools": {} } })),
+            Some(Arc::new(json!({ "sampling": { "tools": {} } }))),
             BTreeMap::new(),
             None,
             false,
@@ -2565,7 +2567,7 @@ mod tests {
     async fn url_mode_is_refused_when_only_form_was_declared() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": { "form": {} } })),
+            Some(Arc::new(json!({ "elicitation": { "form": {} } }))),
             BTreeMap::new(),
             None,
             false,
@@ -2585,7 +2587,7 @@ mod tests {
         // so bare `elicitation` has to keep meaning "I can render a form".
         let form_only = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             BTreeMap::new(),
             None,
             false,
@@ -2604,7 +2606,7 @@ mod tests {
     async fn elicit_url_resolves_from_the_retry_response() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": { "url": {} } })),
+            Some(Arc::new(json!({ "elicitation": { "url": {} } }))),
             BTreeMap::from([("k".to_owned(), json!({ "action": "accept" }))]),
             None,
             false,
@@ -2627,7 +2629,7 @@ mod tests {
     async fn sampling_and_roots_record_their_spec_methods() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "sampling": {}, "roots": {} })),
+            Some(Arc::new(json!({ "sampling": {}, "roots": {} }))),
             BTreeMap::new(),
             None,
             false,
@@ -2664,7 +2666,7 @@ mod tests {
         // Undeclared is refused (SEP-2322 MUST NOT), per capability.
         let bare = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "roots": {} })),
+            Some(Arc::new(json!({ "roots": {} }))),
             BTreeMap::new(),
             None,
             false,
@@ -2684,7 +2686,7 @@ mod tests {
     #[tokio::test]
     async fn a_task_mediated_handle_that_never_became_a_task_reports_it() {
         let handle = ClientHandle::task_mediated(
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             crate::task_handle::TaskSlot::default(),
             ProtocolVersion::V2026_07_28,
         );
@@ -2743,7 +2745,7 @@ mod tests {
         };
 
         let handle = ClientHandle::task_mediated(
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             slot,
             ProtocolVersion::V2026_07_28,
         );
@@ -2930,7 +2932,7 @@ mod tests {
     async fn non_strict_keys_only_warn_on_conflict() {
         let handle = ClientHandle::mrtr(
             Route::default(),
-            Some(json!({ "elicitation": {} })),
+            Some(Arc::new(json!({ "elicitation": {} }))),
             BTreeMap::new(),
             None,
             false,

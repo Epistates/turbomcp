@@ -246,7 +246,9 @@ impl Linker {
 /// One live connection to an upstream, with what is cached from it.
 pub(crate) struct Link {
     pub(crate) client: Client,
-    pub(crate) tools: Catalog<neutral::Tool>,
+    /// Shared: a call through the gateway gets the catalogue's own `Arc`,
+    /// whose compiled input schema the dispatcher keeps.
+    pub(crate) tools: Catalog<Arc<neutral::Tool>>,
     pub(crate) prompts: Catalog<neutral::Prompt>,
     pub(crate) resources: Catalog<neutral::Resource>,
     pub(crate) templates: Catalog<neutral::ResourceTemplate>,

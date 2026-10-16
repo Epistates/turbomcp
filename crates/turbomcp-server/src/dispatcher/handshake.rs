@@ -96,7 +96,7 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     // handshake's answer.
     let mut base = super::params::build_context(req, ext);
     base.protocol_version = negotiated.clone();
-    base.client_capabilities = Some(client_capabilities.clone());
+    base.client_capabilities = Some(Arc::new(client_capabilities.clone()));
     let base = base.with_client_info(client_info.clone());
     if let Err(refused) = server
         .on_initialize(&crate::InitializeContext::new(base))

@@ -1090,8 +1090,9 @@ impl WithTools for Indexed {
         &self,
         _ctx: &ListToolsContext,
         name: String,
-    ) -> McpResult<Option<neutral::Tool>> {
-        Ok((name == "find").then(|| neutral::Tool::new("find", json!({ "type": "object" }))))
+    ) -> McpResult<Option<std::sync::Arc<neutral::Tool>>> {
+        Ok((name == "find")
+            .then(|| std::sync::Arc::new(neutral::Tool::new("find", json!({ "type": "object" })))))
     }
 
     async fn list_tools(

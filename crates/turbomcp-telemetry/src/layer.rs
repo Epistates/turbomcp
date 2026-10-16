@@ -347,7 +347,11 @@ mod tests {
         }));
         let alice = Identity::Bearer {
             sub: "alice".into(),
-            claims: json!({ "scope": "read" }).as_object().unwrap().clone(),
+            claims: json!({ "scope": "read" })
+                .as_object()
+                .unwrap()
+                .clone()
+                .into(),
         };
         let resp = svc.oneshot(McpRequest::new(req).with(alice)).await.unwrap();
         assert!(matches!(resp, Some(JsonRpcMessage::Response(_))));

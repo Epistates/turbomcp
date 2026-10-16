@@ -155,7 +155,7 @@ trait Mounted: Send + Sync + 'static {
         &self,
         ctx: ListToolsContext,
         name: String,
-    ) -> Option<BoxFuture<'static, McpResult<Option<neutral::Tool>>>>;
+    ) -> Option<BoxFuture<'static, McpResult<Option<Arc<neutral::Tool>>>>>;
     fn list_resources(
         &self,
         ctx: ListResourcesContext,
@@ -261,7 +261,7 @@ impl<S: McpServerCore> Mounted for Erased<S> {
         dispatch_lookup_tool,
         ListToolsContext,
         String,
-        Option<neutral::Tool>
+        Option<Arc<neutral::Tool>>
     );
     forward!(
         list_resources,
@@ -1026,11 +1026,13 @@ impl WithTools for CompositeServer {
         &self,
         ctx: &ListToolsContext,
         name: String,
-    ) -> McpResult<Option<neutral::Tool>> {
+    ) -> McpResult<Option<Arc<neutral::Tool>>> {
+        // A flat mount's tool comes back as its server shared it; only a
+        // prefixed one is renamed, and so copied.
         self.lookup(
             name,
             |mount, name| mount.server.lookup_tool(ctx.clone(), name),
-            |tool, name| tool.name = name,
+            |tool, name| Arc::make_mut(tool).name = name,
         )
         .await
     }
