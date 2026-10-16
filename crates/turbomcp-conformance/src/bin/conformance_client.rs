@@ -380,10 +380,29 @@ async fn run_auth(url: &str, context: &ScenarioContext) -> Result<(), String> {
                 },
                 None => ClientCredentials::public(id),
             },
-            // The scenario hands us credentials without naming their issuer;
-            // binding them to whatever discovery finds is the scenario's
-            // premise, so there is nothing to check them against.
-            issuer: None,
+            // The scenario hands us credentials without naming their issuer:
+            // they are for whichever authorization server the resource names,
+            // which is the scenario's premise. A real deployment knows the
+            // issuer it registered at; here it is discovered, and the binding
+            // is made explicitly rather than by default.
+            issuer: {
+                let probe = OAuthClient::new(
+                    url,
+                    REDIRECT_URI,
+                    RegistrationStrategy::Dynamic(DynamicRegistration::native(
+                        "turbomcp-conformance-client",
+                        vec![REDIRECT_URI.to_string()],
+                    )),
+                )
+                .with_network_policy(turbomcp::auth::NetworkPolicy::default())
+                .map_err(|e| e.to_string())?;
+                probe
+                    .discover(None)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .server
+                    .issuer
+            },
         },
         None if std::env::var("MCP_CONFORMANCE_SCENARIO").as_deref() == Ok("auth/basic-cimd") => {
             RegistrationStrategy::MetadataDocument {

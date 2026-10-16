@@ -28,7 +28,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use turbomcp_core::{Extensions, JsonRpcMessage, JsonRpcNotification, RequestId, SessionId, meta};
+use turbomcp_core::{
+    CancellationToken, Extensions, JsonRpcMessage, JsonRpcNotification, McpError, RequestId,
+    SessionId, meta,
+};
 use turbomcp_protocol::methods;
 use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_service::{Delivery, Peer, Reserved, SessionStreams};
@@ -82,6 +85,11 @@ impl ListChangedKind {
 /// Upper bound on tracked legacy session routes. At capacity a route with no
 /// reachable stream goes first, then the least recently seen one.
 pub(crate) const MAX_LEGACY_ROUTES: usize = 4096;
+
+/// Upper bound on the resource URIs one session (legacy `resources/subscribe`)
+/// or one `subscriptions/listen` filter may watch. Every publish scans them,
+/// so an unbounded set was memory and CPU a single peer could grow at will.
+pub(crate) const MAX_URIS_PER_SESSION: usize = 1024;
 
 /// A legacy session's delivery route: where its messages go and which
 /// resource URIs it subscribed to.
@@ -200,8 +208,18 @@ impl SubscriptionRegistry {
     /// from what the request's transport attached. Called on every legacy
     /// dispatch so the stdio fallback stays current.
     pub(crate) fn legacy_touch(&self, session: &str, ext: &Extensions) {
+        Self::touch_route(&mut self.lock_legacy(), session, ext);
+    }
+
+    /// [`legacy_touch`](Self::legacy_touch) under a lock the caller holds, so
+    /// whatever it does to the route next can't race the route's removal (a
+    /// `DELETE`, an idle sweep, another session's eviction).
+    fn touch_route<'a>(
+        routes: &'a mut HashMap<String, LegacyRoute>,
+        session: &str,
+        ext: &Extensions,
+    ) -> &'a mut LegacyRoute {
         let peer = ext.get::<Peer>();
-        let mut routes = self.lock_legacy();
         if !routes.contains_key(session) {
             // A byte pipe carries one session at a time. A new one on the same
             // connection (the client initialized again) replaces the old, whose
@@ -236,17 +254,30 @@ impl SubscriptionRegistry {
         if let Some(streams) = ext.get::<SessionStreams>() {
             route.streams = Some(streams.clone());
         }
+        route
     }
 
     /// Legacy `resources/subscribe`: deliver `notifications/resources/updated`
     /// for `uri` to this session.
-    pub(crate) fn legacy_subscribe(&self, session: &str, ext: &Extensions, uri: String) {
-        self.legacy_touch(session, ext);
-        self.lock_legacy()
-            .get_mut(session)
-            .expect("touched above")
-            .uris
-            .insert(uri);
+    ///
+    /// # Errors
+    /// The session already watches [`MAX_URIS_PER_SESSION`] URIs.
+    pub(crate) fn legacy_subscribe(
+        &self,
+        session: &str,
+        ext: &Extensions,
+        uri: String,
+    ) -> Result<(), McpError> {
+        let mut routes = self.lock_legacy();
+        let route = Self::touch_route(&mut routes, session, ext);
+        if route.uris.len() >= MAX_URIS_PER_SESSION && !route.uris.contains(&uri) {
+            return Err(McpError::invalid_params(format!(
+                "this session already watches {MAX_URIS_PER_SESSION} resources; \
+                 unsubscribe from one first"
+            )));
+        }
+        route.uris.insert(uri);
+        Ok(())
     }
 
     /// Legacy `resources/unsubscribe` (idempotent — unknown URIs are a no-op).
@@ -412,6 +443,35 @@ impl SubscriptionRegistry {
 pub(crate) struct Route {
     peer: Option<Peer>,
     session: Option<(SessionStreams, SessionId)>,
+    lifetime: Option<CancellationToken>,
+}
+
+/// How long a request's notifications may be sent: from dispatch until it is
+/// answered, or, for a call that becomes a `2025-11-25` task, until the task
+/// ends. Fired, it closes every [`Route`] built under it, so a handler that
+/// keeps a progress reporter or log sender in a spawned task can't go on
+/// sending after the request is over ("progress notifications MUST stop
+/// after completion"), which on the legacy wires would otherwise fall back to
+/// the session's `GET` stream.
+#[derive(Clone, Debug)]
+pub(crate) struct RequestLifetime(pub(crate) CancellationToken);
+
+impl RequestLifetime {
+    /// A new lifetime and the guard that ends it on drop, whichever way the
+    /// work it covers finishes (answered, cancelled, panicked, dropped).
+    pub(crate) fn start() -> (Self, LifetimeEnd) {
+        let token = CancellationToken::new();
+        (Self(token.clone()), LifetimeEnd(token))
+    }
+}
+
+/// Ends a [`RequestLifetime`] when dropped.
+pub(crate) struct LifetimeEnd(CancellationToken);
+
+impl Drop for LifetimeEnd {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
 }
 
 impl Route {
@@ -427,6 +487,7 @@ impl Route {
         Self {
             peer: ext.get::<Peer>().cloned(),
             session,
+            lifetime: ext.get::<RequestLifetime>().map(|l| l.0.clone()),
         }
     }
 
@@ -436,11 +497,26 @@ impl Route {
         Self {
             peer: Some(peer),
             session: None,
+            lifetime: None,
         }
+    }
+
+    /// This route, closed when `lifetime` fires (tests).
+    #[cfg(test)]
+    pub(crate) fn until(mut self, lifetime: CancellationToken) -> Self {
+        self.lifetime = Some(lifetime);
+        self
     }
 
     /// The live stream to write to right now, if any.
     pub(crate) fn peer(&self) -> Option<Peer> {
+        if self
+            .lifetime
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            return None;
+        }
         self.peer.clone().filter(Peer::is_open).or_else(|| {
             self.session
                 .as_ref()

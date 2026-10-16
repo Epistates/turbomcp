@@ -56,6 +56,15 @@ pub trait HttpAuthenticator: Send + Sync {
     fn retains_token(&self) -> bool {
         false
     }
+
+    /// The scope hierarchy of the authorization server whose tokens this
+    /// checks, attached to every request it authorizes so that every scope
+    /// check (a tool's declared scopes, a visibility policy) honors it:
+    /// "Servers MUST account for scope hierarchies, where a broader scope
+    /// implies narrower ones". Default `None`: scopes match exactly.
+    fn scope_rules(&self) -> Option<turbomcp_core::ScopeRules> {
+        None
+    }
 }
 
 /// The bearer token an authorized request arrived with, kept beside it when
@@ -126,6 +135,7 @@ impl ScopeChallenge {
 
 /// The outcome of authenticating one request.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AuthDecision {
     /// Authorized, as this identity. The transport attaches it to the request
     /// beside the message, where the client can't forge it.
@@ -138,6 +148,15 @@ pub enum AuthDecision {
         status: u16,
         /// The `WWW-Authenticate` response header value.
         www_authenticate: String,
+    },
+    /// Undecided: what tokens are checked against (a key set, an
+    /// introspection endpoint) can't be reached. Answered `503` with
+    /// `Retry-After` and no challenge: the token may be perfectly good, and a
+    /// `401 invalid_token` would send every client to re-authorize over what
+    /// is an outage on this side.
+    Unavailable {
+        /// Seconds the client should wait before retrying.
+        retry_after_secs: u64,
     },
 }
 

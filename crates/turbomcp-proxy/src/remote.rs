@@ -26,6 +26,9 @@ use crate::{OutboundAuth, ProxyError, Upstream};
 /// unless the upstream says it changed first.
 const DEFAULT_CATALOG_TTL: Duration = Duration::from_secs(30);
 
+/// The ceiling on one forwarded call, however much progress it reports.
+const DEFAULT_MAX_CALL: Duration = Duration::from_secs(60 * 60);
+
 /// How many changes a slow [`RemoteServer::changes`] receiver may fall
 /// behind before it skips the oldest.
 const CHANGE_BUFFER: usize = 64;
@@ -67,6 +70,8 @@ struct Shared {
     forward_input: bool,
     /// Keep the upstream tools' declared scopes, for the gateway to enforce.
     enforce_scopes: bool,
+    /// The ceiling on one forwarded call.
+    max_call: Duration,
     key: UpstreamKey,
     pool: Pool,
 }
@@ -103,6 +108,7 @@ pub struct RemoteServerBuilder {
     serialize: bool,
     idle: Duration,
     max: u64,
+    max_call: Duration,
     #[cfg(feature = "http")]
     network: Option<turbomcp_auth::NetworkPolicy>,
 }
@@ -137,6 +143,7 @@ impl RemoteServerBuilder {
             serialize: false,
             idle: DEFAULT_IDLE,
             max: DEFAULT_MAX,
+            max_call: DEFAULT_MAX_CALL,
             #[cfg(feature = "http")]
             network: None,
         }
@@ -168,10 +175,20 @@ impl RemoteServerBuilder {
         self
     }
 
-    /// Fail an upstream request that takes longer than `timeout` (default:
-    /// the client's).
+    /// Fail an upstream request that goes `timeout` without an answer
+    /// (default: the client's, 60 s). A forwarded call's clock restarts with
+    /// every progress report the upstream sends, so a long operation that
+    /// keeps reporting isn't cut off; [`max_call_duration`](Self::max_call_duration)
+    /// is the ceiling either way.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.client = self.client.with_timeout(timeout);
+        self
+    }
+
+    /// Give up on a forwarded call after `max`, whatever progress it reports
+    /// (default one hour). The caller cancelling ends it sooner, as always.
+    pub fn max_call_duration(mut self, max: Duration) -> Self {
+        self.max_call = max;
         self
     }
 
@@ -334,6 +351,7 @@ impl RemoteServerBuilder {
             changes,
             forward_input: self.forward_input,
             enforce_scopes: self.enforce_scopes.unwrap_or(for_callers),
+            max_call: self.max_call,
             key,
             label,
             pool: {
@@ -529,7 +547,13 @@ impl RemoteServer {
         progress: &turbomcp_server::ProgressReporter,
         handle: &turbomcp_server::ClientHandle,
     ) -> Forwarded {
-        let mut options = CallOptions::new().cancel_on(base.cancellation.clone());
+        // The caller's own cancellation governs; the gateway adds no deadline
+        // tighter than the upstream's silence: progress restarts the clock,
+        // up to the ceiling.
+        let mut options = CallOptions::new()
+            .cancel_on(base.cancellation.clone())
+            .reset_timeout_on_progress(true)
+            .max_total_timeout(self.inner.max_call);
         let bridge = self.inner.forward_input.then(|| {
             Bridge::new(
                 handle.clone(),

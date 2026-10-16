@@ -136,6 +136,7 @@ async fn the_idp_authorizes_the_client_without_a_browser() {
 
     let engine = EnterpriseAuthorization::new(
         resource.clone(),
+        authority.clone(),
         IdentityProvider::new(
             format!("{authority}/idp/token"),
             ClientCredentials::public("sso-client"),

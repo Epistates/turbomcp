@@ -67,7 +67,7 @@ async fn run_harness(spec_version: &str) -> Vec<CheckResult> {
             && stdout.lines().any(|line| line.starts_with("Total:")),
         "harness did not complete: {stdout}"
     );
-    // alpha.11 exits 1 on WARNING as well as FAILURE. Permit that exit only
+    // The harness exits 1 on WARNING as well as FAILURE. Permit that exit only
     // for an otherwise complete run with warnings; the exact warning inventory
     // below is independently pinned and reviewed.
     assert!(

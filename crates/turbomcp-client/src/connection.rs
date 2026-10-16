@@ -903,9 +903,16 @@ fn route_inbound(
                     .as_ref()
                     .and_then(|p| p.get("requestId"))
                     .and_then(|id| serde_json::from_value::<RequestId>(id.clone()).ok())
-                && let Some(task) = dispatch.inflight.remove(&id)
             {
-                task.abort();
+                if let Some(task) = dispatch.inflight.remove(&id) {
+                    task.abort();
+                } else {
+                    // Naming one of *our* requests: a `subscriptions/listen`
+                    // the server is tearing down, which it does by "sending
+                    // `notifications/cancelled` referencing the listen
+                    // request's ID". On stdio nothing else ever ends it.
+                    subscriptions.close(&id);
+                }
             }
             // "Clients MUST ignore completion notifications for unknown or
             // already-completed elicitation IDs." Claiming the id here, once,
@@ -961,6 +968,32 @@ fn route_inbound(
         }
         JsonRpcMessage::Request(req) if req.method == request::PING => {
             Some(JsonRpcResponse::success(req.id, serde_json::json!({})).into())
+        }
+        // `2026-07-28` carries sampling, elicitation and roots inside the
+        // call that needs them (`InputRequiredResult`); "the server MUST NOT
+        // write JSON-RPC requests" to stdio, and a request arriving outside
+        // any call is one this client won't act on: running it would let a
+        // server start model calls or prompt the user unasked. SEP-2260:
+        // "Clients receiving server-to-client requests with no associated
+        // outbound request SHOULD respond with a `-32602`."
+        JsonRpcMessage::Request(req)
+            if *negotiated
+                .lock()
+                .expect("negotiated version mutex poisoned")
+                == ProtocolVersion::V2026_07_28 =>
+        {
+            tracing::debug!(method = %req.method, "unassociated server request on 2026-07-28; refused");
+            Some(JsonRpcMessage::Response(JsonRpcResponse::error(
+                req.id,
+                JsonRpcError {
+                    code: turbomcp_core::codes::INVALID_PARAMS,
+                    message: format!(
+                        "`{}` is not associated with any request from this client",
+                        req.method
+                    ),
+                    data: None,
+                },
+            )))
         }
         JsonRpcMessage::Request(req) if dispatch.inflight.len() >= MAX_INBOUND_REQUESTS => {
             tracing::warn!(method = %req.method, "too many server requests in flight; refusing one");

@@ -116,28 +116,33 @@ impl Identity {
     }
 
     /// The OAuth scopes granted to this identity, read from the standard `scope`
-    /// (space-delimited string) and `scp` (array) claims.
+    /// claim and from `scp`, as an array or as a space-delimited string (the
+    /// form Microsoft Entra ID issues).
     #[must_use]
     pub fn granted_scopes(&self) -> Vec<String> {
         let mut out = Vec::new();
-        if let Some(Value::String(s)) = self.claim("scope") {
-            out.extend(s.split_whitespace().map(String::from));
-        }
-        if let Some(Value::Array(arr)) = self.claim("scp") {
-            out.extend(arr.iter().filter_map(|v| v.as_str().map(String::from)));
+        for claim in ["scope", "scp"] {
+            match self.claim(claim) {
+                Some(Value::String(s)) => out.extend(s.split_whitespace().map(String::from)),
+                Some(Value::Array(arr)) => {
+                    out.extend(arr.iter().filter_map(|v| v.as_str().map(String::from)));
+                }
+                _ => {}
+            }
         }
         out
     }
 
-    /// Whether this identity holds every scope in `required` (`true` if the
-    /// requirement is empty). Anonymous identities hold no scopes.
+    /// Whether this identity holds every scope in `required` exactly (`true`
+    /// if the requirement is empty). Anonymous identities hold no scopes.
+    ///
+    /// No scope hierarchy is consulted here, since none is known to an
+    /// identity; a server's checks go through
+    /// [`RequestContext::has_scopes`](crate::RequestContext::has_scopes),
+    /// which applies the one its authenticator declared.
     #[must_use]
     pub fn has_scopes(&self, required: &[&str]) -> bool {
-        if required.is_empty() {
-            return true;
-        }
-        let granted = self.granted_scopes();
-        required.iter().all(|r| granted.iter().any(|g| g == r))
+        required.is_empty() || crate::scopes::satisfies(None, &self.granted_scopes(), required)
     }
 }
 

@@ -132,6 +132,14 @@ pub struct IntrospectionValidator {
     leeway: u64,
     cache_ttl: Duration,
     cache: moka::sync::Cache<[u8; 32], Cached>,
+    /// Tokens the endpoint called inactive or this resource refused, by
+    /// digest, for [`NEGATIVE_TTL`](Self::NEGATIVE_TTL): replaying one costs
+    /// nothing upstream.
+    rejected: moka::sync::Cache<[u8; 32], ()>,
+    /// Bounds introspection calls in flight: each request carrying an
+    /// unknown token costs one, and those are what an unauthenticated caller
+    /// controls.
+    in_flight: std::sync::Arc<tokio::sync::Semaphore>,
     client: reqwest::Client,
     policy: NetworkPolicy,
 }
@@ -153,6 +161,12 @@ impl IntrospectionValidator {
     pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(60);
     /// How many answers the cache holds.
     pub const CACHE_CAPACITY: u64 = 10_000;
+    /// How long a rejected token stays rejected without asking again.
+    pub const NEGATIVE_TTL: Duration = Duration::from_secs(30);
+    /// How many introspection calls may be in flight at once; requests
+    /// beyond it wait their turn rather than multiplying the load on the
+    /// authorization server.
+    pub const MAX_IN_FLIGHT: usize = 64;
 
     /// Introspect at `endpoint`, authenticated with `auth`, accepting tokens
     /// issued for `audience` (this resource's canonical URI).
@@ -170,6 +184,11 @@ impl IntrospectionValidator {
             leeway: 60,
             cache_ttl: Self::DEFAULT_CACHE_TTL,
             cache: Self::build_cache(Self::DEFAULT_CACHE_TTL),
+            rejected: moka::sync::Cache::builder()
+                .max_capacity(Self::CACHE_CAPACITY)
+                .time_to_live(Self::NEGATIVE_TTL)
+                .build(),
+            in_flight: std::sync::Arc::new(tokio::sync::Semaphore::new(Self::MAX_IN_FLIGHT)),
             client: policy.http_client().expect("HTTP client initialization"),
             policy,
         }
@@ -206,11 +225,16 @@ impl IntrospectionValidator {
     }
 
     /// Reuse an answer for up to `ttl` (default 60 s), never past the token's
-    /// `exp`. `Duration::ZERO` introspects every request.
+    /// `exp`; a refusal is reused for at most [`NEGATIVE_TTL`](Self::NEGATIVE_TTL).
+    /// `Duration::ZERO` introspects every request.
     #[must_use]
     pub fn cache_ttl(mut self, ttl: Duration) -> Self {
         self.cache_ttl = ttl;
         self.cache = Self::build_cache(ttl);
+        self.rejected = moka::sync::Cache::builder()
+            .max_capacity(Self::CACHE_CAPACITY)
+            .time_to_live(ttl.min(Self::NEGATIVE_TTL).max(Duration::from_millis(1)))
+            .build();
         self
     }
 
@@ -247,8 +271,27 @@ impl IntrospectionValidator {
             }
             self.cache.invalidate(&key);
         }
-        let claims = self.introspect(token).await?;
-        let (principal, exp) = self.accept(claims)?;
+        if !self.cache_ttl.is_zero() && self.rejected.contains_key(&key) {
+            return Err(AuthError::InvalidToken(
+                "the token was refused recently".into(),
+            ));
+        }
+        let claims = {
+            // Closed never: the semaphore lives as long as `self`.
+            let _turn = self.in_flight.acquire().await.ok();
+            self.introspect(token).await?
+        };
+        let (principal, exp) = match self.accept(claims) {
+            Ok(accepted) => accepted,
+            Err(e) => {
+                // Only a definite answer about the token is remembered; an
+                // unreachable endpoint (`introspect`'s error) is not.
+                if !self.cache_ttl.is_zero() {
+                    self.rejected.insert(key, ());
+                }
+                return Err(e);
+            }
+        };
         if !self.cache_ttl.is_zero() {
             self.cache.insert(
                 key,
@@ -290,7 +333,7 @@ impl IntrospectionValidator {
             }
             ClientAuth::Bearer(bearer) => request = request.bearer_auth(bearer.as_str()),
         }
-        let unavailable = |e: String| AuthError::KeyUnavailable(format!("introspection: {e}"));
+        let unavailable = |e: String| AuthError::Unavailable(format!("introspection: {e}"));
         let response = self
             .policy
             .send(&self.client, request.form(&form))

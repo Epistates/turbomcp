@@ -37,6 +37,7 @@ mod identity;
 mod jsonrpc;
 pub mod meta;
 mod protocol_version;
+pub mod scopes;
 
 pub use cancellation::CancellationToken;
 pub use context::{Extensions, Implementation, LogLevel, RequestContext, TraceContext};
@@ -48,3 +49,4 @@ pub use jsonrpc::{
     JsonRpcResponse, RequestId,
 };
 pub use protocol_version::ProtocolVersion;
+pub use scopes::{ImpliedScopes, PrefixHierarchy, ScopeHierarchy, ScopeRules};

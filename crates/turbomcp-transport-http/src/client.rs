@@ -1289,12 +1289,27 @@ async fn listen(shared: Arc<Shared>) {
                 // the id here instead left every later POST sessionless, so
                 // each got a 400 rather than the 404 that triggers recovery,
                 // and the client stayed broken for good.
+                //
+                // A 404 to a *resuming* GET may only mean the server no longer
+                // has that stream (its event store expired it, or it
+                // restarted): the cursor is dead, not necessarily the session.
+                // Reopen without it before concluding anything; treating it as
+                // a lost session re-initialized, kept the cursor, got 404
+                // again, and looped with no delay until the server's session
+                // table was full.
+                if status.as_u16() == 404 && last_event_id.take().is_some() {
+                    continue;
+                }
                 if status.as_u16() == 404 && sent_session.is_some() {
                     match recover_session(&shared, sent_session.as_deref()).await {
-                        Ok(true) => {
-                            refusals = 0;
-                            continue; // reopen at once, on the new session
+                        // Reopen at once on the new session, but only once in
+                        // a row: a server that 404s every new session gets the
+                        // backoff below, not a handshake per round trip.
+                        Ok(true) if refusals == 0 => {
+                            refusals = 1;
+                            continue;
                         }
+                        Ok(true) => {}
                         Ok(false) => {}
                         Err(e) => {
                             tracing::debug!(error = %e, "standalone sse stream: session recovery failed");

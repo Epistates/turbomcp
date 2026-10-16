@@ -485,6 +485,14 @@ where
         }
         // Where a handler says the call needs scopes this token lacks.
         ext.insert(ScopeChallenge::default());
+        // What the authorization server's scopes imply, for every check.
+        if let Some(rules) = state
+            .authenticator
+            .as_ref()
+            .and_then(|authenticator| authenticator.scope_rules())
+        {
+            ext.insert(rules);
+        }
     }
 
     // Rate limit (if configured) per identity: authenticated → per-subject,

@@ -199,13 +199,63 @@ async fn what_is_refused() {
     assert_eq!(v.validate("machine").await.unwrap().subject, "ci-runner");
 }
 
+/// A refused token is remembered for a while: an unauthenticated caller
+/// replaying one doesn't turn each request into a call to the authorization
+/// server. An unreachable endpoint is not remembered, since it said nothing
+/// about the token.
+#[tokio::test]
+async fn a_refused_token_is_not_asked_about_again() {
+    let (url, endpoint) = serve().await;
+    endpoint.answer("revoked", json!({ "active": false }));
+    let v = validator(&url);
+    for _ in 0..5 {
+        assert!(matches!(
+            v.validate("revoked").await,
+            Err(AuthError::InvalidToken(_))
+        ));
+    }
+    assert_eq!(endpoint.seen.lock().unwrap().len(), 1, "asked once");
+
+    endpoint.fail("flaky", 503);
+    for _ in 0..2 {
+        assert!(v.validate("flaky").await.is_err());
+    }
+    assert_eq!(
+        endpoint.seen.lock().unwrap().len(),
+        3,
+        "an outage is asked again"
+    );
+}
+
+/// An introspection endpoint that is down says nothing about the token: the
+/// resource server answers `503` with `Retry-After`, not `401
+/// invalid_token`, which would send every client to re-authorize over an
+/// outage on the server's side.
+#[tokio::test]
+async fn an_unreachable_backend_is_a_503_not_a_rejection() {
+    use turbomcp_auth::{ResourceMetadata, ResourceServer};
+    use turbomcp_service::{AuthDecision, HttpAuthenticator};
+    let (url, endpoint) = serve().await;
+    endpoint.fail("boom", 503);
+    let rs = ResourceServer::new(
+        validator(&url),
+        ResourceMetadata::new(RESOURCE, vec![ISSUER.to_owned()]),
+        "https://mcp.example.com/.well-known/oauth-protected-resource",
+    );
+    let decision = rs.authenticate(Some("Bearer boom")).await;
+    assert!(
+        matches!(decision, AuthDecision::Unavailable { retry_after_secs } if retry_after_secs > 0),
+        "{decision:?}"
+    );
+}
+
 #[tokio::test]
 async fn an_unreachable_or_failing_endpoint_closes() {
     let (url, endpoint) = serve().await;
     endpoint.fail("boom", 500);
     assert!(matches!(
         validator(&url).validate("boom").await,
-        Err(AuthError::KeyUnavailable(_))
+        Err(AuthError::Unavailable(_))
     ));
     // Nothing listening there.
     let gone = IntrospectionValidator::new(
@@ -215,7 +265,7 @@ async fn an_unreachable_or_failing_endpoint_closes() {
     );
     assert!(matches!(
         gone.validate("any").await,
-        Err(AuthError::KeyUnavailable(_))
+        Err(AuthError::Unavailable(_))
     ));
 }
 

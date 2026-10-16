@@ -212,6 +212,23 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
+    /// Whether the caller holds every scope in `required` (`true` if the
+    /// requirement is empty), under the scope hierarchy the request's
+    /// authenticator declared ([`ScopeRules`](crate::ScopeRules)): "a broader
+    /// scope implies narrower ones". Without one, scopes match exactly.
+    #[must_use]
+    pub fn has_scopes(&self, required: &[&str]) -> bool {
+        if required.is_empty() {
+            return true;
+        }
+        let rules = self.extensions.get::<crate::ScopeRules>();
+        crate::scopes::satisfies(
+            rules.map(|r| r.0.as_ref()),
+            &self.identity.granted_scopes(),
+            required,
+        )
+    }
+
     /// Create a context for the given protocol version with default everything
     /// else (anonymous identity, fresh cancellation token, empty maps).
     #[must_use]

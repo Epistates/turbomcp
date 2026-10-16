@@ -15,6 +15,10 @@ use crate::error::AuthError;
 use crate::metadata::ResourceMetadata;
 use crate::validator::BearerValidator;
 
+/// `Retry-After` on a `503` for an unreachable key or introspection backend:
+/// long enough not to hammer it, short next to a token's life.
+const UNAVAILABLE_RETRY_AFTER_SECS: u64 = 5;
+
 /// An MCP server acting as an OAuth 2.1 resource server.
 ///
 /// Construct one with a [`BearerValidator`] and the resource's
@@ -27,6 +31,7 @@ pub struct ResourceServer<V> {
     metadata_url: String,
     required_scopes: Vec<String>,
     retain_token: bool,
+    scope_rules: Option<turbomcp_core::ScopeRules>,
 }
 
 impl<V: BearerValidator> ResourceServer<V> {
@@ -42,7 +47,24 @@ impl<V: BearerValidator> ResourceServer<V> {
             metadata_url: metadata_url.into(),
             required_scopes: Vec::new(),
             retain_token: false,
+            scope_rules: None,
         }
+    }
+
+    /// What this authorization server's scopes imply: "a broader scope
+    /// implies narrower ones" (`files` covering `files:read`, say, with
+    /// [`PrefixHierarchy`](turbomcp_core::PrefixHierarchy), or a table with
+    /// [`ImpliedScopes`](turbomcp_core::ImpliedScopes)). Applied to the
+    /// baseline [`required_scopes`](Self::required_scopes) here and, through
+    /// the transport, to every per-tool and visibility check of the requests
+    /// this authorizes. Default: scopes match exactly.
+    #[must_use]
+    pub fn scope_hierarchy(
+        mut self,
+        hierarchy: impl turbomcp_core::ScopeHierarchy + 'static,
+    ) -> Self {
+        self.scope_rules = Some(turbomcp_core::ScopeRules(std::sync::Arc::new(hierarchy)));
+        self
     }
 
     /// Keep each authorized request's bearer token beside it, as a
@@ -113,12 +135,23 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
             };
             let principal = match self.validator.validate(token).await {
                 Ok(principal) => principal,
+                Err(AuthError::Unavailable(e)) => {
+                    tracing::warn!(error = %e, "bearer token undecided: backend unavailable");
+                    return AuthDecision::Unavailable {
+                        retry_after_secs: UNAVAILABLE_RETRY_AFTER_SECS,
+                    };
+                }
                 Err(e) => {
                     tracing::debug!(error = %e, "bearer token rejected");
                     return self.unauthorized(true);
                 }
             };
-            if !principal.has_scopes(&self.required_scopes) {
+            let required: Vec<&str> = self.required_scopes.iter().map(String::as_str).collect();
+            if !turbomcp_core::scopes::satisfies(
+                self.scope_rules.as_ref().map(|rules| rules.0.as_ref()),
+                &principal.scopes,
+                &required,
+            ) {
                 return self.forbidden();
             }
             AuthDecision::Allow(turbomcp_core::Identity::Bearer {
@@ -130,6 +163,10 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
 
     fn retains_token(&self) -> bool {
         self.retain_token
+    }
+
+    fn scope_rules(&self) -> Option<turbomcp_core::ScopeRules> {
+        self.scope_rules.clone()
     }
 
     fn resource_metadata(&self) -> Value {

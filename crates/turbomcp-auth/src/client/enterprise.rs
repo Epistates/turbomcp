@@ -154,6 +154,7 @@ impl std::fmt::Debug for IdJag {
 #[derive(Clone, Debug)]
 pub struct EnterpriseAuthorization {
     resource: String,
+    issuer: String,
     idp: IdentityProvider,
     credentials: ClientCredentials,
     http: reqwest::Client,
@@ -162,9 +163,14 @@ pub struct EnterpriseAuthorization {
 
 impl EnterpriseAuthorization {
     /// The flow for the MCP server `resource`, through `idp`, where this
-    /// client is `credentials` at the MCP server's authorization server (a
-    /// registered client, or a Client ID Metadata Document URL as a public
-    /// client).
+    /// client is `credentials` at the MCP server's authorization server
+    /// `issuer` (a registered client, or a Client ID Metadata Document URL as
+    /// a public client).
+    ///
+    /// `issuer` is pinned: a resource whose metadata names another
+    /// authorization server is refused with
+    /// [`OAuthClientError::IssuerChanged`], before an ID-JAG is requested for
+    /// it or the credentials are presented to it.
     ///
     /// Endpoints must be HTTPS on public addresses, as for
     /// [`OAuthClient`](super::OAuthClient); widen with
@@ -175,12 +181,14 @@ impl EnterpriseAuthorization {
     #[must_use]
     pub fn new(
         resource: impl Into<String>,
+        issuer: impl Into<String>,
         idp: IdentityProvider,
         credentials: ClientCredentials,
     ) -> Self {
         let network = crate::NetworkPolicy::public_only();
         Self {
             resource: resource.into(),
+            issuer: issuer.into(),
             idp,
             credentials,
             http: network.http_client().expect("HTTP client initialization"),
@@ -220,8 +228,14 @@ impl EnterpriseAuthorization {
         &self,
         challenge: Option<&BearerChallenge>,
     ) -> Result<Discovered, OAuthClientError> {
-        let discovered =
-            discover_with_policy(&self.http, &self.resource, challenge, &self.network).await?;
+        let discovered = discover_with_policy(
+            &self.http,
+            &self.resource,
+            &self.issuer,
+            challenge,
+            &self.network,
+        )
+        .await?;
         if !accepts_id_jag(&discovered.server) {
             return Err(OAuthClientError::Discovery(format!(
                 "authorization server {} does not accept ID-JAGs \

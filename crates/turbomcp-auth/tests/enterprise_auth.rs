@@ -114,6 +114,7 @@ async fn as_token(
 fn flow(base: &str) -> EnterpriseAuthorization {
     EnterpriseAuthorization::new(
         format!("{base}/mcp"),
+        base,
         IdentityProvider::new(
             format!("{base}/idp/token"),
             ClientCredentials {

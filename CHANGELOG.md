@@ -353,6 +353,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Breaking:** machine authorization binds its credentials to one
+  authorization server. `MachineAuthorization::new`,
+  `EnterpriseAuthorization::new` and the gateway's `ServiceAccount::new`
+  take the issuer the credentials were registered at, and a resource whose
+  protected resource metadata names another server is refused with
+  `OAuthClientError::IssuerChanged` before anything is sent. The server
+  was taken from the resource's own metadata, so a hostile or compromised
+  upstream could name an authorization server it controls and receive the
+  client secret and, under `OutboundAuth::TokenExchange`, each caller's
+  token as the `subject_token`.
+- **Breaking:** `RegistrationStrategy::Preregistered::issuer` is a
+  `String`, not an `Option`: pre-registered credentials are always bound to
+  the server that issued them ("MUST associate those credentials with the
+  specific authorization server that issued them"). Configured
+  pre-registered credentials also take precedence over a client stored
+  earlier for the same issuer.
+- `IntrospectionValidator` remembers a refused token for 30 s
+  (`NEGATIVE_TTL`, capped by `cache_ttl`) and bounds introspection calls in
+  flight at 64, so an unauthenticated caller can no longer turn every
+  request into a call to the authorization server.
+- Resource template captures can't be widened by percent-decoding: a
+  one-segment variable (`{var}`, `{/var}`, `{.var}`) no longer matches a
+  value that decodes to `/` or `\`, and no variable binds a `.` or `..`
+  path segment. `docs://{name}` was handed `../../etc/passwd` for
+  `docs://..%2F..%2Fetc%2Fpasswd`.
+- The gateway's upstream labels, which reach downstream callers in error
+  messages, keep only `scheme://host[:port]`: an API key in an upstream
+  URL's user info, path or query no longer leaks to every caller when that
+  upstream is down.
+- A legacy `resources/subscribe` could panic the server while holding the
+  subscription registry's lock (racing a `DELETE` or idle expiry of the
+  same session), poisoning it for every session after. Subscriptions are
+  bounded too: 1024 resource URIs per session or `subscriptions/listen`
+  filter, refused with `-32602` beyond that.
+- `initialize` refuses client capabilities over 64 KiB, which a session
+  kept for its whole life.
+- The release profile unwinds instead of aborting on panic, so the shipped
+  `turbomcp` binary keeps its panic isolation: one handler's panic is
+  answered `-32603` instead of killing the gateway and every connection on
+  it.
 - OAuth secrets are wiped from memory when dropped: `TokenSet`'s access and
   refresh tokens, `ClientCredentials::client_secret`, the PKCE verifier,
   and `ClientAuth`'s credentials are `zeroize::Zeroizing<String>` (already
@@ -448,6 +488,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `2026-07-28` header mirroring: a tool argument that is `null` has no
+  `Mcp-Param-*` header ("Client MUST omit the header … Server MUST NOT
+  expect the header"), but the server answered every such call `400
+  HeaderMismatch`, so an `Option` argument set to `None` failed against
+  any conformant client.
+- A cancelled request was still answered about half the time when its
+  handler noticed the cancellation itself: the dispatcher now prefers the
+  cancellation and checks it again after the handler returns.
+- Progress and log notifications stop when their request is answered (or,
+  for a `2025-11-25` task, when the task ends). A reporter a handler kept
+  in a spawned task went on sending, on the legacy wires through the
+  session's `GET` stream.
+- Progress notifications for a `2025-11-25` task carry
+  `io.modelcontextprotocol/related-task`, which "all notifications related
+  to a task MUST include".
+- A client that refuses a `2025-11-25` task's input request with a
+  JSON-RPC error unblocks the task: the handler's `elicit` or
+  `create_message` returns the error, where it used to wait out the task's
+  TTL. **Breaking** for custom `TaskBackend`s: `InputWaiter` resolves to
+  `Result<Value, JsonRpcError>`, and `fail_input` is a new required method.
+- `2026-07-28` results carry the server's identity in `_meta`
+  (`io.modelcontextprotocol/serverInfo`), as servers SHOULD on the
+  stateless wire; only `server/discover` did.
+- The client:
+  - rejects an unrecognized `resultType` on every `2026-07-28` result, and
+    `input_required` on any method other than `tools/call`,
+    `resources/read` and `prompts/get` ("MUST be considered invalid"); list
+    results were decoded, and cached, as if complete;
+  - doesn't cache a `resources/read` that asked for input ("Results from
+    requests that include `inputResponses` or `requestState` MUST NOT be
+    cached"), so the next read of the URI asks again;
+  - ends a subscription the server tears down with `notifications/cancelled`
+    naming the listen request; on stdio `next()` waited forever;
+  - refuses a `2026-07-28` server request that belongs to no call with
+    `-32602` (SEP-2260) instead of running its sampling or elicitation
+    handler;
+  - over HTTP, no longer takes a slow `server/discover` for a legacy server:
+    `ConnectMode::Auto` falls back on a timeout only on byte pipes, where a
+    legacy server may stay silent;
+  - drops a dead `Last-Event-ID` when the server answers `404` to a
+    resuming `GET`, instead of re-initializing the session and looping
+    with no delay until the server's session table was full;
+  - accepts a negative or float-spelled `ttlMs` (as `0` / the integer), which
+    failed the whole result.
+- OAuth: the authorization request, token request and refresh send the
+  `resource` exactly as the server's protected resource metadata
+  publishes it, not the configured endpoint URL (conformance 0.2.0-alpha.12
+  `resource-parameter-matches-prm`).
+- An unreachable JWKS or introspection endpoint is answered `503` with
+  `Retry-After` (`AuthDecision::Unavailable`, `AuthError::Unavailable`)
+  instead of `401 invalid_token`, which sent every client to re-authorize
+  over an outage on the server's side.
+- Scope hierarchies (2026-07-28 MUST): `ResourceServer::scope_hierarchy`
+  declares what the authorization server's scopes imply
+  (`scopes::PrefixHierarchy`, `scopes::ImpliedScopes`, or your own
+  `ScopeHierarchy`), and every check honors it through
+  `RequestContext::has_scopes`: the baseline gate, `#[tool(scopes(…))]`,
+  and scope-based visibility. A token holding `files` was refused a tool
+  needing `files:read` with a step-up no authorization server could
+  satisfy. `scp` given as a space-delimited string (Entra ID) is read as
+  scopes, and the baseline and per-tool gates read claims the same way.
+- A resumable stream's recorder no longer holds the stream's lock while it
+  hands an event to a stalled reader, which blocked the resume that would
+  replace it.
+- Forwarded gateway calls restart their timeout on every progress report,
+  up to `RemoteServer::max_call_duration` (default one hour), and
+  `turbomcp proxy --timeout` sets the per-request timeout; a long tool
+  failed at 60 s through the gateway even while reporting progress.
+- `cargo test -p turbomcp-transport-http --all-features` compiles again.
+- Conformance is pinned to `@modelcontextprotocol/conformance@0.2.0-alpha.12`
+  (server 232 passed of 237, client 511 distinct passing pairs, zero
+  failures either way, and the unmodified upstream client run passes too).
+  Client fixture corrections v2 drop the SSE-retry one, which upstream
+  fixed. `TURBOMCP_CONFORMANCE_BLESS=1` rewrites the exact inventories from
+  a passing run after a harness update. The interop suite resolves rmcp
+  3.5.1.
 - `WebSocketClientTransport::connect` with an `http::Request` built by hand
   (the documented way to add an `Authorization` header) failed the upgrade:
   the request lacked the handshake's own headers. The transport now adds

@@ -72,7 +72,7 @@ fn main() -> Result<()> {
 use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, vec, vec::Vec};\n";
     let body = format!("{intro}\n{no_std_prelude}\n{}", type_space.to_stream());
     let file = syn::parse_file(&body).context("parsing generated tokens as a Rust file")?;
-    let pretty = to_no_std(&prettyplease::unparse(&file));
+    let pretty = lenient_fields(&to_no_std(&prettyplease::unparse(&file)));
 
     // Deliberately records no filesystem path. The header used to carry the
     // schema's location at generation time, which made the output a function of
@@ -95,6 +95,19 @@ use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, v
         pretty.lines().count()
     );
     Ok(())
+}
+
+/// Point the fields the spec tells a receiver to tolerate at the protocol
+/// crate's lenient decoders (`turbomcp_protocol::lenient`). typify has no
+/// per-field `deserialize_with`, so this matches the exact attribute it emits
+/// for each and adds one.
+///
+/// - `ttlMs`: a negative value is `0` and `5000.0` is `5000` (caching).
+fn lenient_fields(src: &str) -> String {
+    src.replace(
+        "#[serde(rename = \"ttlMs\", default)]",
+        "#[serde(rename = \"ttlMs\", default, deserialize_with = \"crate::lenient::ttl_ms\")]",
+    )
 }
 
 /// Rewrite typify's `::std::` absolute paths to `::alloc::`/`::core::` so the

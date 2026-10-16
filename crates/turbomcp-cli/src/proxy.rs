@@ -37,6 +37,12 @@ pub struct ProxyArgs {
     #[arg(long)]
     pub strict: bool,
 
+    /// Seconds an upstream may go silent on a call before it fails (default
+    /// 60). Each progress report it sends restarts the clock, so a long
+    /// operation that keeps reporting runs on, for up to an hour.
+    #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u64).range(1..))]
+    pub timeout: Option<u64>,
+
     /// Require OAuth 2.1 bearer tokens on `--http`: JWTs issued by this
     /// authorization server (its issuer identifier).
     #[arg(long, value_name = "URL", requires_all = ["http", "auth_jwks"])]
@@ -119,9 +125,13 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
     }
 
     // Every upstream at once: a slow one doesn't hold up the rest.
+    let timeout = args.timeout.map(std::time::Duration::from_secs);
     let connecting = servers.into_iter().map(|server| async move {
-        let connected = RemoteServer::connect(server.upstream).await;
-        (server.name, connected)
+        let mut remote = RemoteServer::builder(server.upstream);
+        if let Some(timeout) = timeout {
+            remote = remote.timeout(timeout);
+        }
+        (server.name, remote.connect().await)
     });
     let mut remotes = Vec::new();
     for (name, connected) in futures::future::join_all(connecting).await {

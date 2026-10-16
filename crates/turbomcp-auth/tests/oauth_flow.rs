@@ -482,7 +482,7 @@ async fn preregistered_credentials_bound_to_a_different_issuer_error_out() {
         "http://127.0.0.1:19999/callback",
         RegistrationStrategy::Preregistered {
             credentials: turbomcp_auth::client::ClientCredentials::public("pre-1"),
-            issuer: Some("https://old-as.example".into()),
+            issuer: "https://old-as.example".into(),
         },
     )
     .with_network_policy(turbomcp_auth::NetworkPolicy::default())

@@ -165,6 +165,7 @@ async fn a_service_authorizes_itself_and_steps_up() {
 
     let engine = MachineAuthorization::new(
         resource.clone(),
+        authority.clone(),
         ClientCredentials {
             client_id: "deploy-bot".into(),
             client_secret: Some("s3cret".to_owned().into()),
@@ -198,7 +199,9 @@ async fn a_gateway_authorizes_itself_at_its_upstream() {
 
     let remote = RemoteServer::builder(Upstream::http(resource))
         .auth(OutboundAuth::ClientCredentials(ServiceAccount::new(
-            "gateway", "s3cret",
+            authority.clone(),
+            "gateway",
+            "s3cret",
         )))
         .network_policy(NetworkPolicy::default())
         .connect()

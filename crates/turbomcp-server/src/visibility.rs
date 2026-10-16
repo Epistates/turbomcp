@@ -198,7 +198,7 @@ impl VisibilityPolicy for Visibility {
         }
         if self.declared_scopes {
             let required: Vec<&str> = component.declared_scopes().collect();
-            if !required.is_empty() && !component.request.identity.has_scopes(&required) {
+            if !required.is_empty() && !component.request.has_scopes(&required) {
                 return false;
             }
         }

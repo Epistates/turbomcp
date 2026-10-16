@@ -229,7 +229,10 @@ fn check_header_mirrors(
                 "Mcp-Param-{header} {why}"
             )))
         };
-        match (argument_at(&arguments, &param.path), observed.get(header)) {
+        // A `null` value has no header: "Client MUST omit the header … Server
+        // MUST NOT expect the header", the same as an absent argument.
+        let body = argument_at(&arguments, &param.path).filter(|v| !v.is_null());
+        match (body, observed.get(header)) {
             (None, None) => {}
             (Some(_), None) => return mismatch("header is missing"),
             (None, Some(_)) => return mismatch("header has no matching value in the request body"),
@@ -812,7 +815,7 @@ pub(super) async fn prepare_tool<S: McpServerCore, W: WireFamily>(
     // instead of the step-up challenge. (`#[tool(scopes(…))]` also guards the
     // handler itself, for callers that reach it without a dispatcher.)
     let required: Vec<&str> = crate::visibility::declared_scopes(&tool.meta).collect();
-    if !ctx.identity.has_scopes(&required) {
+    if !ctx.has_scopes(&required) {
         let refusal = crate::router::scope_refusal(
             ctx.extensions.get::<turbomcp_service::ScopeChallenge>(),
             required.into_iter().map(String::from).collect(),
@@ -1161,6 +1164,15 @@ mod header_mirror_tests {
         );
         // A header the tool doesn't declare is someone else's business.
         assert!(check(json!({}), json!({ "trace": "x" })).is_ok());
+    }
+
+    /// The spec's table: a `null` value means the client omits the header and
+    /// the server doesn't expect it; a header sent anyway mirrors nothing.
+    #[test]
+    fn a_null_value_has_no_header() {
+        assert!(check(json!({ "target_zone": null }), json!({})).is_ok());
+        assert!(check(json!({ "cfg": { "region": null } }), json!({})).is_ok());
+        assert!(check(json!({ "target_zone": null }), json!({ "zone": "a" })).is_err());
     }
 
     #[test]

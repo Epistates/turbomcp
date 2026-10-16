@@ -212,7 +212,11 @@ impl OAuthClient {
         self
     }
 
-    /// The canonical resource URI this engine requests tokens for.
+    /// The MCP server URL this engine authorizes for. The `resource`
+    /// parameter it sends is what that server's protected resource metadata
+    /// publishes, verbatim (which may be an ancestor of this URL): "the
+    /// resource identifier exactly as published", so the token's audience is
+    /// the one the server validates.
     #[must_use]
     pub fn resource(&self) -> &str {
         &self.resource
@@ -258,7 +262,12 @@ impl OAuthClient {
         &self,
         discovered: &Discovered,
     ) -> Result<ClientCredentials, OAuthClientError> {
-        if let Some(stored) = self.store.load_client(&discovered.server.issuer).await {
+        // Configured pre-registered credentials are the authority on who this
+        // client is: a client stored earlier for the issuer (a DCR client,
+        // say) must not quietly stand in for them.
+        let configured = matches!(self.strategy, RegistrationStrategy::Preregistered { .. });
+        if !configured && let Some(stored) = self.store.load_client(&discovered.server.issuer).await
+        {
             return Ok(stored);
         }
         let credentials = super::registration::obtain_credentials_with_policy(
@@ -337,7 +346,7 @@ impl OAuthClient {
         let mut request = client
             .authorize_url(CsrfToken::new_random)
             .set_pkce_challenge(pkce_challenge)
-            .add_extra_param("resource", &self.resource);
+            .add_extra_param("resource", &discovered.resource.resource);
         for scope in scopes {
             request = request.add_scope(Scope::new(scope.clone()));
         }
@@ -444,7 +453,7 @@ impl OAuthClient {
         let token = client
             .exchange_code(AuthorizationCode::new(code.clone()))
             .set_pkce_verifier(PkceCodeVerifier::new(pending.pkce_verifier.to_string()))
-            .add_extra_param("resource", &self.resource)
+            .add_extra_param("resource", &discovered.resource.resource)
             .request_async(&move |req| {
                 let http = http.clone();
                 let policy = policy.clone();
@@ -491,7 +500,7 @@ impl OAuthClient {
         let policy = self.network.clone();
         let token = client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-            .add_extra_param("resource", &self.resource)
+            .add_extra_param("resource", &discovered.resource.resource)
             .request_async(&move |req| {
                 let http = http.clone();
                 let policy = policy.clone();

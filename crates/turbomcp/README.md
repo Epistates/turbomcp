@@ -77,7 +77,7 @@ both directions, a TurboMCP client against an rmcp server and the reverse, on
 every change, alongside the same matrix over HTTP against the official
 TypeScript (v2), Python and Go SDKs.
 
-TurboMCP's interoperability tests pin `rmcp` 3.2. TurboMCP serves three
+TurboMCP's interoperability tests pin `rmcp` 3.5. TurboMCP serves three
 revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) using separate generated
 wire types and exhaustive conversions to a neutral handler API. It does not
 serve `2024-11-05` or `2025-03-26`.

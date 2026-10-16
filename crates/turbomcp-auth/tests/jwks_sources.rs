@@ -235,8 +235,9 @@ mod http {
         );
     }
 
-    /// An unreachable authorization server must surface as `KeyUnavailable`
-    /// with the cause attached — this is what an operator reads at 3am.
+    /// An unreachable authorization server must surface as `Unavailable`
+    /// (a `503`, not a token rejection) with the cause attached — this is
+    /// what an operator reads at 3am.
     #[tokio::test]
     async fn an_unreachable_endpoint_reports_key_unavailable() {
         // Port 1 on loopback: reserved, nothing binds it.

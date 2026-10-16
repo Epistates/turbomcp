@@ -202,9 +202,9 @@ mod http {
                 .policy
                 .send(&self.client, self.client.get(&self.jwks_uri))
                 .await
-                .map_err(|e| AuthError::KeyUnavailable(format!("JWKS fetch failed: {e}")))?;
+                .map_err(|e| AuthError::Unavailable(format!("JWKS fetch failed: {e}")))?;
             if !response.status().is_success() {
-                return Err(AuthError::KeyUnavailable(format!(
+                return Err(AuthError::Unavailable(format!(
                     "JWKS HTTP {}",
                     response.status()
                 )));
@@ -214,9 +214,9 @@ mod http {
                     .policy
                     .body(response)
                     .await
-                    .map_err(AuthError::KeyUnavailable)?,
+                    .map_err(AuthError::Unavailable)?,
             )
-            .map_err(|e| AuthError::KeyUnavailable(format!("JWKS decode failed: {e}")))?;
+            .map_err(|e| AuthError::Unavailable(format!("JWKS decode failed: {e}")))?;
             *self.cache.write().expect("jwks cache poisoned") = Some(Cached {
                 set: set.clone(),
                 fetched: Instant::now(),
@@ -249,7 +249,7 @@ mod http {
             if let Some((at, error)) = &*last_failure
                 && at.elapsed() < self.refresh_cooldown
             {
-                return Err(AuthError::KeyUnavailable(error.clone()));
+                return Err(AuthError::Unavailable(error.clone()));
             }
             match self.fetch().await {
                 Ok(set) => {

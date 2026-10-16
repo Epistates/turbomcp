@@ -783,6 +783,18 @@ async fn handle<S: McpServerCore>(
                 .await;
             }
 
+            // "Servers SHOULD identify themselves in each result's `_meta`"
+            // on the stateless wire, which has no `initialize` result to say
+            // it once in.
+            let identity = matches!(
+                classify_version(req.params.as_ref(), &supported),
+                VersionRoute::Modern
+            )
+            .then(|| server.server_info());
+            // Everything the handler sends on the request's behalf (progress,
+            // logs) stops when it is answered: see `RequestLifetime`.
+            let (lifetime, _ended) = crate::subscriptions::RequestLifetime::start();
+            let ext = ext.with(lifetime);
             let dispatch = handle_request(
                 server,
                 &router,
@@ -792,13 +804,25 @@ async fn handle<S: McpServerCore>(
                 &ext,
                 cancel.clone(),
             );
-            tokio::select! {
-                // Cancelled mid-flight: drop the handler future and send
-                // nothing (cancellation spec: "stop processing … not send a
-                // response for the cancelled request").
-                () = cancel.cancelled() => Ok(None),
-                out = dispatch => Ok(Some(out?)),
+            // Cancelled mid-flight: drop the handler future and send nothing
+            // (cancellation spec: "stop processing … not send a response for
+            // the cancelled request"). Biased, and checked again after the
+            // handler: one that notices `ctx.cancellation` returns in the very
+            // poll the token fires, and an unbiased pick would answer it about
+            // half the time.
+            let out = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Ok(None),
+                out = dispatch => out,
+            };
+            if cancel.is_cancelled() {
+                return Ok(None);
             }
+            let mut out = out?;
+            if let Some(identity) = identity {
+                handshake::stamp_server_info(&mut out, identity);
+            }
+            Ok(Some(out))
         }
         JsonRpcMessage::Notification(n) => {
             handle_notification(&shared, &n, &ext);
@@ -1210,7 +1234,9 @@ async fn handle_request<S: McpServerCore>(
                         match resource_hidden(shared, router, &server, &ctx, &uri).await {
                             Ok(true) => {}
                             Ok(false) => {
-                                subs.legacy_subscribe(sid, ext, uri);
+                                if let Err(e) = subs.legacy_subscribe(sid, ext, uri) {
+                                    return Ok(error_response_for(id, &version, &e));
+                                }
                             }
                             Err(e) => return Ok(error_response_for(id, &version, &e)),
                         }

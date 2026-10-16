@@ -90,6 +90,7 @@ async fn token(
 fn machine(base: &str, secret: Option<&str>) -> MachineAuthorization {
     MachineAuthorization::new(
         format!("{base}/mcp"),
+        base,
         ClientCredentials {
             client_id: "gateway".into(),
             client_secret: secret.map(|s| s.to_owned().into()),
@@ -125,6 +126,54 @@ async fn client_credentials_get_a_token_bound_to_the_server() {
     assert_eq!(form["scope"], "mcp:tools");
     assert!(!form.contains_key("client_secret"), "Basic is the default");
     assert!(auth.as_deref().is_some_and(|a| a.starts_with("Basic ")));
+}
+
+/// The credentials belong to one authorization server. A resource whose
+/// metadata names another (a compromised or hostile upstream pointing at an
+/// AS it controls) is refused at discovery, before the secret or a caller's
+/// token could be sent anywhere.
+#[tokio::test]
+async fn a_resource_naming_another_authorization_server_is_refused() {
+    let mock: Shared = Arc::default();
+    let base = spawn(Arc::clone(&mock)).await;
+    let machine = MachineAuthorization::new(
+        format!("{base}/mcp"),
+        "https://as.example.com",
+        ClientCredentials {
+            client_id: "gateway".into(),
+            client_secret: Some("s3cret".to_owned().into()),
+        },
+    )
+    .with_network_policy(NetworkPolicy::default())
+    .unwrap();
+    let err = machine.discover(None).await.unwrap_err();
+    assert!(
+        matches!(&err, OAuthClientError::IssuerChanged { expected, .. } if expected == "https://as.example.com"),
+        "{err}"
+    );
+    assert!(
+        mock.lock().unwrap().forms.is_empty(),
+        "nothing reached a token endpoint"
+    );
+}
+
+/// An issuer pinned with a trailing `/` names the same server as one
+/// published without it.
+#[tokio::test]
+async fn a_trailing_slash_does_not_make_another_issuer() {
+    let mock: Shared = Arc::default();
+    let base = spawn(Arc::clone(&mock)).await;
+    let machine = MachineAuthorization::new(
+        format!("{base}/mcp"),
+        format!("{base}/"),
+        ClientCredentials {
+            client_id: "gateway".into(),
+            client_secret: Some("s3cret".to_owned().into()),
+        },
+    )
+    .with_network_policy(NetworkPolicy::default())
+    .unwrap();
+    machine.discover(None).await.expect("the same server");
 }
 
 #[tokio::test]

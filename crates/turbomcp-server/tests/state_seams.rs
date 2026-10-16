@@ -165,6 +165,16 @@ impl TaskBackend for CountingTasks {
         self.inner.provide_input(owner, task_id, responses).await
     }
 
+    async fn fail_input(
+        &self,
+        owner: &TaskOwner,
+        task_id: &str,
+        key: &str,
+        error: JsonRpcError,
+    ) -> Result<bool, TaskError> {
+        self.inner.fail_input(owner, task_id, key, error).await
+    }
+
     async fn end_session(&self, session_id: &str) {
         self.inner.end_session(session_id).await;
     }

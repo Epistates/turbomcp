@@ -12,7 +12,7 @@ zero-boilerplate surface and strict spec compliance as a feature.
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
 > MSRV 1.88. It interoperates with the official Rust, TypeScript, Python and Go
 > SDKs in both directions, on both revisions, and both halves are scored against the official MCP conformance
-> suite: 231 successful server assertions and 488 distinct successful client
+> suite: 232 successful server assertions and 511 distinct successful client
 > scenario/check pairs using pinned client fixture corrections, with zero failures, skips, or warnings. All three advertised revisions (`2025-06-18`, `2025-11-25`,
 > `2026-07-28`) are dated and frozen; `2026-07-28` is generated from the
 > released `schema/2026-07-28/`, not the RC.
@@ -53,7 +53,7 @@ both directions, a TurboMCP client against an rmcp server and the reverse, on
 every change, alongside the same matrix over HTTP against the official
 TypeScript (v2), Python and Go SDKs.
 
-TurboMCP's interoperability tests pin `rmcp` 3.2. TurboMCP serves three
+TurboMCP's interoperability tests pin `rmcp` 3.5. TurboMCP serves three
 revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) using separate generated
 wire types and exhaustive conversions to a neutral handler API. It does not
 serve `2024-11-05` or `2025-03-26`.
@@ -120,16 +120,16 @@ Compliance is tested, not asserted:
 - **Official conformance suite, both halves** — the
   `@modelcontextprotocol/conformance` harness runs in both directions on both
   scored revisions. As the *server*, it drives a full-featured TurboMCP server
-  over Streamable HTTP: **236 checks, 231 pass, 0 fail, 5 informational**. As the
+  over Streamable HTTP: **237 checks, 232 pass, 0 fail, 5 informational**. As the
   *client*, it stands up a deliberately awkward mock server per scenario and
-  referees what our client did on the wire: **488 distinct successful scenario/check pairs, 0 failures**, including the
+  referees what our client did on the wire: **511 distinct successful scenario/check pairs, 0 failures**, including the
   OAuth scenarios through the public `OAuthSession` coordinator. The client gate
   uses [hash-pinned fixture corrections](crates/turbomcp-conformance/fixtures/README.md)
   and reports zero failures, skips, or warnings. The unmodified upstream mode
   remains available with its original fixture limitations. Neither side has
   failure waivers (`crates/turbomcp-conformance`).
 - **Cross-SDK interop** — a TurboMCP client drives an official-Rust-SDK
-  (rmcp 3.2) server and vice-versa, in-process, on `2025-11-25` *and* the
+  (rmcp 3.5) server and vice-versa, in-process, on `2025-11-25` *and* the
   stateless `2026-07-28`; and over Streamable HTTP the same, both ways and both
   eras, against the official TypeScript (v2.3), Python (2.3) and Go (1.8) SDKs
   (`crates/turbomcp-interop`, `sdks/`).

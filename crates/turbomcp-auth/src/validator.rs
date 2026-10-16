@@ -35,18 +35,21 @@ pub trait BearerValidator: Send + Sync {
     fn validate<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<AuthPrincipal, AuthError>>;
 }
 
-/// Scopes from `scope` (space-delimited string) or `scp` (array of strings).
+/// Scopes from `scope` and `scp`, each a space-delimited string or an array
+/// of strings (Microsoft Entra ID issues `scp` as a string). Read the same
+/// way as [`Identity::granted_scopes`](turbomcp_core::Identity::granted_scopes),
+/// so the baseline gate and the per-tool check agree on what a token grants.
 #[cfg(any(feature = "jwt", feature = "introspection"))]
 pub(crate) fn extract_scopes(claims: &Map<String, Value>) -> Vec<String> {
-    if let Some(scope) = claims.get("scope").and_then(Value::as_str) {
-        return scope.split_whitespace().map(str::to_owned).collect();
+    let mut out = Vec::new();
+    for claim in ["scope", "scp"] {
+        match claims.get(claim) {
+            Some(Value::String(s)) => out.extend(s.split_whitespace().map(str::to_owned)),
+            Some(Value::Array(arr)) => {
+                out.extend(arr.iter().filter_map(Value::as_str).map(str::to_owned));
+            }
+            _ => {}
+        }
     }
-    if let Some(arr) = claims.get("scp").and_then(Value::as_array) {
-        return arr
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
-    }
-    Vec::new()
+    out
 }

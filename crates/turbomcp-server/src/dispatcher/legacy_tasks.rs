@@ -113,6 +113,10 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let sid = session_id(&ctx.extensions).unwrap_or_default().to_owned();
     let mut ctx = ctx;
     ctx.cancellation = token.clone();
+    // The call outlives its request: what it sends on the call's behalf may
+    // go on until the task ends, and no further.
+    let (lifetime, ended) = crate::subscriptions::RequestLifetime::start();
+    ctx.extensions.insert(lifetime);
     // Filled once the task exists, before the work starts. "The
     // `progressToken` provided in the initial request remains valid
     // throughout the task lifetime", so progress both notifies and becomes
@@ -163,6 +167,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let span = tracing::info_span!("mcp.task", "mcp.task.id" = %task_id);
     let work = async move {
         let _tracked = tracked;
+        let _ended = ended;
         tokio::select! {
             () = token.cancelled() => {
                 // `tasks/cancel` (or expiry purge) already transitioned the

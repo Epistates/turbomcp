@@ -546,3 +546,45 @@ async fn dropping_a_subscription_cancels_it_by_its_id() {
         .unwrap();
     assert_eq!(cancelled, id);
 }
+
+/// The server ends a subscription by "sending `notifications/cancelled`
+/// referencing the listen request's ID". On stdio nothing else ends it, so
+/// ignoring that left `next()` waiting forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_teardown_ends_the_subscription() {
+    let client = connect(None, |method, frame| match method {
+        "subscriptions/listen" => {
+            let id = frame.get("id").cloned().unwrap_or(Value::Null);
+            vec![
+                json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/subscriptions/acknowledged",
+                    "params": {
+                        "_meta": { "io.modelcontextprotocol/subscriptionId": id },
+                        "notifications": { "toolsListChanged": true }
+                    }
+                }),
+                json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": { "requestId": id, "reason": "server shutting down" }
+                }),
+            ]
+        }
+        other => panic!("unexpected method {other}"),
+    })
+    .await;
+
+    let mut subscription = client
+        .listen(neutral::SubscriptionFilter::all_list_changed())
+        .await
+        .expect("acknowledged");
+    let next = tokio::time::timeout(std::time::Duration::from_secs(5), subscription.next())
+        .await
+        .expect("the teardown ends the subscription");
+    assert!(next.is_none());
+    assert_eq!(
+        subscription.end(),
+        Some(turbomcp_client::SubscriptionEnd::Closed)
+    );
+}

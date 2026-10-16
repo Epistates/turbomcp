@@ -213,15 +213,15 @@ impl TaskInputRelay {
                 }
                 self.release(&a.task_id, &a.key);
             }
-            // Left marked as out on that stream, so it isn't asked again
-            // there; a fresh `tasks/result` stream asks again.
-            (_, Some(e)) => tracing::warn!(
-                task = %a.task_id,
-                key = %a.key,
-                code = e.code,
-                message = %e.message,
-                "the client answered a task's input request with an error",
-            ),
+            // A refusal is an answer: the work sees the error (its
+            // `elicit`/`create_message` returns it) instead of waiting out
+            // the task's TTL for an answer that isn't coming.
+            (_, Some(e)) => {
+                if let Err(err) = a.store.fail_input(&a.owner, &a.task_id, &a.key, e).await {
+                    tracing::debug!(error = ?err, task = %a.task_id, "task input refusal dropped");
+                }
+                self.release(&a.task_id, &a.key);
+            }
             _ => tracing::warn!(
                 task = %a.task_id,
                 key = %a.key,

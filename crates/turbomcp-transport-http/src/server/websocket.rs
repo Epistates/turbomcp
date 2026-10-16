@@ -238,6 +238,11 @@ async fn connection<H: ServerHandle>(
             drain_timeout: state.drain,
             identity,
             subject_token,
+            scope_rules: state
+                .http
+                .authenticator
+                .as_ref()
+                .and_then(|authenticator| authenticator.scope_rules()),
             ..ServeConfig::default()
         },
     );

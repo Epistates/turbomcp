@@ -47,8 +47,11 @@ impl Credential {
             let resource = upstream.resource().ok_or_else(|| {
                 ProxyError::Config("OAuth credentials are for HTTP and WebSocket upstreams".into())
             })?;
-            let engine =
-                turbomcp_auth::client::MachineAuthorization::new(resource, account.credentials());
+            let engine = turbomcp_auth::client::MachineAuthorization::new(
+                resource,
+                account.issuer.clone(),
+                account.credentials(),
+            );
             match network {
                 Some(policy) => engine
                     .with_network_policy(policy.clone())

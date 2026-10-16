@@ -27,6 +27,7 @@ extern crate alloc;
 
 use turbomcp_core as _;
 
+mod lenient;
 pub mod methods;
 pub mod neutral;
 pub mod v2025_06_18;

@@ -304,12 +304,21 @@ pub(crate) async fn discover_authorization_server_with_policy(
     Ok(meta)
 }
 
-/// Discover `resource`'s authorization server: its RFC 9728 document (from
-/// the challenge's `resource_metadata` when given), then the first named
-/// authorization server's validated metadata.
+/// Discover `resource`'s authorization server, which must be `issuer`: its
+/// RFC 9728 document (from the challenge's `resource_metadata` when given)
+/// has to name `issuer` among its authorization servers, and then `issuer`'s
+/// validated metadata is fetched.
+///
+/// The pin is what keeps a client secret (and, for token exchange, the
+/// caller's token) away from an authorization server the *resource* chose:
+/// the resource's metadata is not something these credentials can trust, and
+/// "clients MUST NOT reuse client credentials from a different authorization
+/// server". A resource naming another server is
+/// [`OAuthClientError::IssuerChanged`], before anything is sent to it.
 pub(crate) async fn discover_with_policy(
     http: &reqwest::Client,
     resource: &str,
+    issuer: &str,
     challenge: Option<&super::challenge::BearerChallenge>,
     policy: &crate::NetworkPolicy,
 ) -> Result<super::flow::Discovered, OAuthClientError> {
@@ -320,9 +329,25 @@ pub(crate) async fn discover_with_policy(
         policy,
     )
     .await?;
-    let issuer = resource.authorization_servers[0].clone();
-    let server = fetch_authorization_server(http, &issuer, policy).await?;
+    if !resource
+        .authorization_servers
+        .iter()
+        .any(|named| same_issuer(named, issuer))
+    {
+        return Err(OAuthClientError::IssuerChanged {
+            expected: issuer.to_owned(),
+            discovered: resource.authorization_servers.join(", "),
+        });
+    }
+    let server = fetch_authorization_server(http, issuer, policy).await?;
     Ok(super::flow::Discovered { resource, server })
+}
+
+/// Whether two issuer identifiers name the same server. RFC 8414 compares
+/// issuers as strings; a trailing `/` is the one difference deployments
+/// routinely disagree on, and never names a different server.
+fn same_issuer(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/') == b.trim_end_matches('/')
 }
 
 /// Fetch and validate `issuer`'s metadata: the document's `issuer` MUST equal

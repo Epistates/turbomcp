@@ -285,6 +285,9 @@ pub(super) type Numbered = (u64, JsonRpcMessage);
 struct Live {
     next_seq: u64,
     attached: Option<mpsc::Sender<Numbered>>,
+    /// Woken when a resume replaces `attached`, so a send stalled on the
+    /// replaced response gives up: the new one has the event from the store.
+    replaced: Arc<tokio::sync::Notify>,
 }
 
 /// One running call's stream, shared by its recorder and any resume.
@@ -321,6 +324,7 @@ impl ResumableStreams {
         let live = Arc::new(tokio::sync::Mutex::new(Live {
             next_seq: 1,
             attached: Some(attached),
+            replaced: Arc::new(tokio::sync::Notify::new()),
         }));
         self.live
             .lock()
@@ -365,7 +369,7 @@ impl ResumableStreams {
         // Caught up already (the client saw the last event, or the stream has
         // none yet): nothing to ask the store, which may hold no record of a
         // stream that has recorded nothing.
-        let events = if after + 1 >= live.next_seq {
+        let events = if after.saturating_add(1) >= live.next_seq {
             Vec::new()
         } else {
             let Some(events) = store.replay(session, stream, after, live.next_seq).await? else {
@@ -375,6 +379,7 @@ impl ResumableStreams {
         };
         let (tx, rx) = mpsc::channel(super::sse::SSE_CHANNEL_CAPACITY);
         live.attached = Some(tx);
+        live.replaced.notify_waiters();
         Ok(Some((events, Some(rx))))
     }
 }
@@ -397,21 +402,50 @@ impl Recorder {
 
     /// Number `message`, record it, and hand it to the attached response, if
     /// one is still there.
+    ///
+    /// Numbering and recording happen under the stream's lock, which is what
+    /// lets a resume trust that everything before `next_seq` is in the store.
+    /// The hand-off doesn't: a response whose reader has stalled used to hold
+    /// the lock for as long as it stalled, and so block the very resume that
+    /// would replace it.
     pub(super) async fn emit(&self, message: JsonRpcMessage) {
-        let mut live = self.live.lock().await;
-        let seq = live.next_seq;
-        live.next_seq += 1;
-        if let Err(e) = self
-            .store
-            .append(&self.session, &self.stream, seq, &message)
-            .await
-        {
-            tracing::warn!(error = %e, "could not record an event; it can't be replayed");
-        }
-        if let Some(tx) = &live.attached
-            && tx.send((seq, message)).await.is_err()
-        {
-            live.attached = None;
+        let (seq, tx, replaced) = {
+            let mut live = self.live.lock().await;
+            let seq = live.next_seq;
+            live.next_seq += 1;
+            if let Err(e) = self
+                .store
+                .append(&self.session, &self.stream, seq, &message)
+                .await
+            {
+                tracing::warn!(error = %e, "could not record an event; it can't be replayed");
+            }
+            let Some(tx) = live.attached.clone() else {
+                return;
+            };
+            (seq, tx, Arc::clone(&live.replaced))
+        };
+        // Armed before the lock is released, so a resume that replaces the
+        // response between here and the send still wakes it.
+        let replaced = replaced.notified();
+        tokio::pin!(replaced);
+        replaced.as_mut().enable();
+        let delivered = tokio::select! {
+            sent = tx.send((seq, message)) => sent.is_ok(),
+            // Replaced: the resume read this event from the store.
+            () = replaced => return,
+        };
+        if !delivered {
+            let mut live = self.live.lock().await;
+            // Only if it is still the response that went away: a resume may
+            // have attached a new one meanwhile.
+            if live
+                .attached
+                .as_ref()
+                .is_some_and(|now| now.same_channel(&tx))
+            {
+                live.attached = None;
+            }
         }
     }
 

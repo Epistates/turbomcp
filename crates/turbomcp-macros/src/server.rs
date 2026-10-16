@@ -1318,7 +1318,7 @@ fn gen_tool_call_arm(self_ty: &Type, t: &Handler) -> TokenStream {
     let scope_guard = (!t.scopes.is_empty()).then(|| {
         let scopes = &t.scopes;
         quote! {
-            if !ctx.base.identity.has_scopes(&[#(#scopes),*]) {
+            if !ctx.base.has_scopes(&[#(#scopes),*]) {
                 return ::core::result::Result::Err(
                     ::turbomcp::McpError::insufficient_scope([#(#scopes),*])
                 );

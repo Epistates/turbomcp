@@ -357,9 +357,11 @@ mod tests {
         assert_eq!(result["tools"][0]["name"], "add");
         assert_eq!(result["tools"][0]["description"], "Add two numbers");
         assert_eq!(result["resultType"], "complete");
-        // The RC dropped the per-result `_meta` server-identity convention:
-        // only `server/discover` carries `serverInfo`.
-        assert!(result.get("_meta").is_none());
+        // "Servers SHOULD identify themselves in each result's `_meta`."
+        assert_eq!(
+            result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "calculator"
+        );
     }
 
     #[tokio::test]

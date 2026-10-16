@@ -68,12 +68,14 @@ pub enum RegistrationStrategy {
     Preregistered {
         /// The credentials issued at registration time.
         credentials: ClientCredentials,
-        /// The issuer that issued them, when known. Pre-registered
-        /// credentials are inherently AS-specific: when set and the
-        /// discovered authorization server differs, the flow surfaces an
-        /// error instead of silently presenting mismatched credentials
-        /// (spec §Authorization Server Binding).
-        issuer: Option<String>,
+        /// The issuer that issued them. Pre-registered credentials belong to
+        /// one authorization server ("clients MUST associate those
+        /// credentials with the specific authorization server that issued
+        /// them, keyed by the authorization server's `issuer`"): when the
+        /// discovered server differs, the flow fails with
+        /// [`OAuthClientError::IssuerChanged`] instead of presenting them to
+        /// a server the resource chose.
+        issuer: String,
     },
     /// OAuth Client ID Metadata Documents: the HTTPS URL of a metadata
     /// document this client hosts, used verbatim as the `client_id`. Usable
@@ -163,25 +165,11 @@ pub(crate) async fn obtain_credentials_with_policy(
             credentials,
             issuer,
         } => {
-            match issuer {
-                Some(expected)
-                    if expected.trim_end_matches('/') != as_meta.issuer.trim_end_matches('/') =>
-                {
-                    return Err(OAuthClientError::IssuerChanged {
-                        expected: expected.clone(),
-                        discovered: as_meta.issuer.clone(),
-                    });
-                }
-                Some(_) => {}
-                // No recorded issuer means no Authorization Server Binding check
-                // (spec §Authorization Server Binding): the credentials would be
-                // presented to whichever AS discovery selected. Warn — set the
-                // `issuer` to bind them to a specific server.
-                None => tracing::warn!(
-                    discovered_issuer = %as_meta.issuer,
-                    "pre-registered credentials have no recorded issuer; \
-                     presenting them without an authorization-server binding check"
-                ),
+            if issuer.trim_end_matches('/') != as_meta.issuer.trim_end_matches('/') {
+                return Err(OAuthClientError::IssuerChanged {
+                    expected: issuer.clone(),
+                    discovered: as_meta.issuer.clone(),
+                });
             }
             Ok(credentials.clone())
         }

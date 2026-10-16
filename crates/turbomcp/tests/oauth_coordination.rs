@@ -90,7 +90,7 @@ async fn fixture(expiring: bool, reject_refresh: bool) -> Fixture {
             "http://localhost/callback",
             RegistrationStrategy::Preregistered {
                 credentials: ClientCredentials::public("test-client"),
-                issuer: Some(base),
+                issuer: base,
             },
         )
         .with_network_policy(turbomcp::auth::NetworkPolicy::default())

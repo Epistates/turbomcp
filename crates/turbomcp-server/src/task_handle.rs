@@ -104,9 +104,16 @@ impl TaskLink {
             () = self.cancel.cancelled() => Err(McpError::internal(
                 "the task was cancelled while awaiting client input",
             )),
-            answer = answer => answer.ok_or_else(|| {
-                McpError::internal("the task ended before the client answered")
-            }),
+            answer = answer => match answer {
+                Some(Ok(value)) => Ok(value),
+                // Only `2025-11-25` answers with an error (its client replies
+                // to the server's own request); `tasks/update` carries results.
+                Some(Err(error)) => Err(McpError::from_jsonrpc(
+                    &error,
+                    &turbomcp_core::ProtocolVersion::V2025_11_25,
+                )),
+                None => Err(McpError::internal("the task ended before the client answered")),
+            },
         }
     }
 }

@@ -18,6 +18,21 @@ pub(super) fn challenge_response(status: u16, www_authenticate: &str) -> Respons
     (status, [(axum::http::header::WWW_AUTHENTICATE, header)]).into_response()
 }
 
+/// `503` with `Retry-After` when the authenticator couldn't reach what it
+/// checks tokens against. No `WWW-Authenticate`: nothing about the token is
+/// being challenged.
+pub(super) fn auth_unavailable(retry_after_secs: u64) -> Response {
+    tracing::debug!("refused: authentication backend unavailable");
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(
+            axum::http::header::RETRY_AFTER,
+            retry_after_secs.to_string(),
+        )],
+    )
+        .into_response()
+}
+
 /// `403` for an operation that needs scopes the token lacks ("Runtime
 /// Insufficient Scope Errors"): the authenticator's `WWW-Authenticate`
 /// challenge, which an OAuth client answers by stepping up and retrying, and

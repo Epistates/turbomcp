@@ -129,6 +129,16 @@ impl TaskBackend for FastPoll {
     ) -> Result<bool, TaskError> {
         self.inner.provide_input(owner, task_id, responses).await
     }
+
+    async fn fail_input(
+        &self,
+        owner: &TaskOwner,
+        task_id: &str,
+        key: &str,
+        error: JsonRpcError,
+    ) -> Result<bool, TaskError> {
+        self.inner.fail_input(owner, task_id, key, error).await
+    }
 }
 
 async fn connect_real(tasks: Option<Arc<FastPoll>>) -> Client {

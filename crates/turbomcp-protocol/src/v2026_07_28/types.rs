@@ -244,7 +244,7 @@ pub struct CacheableResult {
       The client MAY re-fetch every time the result is needed.
     - If positive, the client SHOULD consider the result fresh for this many
       milliseconds after receiving the response.*/
-    #[serde(rename = "ttlMs", default)]
+    #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
 impl ::core::default::Default for CacheableResult {
@@ -1640,7 +1640,7 @@ pub struct DiscoverResult {
       The client MAY re-fetch every time the result is needed.
     - If positive, the client SHOULD consider the result fresh for this many
       milliseconds after receiving the response.*/
-    #[serde(rename = "ttlMs", default)]
+    #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
 /**Indicates the intended scope of the cached response, analogous to HTTP
@@ -3505,7 +3505,7 @@ pub struct ListPromptsResult {
       The client MAY re-fetch every time the result is needed.
     - If positive, the client SHOULD consider the result fresh for this many
       milliseconds after receiving the response.*/
-    #[serde(rename = "ttlMs", default)]
+    #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
 /**Indicates the intended scope of the cached response, analogous to HTTP
@@ -3781,7 +3781,7 @@ pub struct ListResourceTemplatesResult {
       The client MAY re-fetch every time the result is needed.
     - If positive, the client SHOULD consider the result fresh for this many
       milliseconds after receiving the response.*/
-    #[serde(rename = "ttlMs", default)]
+    #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
 /**Indicates the intended scope of the cached response, analogous to HTTP
@@ -4058,7 +4058,7 @@ pub struct ListResourcesResult {
       The client MAY re-fetch every time the result is needed.
     - If positive, the client SHOULD consider the result fresh for this many
       milliseconds after receiving the response.*/
-    #[serde(rename = "ttlMs", default)]
+    #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
 /**Indicates the intended scope of the cached response, analogous to HTTP
@@ -4409,7 +4409,7 @@ pub struct ListToolsResult {
       The client MAY re-fetch every time the result is needed.
     - If positive, the client SHOULD consider the result fresh for this many
       milliseconds after receiving the response.*/
-    #[serde(rename = "ttlMs", default)]
+    #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
 /**Indicates the intended scope of the cached response, analogous to HTTP
@@ -5701,7 +5701,7 @@ pub struct ReadResourceResult {
       The client MAY re-fetch every time the result is needed.
     - If positive, the client SHOULD consider the result fresh for this many
       milliseconds after receiving the response.*/
-    #[serde(rename = "ttlMs", default)]
+    #[serde(rename = "ttlMs", default, deserialize_with = "crate::lenient::ttl_ms")]
     pub ttl_ms: u64,
 }
 /**Indicates the intended scope of the cached response, analogous to HTTP

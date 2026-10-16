@@ -180,7 +180,11 @@ overflow-checks = true
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# Unwind, not abort: the server answers a panicking handler `-32603` and keeps
+# serving (`catch_handler_panic`), which an aborting binary can't do. A
+# gateway built here would otherwise die with every tenant's connections
+# whenever one handler panicked.
+panic = "unwind"
 strip = true
 
 # CI-optimized profile for disk space constrained environments

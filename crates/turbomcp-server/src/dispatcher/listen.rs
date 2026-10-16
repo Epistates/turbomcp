@@ -95,9 +95,20 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     // Honor only what the server can actually emit; unsupported types are
     // omitted from the acknowledgment (spec §Acknowledgment).
     let wanted = requested.notifications;
+    // Bounded before anything is judged: every publish scans the list, and
+    // each URI below costs a visibility check.
+    if wanted.resource_subscriptions.len() > crate::subscriptions::MAX_URIS_PER_SESSION {
+        return Ok(Some(error_response(
+            id,
+            &McpError::invalid_params(format!(
+                "a subscription may watch at most {} resources",
+                crate::subscriptions::MAX_URIS_PER_SESSION
+            )),
+        )));
+    }
     // Resource URIs the policy hides: acknowledged like any other, but never
     // watched. See the comment on `resource_subscriptions` below.
-    let mut unwatched = Vec::new();
+    let mut unwatched = std::collections::HashSet::new();
     let mut agreed = v0728::SubscriptionFilter {
         tools_list_changed: (wanted.tools_list_changed == Some(true) && router.has_tools())
             .then_some(true),
@@ -118,7 +129,9 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
             for uri in &wanted.resource_subscriptions {
                 match resource_hidden(shared, router, server, &ctx, uri).await {
                     Ok(false) => {}
-                    Ok(true) => unwatched.push(uri.clone()),
+                    Ok(true) => {
+                        unwatched.insert(uri.clone());
+                    }
                     Err(e) => return Ok(Some(error_response(id, &e))),
                 }
             }

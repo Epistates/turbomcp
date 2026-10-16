@@ -181,15 +181,36 @@ impl Upstream {
         }
     }
 
-    /// A short label for logs and errors (never a secret).
+    /// A short label for logs and errors, which reach downstream callers.
+    /// A URL loses its user info, query and fragment: SaaS endpoints put API
+    /// keys there, and an upstream that is down must not hand one to every
+    /// caller in an error message.
     pub(crate) fn label(&self) -> String {
         match self {
             Self::Stdio { command, .. } => format!("stdio:{command}"),
             #[cfg(feature = "http")]
-            Self::Http { url, .. } => url.clone(),
+            Self::Http { url, .. } => redacted_url(url),
             #[cfg(feature = "websocket")]
-            Self::WebSocket { url, .. } => url.clone(),
+            Self::WebSocket { url, .. } => redacted_url(url),
         }
+    }
+}
+
+/// `scheme://host[:port]` of `url`, and nothing a secret could hide in: no
+/// user info, path, query or fragment (`https://mcp.vendor.example/s/<key>`
+/// and `…?api_key=…` are both common).
+#[cfg(feature = "http")]
+fn redacted_url(url: &str) -> String {
+    match url.parse::<http::Uri>() {
+        Ok(uri) => {
+            let port = uri.port_u16().map(|p| format!(":{p}")).unwrap_or_default();
+            format!(
+                "{}://{}{port}",
+                uri.scheme_str().unwrap_or("?"),
+                uri.host().unwrap_or("?")
+            )
+        }
+        Err(_) => "upstream (unparseable URL)".to_owned(),
     }
 }
 
@@ -282,6 +303,7 @@ pub enum OutboundAuth {
 #[cfg_attr(docsrs, doc(cfg(feature = "oauth")))]
 #[derive(Clone)]
 pub struct ServiceAccount {
+    pub(crate) issuer: String,
     pub(crate) client_id: String,
     pub(crate) client_secret: Zeroizing<String>,
     pub(crate) scopes: Option<Vec<String>>,
@@ -291,6 +313,7 @@ pub struct ServiceAccount {
 impl core::fmt::Debug for ServiceAccount {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ServiceAccount")
+            .field("issuer", &self.issuer)
             .field("client_id", &self.client_id)
             .field("scopes", &self.scopes)
             .finish_non_exhaustive()
@@ -299,9 +322,20 @@ impl core::fmt::Debug for ServiceAccount {
 
 #[cfg(feature = "oauth")]
 impl ServiceAccount {
-    /// Client `client_id`, authenticated by `client_secret`.
-    pub fn new(client_id: impl Into<String>, client_secret: impl Into<String>) -> Self {
+    /// Client `client_id` at the authorization server `issuer`,
+    /// authenticated by `client_secret`.
+    ///
+    /// The secret (and, under [`OutboundAuth::TokenExchange`], each caller's
+    /// token) goes to `issuer` and nowhere else: an upstream whose protected
+    /// resource metadata names another authorization server is refused, so a
+    /// compromised or hostile upstream can't collect them.
+    pub fn new(
+        issuer: impl Into<String>,
+        client_id: impl Into<String>,
+        client_secret: impl Into<String>,
+    ) -> Self {
         Self {
+            issuer: issuer.into(),
             client_id: client_id.into(),
             client_secret: Zeroizing::new(client_secret.into()),
             scopes: None,
@@ -343,5 +377,22 @@ impl OutboundAuth {
     /// A fixed bearer token.
     pub fn bearer(token: impl Into<String>) -> Self {
         Self::Static(Zeroizing::new(token.into()))
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod tests {
+    use super::*;
+
+    /// A label reaches downstream callers in errors: nothing an upstream URL
+    /// can carry a secret in survives into it.
+    #[test]
+    fn a_url_label_keeps_no_secret() {
+        let label = |url: &str| Upstream::http(url).label();
+        assert_eq!(
+            label("https://user:pw@mcp.vendor.example/s/ab12cd34?api_key=K"),
+            "https://mcp.vendor.example"
+        );
+        assert_eq!(label("http://127.0.0.1:8080/mcp"), "http://127.0.0.1:8080");
     }
 }

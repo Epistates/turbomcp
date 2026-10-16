@@ -1,5 +1,5 @@
 {
-  "package": "@modelcontextprotocol/conformance@0.2.0-alpha.11",
+  "package": "@modelcontextprotocol/conformance@0.2.0-alpha.12",
   "passed": [
     "2025-11-25::completion-complete::completion-complete",
     "2025-11-25::completion-complete::wire-schema-valid",
@@ -214,6 +214,7 @@
     "2026-07-28::tools-call-with-progress::tools-call-with-progress",
     "2026-07-28::tools-call-with-progress::wire-schema-valid",
     "2026-07-28::tools-list::tools-list",
+    "2026-07-28::tools-list::tools-list-deterministic-order",
     "2026-07-28::tools-list::tools-name-format",
     "2026-07-28::tools-list::wire-schema-valid"
   ],

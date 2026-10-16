@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use turbomcp_core::{
     Extensions, Identity, Implementation, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse,
-    McpError, ProtocolVersion, RequestId,
+    McpError, ProtocolVersion, RequestId, meta,
 };
 use turbomcp_protocol::neutral;
 use turbomcp_protocol::v2025_06_18::types as v0618;
@@ -24,6 +24,10 @@ use crate::session::SessionState;
 use crate::traits::McpServerCore;
 
 use super::{error_response, session_id};
+
+/// Upper bound on the serialized client capabilities a session keeps.
+/// Real ones are well under a kilobyte; the bound leaves room for extensions.
+const MAX_CLIENT_CAPABILITIES_BYTES: usize = 64 * 1024;
 
 /// Answer the `initialize` handshake (lifecycle spec §Version Negotiation):
 /// echo the requested version when supported, otherwise our latest
@@ -75,6 +79,18 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
             .and_then(|p| p.get("capabilities"))
             .cloned()
             .unwrap_or(Value::Null);
+        // Kept for the session's whole life, so bounded: a frame of nested
+        // capabilities otherwise pinned megabytes per session, and an
+        // unauthenticated `initialize` loop multiplied that by the store.
+        let size = serde_json::to_vec(&client_capabilities).map_or(usize::MAX, |b| b.len());
+        if size > MAX_CLIENT_CAPABILITIES_BYTES {
+            return Ok(error_response(
+                id,
+                &McpError::invalid_params(format!(
+                    "client capabilities exceed {MAX_CLIENT_CAPABILITIES_BYTES} bytes"
+                )),
+            ));
+        }
         // A store that can't take the session (down, or full) fails the
         // handshake with `503`: answering success would hand the client a
         // session id that every later request finds unknown.
@@ -313,6 +329,27 @@ fn build_discover_result<S: McpServerCore>(
         result_type: neutral::result_type::COMPLETE.to_string(),
         supported_versions: supported.iter().map(|v| v.as_str().to_owned()).collect(),
         ttl_ms: cache.ttl_ms,
+    }
+}
+
+/// Put the server's identity in a `2026-07-28` success result's `_meta`
+/// (`io.modelcontextprotocol/serverInfo`), unless the result already names
+/// one: a gateway relaying an upstream's result keeps the upstream's word.
+pub(super) fn stamp_server_info(msg: &mut JsonRpcMessage, identity: Implementation) {
+    let JsonRpcMessage::Response(response) = msg else {
+        return;
+    };
+    let Some(Value::Object(result)) = response.result.as_mut() else {
+        return;
+    };
+    let meta = result
+        .entry("_meta")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(meta) = meta
+        && !meta.contains_key(meta::keys::SERVER_INFO)
+        && let Ok(identity) = serde_json::to_value(to_draft_impl(identity))
+    {
+        meta.insert(meta::keys::SERVER_INFO.to_owned(), identity);
     }
 }
 

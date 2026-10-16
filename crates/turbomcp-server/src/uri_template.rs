@@ -16,6 +16,12 @@
 //!
 //! Captures are percent-decoded: a client expanding `notes://{title}` with
 //! `"Q3 plan"` sends `notes://Q3%20plan`, and the handler should see the title.
+//! Decoding never widens what a variable binds, though. One that matches a
+//! single segment (`{var}`, `{/var}`, `{.var}`) does not match a value that
+//! decodes to a `/` or `\`, so `docs://{name}` can't be handed
+//! `..%2F..%2Fetc%2Fpasswd`; and no variable binds a `.` or `..` path segment,
+//! which a normalized URI (RFC 3986 §6.2.2.3) never contains and a traversal
+//! always does. Such a URI is simply not a match: refused as not found.
 //! An optional variable the URI leaves out is simply absent from the result.
 //! Prefix modifiers (`{var:3}`) match like the bare variable; an exploded
 //! (`{var*}`) list comes back as the expanded text after its leading operator.
@@ -43,6 +49,9 @@ struct Capture {
     name: String,
     group: usize,
     kind: Kind,
+    /// The template promises one segment (`{var}`, `{/var}`, `{.var}`), so
+    /// the decoded value may not contain a path separator.
+    segment: bool,
 }
 
 /// What surrounds the value inside the captured text.
@@ -131,6 +140,13 @@ impl UriTemplate {
                 }
             };
             let value = percent_decode_str(raw).decode_utf8().ok()?;
+            if (c.segment && value.contains(['/', '\\']))
+                || value
+                    .split(['/', '\\'])
+                    .any(|seg| seg == "." || seg == "..")
+            {
+                return None;
+            }
             out.push((c.name.clone(), value.into_owned()));
         }
         Some(out)
@@ -213,6 +229,7 @@ fn compile_expression(
                 Some('.' | '/' | '?' | '&') if spec.explode => Kind::Exploded,
                 _ => Kind::Value,
             },
+            segment: matches!(op, None | Some('.' | '/')) && !spec.explode,
         });
     }
     Ok(())
@@ -329,6 +346,29 @@ mod tests {
         assert_eq!(
             m("map://{x,y}", "map://1,2"),
             Some(pairs(&[("x", "1"), ("y", "2")]))
+        );
+    }
+
+    /// Decoding can't smuggle a separator into a one-segment variable, and no
+    /// variable binds a dot segment, encoded or not.
+    #[test]
+    fn decoding_never_widens_a_capture() {
+        assert!(m("docs://{name}", "docs://..%2F..%2Fetc%2Fpasswd").is_none());
+        assert!(m("docs://{name}", "docs://a%2Fb").is_none());
+        assert!(m("docs://{name}", "docs://a%5Cb").is_none());
+        assert!(m("docs://{name}", "docs://%2E%2E").is_none());
+        assert!(m("docs://{name}", "docs://..").is_none());
+        assert!(m("file://{+path}", "file:///srv/../etc/passwd").is_none());
+        assert!(m("file://{+path}", "file:///srv/%2E%2E/etc/passwd").is_none());
+        assert!(m("db{/table}", "db/..").is_none());
+        // A dot inside a segment is just a dot.
+        assert_eq!(
+            m("docs://{name}", "docs://v1..2.txt"),
+            Some(pairs(&[("name", "v1..2.txt")]))
+        );
+        assert_eq!(
+            m("file://{+path}", "file:///srv/a.b/c"),
+            Some(pairs(&[("path", "/srv/a.b/c")]))
         );
     }
 

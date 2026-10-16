@@ -107,6 +107,14 @@ pub use turbomcp_core::{
     McpResult, ObservedHeaders, ProtocolVersion, RequestContext, RequestId, SessionId, codes,
 };
 
+/// Scope hierarchies: when a broader OAuth scope covers a narrower one
+/// ([`PrefixHierarchy`](scopes::PrefixHierarchy),
+/// [`ImpliedScopes`](scopes::ImpliedScopes), or your own
+/// [`ScopeHierarchy`](scopes::ScopeHierarchy)), declared on the authenticator
+/// (`ResourceServer::scope_hierarchy`, feature `auth`) and honored by every
+/// scope check.
+pub use turbomcp_core::scopes;
+
 /// Version-stable, handler-facing types (the surface user handlers speak).
 pub use turbomcp_protocol::neutral;
 

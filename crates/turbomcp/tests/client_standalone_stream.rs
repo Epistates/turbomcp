@@ -242,6 +242,97 @@ async fn the_standalone_stream_is_open_before_connect_returns() {
     server.abort();
 }
 
+/// A server that no longer has the stream a `Last-Event-ID` names (its event
+/// store expired it, or it restarted) answers the resuming `GET` with `404`.
+/// The session is fine: the client must drop the cursor and reopen, not start
+/// a new session. Taking it for an expired session re-initialized, kept the
+/// cursor, got `404` again, and looped with no delay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_404_to_a_resuming_get_drops_the_cursor_not_the_session() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let initializes = Arc::new(AtomicUsize::new(0));
+    let resumes = Arc::new(AtomicUsize::new(0));
+
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind ephemeral port");
+    let addr: SocketAddr = listener.local_addr().unwrap();
+
+    let counted = Arc::clone(&initializes);
+    let refused = Arc::clone(&resumes);
+    let app = Router::new()
+        .route(
+            "/mcp",
+            post(move |Json(body): Json<Value>| {
+                let counted = Arc::clone(&counted);
+                async move {
+                    let id = body.get("id").cloned();
+                    match body.get("method").and_then(Value::as_str).unwrap_or("") {
+                        "initialize" => {
+                            counted.fetch_add(1, SeqCst);
+                            (
+                                [("mcp-session-id", "the-only-session")],
+                                Json(json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": {
+                                        "protocolVersion": "2025-11-25",
+                                        "capabilities": {},
+                                        "serverInfo": { "name": "forgetful", "version": "1.0.0" },
+                                    },
+                                })),
+                            )
+                                .into_response()
+                        }
+                        _ if id.is_none() => StatusCode::ACCEPTED.into_response(),
+                        _ => Json(json!({ "jsonrpc": "2.0", "id": id, "result": {} }))
+                            .into_response(),
+                    }
+                }
+            })
+            .get(move |headers: HeaderMap| {
+                let refused = Arc::clone(&refused);
+                async move {
+                    if headers.contains_key("last-event-id") {
+                        refused.fetch_add(1, SeqCst);
+                        return StatusCode::NOT_FOUND.into_response();
+                    }
+                    // One event with an id, then the server ends the stream.
+                    (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        "id: s1:1\nretry: 200\ndata: \n\n",
+                    )
+                        .into_response()
+                }
+            }),
+        )
+        .into_make_service();
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let client = connect_http(
+        ClientBuilder::new("forgetful-test", "1.0.0").with_connect_mode(ConnectMode::Legacy),
+        format!("http://{addr}/mcp"),
+    )
+    .await
+    .expect("handshake");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        resumes.load(SeqCst) > 0,
+        "the test is vacuous unless the client tried to resume"
+    );
+    assert_eq!(
+        initializes.load(SeqCst),
+        1,
+        "a stream the server forgot is not a session it forgot"
+    );
+
+    drop(client);
+    server.abort();
+}
+
 /// A server with nothing to push answers `405`, and that is a complete answer —
 /// the client must not sit in a reconnect loop against it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

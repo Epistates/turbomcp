@@ -19,7 +19,7 @@
 
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-use turbomcp_core::JsonRpcNotification;
+use turbomcp_core::{JsonRpcNotification, meta};
 use turbomcp_protocol::methods;
 
 use crate::subscriptions::Route;
@@ -177,6 +177,14 @@ impl ProgressReporter {
             "progress": progress,
         });
         if let Some(obj) = params.as_object_mut() {
+            // "All notifications related to a task MUST include the
+            // `io.modelcontextprotocol/related-task` key in their `_meta`."
+            if let Some(task_id) = inner.task.id() {
+                obj.insert(
+                    "_meta".to_owned(),
+                    json!({ meta::keys::RELATED_TASK: { "taskId": task_id } }),
+                );
+            }
             if let Some(total) = total {
                 obj.insert("total".to_owned(), json!(total));
             }
@@ -233,6 +241,24 @@ mod tests {
         assert_eq!(second.params.as_ref().unwrap()["progress"], 3.0);
         assert_eq!(second.params.as_ref().unwrap()["message"], "step 3");
         assert_eq!(second.params.as_ref().unwrap()["progressToken"], "t1");
+    }
+
+    /// "Progress notifications MUST stop after completion": a reporter a
+    /// handler kept (in a spawned task, say) goes quiet once the request's
+    /// lifetime ends, however open the stream it rode still is.
+    #[tokio::test]
+    async fn reports_stop_when_the_request_ends() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let (lifetime, ended) = crate::subscriptions::RequestLifetime::start();
+        let reporter = ProgressReporter::new(
+            json!("t3"),
+            Route::to(turbomcp_service::Peer::new("prog-life-conn", &tx)).until(lifetime.0),
+        );
+        reporter.report(1.0, None, None).await;
+        drop(ended);
+        reporter.report(2.0, None, None).await;
+        assert!(rx.try_recv().is_ok(), "reported while live");
+        assert!(rx.try_recv().is_err(), "nothing after the request ended");
     }
 
     /// `done / total` with `total == 0` is NaN. It used to go out as

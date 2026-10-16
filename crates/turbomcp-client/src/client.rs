@@ -80,6 +80,13 @@ const REISSUABLE: &[&str] = &[
     request::DISCOVER,
 ];
 
+/// The requests a `2026-07-28` server may answer with `input_required`.
+const MRTR_METHODS: &[&str] = &[
+    request::TOOLS_CALL,
+    request::RESOURCES_READ,
+    request::PROMPTS_GET,
+];
+
 /// How long [`ConnectMode::Auto`] waits for its `server/discover` probe (or the
 /// request timeout, if shorter) before concluding the server is legacy.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -420,6 +427,19 @@ impl ClientBuilder {
     /// servers (`-32602`), go-sdk HTTP servers (a plain-text 400), and any
     /// server that ignores unknown methods (the full request timeout).
     async fn probe(&self, conn: &Connection) -> ClientResult<Option<Handshake>> {
+        // Silence means legacy only on a byte pipe, where a legacy server may
+        // ignore a method it doesn't know. Over HTTP every server answers a
+        // POST, legacy ones with a status; a slow one (a cold start) is just
+        // slow, and taking it for legacy sent `initialize` to a server that
+        // refuses it. There the probe gets the full request timeout, and
+        // running out of it is a failure, not a verdict.
+        if conn.carries_headers() {
+            return match self.discover(conn).await {
+                Ok(result) => self.probe_answered(&result),
+                Err(ClientError::Timeout) => Err(ClientError::Timeout),
+                Err(error) => probe_error(error),
+            };
+        }
         let wait = self.request_timeout.min(PROBE_TIMEOUT);
         let result = match tokio::time::timeout(wait, self.discover(conn)).await {
             // "does not respond within a reasonable timeout: the server is legacy"
@@ -427,6 +447,11 @@ impl ClientBuilder {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => return probe_error(error),
         };
+        self.probe_answered(&result)
+    }
+
+    /// What a `server/discover` answer says about the server's era.
+    fn probe_answered(&self, result: &Value) -> ClientResult<Option<Handshake>> {
         let listed: Vec<ProtocolVersion> = result
             .get("supportedVersions")
             .and_then(Value::as_array)
@@ -440,7 +465,7 @@ impl ClientBuilder {
         if listed.contains(&ProtocolVersion::LATEST) {
             return Ok(Some(Handshake::from_result(
                 ProtocolVersion::LATEST,
-                &result,
+                result,
             )));
         }
         // Answered, but serving only revisions reached through `initialize`.
@@ -1424,10 +1449,16 @@ impl Client {
         }
         let mut params = Map::new();
         params.insert("uri".into(), json!(&uri));
-        let v = self
-            .mrtr_request_with(request::RESOURCES_READ, params, Extensions::new(), &per)
+        let (v, retried) = self
+            .mrtr_rounds(request::RESOURCES_READ, params, Extensions::new(), &per)
             .await?;
-        if let Some(cache) = &self.cache {
+        // A result that answered a retry depended on what this caller was
+        // asked and said (or on the server's sealed state): "Results from
+        // requests that include `inputResponses` or `requestState` MUST NOT
+        // be cached", or the next read of the URI skips the question.
+        if let Some(cache) = &self.cache
+            && !retried
+        {
             cache.store(request::RESOURCES_READ, Some(&uri), &v);
         }
         self.decode::<v0728::ReadResourceResult, legacy::ReadResourceResult, _>(v)
@@ -2094,19 +2125,34 @@ impl Client {
     async fn mrtr_request_with(
         &self,
         method: &str,
-        mut original: Map<String, Value>,
+        original: Map<String, Value>,
         facts: Extensions,
         per: &Prepared,
     ) -> ClientResult<Value> {
+        self.mrtr_rounds(method, original, facts, per)
+            .await
+            .map(|(result, _)| result)
+    }
+
+    /// [`mrtr_request_with`](Self::mrtr_request_with), and whether the final
+    /// result answered a retry (one carrying `inputResponses` or
+    /// `requestState`), which caching.mdx says MUST NOT be cached.
+    async fn mrtr_rounds(
+        &self,
+        method: &str,
+        mut original: Map<String, Value>,
+        facts: Extensions,
+        per: &Prepared,
+    ) -> ClientResult<(Value, bool)> {
         per.stamp(&mut original);
         let mut params = original.clone();
         let mut state_only_rounds = 0u32;
-        for _ in 0..MAX_MRTR_ROUNDS {
+        for round in 0..MAX_MRTR_ROUNDS {
             let result = self
                 .versioned_request_waiting(method, params, facts.clone(), per.wait())
                 .await?;
             if !self.result_is_input_required(&result)? {
-                return self.settle_claimed(method, result).await;
+                return Ok((self.settle_claimed(method, result).await?, round > 0));
             }
 
             // Each retry is the original request plus what *this* round
@@ -2260,7 +2306,7 @@ impl Client {
     ) -> ClientResult<Value> {
         self.stamp_version(&mut params, &mut facts);
         let params = Value::Object(params);
-        match self
+        let result = match self
             .conn
             .request_waiting(method, Some(params.clone()), facts.clone(), wait.clone())
             .await
@@ -2276,7 +2322,18 @@ impl Client {
                     .await
             }
             other => other,
+        }?;
+        // Every result, not only the three that can ask for input: an
+        // unrecognized `resultType` "MUST be considered invalid" wherever it
+        // turns up, and an invalid list result was otherwise decoded (and
+        // cached) as if it were complete.
+        if self.result_is_input_required(&result)? && !MRTR_METHODS.contains(&method) {
+            return Err(ClientError::Protocol(format!(
+                "server answered `{method}` with `input_required`, which only \
+                 tools/call, resources/read and prompts/get may return"
+            )));
         }
+        Ok(result)
     }
 
     /// Stamp a request with the negotiated version: the `2026-07-28` `_meta`

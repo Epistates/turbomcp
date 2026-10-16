@@ -34,6 +34,7 @@ const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
 #[derive(Clone, Debug)]
 pub struct MachineAuthorization {
     resource: String,
+    issuer: String,
     credentials: ClientCredentials,
     http: reqwest::Client,
     network: crate::NetworkPolicy,
@@ -41,8 +42,13 @@ pub struct MachineAuthorization {
 
 impl MachineAuthorization {
     /// Authorization for the MCP server `resource`, as the confidential
-    /// client `credentials` at its authorization server (both grants
+    /// client `credentials` at the authorization server `issuer` (both grants
     /// authenticate the client, so it needs a secret).
+    ///
+    /// `issuer` is the server that issued `credentials`, and the only one
+    /// they are sent to: a resource whose metadata names another is refused
+    /// with [`OAuthClientError::IssuerChanged`] rather than handed the secret
+    /// (and, for [`exchange`](Self::exchange), the caller's token).
     ///
     /// Endpoints must be HTTPS on public addresses, as for
     /// [`OAuthClient`](super::OAuthClient); widen with
@@ -51,10 +57,15 @@ impl MachineAuthorization {
     /// # Panics
     /// If the TLS backend can't initialize, which the HTTP client needs.
     #[must_use]
-    pub fn new(resource: impl Into<String>, credentials: ClientCredentials) -> Self {
+    pub fn new(
+        resource: impl Into<String>,
+        issuer: impl Into<String>,
+        credentials: ClientCredentials,
+    ) -> Self {
         let network = crate::NetworkPolicy::public_only();
         Self {
             resource: resource.into(),
+            issuer: issuer.into(),
             credentials,
             http: network.http_client().expect("HTTP client initialization"),
             network,
@@ -91,7 +102,14 @@ impl MachineAuthorization {
         &self,
         challenge: Option<&BearerChallenge>,
     ) -> Result<Discovered, OAuthClientError> {
-        discover_with_policy(&self.http, &self.resource, challenge, &self.network).await
+        discover_with_policy(
+            &self.http,
+            &self.resource,
+            &self.issuer,
+            challenge,
+            &self.network,
+        )
+        .await
     }
 
     /// A token for this client itself, with `scopes` (RFC 6749 §4.4).

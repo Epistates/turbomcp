@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Fixture corrections are hash-pinned in fixtures/corrected-client.mjs.
 /// Review them and both inventories whenever this package pin changes.
-pub const CONFORMANCE_PKG: &str = "@modelcontextprotocol/conformance@0.2.0-alpha.11";
+pub const CONFORMANCE_PKG: &str = "@modelcontextprotocol/conformance@0.2.0-alpha.12";
 
 /// Run the unmodified upstream client fixtures for comparison.
 #[must_use]
@@ -433,6 +433,10 @@ pub fn assert_inventory(suite: &str, version: &str, checks: &[CheckResult]) {
         _ => panic!("unknown conformance suite"),
     };
     let inventory: serde_json::Value = serde_json::from_str(raw).expect("inventory JSON");
+    if std::env::var("TURBOMCP_CONFORMANCE_BLESS").as_deref() == Ok("1") {
+        bless_inventory(suite, version, inventory, checks);
+        return;
+    }
     assert_eq!(
         inventory["package"].as_str(),
         Some(CONFORMANCE_PKG),
@@ -459,6 +463,51 @@ pub fn assert_inventory(suite: &str, version: &str, checks: &[CheckResult]) {
             .collect();
         assert_eq!(actual, expected, "{suite} {version} {key} inventory drift");
     }
+}
+
+/// `TURBOMCP_CONFORMANCE_BLESS=1`: rewrite `version`'s entries in the suite's
+/// inventory from what this run observed, under the current package pin, and
+/// leave the other versions' entries alone. For a harness update only; the
+/// diff is what gets reviewed.
+fn bless_inventory(
+    suite: &str,
+    version: &str,
+    mut inventory: serde_json::Value,
+    checks: &[CheckResult],
+) {
+    let file = match suite {
+        "client" if raw_upstream() => "conformance-inventory-client-upstream.json",
+        "client" => "conformance-inventory-client.json",
+        _ => "conformance-inventory-server.json",
+    };
+    inventory["package"] = serde_json::Value::from(CONFORMANCE_PKG);
+    let prefix = format!("{version}::");
+    for (key, disposition) in [
+        ("passed", Disposition::Pass),
+        ("skipped", Disposition::Skip),
+        ("warnings", Disposition::Warning),
+    ] {
+        let mut entries: BTreeSet<String> = inventory[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+            .filter(|v| !v.starts_with(&prefix))
+            .map(str::to_owned)
+            .collect();
+        entries.extend(
+            checks
+                .iter()
+                .filter(|c| c.spec_version == version && c.disposition == disposition)
+                .map(CheckResult::id),
+        );
+        inventory[key] = entries.into_iter().collect();
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
+    let mut text = serde_json::to_string_pretty(&inventory).expect("inventory JSON");
+    text.push('\n');
+    std::fs::write(&path, text).expect("write inventory");
+    eprintln!("blessed {suite} {version} into {}", path.display());
 }
 
 #[cfg(test)]

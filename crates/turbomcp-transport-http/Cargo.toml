@@ -72,7 +72,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 turbomcp-protocol = { workspace = true }
 turbomcp-server = { workspace = true }
-turbomcp-auth = { workspace = true }
+turbomcp-auth = { workspace = true, features = ["jwt"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "macros", "time"] }
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"

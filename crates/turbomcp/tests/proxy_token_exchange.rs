@@ -185,7 +185,9 @@ async fn gateway(
     .await;
     let remote = RemoteServer::builder(Upstream::http(upstream))
         .auth(OutboundAuth::TokenExchange(ServiceAccount::new(
-            "gateway", "s3cret",
+            authority.clone(),
+            "gateway",
+            "s3cret",
         )))
         .network_policy(NetworkPolicy::default())
         .connect()

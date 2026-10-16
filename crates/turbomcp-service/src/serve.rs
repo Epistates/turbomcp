@@ -81,6 +81,10 @@ pub struct ServeConfig {
     /// request beside its identity when the authenticator retains tokens
     /// ([`SubjectToken`](crate::SubjectToken)). Default: `None`.
     pub subject_token: Option<crate::SubjectToken>,
+    /// The scope hierarchy the connection's authenticator declared
+    /// ([`HttpAuthenticator::scope_rules`](crate::HttpAuthenticator::scope_rules)),
+    /// attached to every request beside its identity. Default: `None`.
+    pub scope_rules: Option<turbomcp_core::ScopeRules>,
 }
 
 impl Default for ServeConfig {
@@ -93,6 +97,7 @@ impl Default for ServeConfig {
             shutdown: CancellationToken::new(),
             identity: None,
             subject_token: None,
+            scope_rules: None,
         }
     }
 }
@@ -141,6 +146,7 @@ where
         shutdown,
         identity,
         subject_token,
+        scope_rules,
     } = config;
     let capacity = max_in_flight.max(1);
     let network = transport.network();
@@ -265,6 +271,9 @@ where
                         }
                         if let Some(token) = &subject_token {
                             request.extensions.insert(token.clone());
+                        }
+                        if let Some(rules) = &scope_rules {
+                            request.extensions.insert(rules.clone());
                         }
                         if let Some(network) = &network {
                             request.extensions.insert(network.clone());

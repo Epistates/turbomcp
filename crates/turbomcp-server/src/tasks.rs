@@ -182,9 +182,10 @@ pub enum TaskOutcome {
     Error(JsonRpcError),
 }
 
-/// Resolves to the client's answer to one input request, or `None` when the
-/// task ends (or is forgotten) first.
-pub type InputWaiter = BoxFuture<'static, Option<Value>>;
+/// Resolves to the client's answer to one input request (its result, or the
+/// JSON-RPC error it answered with), or `None` when the task ends (or is
+/// forgotten) first.
+pub type InputWaiter = BoxFuture<'static, Option<Result<Value, JsonRpcError>>>;
 
 /// What a task's work reports about itself. Fields left `None` keep their
 /// value.
@@ -303,6 +304,19 @@ pub trait TaskBackend: Send + Sync {
         responses: &Map<String, Value>,
     ) -> Result<bool, TaskError>;
 
+    /// The client refused the outstanding input request `key` with `error`
+    /// (on `2025-11-25`, where it answers the server's own request): resolve
+    /// its waiter with the error, so the work sees it rather than waiting out
+    /// the task's TTL, and treat the key as answered. Returns whether the
+    /// status changed.
+    async fn fail_input(
+        &self,
+        owner: &TaskOwner,
+        task_id: &str,
+        key: &str,
+        error: JsonRpcError,
+    ) -> Result<bool, TaskError>;
+
     /// A `2025-11-25` session ended: cancel its running tasks and forget all
     /// of them. The default does nothing, which suits a backend whose tasks
     /// outlive sessions by design.
@@ -315,7 +329,7 @@ struct Inputs {
     /// Outstanding input requests, keyed by their task-unique key.
     outstanding: Map<String, Value>,
     /// What resolves each outstanding key's waiter.
-    waiters: HashMap<String, oneshot::Sender<Value>>,
+    waiters: HashMap<String, oneshot::Sender<Result<Value, JsonRpcError>>>,
     /// Every key ever issued for this task, so none is reused.
     used: HashSet<String>,
 }
@@ -373,6 +387,17 @@ impl Entry {
     fn touch(&mut self) {
         self.updated_wall = OffsetDateTime::now_utc();
         let _ = self.notify.send(());
+    }
+
+    /// An `input_required` task with nothing left outstanding goes back to
+    /// `working`. Returns whether it did.
+    fn resume_if_answered(&mut self) -> bool {
+        if self.status == TaskStatus::InputRequired && self.inputs.outstanding.is_empty() {
+            self.status = TaskStatus::Working;
+            self.touch();
+            return true;
+        }
+        false
     }
 
     fn finish(
@@ -764,15 +789,27 @@ impl TaskBackend for TaskStore {
             {
                 // A closed receiver means the work already unwound; the
                 // answer is dropped.
-                let _ = waiter.send(value.clone());
+                let _ = waiter.send(Ok(value.clone()));
             }
         }
-        if entry.status == TaskStatus::InputRequired && entry.inputs.outstanding.is_empty() {
-            entry.status = TaskStatus::Working;
-            entry.touch();
-            return Ok(true);
+        Ok(entry.resume_if_answered())
+    }
+
+    async fn fail_input(
+        &self,
+        owner: &TaskOwner,
+        task_id: &str,
+        key: &str,
+        error: JsonRpcError,
+    ) -> Result<bool, TaskError> {
+        let mut map = self.live();
+        let entry = owned(&mut map, owner, task_id)?;
+        if entry.inputs.outstanding.remove(key).is_some()
+            && let Some(waiter) = entry.inputs.waiters.remove(key)
+        {
+            let _ = waiter.send(Err(error));
         }
-        Ok(false)
+        Ok(entry.resume_if_answered())
     }
 
     async fn end_session(&self, session_id: &str) {
@@ -1139,7 +1176,7 @@ mod tests {
             s.provide_input(&owner, &task.task_id, &responses).await,
             Ok(true)
         );
-        assert_eq!(waiter.await.unwrap()["action"], "accept");
+        assert_eq!(waiter.await.unwrap().unwrap()["action"], "accept");
         let got = s.get(&owner, &task.task_id).await.unwrap();
         assert_eq!(got.status, TaskStatus::Working);
         assert!(got.input_requests.is_empty());
@@ -1151,6 +1188,37 @@ mod tests {
             s.provide_input(&owner, &task.task_id, &again).await,
             Ok(false)
         );
+    }
+
+    /// A client that refuses an input request (a JSON-RPC error, on
+    /// `2025-11-25`) unblocks the work with that error instead of leaving it
+    /// waiting until the TTL.
+    #[tokio::test]
+    async fn a_refused_input_request_resolves_with_the_error() {
+        let s = TaskStore::default();
+        let owner = sess();
+        let task = create(&s, &owner, None).await;
+        let waiter = s
+            .request_input(
+                &task.task_id,
+                "confirm",
+                json!({"method": "sampling/createMessage"}),
+            )
+            .await
+            .unwrap();
+        let refusal = JsonRpcError {
+            code: turbomcp_core::codes::METHOD_NOT_FOUND,
+            message: "sampling not supported".into(),
+            data: None,
+        };
+        assert_eq!(
+            s.fail_input(&owner, &task.task_id, "confirm", refusal.clone())
+                .await,
+            Ok(true)
+        );
+        assert_eq!(waiter.await.unwrap(), Err(refusal));
+        let got = s.get(&owner, &task.task_id).await.unwrap();
+        assert_eq!(got.status, TaskStatus::Working);
     }
 
     #[tokio::test]
