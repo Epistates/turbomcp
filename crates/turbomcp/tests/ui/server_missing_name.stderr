@@ -1,5 +1,0 @@
-error: #[server] requires `name = "…"`
- --> tests/ui/server_missing_name.rs:7:10
-  |
-7 | #[server(version = "1.0.0")]
-  |          ^^^^^^^

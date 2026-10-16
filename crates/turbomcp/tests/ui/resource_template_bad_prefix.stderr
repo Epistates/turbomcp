@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: a prefix length must be 1-9999
+  --> tests/ui/resource_template_bad_prefix.rs:11:16
+   |
+11 |     #[resource("file://{path:0}")]
+   |                ^^^^^^^^^^^^^^^^^ evaluation of `_` failed here

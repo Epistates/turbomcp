@@ -16,7 +16,7 @@
 //! downstream crate.
 
 use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens as _, format_ident, quote, quote_spanned};
+use quote::{ToTokens, format_ident, quote, quote_spanned};
 use syn::ext::IdentExt as _;
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
@@ -30,19 +30,12 @@ use syn::{
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let args = ServerArgs::parse(attr)?;
     let mut block: ItemImpl = parse2(item)?;
-    // The generated trait impls name the type directly, so generic parameters
-    // would escape their binder. Say so plainly — otherwise the user sees
-    // "cannot find type `T` in this scope" pointing at generated code.
-    if !block.generics.params.is_empty() {
-        return Err(syn::Error::new(
-            block.generics.span(),
-            "#[server] does not support generic impl blocks — the generated \
-             `McpServerCore`/`WithTools` impls are for one concrete type. \
-             Apply it to a concrete type (e.g. a type alias or newtype), or \
-             implement the capability traits by hand.",
-        ));
-    }
     let self_ty = (*block.self_ty).clone();
+    let generics = block.generics.clone();
+    let target = Target {
+        ty: &self_ty,
+        generics: &generics,
+    };
 
     // Classify methods and collect handler models. Clean the marker attributes
     // off the methods in place so the re-emitted impl compiles.
@@ -59,7 +52,8 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         match kind {
             Marker::Handler { kind, desc, args } => {
                 let mut h = Handler::parse(f, desc, kind)?;
-                h.apply(args);
+                h.apply(*args);
+                h.validate_metadata()?;
                 match &h.kind {
                     HandlerKind::Tool => tools.push(h),
                     HandlerKind::Prompt => prompts.push(h),
@@ -94,12 +88,12 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         "give each resource a distinct URI",
     )?;
 
-    let tools_impl = (!tools.is_empty()).then(|| gen_tools_impl(&self_ty, &tools));
-    let resources_impl = (!resources.is_empty()).then(|| gen_resources_impl(&self_ty, &resources));
-    let prompts_impl = (!prompts.is_empty()).then(|| gen_prompts_impl(&self_ty, &prompts));
+    let tools_impl = (!tools.is_empty()).then(|| gen_tools_impl(&target, &tools));
+    let resources_impl = (!resources.is_empty()).then(|| gen_resources_impl(&target, &resources));
+    let prompts_impl = (!prompts.is_empty()).then(|| gen_prompts_impl(&target, &prompts));
     let completions_impl = completion
         .as_ref()
-        .map(|c| gen_completions_impl(&self_ty, c));
+        .map(|c| gen_completions_impl(&target, c));
 
     let mut registrations = TokenStream::new();
     if !tools.is_empty() {
@@ -114,10 +108,11 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     if completion.is_some() {
         registrations.extend(quote!(.with_completions()));
     }
-    let core_impl = gen_core_impl(&self_ty, &args, &registrations)?;
+    let core_impl = gen_core_impl(&target, &args, &registrations)?;
+    let entry_head = target.head(None);
 
     let entry_impl = quote! {
-        impl #self_ty {
+        #entry_head {
             /// Build a configurable server with this type's capabilities
             /// registered. The same as
             /// [`IntoServerBuilder::into_server`](::turbomcp::IntoServerBuilder::into_server),
@@ -151,6 +146,26 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     };
     let generated = crate::resolve_facade(generated)?;
     Ok(quote! { #block #generated })
+}
+
+/// The type a `#[server]` impl is for, with the impl's generics: every
+/// generated impl repeats them, so `impl<S: Store> App<S>` serves as well
+/// as a concrete type.
+struct Target<'a> {
+    ty: &'a Type,
+    generics: &'a syn::Generics,
+}
+
+impl Target<'_> {
+    /// `impl<…> Trait for Ty<…> where …` (or the inherent `impl<…> Ty<…>`).
+    fn head(&self, trait_path: Option<TokenStream>) -> TokenStream {
+        let (impl_generics, _, where_clause) = self.generics.split_for_impl();
+        let ty = self.ty;
+        match trait_path {
+            Some(t) => quote!(impl #impl_generics #t for #ty #where_clause),
+            None => quote!(impl #impl_generics #ty #where_clause),
+        }
+    }
 }
 
 const NAME_REMEDY: &str = "rename one, or give it a distinct `name = \"…\"`";
@@ -221,10 +236,19 @@ fn validate_tool_name(name: &str, span: Span) -> syn::Result<()> {
 // ---- attribute parsing -------------------------------------------------------
 
 struct ServerArgs {
-    name: String,
-    version: String,
-    title: Option<String>,
-    instructions: Option<String>,
+    /// Any `&str`-valued expression: a literal, `env!(…)`, `concat!(…)`,
+    /// `include_str!(…)`, a `const`. Defaults to the crate's name.
+    name: Option<Expr>,
+    /// Likewise; defaults to the crate's version.
+    version: Option<Expr>,
+    title: Option<Expr>,
+    instructions: Option<Expr>,
+    /// `description = …` (`2025-11-25` onwards).
+    description: Option<Expr>,
+    /// `website_url = …` (`2025-11-25` onwards).
+    website_url: Option<Expr>,
+    /// `icon(…)`, each a `neutral::Icon` expression.
+    icons: Vec<TokenStream>,
     /// Wire strings from `protocols(…)`, paired with their spans for error
     /// reporting. Empty means "unset" — the server keeps the crate default
     /// (`ProtocolVersion::SUPPORTED`).
@@ -240,6 +264,9 @@ impl ServerArgs {
         let mut version = None;
         let mut title = None;
         let mut instructions = None;
+        let mut description = None;
+        let mut website_url = None;
+        let mut icons = Vec::new();
         let mut protocols = Vec::new();
         for m in metas {
             let key = m
@@ -247,6 +274,10 @@ impl ServerArgs {
                 .get_ident()
                 .map(ToString::to_string)
                 .unwrap_or_default();
+            if key == "icon" {
+                icons.push(icon_arg(&m)?);
+                continue;
+            }
             if key == "protocols" {
                 let Meta::List(list) = &m else {
                     return Err(syn::Error::new(
@@ -272,31 +303,33 @@ impl ServerArgs {
                     format!("expected `{key} = \"…\"`"),
                 ));
             };
-            let val = lit_str(&nv.value)
-                .ok_or_else(|| syn::Error::new(nv.value.span(), "expected a string literal"))?;
+            let val = nv.value.clone();
             match key.as_str() {
                 "name" => name = Some(val),
                 "version" => version = Some(val),
                 "title" => title = Some(val),
                 "instructions" => instructions = Some(val),
+                "description" => description = Some(val),
+                "website_url" => website_url = Some(val),
                 other => {
                     return Err(syn::Error::new(
                         m.path().span(),
                         format!(
-                            "unknown #[server] argument `{other}` (expected name, version, title, instructions, protocols)"
+                            "unknown #[server] argument `{other}` (expected name, version, title, \
+                             description, website_url, icon, instructions, protocols)"
                         ),
                     ));
                 }
             }
         }
         Ok(Self {
-            name: name
-                .ok_or_else(|| syn::Error::new(attr.span(), "#[server] requires `name = \"…\"`"))?,
-            version: version.ok_or_else(|| {
-                syn::Error::new(attr.span(), "#[server] requires `version = \"…\"`")
-            })?,
+            name,
+            version,
             title,
             instructions,
+            description,
+            website_url,
+            icons,
             protocols,
         })
     }
@@ -329,10 +362,10 @@ fn protocol_variant(wire: &LitStr) -> syn::Result<proc_macro2::TokenStream> {
 enum Marker {
     Handler {
         kind: HandlerKind,
-        /// The resolved description: an explicit `description = "…"`, else the
+        /// The resolved description: an explicit `description = …`, else the
         /// bare-string shorthand, else the doc comment.
-        desc: Option<String>,
-        args: MarkerArgs,
+        desc: Option<Desc>,
+        args: Box<MarkerArgs>,
     },
     Completion,
 }
@@ -391,11 +424,27 @@ impl MarkerKind {
                     | "destructive"
                     | "idempotent"
                     | "open_world"
+                    | "icon"
+                    | "meta"
+                    | "output_schema"
             ),
-            Self::Prompt => matches!(key, "description" | "name" | "title" | "tags"),
-            Self::Resource => {
-                matches!(key, "description" | "name" | "title" | "mime_type" | "tags")
-            }
+            Self::Prompt => matches!(
+                key,
+                "description" | "name" | "title" | "tags" | "icon" | "meta"
+            ),
+            Self::Resource => matches!(
+                key,
+                "description"
+                    | "name"
+                    | "title"
+                    | "mime_type"
+                    | "tags"
+                    | "icon"
+                    | "meta"
+                    | "size"
+                    | "audience"
+                    | "priority"
+            ),
         }
     }
 
@@ -405,15 +454,17 @@ impl MarkerKind {
             Self::Tool => {
                 "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `task`, \
                  `scopes(\"…\", …)`, `tags(\"…\", …)`, `schema_extend = \"{…}\"`, \
-                 or a behavior hint \
+                 `icon(…)`, `meta(\"key\" = …)`, `output_schema = Type`, or a behavior hint \
                  (`read_only`, `destructive`, `idempotent`, `open_world`)"
             }
             Self::Prompt => {
-                "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, or `tags(\"…\", …)`"
+                "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `tags(\"…\", …)`, \
+                 `icon(…)`, or `meta(\"key\" = …)`"
             }
             Self::Resource => {
                 "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `mime_type = \"…\"`, \
-                 or `tags(\"…\", …)`"
+                 `tags(\"…\", …)`, `icon(…)`, `meta(\"key\" = …)`, `size = N`, \
+                 `audience(\"user\", …)`, or `priority = 0.0..=1.0`"
             }
         }
     }
@@ -437,16 +488,24 @@ struct MarkerArg {
 /// `open_world`, each optionally `= true|false` (bare = `true`).
 enum ArgKind {
     Positional(LitStr),
-    Desc(String),
+    Desc(Expr),
     Name(LitStr),
-    Title(String),
-    MimeType(String),
+    Title(Expr),
+    MimeType(Expr),
     /// `task` / `task = "optional"` (`false`) or `task = "required"` (`true`).
     Task(bool),
     Scopes(Vec<String>),
     Tags(Vec<String>),
     Hint(HintKind, bool),
     SchemaExtend(LitStr),
+    /// An `neutral::Icon` expression.
+    Icon(TokenStream),
+    /// `meta("key" = <json>, …)`: keys and `json!` value tokens.
+    Meta(Vec<(LitStr, TokenStream)>),
+    OutputSchema(Type),
+    Size(Expr),
+    Audience(Vec<TokenStream>),
+    Priority(Expr),
     Unknown(String),
 }
 
@@ -464,6 +523,12 @@ impl ArgKind {
             Self::Tags(_) => "tags",
             Self::Hint(k, _) => k.key(),
             Self::SchemaExtend(_) => "schema_extend",
+            Self::Icon(_) => "icon",
+            Self::Meta(_) => "meta",
+            Self::OutputSchema(_) => "output_schema",
+            Self::Size(_) => "size",
+            Self::Audience(_) => "audience",
+            Self::Priority(_) => "priority",
             Self::Unknown(k) => k,
         }
     }
@@ -518,13 +583,21 @@ impl Parse for MarkerArg {
         // and the marker gate (which key belongs on which marker) runs later.
         let kind = match key.as_str() {
             "task" => ArgKind::Task(task_required(&meta)?),
-            "description" => ArgKind::Desc(name_value_str(&meta, &key)?),
+            "description" => ArgKind::Desc(name_value_expr(&meta, &key)?),
             "name" => ArgKind::Name(name_value_lit(&meta, &key)?),
-            "title" => ArgKind::Title(name_value_str(&meta, &key)?),
-            "mime_type" => ArgKind::MimeType(name_value_str(&meta, &key)?),
+            "title" => ArgKind::Title(name_value_expr(&meta, &key)?),
+            "mime_type" => ArgKind::MimeType(name_value_expr(&meta, &key)?),
             "scopes" => ArgKind::Scopes(string_list(&meta, &key)?),
             "tags" => ArgKind::Tags(nonempty_string_list(&meta, &key)?),
             "schema_extend" => ArgKind::SchemaExtend(name_value_lit(&meta, &key)?),
+            "icon" => ArgKind::Icon(icon_arg(&meta)?),
+            "meta" => ArgKind::Meta(meta_arg(&meta)?),
+            "output_schema" => {
+                ArgKind::OutputSchema(parse2(name_value_expr(&meta, &key)?.to_token_stream())?)
+            }
+            "size" => ArgKind::Size(name_value_expr(&meta, &key)?),
+            "audience" => ArgKind::Audience(audience_arg(&meta)?),
+            "priority" => ArgKind::Priority(priority_arg(&meta)?),
             _ => match HintKind::from_key(&key) {
                 Some(hint) => ArgKind::Hint(hint, hint_value(&meta)?),
                 None => ArgKind::Unknown(key),
@@ -641,6 +714,164 @@ fn task_required(meta: &Meta) -> syn::Result<bool> {
     }
 }
 
+/// The value of `key = …`: any expression (a literal, `env!`, `concat!`,
+/// `include_str!`, a `const`), blaming the key when the shape is wrong.
+fn name_value_expr(meta: &Meta, key: &str) -> syn::Result<Expr> {
+    match meta {
+        Meta::NameValue(nv) => Ok(nv.value.clone()),
+        _ => Err(syn::Error::new(
+            meta.span(),
+            format!("expected `{key} = …`"),
+        )),
+    }
+}
+
+/// `icon("src")` or `icon(src = …, mime_type = …, sizes("48x48", …),
+/// theme = "light" | "dark")`, as a `neutral::Icon` expression.
+fn icon_arg(meta: &Meta) -> syn::Result<TokenStream> {
+    let Meta::List(list) = meta else {
+        return Err(syn::Error::new(
+            meta.span(),
+            "expected `icon(\"https://…\")` or `icon(src = …, …)`",
+        ));
+    };
+    if let Ok(src) = parse2::<LitStr>(list.tokens.clone()) {
+        return Ok(quote!(::turbomcp::neutral::Icon::new(#src)));
+    }
+    let parts = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+    let mut src = None;
+    let mut sets = Vec::new();
+    for part in &parts {
+        let key = part
+            .path()
+            .get_ident()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        match key.as_str() {
+            "src" => src = Some(name_value_expr(part, "src")?),
+            "mime_type" => {
+                let m = name_value_expr(part, "mime_type")?;
+                sets.push(quote!(__icon.mime_type = ::core::option::Option::Some(::core::convert::Into::into(#m));));
+            }
+            "sizes" => {
+                let sizes = string_list(part, "sizes")?;
+                sets.push(
+                    quote!(__icon.sizes = ::std::vec![#(::std::string::String::from(#sizes)),*];),
+                );
+            }
+            "theme" => {
+                let theme = name_value_lit(part, "theme")?;
+                let variant = match theme.value().as_str() {
+                    "light" => quote!(Light),
+                    "dark" => quote!(Dark),
+                    _ => {
+                        return Err(syn::Error::new(
+                            theme.span(),
+                            "an icon's `theme` is \"light\" or \"dark\"",
+                        ));
+                    }
+                };
+                sets.push(quote!(__icon.theme = ::core::option::Option::Some(::turbomcp::neutral::IconTheme::#variant);));
+            }
+            other => {
+                return Err(syn::Error::new(
+                    part.path().span(),
+                    format!("unknown icon key `{other}` (expected src, mime_type, sizes, theme)"),
+                ));
+            }
+        }
+    }
+    let src = src.ok_or_else(|| syn::Error::new(list.span(), "an icon needs a `src`"))?;
+    Ok(quote!({
+        #[allow(unused_mut)]
+        let mut __icon = ::turbomcp::neutral::Icon::new(#src);
+        #(#sets)*
+        __icon
+    }))
+}
+
+/// `meta("key" = <json>, …)`. A value is anything `json!` takes: a literal,
+/// `{ … }`, `[ … ]`, an expression. The spec reserves the
+/// `io.modelcontextprotocol/` prefix, and TurboMCP sets `io.turbomcp/` itself
+/// (`tags(…)`, `scopes(…)`), so neither is accepted here.
+fn meta_arg(meta: &Meta) -> syn::Result<Vec<(LitStr, TokenStream)>> {
+    struct Entry(LitStr, TokenStream);
+    impl Parse for Entry {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let key: LitStr = input.parse()?;
+            input.parse::<Token![=]>()?;
+            let mut value = TokenStream::new();
+            while !input.is_empty() && !input.peek(Token![,]) {
+                let tt: proc_macro2::TokenTree = input.parse()?;
+                value.extend([tt]);
+            }
+            if value.is_empty() {
+                return Err(input.error("expected a value after `=`"));
+            }
+            Ok(Self(key, value))
+        }
+    }
+    let Meta::List(list) = meta else {
+        return Err(syn::Error::new(
+            meta.span(),
+            "expected `meta(\"key\" = value, …)`",
+        ));
+    };
+    let entries = list.parse_args_with(Punctuated::<Entry, Token![,]>::parse_terminated)?;
+    entries
+        .into_iter()
+        .map(|Entry(key, value)| {
+            let k = key.value();
+            if k.starts_with("io.modelcontextprotocol/") || k.starts_with("io.turbomcp/") {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!(
+                        "`{k}` is under a reserved `_meta` prefix (the spec's or TurboMCP's own)"
+                    ),
+                ));
+            }
+            Ok((key, value))
+        })
+        .collect()
+}
+
+/// `audience("user", "assistant")`, as `neutral::Role` paths.
+fn audience_arg(meta: &Meta) -> syn::Result<Vec<TokenStream>> {
+    let Meta::List(list) = meta else {
+        return string_list(meta, "audience").map(|_| Vec::new());
+    };
+    let lits = list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)?;
+    lits.iter()
+        .map(|lit| match lit.value().as_str() {
+            "user" => Ok(quote!(::turbomcp::neutral::Role::User)),
+            "assistant" => Ok(quote!(::turbomcp::neutral::Role::Assistant)),
+            _ => Err(syn::Error::new(
+                lit.span(),
+                "an audience is \"user\" or \"assistant\"",
+            )),
+        })
+        .collect()
+}
+
+/// `priority = 0.0..=1.0`, checked when it is a literal.
+fn priority_arg(meta: &Meta) -> syn::Result<Expr> {
+    let value = name_value_expr(meta, "priority")?;
+    if let Expr::Lit(ExprLit { lit, .. }) = &value {
+        let number = match lit {
+            Lit::Float(f) => f.base10_parse::<f64>().ok(),
+            Lit::Int(i) => i.base10_parse::<f64>().ok(),
+            _ => None,
+        };
+        if !number.is_some_and(|n| (0.0..=1.0).contains(&n)) {
+            return Err(syn::Error::new(
+                value.span(),
+                "`priority` is a number from 0.0 to 1.0",
+            ));
+        }
+    }
+    Ok(value)
+}
+
 fn name_value_str(meta: &Meta, key: &str) -> syn::Result<String> {
     name_value_lit(meta, key).map(|s| s.value())
 }
@@ -691,12 +922,12 @@ struct MarkerArgs {
     /// The bare string, if any: the URI on `#[resource]`, otherwise a
     /// description shorthand.
     positional: Option<LitStr>,
-    desc: Option<String>,
+    desc: Option<Expr>,
     /// `name = "…"` — kept as a literal so a bad name is reported at the
     /// literal rather than at the method.
     name: Option<LitStr>,
-    title: Option<String>,
-    mime_type: Option<String>,
+    title: Option<Expr>,
+    mime_type: Option<Expr>,
     task: bool,
     task_required: bool,
     scopes: Vec<String>,
@@ -706,6 +937,12 @@ struct MarkerArgs {
     /// into the generated `inputSchema`. Kept as a literal so a malformed
     /// object is reported at the string.
     schema_extend: Option<LitStr>,
+    icons: Vec<TokenStream>,
+    meta: Vec<(LitStr, TokenStream)>,
+    output_schema: Option<Type>,
+    size: Option<Expr>,
+    audience: Vec<TokenStream>,
+    priority: Option<Expr>,
 }
 
 impl MarkerArgs {
@@ -716,7 +953,7 @@ impl MarkerArgs {
         match &attr.meta {
             Meta::Path(_) => return Ok(parsed),
             Meta::NameValue(nv) => {
-                parsed.desc = lit_str(&nv.value);
+                parsed.desc = Some(nv.value.clone());
                 return Ok(parsed);
             }
             Meta::List(_) => {}
@@ -762,6 +999,12 @@ impl MarkerArgs {
                     validate_schema_extend(&s)?;
                     parsed.schema_extend = Some(s);
                 }
+                ArgKind::Icon(icon) => parsed.icons.push(icon),
+                ArgKind::Meta(entries) => parsed.meta.extend(entries),
+                ArgKind::OutputSchema(ty) => parsed.output_schema = Some(ty),
+                ArgKind::Size(size) => parsed.size = Some(size),
+                ArgKind::Audience(a) => parsed.audience = a,
+                ArgKind::Priority(p) => parsed.priority = Some(p),
                 // Unreachable: the gate above rejects unknown keys.
                 ArgKind::Unknown(_) => {}
             }
@@ -820,7 +1063,10 @@ fn take_marker(attrs: &mut Vec<Attribute>) -> syn::Result<Option<Marker>> {
                     "#[resource(\"uri\")] requires a string URI argument",
                 )
             })?;
-            HandlerKind::Resource { uri: uri.value() }
+            HandlerKind::Resource {
+                uri: uri.value(),
+                span: uri.span(),
+            }
         }
     };
     // Elsewhere the bare string is the description shorthand; an explicit
@@ -828,9 +1074,21 @@ fn take_marker(attrs: &mut Vec<Attribute>) -> syn::Result<Option<Marker>> {
     let desc = args
         .desc
         .take()
-        .or_else(|| args.positional.as_ref().map(LitStr::value))
+        .map(|e| Desc::Explicit(Box::new(e)))
+        .or_else(|| {
+            args.positional.as_ref().map(|lit| {
+                Desc::Explicit(Box::new(Expr::Lit(ExprLit {
+                    attrs: Vec::new(),
+                    lit: Lit::Str(lit.clone()),
+                })))
+            })
+        })
         .or(doc);
-    Ok(Some(Marker::Handler { kind, desc, args }))
+    Ok(Some(Marker::Handler {
+        kind,
+        desc,
+        args: Box::new(args),
+    }))
 }
 
 // ---- handler model -----------------------------------------------------------
@@ -838,7 +1096,7 @@ fn take_marker(attrs: &mut Vec<Attribute>) -> syn::Result<Option<Marker>> {
 enum HandlerKind {
     Tool,
     Prompt,
-    Resource { uri: String },
+    Resource { uri: String, span: Span },
 }
 
 struct ArgParam {
@@ -852,6 +1110,8 @@ struct ArgParam {
 enum Slot {
     Ctx,
     Arg(usize),
+    /// The `Params<T>` holding the whole input, bound as `__tmcp_whole`.
+    Params,
 }
 
 struct Handler {
@@ -863,7 +1123,7 @@ struct Handler {
     /// makes an internal rename a breaking change for clients (and rules out
     /// names that aren't valid identifiers, like `search.web`).
     wire_name: Option<LitStr>,
-    description: Option<String>,
+    description: Option<Desc>,
     args: Vec<ArgParam>,
     /// Ordered call sites (skipping the receiver) so the call can be rebuilt.
     slots: Vec<Slot>,
@@ -880,16 +1140,30 @@ struct Handler {
     /// `tags(…)`: categorization for catalog policy, carried in the
     /// component's `_meta`. All three kinds.
     tags: Vec<String>,
-    /// `title = "…"`: human-facing display name (all three kinds).
-    title: Option<String>,
-    /// `#[resource(mime_type = "…")]`: the MIME type of what this resource
+    /// `title = …`: human-facing display name (all three kinds).
+    title: Option<Expr>,
+    /// `#[resource(mime_type = …)]`: the MIME type of what this resource
     /// serves, when it is known statically. Resources only.
-    mime_type: Option<String>,
+    mime_type: Option<Expr>,
     /// `#[tool(read_only, …)]` behavior hints → `ToolAnnotations`. Tools only.
     hints: ToolHints,
     /// `#[tool(schema_extend = "{…}")]`: extra top-level JSON Schema keywords
     /// merged into the generated `inputSchema`. Tools only.
     schema_extend: Option<LitStr>,
+    /// `Params<T>`: `T`, the handler's whole input. Tools and prompts.
+    params: Option<Type>,
+    /// `icon(…)`, each a `neutral::Icon` expression. All three kinds.
+    icons: Vec<TokenStream>,
+    /// `meta("key" = …)`. All three kinds.
+    meta: Vec<(LitStr, TokenStream)>,
+    /// `#[tool(output_schema = T)]`: `T`'s schema as the tool's
+    /// `outputSchema`, for a tool returning a `CallToolResult`.
+    output_schema: Option<Type>,
+    /// `#[resource(size = N)]`, fixed resources only.
+    size: Option<Expr>,
+    /// `#[resource(audience(…), priority = …)]` → its `Annotations`.
+    audience: Vec<TokenStream>,
+    priority: Option<Expr>,
 }
 
 impl Handler {
@@ -905,6 +1179,46 @@ impl Handler {
         self.tags = args.tags;
         self.hints = args.hints;
         self.schema_extend = args.schema_extend;
+        self.icons = args.icons;
+        self.meta = args.meta;
+        self.output_schema = args.output_schema;
+        self.size = args.size;
+        self.audience = args.audience;
+        self.priority = args.priority;
+    }
+
+    /// Metadata that contradicts the handler: an `output_schema` beside a
+    /// `Json<T>` return (whose schema already is the output schema), a
+    /// `size` on a template (it describes many resources).
+    fn validate_metadata(&self) -> syn::Result<()> {
+        if let Some(explicit) = &self.output_schema
+            && self.ret_ty.as_ref().and_then(json_output_inner).is_some()
+        {
+            return Err(syn::Error::new_spanned(
+                explicit,
+                "this tool returns `Json<T>`, whose schema is already its `outputSchema`; \
+                 drop `output_schema`",
+            ));
+        }
+        if let (Some(size), HandlerKind::Resource { uri, .. }) = (&self.size, &self.kind)
+            && uri.contains('{')
+        {
+            return Err(syn::Error::new_spanned(
+                size,
+                "`size` describes one resource; a URI template stands for many",
+            ));
+        }
+        Ok(())
+    }
+
+    /// `.with_icon(…)` per icon and `.with_meta_entry(…)` per `meta` entry:
+    /// every component kind has both builders.
+    fn icons_and_meta(&self) -> TokenStream {
+        let icons = self.icons.iter().map(|i| quote!(.with_icon(#i)));
+        let meta = self.meta.iter().map(
+            |(k, v)| quote!(.with_meta_entry(#k, ::turbomcp::__macros::serde_json::json!(#v))),
+        );
+        quote!(#(#icons)* #(#meta)*)
     }
 
     /// `.with_meta_entry(TAGS, [...])`, or nothing when this handler declared no
@@ -944,12 +1258,12 @@ impl Handler {
     /// This resource's URI. Panics on any other kind — callers filter first.
     fn resource_uri(&self) -> String {
         match &self.kind {
-            HandlerKind::Resource { uri } => uri.clone(),
+            HandlerKind::Resource { uri, .. } => uri.clone(),
             _ => unreachable!("resource_uri on a non-resource handler"),
         }
     }
 
-    fn parse(f: &ImplItemFn, description: Option<String>, kind: HandlerKind) -> syn::Result<Self> {
+    fn parse(f: &ImplItemFn, description: Option<Desc>, kind: HandlerKind) -> syn::Result<Self> {
         if f.sig.asyncness.is_none() {
             return Err(syn::Error::new(
                 f.sig.span(),
@@ -958,18 +1272,56 @@ impl Handler {
         }
         let mut args = Vec::new();
         let mut slots = Vec::new();
+        let mut params: Option<Type> = None;
+        let expected = match &kind {
+            HandlerKind::Tool => ("#[tool]", "CallToolContext"),
+            HandlerKind::Prompt => ("#[prompt]", "GetPromptContext"),
+            HandlerKind::Resource { .. } => ("#[resource]", "ReadResourceContext"),
+        };
         for input in &f.sig.inputs {
             match input {
-                FnArg::Receiver(_) => {} // &self
+                FnArg::Receiver(r) => check_receiver(r)?,
                 FnArg::Typed(pt) => {
-                    if is_ctx_type(&pt.ty) {
+                    if check_context(&pt.ty, expected)? {
+                        if slots.iter().any(|s| matches!(s, Slot::Ctx)) {
+                            return Err(syn::Error::new(
+                                pt.ty.span(),
+                                "a handler takes its context once",
+                            ));
+                        }
                         slots.push(Slot::Ctx);
                         continue;
+                    }
+                    if let Some(inner) = params_inner(&pt.ty) {
+                        if matches!(kind, HandlerKind::Resource { .. }) {
+                            return Err(syn::Error::new_spanned(
+                                &pt.ty,
+                                "a #[resource] binds its URI template's variables; `Params<T>` \
+                                 is for tools and prompts",
+                            ));
+                        }
+                        if params.is_some() || !args.is_empty() {
+                            return Err(syn::Error::new_spanned(
+                                &pt.ty,
+                                "`Params<T>` is the handler's whole input: take it alone \
+                                 (beside an optional context)",
+                            ));
+                        }
+                        params = Some(inner.clone());
+                        slots.push(Slot::Params);
+                        continue;
+                    }
+                    if params.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            &pt.ty,
+                            "`Params<T>` is the handler's whole input: put this field in `T`",
+                        ));
                     }
                     let Pat::Ident(pi) = &*pt.pat else {
                         return Err(syn::Error::new(
                             pt.pat.span(),
-                            "handler arguments must be simple identifiers",
+                            "handler arguments are plain identifiers (destructure a `Params<T>` \
+                             if you want a pattern)",
                         ));
                     };
                     let description = param_description(&pt.attrs)?;
@@ -987,9 +1339,9 @@ impl Handler {
             }
         }
 
-        if let HandlerKind::Resource { uri } = &kind {
+        if let HandlerKind::Resource { uri, span } = &kind {
             let vars = template_vars(uri).map_err(|e| {
-                syn::Error::new(f.sig.span(), format!("invalid URI template `{uri}`: {e}"))
+                syn::Error::new(*span, format!("invalid URI template `{uri}`: {e}"))
             })?;
             if vars.is_empty() && !args.is_empty() {
                 return Err(syn::Error::new(
@@ -1015,7 +1367,7 @@ impl Handler {
                         a.ident.span(),
                         format!(
                             "`{name}` is optional in the URI template `{uri}` (a URI may leave \
-                             it out), so take it as `Option<String>`"
+                             it out), so take it as an `Option<…>`"
                         ),
                     ));
                 }
@@ -1043,6 +1395,13 @@ impl Handler {
             mime_type: None,
             hints: ToolHints::default(),
             schema_extend: None,
+            params,
+            icons: Vec::new(),
+            meta: Vec::new(),
+            output_schema: None,
+            size: None,
+            audience: Vec::new(),
+            priority: None,
         })
     }
 
@@ -1052,8 +1411,9 @@ impl Handler {
         self.slots
             .iter()
             .map(|slot| match slot {
-                Slot::Ctx => quote!(ctx),
+                Slot::Ctx => quote!(__tmcp_ctx),
                 Slot::Arg(i) => arg_expr(&self.args[*i]),
+                Slot::Params => quote!(::turbomcp::Params(__tmcp_whole)),
             })
             .collect()
     }
@@ -1062,19 +1422,39 @@ impl Handler {
 // ---- codegen: McpServerCore --------------------------------------------------
 
 fn gen_core_impl(
-    self_ty: &Type,
+    target: &Target,
     args: &ServerArgs,
     registrations: &TokenStream,
 ) -> syn::Result<TokenStream> {
-    let name = &args.name;
-    let version = &args.version;
-    let title_set = args.title.as_ref().map(
-        |t| quote!(__info.title = ::core::option::Option::Some(::std::string::String::from(#t));),
+    // Unset, the server is the crate: its `Cargo.toml` name and version,
+    // so a release bump can't leave the advertised version behind.
+    let name = args.name.as_ref().map_or_else(
+        || quote!(::core::env!("CARGO_PKG_NAME")),
+        ToTokens::to_token_stream,
     );
+    let version = args.version.as_ref().map_or_else(
+        || quote!(::core::env!("CARGO_PKG_VERSION")),
+        ToTokens::to_token_stream,
+    );
+    let title_set = args.title.as_ref().map(
+        |t| quote!(__info.title = ::core::option::Option::Some(::core::convert::Into::into(#t));),
+    );
+    let description_set = args
+        .description
+        .as_ref()
+        .map(|d| quote!(__info = __info.with_description(#d);));
+    let website_set = args
+        .website_url
+        .as_ref()
+        .map(|u| quote!(__info = __info.with_website_url(#u);));
+    let icons_set = (!args.icons.is_empty()).then(|| {
+        let icons = &args.icons;
+        quote!(__info = ::turbomcp::__macros::with_server_icons(__info, ::std::vec![#(#icons),*]);)
+    });
     let instructions_fn = args.instructions.as_ref().map(|i| {
         quote! {
             fn instructions(&self) -> ::core::option::Option<::std::string::String> {
-                ::core::option::Option::Some(::std::string::String::from(#i))
+                ::core::option::Option::Some(::core::convert::Into::into(#i))
             }
         }
     });
@@ -1096,12 +1476,16 @@ fn gen_core_impl(
             }
         })
     };
+    let core_head = target.head(Some(quote!(::turbomcp::McpServerCore)));
     Ok(quote! {
-        impl ::turbomcp::McpServerCore for #self_ty {
+        #core_head {
             fn server_info(&self) -> ::turbomcp::Implementation {
                 #[allow(unused_mut)]
                 let mut __info = ::turbomcp::Implementation::new(#name, #version);
                 #title_set
+                #description_set
+                #website_set
+                #icons_set
                 __info
             }
             #instructions_fn
@@ -1117,26 +1501,49 @@ fn gen_core_impl(
 
 // ---- codegen: tools ----------------------------------------------------------
 
-fn gen_tools_impl(self_ty: &Type, tools: &[Handler]) -> TokenStream {
-    let arg_structs = tools.iter().map(|t| gen_args_struct(self_ty, t));
+fn gen_tools_impl(target: &Target, tools: &[Handler]) -> TokenStream {
+    let self_ty = target.ty;
+    let head = target.head(Some(quote!(::turbomcp::WithTools)));
+    let arg_structs = tools
+        .iter()
+        .filter(|t| t.params.is_none())
+        .map(|t| gen_args_struct(self_ty, t));
     // Marking any tool `#[tool(task)]` makes tasks opt-in for this server:
     // the rest say `forbidden` themselves (the spec's default), as data on
     // each tool, so it holds wherever the tools are served, mounted included.
     let opt_in = tools.iter().any(|t| t.task);
-    let list_entries = tools
-        .iter()
-        .map(|t| gen_tool_list_entry(self_ty, t, opt_in));
+    // One definition per tool, behind a hidden associated fn that both the
+    // list and the lookup use: its schema is generated, and computed, once.
+    let tool_fn = |t: &Handler| format_ident!("__tmcp_tool_{}", t.method.unraw());
+    let definitions = tools.iter().map(|t| {
+        let f = tool_fn(t);
+        let entry = gen_tool_list_entry(self_ty, t, opt_in);
+        quote! {
+            #[doc(hidden)]
+            #[allow(non_snake_case)]
+            fn #f() -> &'static ::turbomcp::neutral::Tool #entry
+        }
+    });
+    let inherent = target.head(None);
+    let list_entries = tools.iter().map(|t| {
+        let f = tool_fn(t);
+        quote!(::core::clone::Clone::clone(Self::#f()))
+    });
     let call_arms = tools.iter().map(|t| gen_tool_call_arm(self_ty, t));
     let lookup_arms = tools.iter().map(|t| {
         let name = t.wire_name();
-        let entry = gen_tool_list_entry(self_ty, t, opt_in);
-        quote!(#name => Some(#entry),)
+        let f = tool_fn(t);
+        quote!(#name => Some(::core::clone::Clone::clone(Self::#f())),)
     });
 
     quote! {
         #(#arg_structs)*
 
-        impl ::turbomcp::WithTools for #self_ty {
+        #inherent {
+            #(#definitions)*
+        }
+
+        #head {
             async fn lookup_tool(&self, _ctx: &::turbomcp::ListToolsContext, name: String)
                 -> ::turbomcp::McpResult<Option<::turbomcp::neutral::Tool>> {
                 Ok(match name.as_str() { #(#lookup_arms)* _ => None })
@@ -1155,10 +1562,10 @@ fn gen_tools_impl(self_ty: &Type, tools: &[Handler]) -> TokenStream {
             #[allow(unused_variables)]
             async fn call_tool(
                 &self,
-                ctx: &::turbomcp::CallToolContext,
-                params: ::turbomcp::neutral::CallToolParams,
+                __tmcp_ctx: &::turbomcp::CallToolContext,
+                __tmcp_params: ::turbomcp::neutral::CallToolParams,
             ) -> ::turbomcp::McpResult<::turbomcp::neutral::CallToolResult> {
-                match params.name.as_str() {
+                match __tmcp_params.name.as_str() {
                     #(#call_arms)*
                     other => ::core::result::Result::Ok(
                         ::turbomcp::neutral::CallToolResult::error(
@@ -1181,14 +1588,20 @@ fn args_struct_ident(self_ty: &Type, t: &Handler) -> Ident {
     format_ident!("__Tmcp_{}_{}_Args", type_tag(self_ty), t.method)
 }
 
-/// An identifier-safe tag for a server type: its final path segment
-/// (`foo::Bar` → `Bar`), or a hash of the tokens for anything that isn't a
-/// plain path, so the name stays unique either way.
+/// An identifier-safe tag for a server type: its path segments joined
+/// (`foo::Bar` → `foo_Bar`, so `a::Bar` and `b::Bar` in one module don't
+/// collide), or a hash of the tokens for anything that isn't a plain path.
 fn type_tag(self_ty: &Type) -> Ident {
     if let Type::Path(p) = self_ty
-        && let Some(seg) = p.path.segments.last()
+        && p.qself.is_none()
     {
-        return seg.ident.clone();
+        let joined: Vec<String> = p
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.unraw().to_string())
+            .collect();
+        return format_ident!("{}", joined.join("_"));
     }
     use std::hash::{Hash as _, Hasher as _};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1221,11 +1634,17 @@ fn gen_args_struct(self_ty: &Type, t: &Handler) -> TokenStream {
 
 fn gen_tool_list_entry(self_ty: &Type, t: &Handler, opt_in: bool) -> TokenStream {
     let ident = args_struct_ident(self_ty, t);
-    let name = t.wire_name();
-    let desc = t
-        .description
+    // The input schema: a `Params<T>`'s `T`, else the generated argument
+    // struct.
+    let input_ty = t
+        .params
         .as_ref()
-        .map(|d| quote!(.with_description(#d)));
+        .map_or_else(|| quote!(#ident), ToTokens::to_token_stream);
+    let name = t.wire_name();
+    let desc = t.description.as_ref().map(|d| {
+        let d = d.tokens();
+        quote!(.with_description(#d))
+    });
     let header_marks = t.args.iter().filter(|a| a.is_header).map(|a| {
         let prop = a.ident.unraw().to_string();
         // Spanned at the parameter's type, so a `#[mcp_header] lat: f64` is
@@ -1239,7 +1658,11 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler, opt_in: bool) -> TokenStream
     });
     // A `-> Json<T>` (optionally inside `McpResult<_>`) return produces the
     // tool's outputSchema from `T` (requires `T: schemars::JsonSchema`).
-    let output_schema = t.ret_ty.as_ref().and_then(json_output_inner).map(|inner| {
+    let output_ty = t
+        .output_schema
+        .as_ref()
+        .or_else(|| t.ret_ty.as_ref().and_then(json_output_inner));
+    let output_schema = output_ty.map(|inner| {
         quote!(.with_output_schema(
             ::turbomcp::__macros::normalize_input_schema(
                 ::turbomcp::__macros::serde_json::to_value(
@@ -1284,6 +1707,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler, opt_in: bool) -> TokenStream
     });
     let tags = t.tags_meta();
     let scopes = t.scopes_meta();
+    let extras = t.icons_and_meta();
     // `schema_extend` is applied last so an explicit keyword wins over the
     // derived one (including `additionalProperties`).
     let schema_extend = t
@@ -1296,7 +1720,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler, opt_in: bool) -> TokenStream
             let mut __schema = ::turbomcp::__macros::close_object_schema(
                 ::turbomcp::__macros::normalize_input_schema(
                     ::turbomcp::__macros::serde_json::to_value(
-                        ::turbomcp::__macros::schemars::schema_for!(#ident)
+                        ::turbomcp::__macros::schemars::schema_for!(#input_ty)
                     ).unwrap_or_else(|_| ::turbomcp::__macros::serde_json::Value::Object(
                         ::core::default::Default::default()
                     ))
@@ -1305,9 +1729,9 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler, opt_in: bool) -> TokenStream
             #schema_extend
             #(#header_marks)*
             ::turbomcp::neutral::Tool::new(#name, __schema)
-                #desc #title #annotations #output_schema #task_support #tags #scopes
+                #desc #title #annotations #output_schema #task_support #tags #scopes #extras
             });
-            (*__TOOL).clone()
+            &*__TOOL
         }
     }
 }
@@ -1326,18 +1750,23 @@ fn gen_tool_call_arm(self_ty: &Type, t: &Handler) -> TokenStream {
     let scope_guard = (!t.scopes.is_empty()).then(|| {
         let scopes = &t.scopes;
         quote! {
-            if !ctx.base.has_scopes(&[#(#scopes),*]) {
+            if !__tmcp_ctx.base.has_scopes(&[#(#scopes),*]) {
                 return ::core::result::Result::Err(
                     ::turbomcp::McpError::insufficient_scope([#(#scopes),*])
                 );
             }
         }
     });
+    let binding = if let Some(ty) = &t.params {
+        quote!(__tmcp_whole: #ty)
+    } else {
+        quote!(__args: #ident)
+    };
     quote! {
         #name => {
             #scope_guard
-            let __args: #ident = match ::turbomcp::__macros::serde_json::from_value(
-                ::turbomcp::__macros::serde_json::Value::Object(params.arguments)
+            let #binding = match ::turbomcp::__macros::serde_json::from_value(
+                ::turbomcp::__macros::serde_json::Value::Object(__tmcp_params.arguments)
             ) {
                 ::core::result::Result::Ok(a) => a,
                 ::core::result::Result::Err(e) => {
@@ -1350,7 +1779,7 @@ fn gen_tool_call_arm(self_ty: &Type, t: &Handler) -> TokenStream {
             };
             ::turbomcp::IntoCallToolResult::into_call_tool_result_for(
                 self.#method(#(#call_args),*).await,
-                ctx,
+                __tmcp_ctx,
             )
         }
     }
@@ -1358,9 +1787,10 @@ fn gen_tool_call_arm(self_ty: &Type, t: &Handler) -> TokenStream {
 
 // ---- codegen: resources ------------------------------------------------------
 
-fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
+fn gen_resources_impl(target: &Target, resources: &[Handler]) -> TokenStream {
+    let head = target.head(Some(quote!(::turbomcp::WithResources)));
     let is_template = |r: &Handler| {
-        let HandlerKind::Resource { uri } = &r.kind else {
+        let HandlerKind::Resource { uri, .. } = &r.kind else {
             unreachable!()
         };
         uri.contains('{')
@@ -1403,29 +1833,18 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
         let method = &r.method;
         let default_mime = declared_mime_default(r);
         let extracts = r.args.iter().map(|a| {
-            let ident = &a.ident;
             let arg_name = a.ident.unraw().to_string();
-            if a.is_option {
-                // A variable the URI left out is simply absent.
-                return quote! {
-                    let #ident: ::core::option::Option<::std::string::String> = __vars
-                        .iter()
-                        .find(|(k, _)| k == #arg_name)
-                        .map(|(_, v)| ::core::clone::Clone::clone(v));
-                };
-            }
-            quote! {
-                let #ident: ::std::string::String = match __vars.iter()
-                    .find(|(k, _)| k == #arg_name)
-                {
-                    ::core::option::Option::Some((_, v)) => ::core::clone::Clone::clone(v),
-                    ::core::option::Option::None => return ::core::result::Result::Err(
-                        ::turbomcp::McpError::internal(
-                            ::std::format!("template var '{}' missing", #arg_name)
-                        )
-                    ),
-                };
-            }
+            // A variable the URI left out is simply absent.
+            parsed_binding(
+                a,
+                &quote!(__vars.iter().find(|(k, _)| k == #arg_name).map(|(_, v)| v)),
+                &quote!(
+                    return ::core::result::Result::Err(::turbomcp::McpError::internal(
+                        ::std::format!("template var '{}' missing", #arg_name)
+                    ))
+                ),
+                Some(&quote!(::turbomcp::McpError::resource_not_found(__uri))),
+            )
         });
         let call_args = r.call_args(|a| {
             let f = &a.ident;
@@ -1461,8 +1880,25 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
         }
     });
 
+    // Every URI checked against the matcher's own grammar at compile time,
+    // blamed on its attribute.
+    let grammar_checks = resources.iter().map(|r| {
+        let uri = r.resource_uri();
+        let HandlerKind::Resource { span, .. } = &r.kind else {
+            unreachable!("resources only")
+        };
+        quote_spanned! {*span=>
+            const _: () = if let ::core::result::Result::Err(__why) =
+                ::turbomcp::__macros::validate_uri_template(#uri)
+            {
+                ::core::panic!("{}", __why);
+            };
+        }
+    });
     quote! {
-        impl ::turbomcp::WithResources for #self_ty {
+        #(#grammar_checks)*
+
+        #head {
             async fn list_resources(
                 &self,
                 _ctx: &::turbomcp::ListResourcesContext,
@@ -1479,10 +1915,10 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
             #[allow(unused_variables)]
             async fn read_resource(
                 &self,
-                ctx: &::turbomcp::ReadResourceContext,
-                params: ::turbomcp::neutral::ReadResourceParams,
+                __tmcp_ctx: &::turbomcp::ReadResourceContext,
+                __tmcp_params: ::turbomcp::neutral::ReadResourceParams,
             ) -> ::turbomcp::McpResult<::turbomcp::neutral::ReadResourceResult> {
-                let __uri = params.uri.as_str();
+                let __uri = __tmcp_params.uri.as_str();
                 match __uri {
                     #(#fixed_arms)*
                     _ => {}
@@ -1512,23 +1948,39 @@ fn declared_mime_default(r: &Handler) -> TokenStream {
 /// The builder tail carrying a resource's optional metadata. `Resource` and
 /// `ResourceTemplate` expose the same setters, so one generator serves both.
 fn resource_metadata(r: &Handler) -> TokenStream {
-    let desc = r
-        .description
-        .as_ref()
-        .map(|d| quote!(.with_description(#d)));
+    let desc = r.description.as_ref().map(|d| {
+        let d = d.tokens();
+        quote!(.with_description(#d))
+    });
     let title = r.title.as_ref().map(|t| quote!(.with_title(#t)));
     let mime = r.mime_type.as_ref().map(|m| quote!(.with_mime_type(#m)));
     let tags = r.tags_meta();
-    quote!(#desc #title #mime #tags)
+    let extras = r.icons_and_meta();
+    let size = r.size.as_ref().map(|n| quote!(.with_size(#n)));
+    let annotations = (!r.audience.is_empty() || r.priority.is_some()).then(|| {
+        let audience = &r.audience;
+        let priority = r
+            .priority
+            .as_ref()
+            .map(|p| quote!(__annotations.priority = ::core::option::Option::Some(#p);));
+        quote!(.with_annotations({
+            let mut __annotations = ::turbomcp::neutral::Annotations::new();
+            __annotations.audience = ::std::vec![#(#audience),*];
+            #priority
+            __annotations
+        }))
+    });
+    quote!(#desc #title #mime #size #annotations #tags #extras)
 }
 
 // ---- codegen: prompts --------------------------------------------------------
 
-fn gen_prompts_impl(self_ty: &Type, prompts: &[Handler]) -> TokenStream {
+fn gen_prompts_impl(target: &Target, prompts: &[Handler]) -> TokenStream {
+    let head = target.head(Some(quote!(::turbomcp::WithPrompts)));
     let list_entries = prompts.iter().map(gen_prompt_list_entry);
     let get_arms = prompts.iter().map(gen_prompt_get_arm);
     quote! {
-        impl ::turbomcp::WithPrompts for #self_ty {
+        #head {
             async fn list_prompts(
                 &self,
                 _ctx: &::turbomcp::ListPromptsContext,
@@ -1543,10 +1995,10 @@ fn gen_prompts_impl(self_ty: &Type, prompts: &[Handler]) -> TokenStream {
             #[allow(unused_variables)]
             async fn get_prompt(
                 &self,
-                ctx: &::turbomcp::GetPromptContext,
-                params: ::turbomcp::neutral::GetPromptParams,
+                __tmcp_ctx: &::turbomcp::GetPromptContext,
+                __tmcp_params: ::turbomcp::neutral::GetPromptParams,
             ) -> ::turbomcp::McpResult<::turbomcp::neutral::GetPromptResult> {
-                match params.name.as_str() {
+                match __tmcp_params.name.as_str() {
                     #(#get_arms)*
                     other => ::core::result::Result::Err(
                         ::turbomcp::McpError::invalid_params(
@@ -1561,10 +2013,10 @@ fn gen_prompts_impl(self_ty: &Type, prompts: &[Handler]) -> TokenStream {
 
 fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
     let name = p.wire_name();
-    let desc = p
-        .description
-        .as_ref()
-        .map(|d| quote!(.with_description(#d)));
+    let desc = p.description.as_ref().map(|d| {
+        let d = d.tokens();
+        quote!(.with_description(#d))
+    });
     let title = p.title.as_ref().map(|t| quote!(.with_title(#t)));
     let args = p.args.iter().map(|a| {
         let arg_name = a.ident.unraw().to_string();
@@ -1576,33 +2028,96 @@ fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
         quote!(.with_argument(::turbomcp::neutral::PromptArgument::new(#arg_name) #req #adesc))
     });
     let tags = p.tags_meta();
-    quote!(::turbomcp::neutral::Prompt::new(#name) #desc #title #tags #(#args)*)
+    let extras = p.icons_and_meta();
+    let prompt =
+        quote!(::turbomcp::neutral::Prompt::new(#name) #desc #title #tags #extras #(#args)*);
+    // A `Params<T>` prompt's arguments are `T`'s properties.
+    match &p.params {
+        Some(ty) => quote! {{
+            let mut __prompt = #prompt;
+            __prompt.arguments = ::turbomcp::__macros::prompt_arguments(
+                &::turbomcp::__macros::serde_json::to_value(
+                    ::turbomcp::__macros::schemars::schema_for!(#ty)
+                ).unwrap_or_default()
+            );
+            __prompt
+        }},
+        None => prompt,
+    }
+}
+
+/// `let #ident: #ty = …` from a string-valued `source`
+/// (`Option<&String>`): parsed with `FromStr` (spanned at the type, so a
+/// type that can't be parsed is an error there), `None` for an absent
+/// `Option<…>` and `missing` otherwise.
+///
+/// `refuse` replaces a parse failure's error (a template capture that
+/// doesn't parse names no resource, so it is not found, not invalid).
+fn parsed_binding(
+    a: &ArgParam,
+    source: &TokenStream,
+    missing: &TokenStream,
+    refuse: Option<&TokenStream>,
+) -> TokenStream {
+    let ident = &a.ident;
+    let ty = &a.ty;
+    let arg_name = a.ident.unraw().to_string();
+    let inner = option_inner(ty);
+    let map_err = refuse.map(|e| quote!(.map_err(|_| #e)));
+    let parse = quote_spanned! {inner.span()=>
+        ::turbomcp::__macros::parse_argument::<#inner>(#arg_name, __v) #map_err ?
+    };
+    if a.is_option {
+        quote! {
+            let #ident: #ty = match #source {
+                ::core::option::Option::Some(__v) => ::core::option::Option::Some(#parse),
+                ::core::option::Option::None => ::core::option::Option::None,
+            };
+        }
+    } else {
+        quote! {
+            let #ident: #ty = match #source {
+                ::core::option::Option::Some(__v) => #parse,
+                ::core::option::Option::None => #missing,
+            };
+        }
+    }
 }
 
 fn gen_prompt_get_arm(p: &Handler) -> TokenStream {
     let name = p.wire_name();
     let method = &p.method;
     let extracts = p.args.iter().map(|a| {
-        let ident = &a.ident;
         let arg_name = a.ident.unraw().to_string();
-        if a.is_option {
-            quote! {
-                let #ident: ::core::option::Option<::std::string::String> =
-                    params.arguments.get(#arg_name).cloned();
-            }
-        } else {
-            quote! {
-                let #ident: ::std::string::String = match params.arguments.get(#arg_name) {
-                    ::core::option::Option::Some(v) => ::core::clone::Clone::clone(v),
-                    ::core::option::Option::None => {
-                        return ::core::result::Result::Err(
-                            ::turbomcp::McpError::invalid_params(
-                                ::std::format!("missing required prompt argument '{}'", #arg_name)
-                            )
-                        );
-                    }
-                };
-            }
+        parsed_binding(
+            a,
+            &quote!(__tmcp_params.arguments.get(#arg_name)),
+            &quote!(
+                return ::core::result::Result::Err(::turbomcp::McpError::invalid_params(
+                    ::std::format!("missing required prompt argument '{}'", #arg_name)
+                ))
+            ),
+            None,
+        )
+    });
+    // A `Params<T>` prompt: its string arguments, deserialized into `T`.
+    let whole = p.params.as_ref().map(|ty| {
+        quote! {
+            let __tmcp_whole: #ty = match ::turbomcp::__macros::serde_json::from_value(
+                ::turbomcp::__macros::serde_json::Value::Object(
+                    ::core::iter::Iterator::collect(::core::iter::Iterator::map(
+                        __tmcp_params.arguments.into_iter(),
+                        |(k, v)| (k, ::turbomcp::__macros::serde_json::Value::String(v)),
+                    ))
+                )
+            ) {
+                ::core::result::Result::Ok(w) => w,
+                ::core::result::Result::Err(e) => return ::core::result::Result::Err(
+                    ::turbomcp::McpError::invalid_params(
+                        ::std::format!("arguments for prompt '{}': {}", #name, e)
+                    )
+                ),
+            };
         }
     });
     let call_args = p.call_args(|a| {
@@ -1612,6 +2127,7 @@ fn gen_prompt_get_arm(p: &Handler) -> TokenStream {
     quote! {
         #name => {
             #(#extracts)*
+            #whole
             ::turbomcp::IntoGetPromptResult::into_get_prompt_result(
                 self.#method(#(#call_args),*).await
             )
@@ -1639,8 +2155,14 @@ impl CompletionHandler {
         let mut wants_ctx = false;
         let mut value_params = 0usize;
         for input in &f.sig.inputs {
-            let FnArg::Typed(pt) = input else { continue };
-            if is_ctx_type(&pt.ty) {
+            let pt = match input {
+                FnArg::Receiver(r) => {
+                    check_receiver(r)?;
+                    continue;
+                }
+                FnArg::Typed(pt) => pt,
+            };
+            if check_context(&pt.ty, ("#[completion]", "CompleteContext"))? {
                 wants_ctx = true;
             } else {
                 value_params += 1;
@@ -1660,20 +2182,21 @@ impl CompletionHandler {
     }
 }
 
-fn gen_completions_impl(self_ty: &Type, c: &CompletionHandler) -> TokenStream {
+fn gen_completions_impl(target: &Target, c: &CompletionHandler) -> TokenStream {
+    let head = target.head(Some(quote!(::turbomcp::WithCompletions)));
     let method = &c.method;
     let call = if c.wants_ctx {
-        quote!(self.#method(ctx, params))
+        quote!(self.#method(__tmcp_ctx, __tmcp_params))
     } else {
-        quote!(self.#method(params))
+        quote!(self.#method(__tmcp_params))
     };
     quote! {
-        impl ::turbomcp::WithCompletions for #self_ty {
+        #head {
             #[allow(unused_variables)]
             async fn complete(
                 &self,
-                ctx: &::turbomcp::CompleteContext,
-                params: ::turbomcp::neutral::CompleteParams,
+                __tmcp_ctx: &::turbomcp::CompleteContext,
+                __tmcp_params: ::turbomcp::neutral::CompleteParams,
             ) -> ::turbomcp::McpResult<::turbomcp::neutral::CompleteResult> {
                 #call.await
             }
@@ -1692,9 +2215,12 @@ struct TemplateVar {
     required: bool,
 }
 
-/// The variables of an RFC 6570 template, checking its grammar the way the
-/// runtime matcher (`turbomcp_server::UriTemplate`) does, so a template that
-/// could never be read fails to compile instead of being listed forever.
+/// The variables of an RFC 6570 template, for binding handler arguments.
+///
+/// This only finds them. The grammar is the runtime matcher's
+/// (`turbomcp_server::uri_template::validate`), which the generated code
+/// evaluates in a `const` so a template the matcher could never read fails to
+/// compile; the obvious mistakes are reported here first, at the attribute.
 fn template_vars(uri: &str) -> Result<Vec<TemplateVar>, String> {
     let mut vars = Vec::new();
     let mut rest = uri;
@@ -1710,31 +2236,13 @@ fn template_vars(uri: &str) -> Result<Vec<TemplateVar>, String> {
         let (required, list) = match body.chars().next() {
             Some('+') => (true, &body[1..]),
             Some('#' | '.' | '/' | ';' | '?' | '&') => (false, &body[1..]),
-            Some(c @ ('=' | ',' | '!' | '@' | '|')) => {
-                return Err(format!("operator `{c}` is reserved for future extensions"));
-            }
             _ => (true, body),
         };
-        if list.is_empty() {
-            return Err("empty expression `{}`".into());
-        }
         for spec in list.split(',') {
             let name = spec
                 .strip_suffix('*')
                 .or_else(|| spec.split_once(':').map(|(name, _)| name))
                 .unwrap_or(spec);
-            let valid = !name.is_empty()
-                && !name.starts_with('.')
-                && !name.ends_with('.')
-                && !name.contains("..")
-                && name
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.');
-            if !valid {
-                return Err(format!(
-                    "`{name}` is not a variable name a handler argument can bind"
-                ));
-            }
             vars.push(TemplateVar {
                 name: name.to_owned(),
                 required,
@@ -1745,36 +2253,51 @@ fn template_vars(uri: &str) -> Result<Vec<TemplateVar>, String> {
     Ok(vars)
 }
 
-/// A string literal `Expr`, or `None`.
-fn lit_str(e: &Expr) -> Option<String> {
-    if let Expr::Lit(ExprLit {
-        lit: Lit::Str(s), ..
-    }) = e
-    {
-        Some(s.value())
-    } else {
-        None
+/// A component's description.
+enum Desc {
+    /// `description = …` or the bare-string shorthand: used as written.
+    Explicit(Box<Expr>),
+    /// The doc comment's attributes in order (`#[doc = include_str!(…)]`
+    /// included), shaped for a model at first use by `doc_description`.
+    Doc(Vec<Expr>),
+}
+
+impl Desc {
+    /// An expression for the description (`impl Into<String>`).
+    fn tokens(&self) -> TokenStream {
+        match self {
+            Self::Explicit(e) => e.to_token_stream(),
+            Self::Doc(parts) => {
+                let mut joined = Vec::new();
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        joined.push(quote!("\n"));
+                    }
+                    joined.push(part.to_token_stream());
+                }
+                quote! {{
+                    static __DOC: ::std::sync::LazyLock<::std::string::String> =
+                        ::std::sync::LazyLock::new(|| {
+                            ::turbomcp::__macros::doc_description(::core::concat!(#(#joined),*))
+                        });
+                    ::core::clone::Clone::clone(&*__DOC)
+                }}
+            }
+        }
     }
 }
 
-/// Concatenate `#[doc = "…"]` lines into a trimmed description.
-fn doc_comment(attrs: &[Attribute]) -> Option<String> {
-    let mut lines = Vec::new();
-    for a in attrs {
-        if !a.path().is_ident("doc") {
-            continue;
-        }
-        if let Meta::NameValue(nv) = &a.meta
-            && let Some(s) = lit_str(&nv.value)
-        {
-            lines.push(s.trim().to_string());
-        }
-    }
-    if lines.is_empty() {
-        None
-    } else {
-        Some(lines.join(" ").trim().to_string())
-    }
+/// The doc comment, `#[doc = "…"]` and `#[doc = include_str!(…)]` alike.
+fn doc_comment(attrs: &[Attribute]) -> Option<Desc> {
+    let parts: Vec<Expr> = attrs
+        .iter()
+        .filter(|a| a.path().is_ident("doc"))
+        .filter_map(|a| match &a.meta {
+            Meta::NameValue(nv) => Some(nv.value.clone()),
+            _ => None,
+        })
+        .collect();
+    (!parts.is_empty()).then_some(Desc::Doc(parts))
 }
 
 /// `#[description("…")]` on a parameter.
@@ -1799,15 +2322,77 @@ fn strip_param_attrs(f: &mut ImplItemFn) {
     }
 }
 
-/// Whether a type is a reference to something named `…Context`.
-fn is_ctx_type(ty: &Type) -> bool {
-    let Type::Reference(r) = ty else { return false };
-    if let Type::Path(p) = &*r.elem
-        && let Some(seg) = p.path.segments.last()
-    {
-        return seg.ident.to_string().ends_with("Context");
+/// A handler's receiver must be `&self`: the server is cloned into every
+/// connection and called concurrently, so mutable state belongs behind a
+/// lock, and a by-value `self` would be consumed by the first call.
+fn check_receiver(r: &syn::Receiver) -> syn::Result<()> {
+    if !matches!(r.kind, syn::ReceiverKind::Reference(_, _, None)) {
+        return Err(syn::Error::new_spanned(
+            r,
+            "a handler takes `&self`: the server serves requests concurrently, so keep \
+             mutable state behind a lock (`Arc<Mutex<…>>`) instead",
+        ));
     }
-    false
+    Ok(())
+}
+
+/// Whether `ty` is this handler's context (`expected` is the marker and the
+/// context it receives). A reference to another `…Context` is an error
+/// naming the right one: the generated code would otherwise fail with a
+/// type mismatch pointing at the attribute.
+fn check_context(ty: &Type, (marker, expected): (&str, &str)) -> syn::Result<bool> {
+    let Type::Reference(r) = ty else {
+        return Ok(false);
+    };
+    let Type::Path(p) = &*r.elem else {
+        return Ok(false);
+    };
+    let Some(seg) = p.path.segments.last() else {
+        return Ok(false);
+    };
+    let name = seg.ident.to_string();
+    if !name.ends_with("Context") {
+        return Ok(false);
+    }
+    if name != expected {
+        let hint = if name == "RequestContext" {
+            " (the request's `RequestContext` is its `.base`)"
+        } else {
+            ""
+        };
+        return Err(syn::Error::new_spanned(
+            ty,
+            format!("a {marker} takes `&{expected}` as its context, not `&{name}`{hint}"),
+        ));
+    }
+    if r.mutability.is_some() {
+        return Err(syn::Error::new_spanned(
+            ty,
+            format!("take the context as `&{expected}`, not `&mut`"),
+        ));
+    }
+    Ok(true)
+}
+
+/// `T` of a `Params<T>` parameter.
+fn params_inner(ty: &Type) -> Option<&Type> {
+    let Type::Path(p) = ty else { return None };
+    let seg = p.path.segments.last()?;
+    (seg.ident == "Params")
+        .then(|| first_generic_type(seg))
+        .flatten()
+}
+
+/// `T` of an `Option<T>`, or the type itself.
+fn option_inner(ty: &Type) -> &Type {
+    if let Type::Path(p) = ty
+        && let Some(seg) = p.path.segments.last()
+        && seg.ident == "Option"
+        && let Some(inner) = first_generic_type(seg)
+    {
+        return inner;
+    }
+    ty
 }
 
 /// Whether a type is `Option<…>`.

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `#[server]` on a generic impl (`impl<S: Store> App<S>`): every generated
+  impl repeats its generics and where-clause.
+- Attribute values are expressions: `description`, `title`, `mime_type` and
+  the server's `name`, `version`, `instructions` take `env!(…)`,
+  `concat!(…)`, `include_str!(…)` or a `const`. The server's `name` and
+  `version` default to the crate's (`CARGO_PKG_NAME`, `CARGO_PKG_VERSION`).
+- `Params<T>`: a tool's whole input as one type (its schema is the
+  `inputSchema`), or a prompt's arguments from `T`'s properties. Prompt
+  arguments and template variables parse into any `FromStr` parameter type
+  (`times: u32`); a template variable that doesn't parse is not found.
+- Markers take `icon(…)` and `meta("key" = <json>)`; `#[tool]` takes
+  `output_schema = T`; `#[resource]` takes `size`, `audience(…)` and
+  `priority`; `#[server]` takes `description`, `website_url` and `icon(…)`.
+  `neutral::Resource::with_size`.
+
 - `TimeoutLayer` (`turbomcp::TimeoutLayer`): bound each request, answering
   one that overruns with a JSON-RPC timeout error in its caller's revision's
   code. `tower`'s own `Timeout` changes the seam's error type and doesn't
@@ -702,6 +717,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line there dropped the client.
 
 ### Fixed
+
+- A resource template the matcher can't read (`{path:0}`) compiled, was
+  listed, and could never be read. The macro now evaluates the runtime's own
+  grammar (`uri_template::validate`, a `const fn` the matcher calls first) in
+  a `const`, so it fails the build at the URI.
+- `#[server]` reports a wrong context type (`&RequestContext` on a tool)
+  and a `&mut self` receiver at the parameter, with the fix, instead of a
+  type error in generated code; prompt arguments named `params` or `ctx` no
+  longer break the generated code; two servers named `a::Foo` and `b::Foo`
+  in one module no longer collide.
+- Doc-comment descriptions keep their paragraphs, lists and code (each
+  paragraph reflowed onto one line), leave out rustdoc-only sections
+  (`# Errors`, `# Examples`, …), and read `#[doc = include_str!(…)]`, which
+  used to give an empty description.
+- Each tool's schema is generated and computed once, not once for the list
+  and again for the lookup.
 
 - A `#[mcp_header]` integer outside ±(2^53−1) was answered "header is
   missing" (the client rightly doesn't mirror it); it is now invalid

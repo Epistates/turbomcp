@@ -13,8 +13,41 @@
 //!
 //! The three handler markers share one argument grammar — an optional bare
 //! string (the URI on `#[resource]`, a description shorthand elsewhere) followed
-//! by `key = "…"` pairs — and each accepts the subset that means something for
+//! by `key = …` pairs — and each accepts the subset that means something for
 //! its kind, so `#[prompt(task)]` is a compile error naming `#[prompt]`.
+//!
+//! Text values (`description`, `title`, `mime_type`, and the server's `name`,
+//! `version`, `instructions`, …) take any `&str` expression: a literal,
+//! `env!(…)`, `concat!(…)`, `include_str!(…)`, a `const`. A component's `name`
+//! stays a literal: dispatch matches on it, and the spec's naming rules are
+//! checked at compile time.
+//!
+//! # Descriptions
+//!
+//! Without `description = …`, a component is described by its doc comment,
+//! `#[doc = include_str!("tool.md")]` included, as a model should read it:
+//! each paragraph on one line (doc comments are wrapped for editors), list
+//! items and code fences kept, and rustdoc-only sections (`# Errors`,
+//! `# Panics`, `# Safety`, `# Examples`) left out.
+//!
+//! # Inputs
+//!
+//! A tool's parameters become its input schema, one property each. A
+//! `Params<T>` parameter makes `T` the whole input instead (destructure it:
+//! `Params(search): Params<Search>`), for an argument type shared by several
+//! tools or one that needs serde or schemars attributes. Prompt arguments and
+//! template variables are strings on the wire and parse into any `FromStr`
+//! parameter type (`times: u32`); a template variable that doesn't parse
+//! names no resource, so the read is not found. A context parameter is the
+//! one its marker gets (`&CallToolContext` on a `#[tool]`, …).
+//!
+//! # Metadata
+//!
+//! Every marker takes `icon("https://…")` (or `icon(src = …, mime_type = …,
+//! sizes("48x48"), theme = "dark")`, repeatable) and `meta("key" = <json>)`;
+//! a `#[tool]` takes `output_schema = T` for a tool that returns a
+//! `CallToolResult` itself; a `#[resource]` takes `size = N`,
+//! `audience("user", "assistant")` and `priority = 0.0..=1.0`.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -34,8 +67,11 @@ mod server;
 ///
 /// # Arguments
 ///
-/// - `name` / `version` (required) — this server's identity.
+/// - `name` / `version` — this server's identity; the crate's
+///   (`CARGO_PKG_NAME`, `CARGO_PKG_VERSION`) when left out.
 /// - `title` — a human-facing display name.
+/// - `description`, `website_url`, `icon(…)` — more of its identity
+///   (`2025-11-25` onwards).
 /// - `instructions` — guidance returned during discovery.
 /// - `protocols("…", …)` — the protocol revisions this server accepts.
 ///   Defaults to every version the build supports (currently `"2025-06-18"`,
@@ -51,8 +87,8 @@ mod server;
 ///   (`UnsupportedProtocolVersion`) and the list of versions that *are*
 ///   served.
 ///
-/// The `impl` block must be for a concrete type; generic `impl` blocks are
-/// rejected, since the generated trait impls name one type.
+/// The `impl` block may be generic (`impl<S: Store> App<S>`): every generated
+/// impl repeats its generics and where-clause. Handlers take `&self`.
 #[proc_macro_attribute]
 pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
     server::expand(attr.into(), item.into())
@@ -63,9 +99,10 @@ pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marker: declares a method as an MCP tool. Consumed by [`macro@server`].
 ///
 /// Accepts `#[tool]`, `#[tool("description")]`, or a list of:
-/// `description = "…"`, `name = "…"`, `title = "…"`, `task` (or
+/// `description = …`, `name = "…"`, `title = …`, `task` (or
 /// `task = "optional"` / `task = "required"`),
-/// `scopes("…", …)`, `tags("…", …)`, and the behavior hints `read_only` /
+/// `scopes("…", …)`, `tags("…", …)`, `icon(…)`, `meta("key" = …)`,
+/// `output_schema = T`, and the behavior hints `read_only` /
 /// `destructive` / `idempotent` / `open_world` (bare = true, or `= false` to
 /// declare the opposite — distinct from leaving a hint unset).
 ///
@@ -110,8 +147,9 @@ pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The first argument is the URI and is required — either fixed
 /// (`"config://app"`) or an RFC 6570 template (`"file://{+path}"`), in which
 /// case every handler argument must name a template variable. It may be
-/// followed by `description = "…"`, `name = "…"`, `title = "…"`,
-/// `mime_type = "…"`, and `tags("…", …)`:
+/// followed by `description = …`, `name = "…"`, `title = …`,
+/// `mime_type = …`, `tags("…", …)`, `icon(…)`, `meta("key" = …)`,
+/// `audience(…)`, `priority = …`, and (on a fixed URI) `size = N`:
 ///
 /// ```ignore
 /// #[resource(
@@ -135,7 +173,8 @@ pub fn resource(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marker: declares a method as an MCP prompt. Consumed by [`macro@server`].
 ///
 /// Accepts `#[prompt]`, `#[prompt("description")]`, or a list of
-/// `description = "…"`, `name = "…"`, `title = "…"`, and `tags("…", …)`. As
+/// `description = …`, `name = "…"`, `title = …`, `tags("…", …)`, `icon(…)`
+/// and `meta("key" = …)`. As
 /// with `#[tool]`, `name` decouples the wire name from the Rust method name and
 /// must be unique within the server.
 ///

@@ -1,0 +1,5 @@
+error: this tool returns `Json<T>`, whose schema is already its `outputSchema`; drop `output_schema`
+  --> tests/ui/output_schema_beside_json.rs:15:28
+   |
+15 |     #[tool(output_schema = A)]
+   |                            ^

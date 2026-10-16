@@ -65,6 +65,127 @@ enum Kind {
     Parameter,
 }
 
+/// Check `template` against the RFC 6570 grammar this matcher accepts: the
+/// one grammar, shared by [`UriTemplate::parse`] (which calls it first) and
+/// by `#[resource]`, which evaluates it at compile time so a template the
+/// matcher could never read fails the build instead of being listed forever.
+///
+/// # Errors
+/// What the template breaks, as a fixed message.
+pub const fn validate(template: &str) -> Result<(), &'static str> {
+    let b = template.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'}' => return Err("unmatched `}`"),
+            b'{' => {
+                let mut close = i + 1;
+                while close < b.len() && b[close] != b'}' {
+                    if b[close] == b'{' {
+                        return Err("`{` inside an expression");
+                    }
+                    close += 1;
+                }
+                if close == b.len() {
+                    return Err("unclosed `{`");
+                }
+                if let Err(e) = validate_expression(b, i + 1, close) {
+                    return Err(e);
+                }
+                i = close + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    Ok(())
+}
+
+/// One expression's body, `b[start..end]`: an optional operator, then
+/// comma-separated variable specs.
+const fn validate_expression(b: &[u8], start: usize, end: usize) -> Result<(), &'static str> {
+    let mut i = start;
+    if i < end {
+        match b[i] {
+            b'+' | b'#' | b'.' | b'/' | b';' | b'?' | b'&' => i += 1,
+            b'=' | b',' | b'!' | b'@' | b'|' => {
+                return Err("the operator is reserved for future extensions");
+            }
+            _ => {}
+        }
+    }
+    if i == end {
+        return Err("empty expression");
+    }
+    let mut spec = i;
+    while i <= end {
+        if i == end || b[i] == b',' {
+            if let Err(e) = validate_varspec(b, spec, i) {
+                return Err(e);
+            }
+            spec = i + 1;
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+/// `varname [ "*" | ":" max-length ]`, where a varname is varchar runs
+/// joined by single dots and a varchar is ALPHA / DIGIT / `_` / pct-encoded.
+const fn validate_varspec(b: &[u8], start: usize, end: usize) -> Result<(), &'static str> {
+    let mut name_end = end;
+    if end > start && b[end - 1] == b'*' {
+        name_end = end - 1;
+    } else {
+        let mut colon = start;
+        while colon < end && b[colon] != b':' {
+            colon += 1;
+        }
+        if colon < end {
+            let digits = end - colon - 1;
+            if digits == 0 || digits > 4 || b[colon + 1] == b'0' {
+                return Err("a prefix length must be 1-9999");
+            }
+            let mut d = colon + 1;
+            while d < end {
+                if !b[d].is_ascii_digit() {
+                    return Err("a prefix length must be 1-9999");
+                }
+                d += 1;
+            }
+            name_end = colon;
+        }
+    }
+    if name_end == start {
+        return Err("empty variable name");
+    }
+    if b[start] == b'.' || b[name_end - 1] == b'.' {
+        return Err("a variable name can't start or end with `.`");
+    }
+    let mut i = start;
+    while i < name_end {
+        match b[i] {
+            b'%' => {
+                if i + 2 >= name_end
+                    || !b[i + 1].is_ascii_hexdigit()
+                    || !b[i + 2].is_ascii_hexdigit()
+                {
+                    return Err("a `%` in a variable name must start a pct-encoding");
+                }
+                i += 3;
+            }
+            b'.' => {
+                if b[i + 1] == b'.' {
+                    return Err("a variable name can't contain `..`");
+                }
+                i += 1;
+            }
+            c if c.is_ascii_alphanumeric() || c == b'_' => i += 1,
+            _ => return Err("a variable name is letters, digits, `_`, `.` and pct-encodings"),
+        }
+    }
+    Ok(())
+}
+
 /// A parsed, compiled URI template.
 #[derive(Clone, Debug)]
 pub struct UriTemplate {
@@ -79,6 +200,7 @@ impl UriTemplate {
     /// # Errors
     /// The [`UriTemplateError`] saying what RFC 6570 does not allow.
     pub fn parse(template: &str) -> Result<Self, UriTemplateError> {
+        validate(template).map_err(|e| UriTemplateError(format!("{e} in `{template}`")))?;
         let mut pattern = String::from("^");
         let mut captures = Vec::new();
         let mut group = 0usize;
@@ -86,17 +208,12 @@ impl UriTemplate {
         while !rest.is_empty() {
             let open = rest.find('{').unwrap_or(rest.len());
             let literal = &rest[..open];
-            if literal.contains('}') {
-                return Err(UriTemplateError(format!("unmatched `}}` in `{template}`")));
-            }
             pattern.push_str(&regex::escape(literal));
             rest = &rest[open..];
             if rest.is_empty() {
                 break;
             }
-            let close = rest
-                .find('}')
-                .ok_or_else(|| UriTemplateError(format!("unclosed `{{` in `{template}`")))?;
+            let close = rest.find('}').unwrap_or(rest.len());
             compile_expression(&rest[1..close], &mut pattern, &mut captures, &mut group)?;
             rest = &rest[close + 1..];
         }
@@ -161,22 +278,12 @@ fn compile_expression(
     captures: &mut Vec<Capture>,
     group: &mut usize,
 ) -> Result<(), UriTemplateError> {
+    // `validate` has checked the grammar; this only builds.
     let (op, list) = match body.chars().next() {
         Some(c @ ('+' | '#' | '.' | '/' | ';' | '?' | '&')) => (Some(c), &body[1..]),
-        Some(c @ ('=' | ',' | '!' | '@' | '|')) => {
-            return Err(UriTemplateError(format!(
-                "operator `{c}` is reserved for future extensions"
-            )));
-        }
         _ => (None, body),
     };
-    if list.is_empty() {
-        return Err(UriTemplateError("empty expression `{}`".into()));
-    }
-    let specs: Vec<VarSpec> = list
-        .split(',')
-        .map(VarSpec::parse)
-        .collect::<Result<_, _>>()?;
+    let specs: Vec<VarSpec> = list.split(',').map(VarSpec::parse).collect();
     let many = specs.len() > 1;
     for (i, spec) in specs.iter().enumerate() {
         *group += 1;
@@ -241,59 +348,18 @@ struct VarSpec {
 }
 
 impl VarSpec {
-    /// `varname [ "*" | ":" max-length ]`, where a varname is `varchar` runs
-    /// joined by single dots and a varchar is ALPHA / DIGIT / `_` / pct-encoded.
-    fn parse(spec: &str) -> Result<Self, UriTemplateError> {
+    /// A spec [`validate`] accepted: `varname`, `varname*` or
+    /// `varname:max`.
+    fn parse(spec: &str) -> Self {
         let (name, explode) = match spec.strip_suffix('*') {
             Some(name) => (name, true),
-            None => match spec.split_once(':') {
-                Some((name, max)) => {
-                    let valid = !max.is_empty()
-                        && max.len() <= 4
-                        && max.bytes().all(|b| b.is_ascii_digit())
-                        && !max.starts_with('0');
-                    if !valid {
-                        return Err(UriTemplateError(format!(
-                            "prefix length in `{spec}` must be 1-9999"
-                        )));
-                    }
-                    (name, false)
-                }
-                None => (spec, false),
-            },
+            None => (spec.split_once(':').map_or(spec, |(name, _)| name), false),
         };
-        let valid_name = !name.is_empty()
-            && !name.starts_with('.')
-            && !name.ends_with('.')
-            && !name.contains("..")
-            && is_varname(name);
-        if !valid_name {
-            return Err(UriTemplateError(format!("invalid variable name `{name}`")));
-        }
-        Ok(Self {
+        Self {
             name: name.to_owned(),
             explode,
-        })
-    }
-}
-
-fn is_varname(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                let hex = bytes.get(i + 1..i + 3);
-                if !hex.is_some_and(|h| h.iter().all(u8::is_ascii_hexdigit)) {
-                    return false;
-                }
-                i += 3;
-            }
-            b if b.is_ascii_alphanumeric() || b == b'_' || b == b'.' => i += 1,
-            _ => return false,
         }
     }
-    true
 }
 
 /// Templates are compiled once. A server lists the same handful every time,
@@ -310,6 +376,43 @@ pub(crate) fn compiled(template: &str) -> Arc<Result<UriTemplate, UriTemplateErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The grammar runs at compile time, which is what `#[resource]` relies
+    /// on.
+    const _: () = assert!(validate("file://{+path}{?q,lang}").is_ok());
+
+    #[test]
+    fn the_grammar_refuses_what_could_never_match() {
+        for bad in [
+            "file://{path:0}",
+            "file://{path:abc}",
+            "file://{path:12345}",
+            "file://{}",
+            "file://{a..b}",
+            "file://{.a}x{a.}",
+            "file://{a%2}",
+            "file://{a b}",
+            "file://{=a}",
+            "file://{a",
+            "file://a}",
+            "file://{a{b}}",
+        ] {
+            assert!(validate(bad).is_err(), "{bad}");
+            assert!(UriTemplate::parse(bad).is_err(), "{bad}");
+        }
+        for good in [
+            "file://{path:3}",
+            "file://{path:9999}",
+            "file://{a%41b}",
+            "file://{a.b}",
+            "file://{list*}",
+            "file://{/a,b}{?q}",
+            "plain://no-variables",
+        ] {
+            assert!(validate(good).is_ok(), "{good}");
+            assert!(UriTemplate::parse(good).is_ok(), "{good}");
+        }
+    }
 
     fn m(template: &str, uri: &str) -> Option<Vec<(String, String)>> {
         UriTemplate::parse(template).unwrap().matches(uri)

@@ -244,10 +244,10 @@ pub use turbomcp_server::{
     GetPromptContext, Image, InputWaiter, IntoCallToolResult, IntoGetPromptResult,
     IntoReadResourceResult, IntoServerBuilder, Json, LegacySessionAdapter, ListPromptsContext,
     ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, LocalBus, LogSender,
-    McpServerCore, MethodRouter, NewTask, NotificationBus, ProgressReporter, ReadResourceContext,
-    Server, ServerBuilder, ServerNotifier, SessionBackend, SessionError, SessionState,
-    SessionStore, TaskBackend, TaskError, TaskHandle, TaskLink, TaskOutcome, TaskOwner,
-    TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate, UriTemplateError,
+    McpServerCore, MethodRouter, NewTask, NotificationBus, Params, ProgressReporter,
+    ReadResourceContext, Server, ServerBuilder, ServerNotifier, SessionBackend, SessionError,
+    SessionState, SessionStore, TaskBackend, TaskError, TaskHandle, TaskLink, TaskOutcome,
+    TaskOwner, TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate, UriTemplateError,
     VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
 };
 
@@ -529,8 +529,9 @@ pub mod __macros {
     pub use turbomcp_core::{McpError, McpResult};
     pub use turbomcp_protocol::neutral;
     pub use turbomcp_server::__macro_support::{
-        assert_header_param, close_object_schema, extend_object_schema, mark_mcp_header,
-        match_uri_template, normalize_input_schema,
+        assert_header_param, close_object_schema, doc_description, extend_object_schema,
+        mark_mcp_header, match_uri_template, normalize_input_schema, parse_argument,
+        prompt_arguments, validate_uri_template, with_server_icons,
     };
 }
 
@@ -541,7 +542,7 @@ pub mod prelude {
     pub use turbomcp_server::{
         Audio, CallToolContext, CompleteContext, GetPromptContext, Image, IntoServerBuilder, Json,
         ListPromptsContext, ListResourceTemplatesContext, ListResourcesContext, ListToolsContext,
-        McpServerCore, ReadResourceContext, ServerBuilder, WithCompletions, WithPrompts,
+        McpServerCore, Params, ReadResourceContext, ServerBuilder, WithCompletions, WithPrompts,
         WithResources, WithTools,
     };
     pub use turbomcp_service::io::stdio;

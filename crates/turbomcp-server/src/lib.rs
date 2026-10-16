@@ -77,7 +77,7 @@ pub use logging::LogSender;
 pub use mrtr::ClientHandle;
 pub use progress::ProgressReporter;
 pub use response::{
-    Audio, Image, IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult, Json,
+    Audio, Image, IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult, Json, Params,
 };
 pub use router::{CapabilityFlags, MethodRouter};
 pub use runtime::Server;
@@ -97,6 +97,195 @@ pub use visibility::{ComponentKind, Visibility, VisibilityPolicy, VisibleCompone
 #[doc(hidden)]
 pub mod __macro_support {
     use serde_json::Value;
+
+    /// A prompt argument or template capture as a handler's parameter type:
+    /// anything [`FromStr`](core::str::FromStr), so `n: u32` or
+    /// `when: chrono::NaiveDate` work, with a failure answered as invalid
+    /// params naming the argument.
+    ///
+    /// # Errors
+    /// [`McpError::invalid_params`](turbomcp_core::McpError) when `value`
+    /// doesn't parse.
+    pub fn parse_argument<T>(name: &str, value: &str) -> turbomcp_core::McpResult<T>
+    where
+        T: ArgumentType,
+    {
+        value
+            .parse::<T>()
+            .map_err(|e| turbomcp_core::McpError::invalid_params(format!("argument `{name}`: {e}")))
+    }
+
+    /// What a prompt argument or template capture can be: parsed from its
+    /// string form.
+    #[diagnostic::on_unimplemented(
+        message = "a prompt argument or URI-template capture is parsed from a string, so `{Self}` must implement `FromStr` with a `Display` error",
+        label = "not parseable from a string",
+        note = "take a `String` and convert it yourself, or use `Params<T>` (prompts) for a structured input"
+    )]
+    pub trait ArgumentType: core::str::FromStr<Err: core::fmt::Display> {}
+    impl<T: core::str::FromStr<Err: core::fmt::Display>> ArgumentType for T {}
+
+    /// A prompt's arguments from the properties of `schema` (a
+    /// `Params<T>`'s): each property an argument, with its description, and
+    /// required when the schema requires it.
+    #[must_use]
+    pub fn prompt_arguments(schema: &Value) -> Vec<turbomcp_protocol::neutral::PromptArgument> {
+        let required: Vec<&str> = schema
+            .get("required")
+            .and_then(Value::as_array)
+            .map(|r| r.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .map(|props| {
+                props
+                    .iter()
+                    .map(|(name, prop)| {
+                        let mut arg = turbomcp_protocol::neutral::PromptArgument::new(name.clone())
+                            .required(required.contains(&name.as_str()));
+                        if let Some(desc) = prop.get("description").and_then(Value::as_str) {
+                            arg = arg.with_description(desc);
+                        }
+                        if let Some(title) = prop.get("title").and_then(Value::as_str) {
+                            arg.title = Some(title.to_owned());
+                        }
+                        arg
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// `info` with `icons` (`#[server(icon(…))]`), as the wire carries them.
+    #[must_use]
+    pub fn with_server_icons(
+        mut info: turbomcp_core::Implementation,
+        icons: Vec<turbomcp_protocol::neutral::Icon>,
+    ) -> turbomcp_core::Implementation {
+        let wire: Vec<Value> = icons
+            .into_iter()
+            .map(|icon| {
+                serde_json::to_value(turbomcp_protocol::v2026_07_28::types::Icon::from(icon))
+                    .unwrap_or_default()
+            })
+            .collect();
+        info.extra.insert("icons".into(), Value::Array(wire));
+        info
+    }
+
+    /// The URI-template grammar, which `#[resource]` evaluates in a `const`
+    /// so a template the matcher can't read is a compile error.
+    pub use crate::uri_template::validate as validate_uri_template;
+
+    /// A component's description from its doc comment (`raw`, the doc
+    /// attributes joined by newlines), as a model should read it:
+    /// paragraphs reflowed onto one line each (doc comments are hard-wrapped
+    /// for editors, not for models), list items and code fences kept, and
+    /// everything from the first rustdoc-only section (`# Errors`,
+    /// `# Panics`, `# Safety`, `# Examples`) on dropped.
+    #[must_use]
+    pub fn doc_description(raw: &str) -> String {
+        enum Block {
+            Para(String),
+            Item(String),
+            Code(String),
+        }
+        let lines: Vec<&str> = raw.lines().collect();
+        let indent = lines
+            .iter()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
+        let is_section = |t: &str| {
+            let heading = t.trim_start_matches('#');
+            heading.len() < t.len()
+                && t.len() - heading.len() <= 3
+                && matches!(
+                    heading.trim(),
+                    "Errors" | "Panics" | "Safety" | "Examples" | "Example"
+                )
+        };
+        let is_item = |t: &str| {
+            t.starts_with("- ")
+                || t.starts_with("* ")
+                || t.split_once(". ")
+                    .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        };
+        let mut blocks: Vec<Block> = Vec::new();
+        let mut open: Option<Block> = None;
+        let mut fence = false;
+        for line in lines {
+            // The indentation every line shares (a `/// ` comment's space) is
+            // the comment's, not the text's.
+            let shared = line.len() >= indent
+                && line.as_bytes()[..indent]
+                    .iter()
+                    .all(u8::is_ascii_whitespace);
+            let line = if shared {
+                &line[indent..]
+            } else {
+                line.trim_start()
+            };
+            let t = line.trim_end();
+            if t.trim_start().starts_with("```") {
+                if let Some(Block::Code(code)) = &mut open {
+                    code.push('\n');
+                    code.push_str(t);
+                    blocks.extend(open.take());
+                } else {
+                    blocks.extend(open.take());
+                    open = Some(Block::Code(t.to_owned()));
+                }
+                fence = !fence;
+                continue;
+            }
+            if fence {
+                if let Some(Block::Code(code)) = &mut open {
+                    code.push('\n');
+                    code.push_str(t);
+                }
+                continue;
+            }
+            let t = t.trim_start();
+            if is_section(t) {
+                break;
+            }
+            if t.is_empty() {
+                blocks.extend(open.take());
+            } else if is_item(t) {
+                blocks.extend(open.take());
+                open = Some(Block::Item(t.to_owned()));
+            } else {
+                match &mut open {
+                    Some(Block::Para(text) | Block::Item(text)) => {
+                        text.push(' ');
+                        text.push_str(t);
+                    }
+                    _ => {
+                        blocks.extend(open.take());
+                        open = Some(Block::Para(t.to_owned()));
+                    }
+                }
+            }
+        }
+        blocks.extend(open);
+        let mut out = String::new();
+        let mut last_item = false;
+        for block in blocks {
+            let (text, item) = match block {
+                Block::Para(t) | Block::Code(t) => (t, false),
+                Block::Item(t) => (t, true),
+            };
+            if !out.is_empty() {
+                out.push_str(if item && last_item { "\n" } else { "\n\n" });
+            }
+            out.push_str(&text);
+            last_item = item;
+        }
+        out
+    }
 
     /// Strip the schemars `title` bookkeeping (the arg-struct's Rust name, which
     /// is noise on a tool input schema). The `$schema` dialect declaration is
@@ -269,6 +458,33 @@ pub mod __macro_support {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn doc_comments_read_as_descriptions() {
+        use crate::__macro_support::doc_description as d;
+        assert_eq!(d(" Greet someone."), "Greet someone.");
+        assert_eq!(
+            d(" Search the index for documents\n matching the query.\n\n Results are ranked."),
+            "Search the index for documents matching the query.\n\nResults are ranked."
+        );
+        assert_eq!(
+            d(" Modes:\n\n - fast: skip ranking\n - full: rank\n   everything"),
+            "Modes:\n\n- fast: skip ranking\n- full: rank everything"
+        );
+        assert_eq!(
+            d(" Run it.\n\n # Errors\n\n When the disk is full."),
+            "Run it."
+        );
+        assert_eq!(
+            d(" Example call:\n\n ```json\n {\"a\": 1}\n ```\n After."),
+            "Example call:\n\n```json\n{\"a\": 1}\n```\n\nAfter."
+        );
+        assert_eq!(
+            d("Plain text from include_str!\n\nTwo paragraphs."),
+            "Plain text from include_str!\n\nTwo paragraphs."
+        );
+    }
+
     use super::*;
 
     use serde_json::json;

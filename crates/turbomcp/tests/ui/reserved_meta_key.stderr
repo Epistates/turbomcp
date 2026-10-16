@@ -1,0 +1,5 @@
+error: `io.modelcontextprotocol/related-task` is under a reserved `_meta` prefix (the spec's or TurboMCP's own)
+  --> tests/ui/reserved_meta_key.rs:10:17
+   |
+10 |     #[tool(meta("io.modelcontextprotocol/related-task" = "x"))]
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

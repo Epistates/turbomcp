@@ -865,6 +865,13 @@ impl Resource {
         self
     }
 
+    /// Set the raw content size in bytes (builder style).
+    #[must_use]
+    pub fn with_size(mut self, size: u64) -> Self {
+        self.size = Some(size);
+        self
+    }
+
     /// Set the display/consumption annotations (builder style).
     #[must_use]
     pub fn with_annotations(mut self, annotations: Annotations) -> Self {

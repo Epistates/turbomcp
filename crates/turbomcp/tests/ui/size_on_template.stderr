@@ -1,0 +1,5 @@
+error: `size` describes one resource; a URI template stands for many
+ --> tests/ui/size_on_template.rs:9:40
+  |
+9 |     #[resource("file://{path}", size = 10)]
+  |                                        ^^

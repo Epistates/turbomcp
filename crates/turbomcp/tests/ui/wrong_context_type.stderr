@@ -1,0 +1,5 @@
+error: a #[tool] takes `&CallToolContext` as its context, not `&RequestContext` (the request's `RequestContext` is its `.base`)
+  --> tests/ui/wrong_context_type.rs:11:30
+   |
+11 |     async fn who(&self, ctx: &RequestContext) -> String {
+   |                              ^^^^^^^^^^^^^^^

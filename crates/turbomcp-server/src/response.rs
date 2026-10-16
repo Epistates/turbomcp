@@ -64,6 +64,26 @@ pub trait IntoCallToolResult {
 #[derive(Clone, Copy, Debug)]
 pub struct Json<T>(pub T);
 
+/// A handler's whole input as one type: `T`'s JSON Schema is the tool's
+/// `inputSchema` (or, on a `#[prompt]`, its properties are the prompt's
+/// arguments), and the arguments deserialize into it. For an argument type
+/// shared by several tools, or one that needs `#[serde(default)]`,
+/// `deny_unknown_fields` or field-level `#[schemars(…)]`.
+///
+/// ```ignore
+/// #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// struct Search { query: String, #[serde(default)] limit: Option<u32> }
+///
+/// #[tool]
+/// async fn search(&self, Params(search): Params<Search>) -> String { search.query }
+/// ```
+///
+/// A `Params` is the handler's only input besides its context. A prompt's
+/// arguments are strings on the wire, so a `Params` for a prompt deserializes
+/// from string values.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Params<T>(pub T);
+
 impl IntoCallToolResult for neutral::CallToolResult {
     fn into_call_tool_result(self) -> McpResult<neutral::CallToolResult> {
         Ok(self)

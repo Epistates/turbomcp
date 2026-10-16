@@ -1,0 +1,5 @@
+error: a handler takes `&self`: the server serves requests concurrently, so keep mutable state behind a lock (`Arc<Mutex<…>>`) instead
+  --> tests/ui/mut_self_receiver.rs:13:19
+   |
+13 |     async fn bump(&mut self) -> u64 {
+   |                   ^^^^^^^^^

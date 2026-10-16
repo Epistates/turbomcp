@@ -1,0 +1,15 @@
+error[E0277]: `()` doesn't implement `std::fmt::Display`
+  --> tests/ui/prompt_arg_not_parseable.rs:22:30
+   |
+22 |     async fn p(&self, value: Opaque) -> String {
+   |                              ^^^^^^ the trait `std::fmt::Display` is not implemented for `()`
+   |
+   = note: required for `Opaque` to implement `turbomcp_server::__macro_support::ArgumentType`
+note: required by a bound in `turbomcp::__macros::parse_argument`
+  --> $WORKSPACE/crates/turbomcp-server/src/lib.rs
+   |
+   |     pub fn parse_argument<T>(name: &str, value: &str) -> turbomcp_core::McpResult<T>
+   |            -------------- required by a bound in this function
+   |     where
+   |         T: ArgumentType,
+   |            ^^^^^^^^^^^^ required by this bound in `parse_argument`
