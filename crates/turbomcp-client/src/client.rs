@@ -125,6 +125,7 @@ pub struct ClientBuilder {
     input_timeout: Duration,
     handler: ClientHandlers,
     response_cache: bool,
+    lenient_lists: bool,
     log_level: Option<LogLevel>,
     observer: Option<Arc<dyn crate::RequestObserver>>,
 }
@@ -140,6 +141,7 @@ impl fmt::Debug for ClientBuilder {
             // the part that explains behaviour.
             .field("handler", &self.handler)
             .field("response_cache", &self.response_cache)
+            .field("lenient_lists", &self.lenient_lists)
             .field("log_level", &self.log_level)
             .field("observer", &self.observer.is_some())
             .finish()
@@ -158,6 +160,7 @@ impl ClientBuilder {
             input_timeout: crate::connection::DEFAULT_INPUT_TIMEOUT,
             handler: ClientHandlers::default(),
             response_cache: true,
+            lenient_lists: false,
             log_level: None,
             observer: None,
         }
@@ -334,6 +337,23 @@ impl ClientBuilder {
         self
     }
 
+    /// Skip a list item this client can't decode instead of failing the
+    /// whole list (default: off).
+    ///
+    /// Strict is the default, as in every other SDK: a server that sends a
+    /// malformed tool is broken, and the error names the item
+    /// (`tools[37]: …`). A gateway relaying many upstreams wants the rest of
+    /// a catalogue rather than none of it; with this on, each item that
+    /// doesn't decode is left out of the `tools/list`, `resources/list`,
+    /// `resources/templates/list` or `prompts/list` result and logged at
+    /// `warn` with its index and the reason. A failure that isn't one item's
+    /// still fails the call.
+    #[must_use]
+    pub fn with_lenient_lists(mut self, enabled: bool) -> Self {
+        self.lenient_lists = enabled;
+        self
+    }
+
     /// Watch every request this client sends with `observer`: client-side
     /// tracing and metrics (`turbomcp_telemetry::ClientTelemetry`), or your
     /// own logging. It may add `_meta` entries (trace context) to each
@@ -439,6 +459,7 @@ impl ClientBuilder {
             tools: Arc::new(Mutex::new(ToolCatalog::default())),
             abandoned: Arc::new(tokio::sync::Semaphore::new(MAX_ABANDONED_CANCELS)),
             cache,
+            lenient_lists: self.lenient_lists,
         };
         if let Some(level) = self.log_level
             && !client.version.is_stateless()
@@ -757,6 +778,8 @@ pub struct Client {
     /// The SEP-2549 response cache (`None` = disabled at build time). Shared
     /// with the connection actor, which invalidates on notifications.
     cache: Option<Arc<ResponseCache>>,
+    /// Leave out list items that don't decode ([`ClientBuilder::with_lenient_lists`]).
+    lenient_lists: bool,
 }
 
 impl fmt::Debug for Client {
@@ -1085,7 +1108,11 @@ impl Client {
             .cached_request(request::TOOLS_LIST, list_params(cursor), cursor, per)
             .await?;
         let mut result: neutral::ListToolsResult =
-            self.decode::<v0728::ListToolsResult, legacy::ListToolsResult, _>(v)?;
+            self.decode_list::<v0728::ListToolsResult, legacy::ListToolsResult, v0728::Tool, legacy::Tool, _>(
+                v,
+                request::TOOLS_LIST,
+                "tools",
+            )?;
         // `x-mcp-header` exists on 2026-07-28 Streamable HTTP only: "Clients
         // using other transports (e.g., stdio) MAY ignore `x-mcp-header`
         // annotations entirely", and earlier revisions never defined it.
@@ -1540,7 +1567,13 @@ impl Client {
         let v = self
             .cached_request(request::RESOURCES_LIST, list_params(cursor), cursor, per)
             .await?;
-        self.decode::<v0728::ListResourcesResult, legacy::ListResourcesResult, _>(v)
+        self.decode_list::<
+            v0728::ListResourcesResult,
+            legacy::ListResourcesResult,
+            v0728::Resource,
+            legacy::Resource,
+            _,
+        >(v, request::RESOURCES_LIST, "resources")
     }
 
     /// Every resource the server offers, following pagination to the last page.
@@ -1666,7 +1699,13 @@ impl Client {
                 per,
             )
             .await?;
-        self.decode::<v0728::ListResourceTemplatesResult, legacy::ListResourceTemplatesResult, _>(v)
+        self.decode_list::<
+            v0728::ListResourceTemplatesResult,
+            legacy::ListResourceTemplatesResult,
+            v0728::ResourceTemplate,
+            legacy::ResourceTemplate,
+            _,
+        >(v, request::RESOURCES_TEMPLATES_LIST, "resourceTemplates")
     }
 
     /// Every resource template the server offers, following pagination to the
@@ -1726,7 +1765,13 @@ impl Client {
         let v = self
             .cached_request(request::PROMPTS_LIST, list_params(cursor), cursor, per)
             .await?;
-        self.decode::<v0728::ListPromptsResult, legacy::ListPromptsResult, _>(v)
+        self.decode_list::<
+            v0728::ListPromptsResult,
+            legacy::ListPromptsResult,
+            v0728::Prompt,
+            legacy::Prompt,
+            _,
+        >(v, request::PROMPTS_LIST, "prompts")
     }
 
     /// Every prompt the server offers, following pagination to the last page.
@@ -2665,6 +2710,59 @@ impl Client {
 
     /// Decode a result into a [`neutral`] type via the negotiated version's wire
     /// shape: deserialize as `D` (draft) or `L` (legacy), then convert.
+    /// [`decode`](Self::decode) for a list result, leaving out the items
+    /// under `key` that don't decode when [`ClientBuilder::with_lenient_lists`]
+    /// is on.
+    fn decode_list<D, L, DI, LI, N>(&self, value: Value, method: &str, key: &str) -> ClientResult<N>
+    where
+        D: DeserializeOwned + Into<N>,
+        L: DeserializeOwned + Into<N>,
+        DI: DeserializeOwned,
+        LI: DeserializeOwned,
+    {
+        if !self.lenient_lists {
+            return self.decode::<D, L, N>(value);
+        }
+        let strict = self.decode::<D, L, N>(value.clone());
+        let mut value = value;
+        let Err(error) = strict else {
+            return strict;
+        };
+        let Some(Value::Array(items)) = value.get_mut(key) else {
+            return Err(error);
+        };
+        let stateless = self.version == ProtocolVersion::V2026_07_28;
+        let before = items.len();
+        let mut index = 0usize;
+        items.retain(|item| {
+            let decoded = if stateless {
+                crate::error::decode::<DI>(item.clone()).map(drop)
+            } else {
+                crate::error::decode::<LI>(item.clone()).map(drop)
+            };
+            let keep = match decoded {
+                Ok(()) => true,
+                Err(why) => {
+                    tracing::warn!(
+                        method,
+                        index,
+                        name = item.get("name").and_then(serde_json::Value::as_str),
+                        error = %why,
+                        "left out a list item this client can't decode"
+                    );
+                    false
+                }
+            };
+            index += 1;
+            keep
+        });
+        if items.len() == before {
+            // No item was at fault.
+            return Err(error);
+        }
+        self.decode::<D, L, N>(value)
+    }
+
     fn decode<D, L, N>(&self, value: Value) -> ClientResult<N>
     where
         D: DeserializeOwned + Into<N>,

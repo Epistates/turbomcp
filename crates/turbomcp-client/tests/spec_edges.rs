@@ -221,3 +221,53 @@ async fn an_unassociated_server_request_is_refused() {
     assert_eq!(answer["error"]["code"], -32602);
     assert_eq!(runs.load(SeqCst), 0, "the sampling handler never ran");
 }
+
+/// A `tools/list` whose second tool has no `inputSchema`.
+fn one_bad_tool(method: &str, frame: &Value) -> Vec<Value> {
+    assert_eq!(method, "tools/list");
+    vec![result_for(
+        frame,
+        json!({
+            "tools": [
+                { "name": "good", "inputSchema": { "type": "object" } },
+                { "name": "broken" },
+                { "name": "fine", "inputSchema": { "type": "object" } }
+            ],
+            "resultType": "complete", "cacheScope": "private", "ttlMs": 0
+        }),
+    )]
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_malformed_list_item_fails_the_list_by_default_and_names_it() {
+    let (client, _) = connect(ClientBuilder::new("strict", "1"), one_bad_tool).await;
+    let Err(ClientError::Decode(why)) = client.list_tools(None).await else {
+        panic!("a malformed tool decoded");
+    };
+    assert!(why.starts_with("tools[1]"), "{why}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lenient_lists_leave_out_only_the_item_that_does_not_decode() {
+    let builder = ClientBuilder::new("lenient", "1").with_lenient_lists(true);
+    let (client, _) = connect(builder, one_bad_tool).await;
+    let tools = client.list_tools(None).await.expect("the rest of the list");
+    let names: Vec<&str> = tools.tools.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["good", "fine"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lenient_lists_still_fail_a_result_whose_fault_is_no_items() {
+    let builder = ClientBuilder::new("lenient", "1").with_lenient_lists(true);
+    let (client, _) = connect(builder, |_, frame| {
+        vec![result_for(
+            frame,
+            json!({ "tools": "not a list", "resultType": "complete" }),
+        )]
+    })
+    .await;
+    assert!(matches!(
+        client.list_tools(None).await,
+        Err(ClientError::Decode(_))
+    ));
+}

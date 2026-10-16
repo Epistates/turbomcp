@@ -7,10 +7,11 @@
 //! 5. [`pin_string_consts`] – make discriminators discriminate.
 //! 6. [`pin_integer_consts`] – an error struct accepts only its own code.
 //! 7. [`open_optional_objects`] – keep `{}` distinct from absent.
-//! 8. [`default_result_type`] – absent `resultType` means `"complete"`.
-//! 9. [`default_cache_hints`] – absent `ttlMs`/`cacheScope` are defaulted.
-//! 10. [`widen_elicit_numbers`] – a submitted form value may be a float.
-//! 11. [`drop_undiscriminated_unions`] – no type that decodes as everything.
+//! 8. [`open_results`] – a result or catalogue item keeps unknown keys.
+//! 9. [`default_result_type`] – absent `resultType` means `"complete"`.
+//! 10. [`default_cache_hints`] – absent `ttlMs`/`cacheScope` are defaulted.
+//! 11. [`widen_elicit_numbers`] – a submitted form value may be a float.
+//! 12. [`drop_undiscriminated_unions`] – no type that decodes as everything.
 //!
 //! Each pass exists because typify silently lost a schema fact the rest of the
 //! crate depends on; the pass docs say which one. Each returns how many places
@@ -49,6 +50,7 @@ pub struct Report {
     pub string_consts_pinned: usize,
     pub integer_consts_pinned: usize,
     pub optional_objects_opened: usize,
+    pub results_opened: usize,
     pub result_types_defaulted: usize,
     pub cache_hints_defaulted: usize,
     pub elicit_numbers_widened: usize,
@@ -67,6 +69,7 @@ pub fn run(schema: &mut Value) -> Result<Report, String> {
         // After `flatten_all_of`, which merges the refined codes into one node.
         integer_consts_pinned: pin_integer_consts(schema),
         optional_objects_opened: open_optional_objects(schema),
+        results_opened: open_results(schema),
         result_types_defaulted: default_result_type(schema),
         cache_hints_defaulted: default_cache_hints(schema),
         elicit_numbers_widened: widen_elicit_numbers(schema),
@@ -554,6 +557,45 @@ pub fn open_optional_objects(schema: &mut Value) -> usize {
                 )
             })
     }
+}
+
+/// The catalogue items a gateway relays whole, beside the results.
+const OPEN_ITEMS: [&str; 5] = [
+    "Tool",
+    "Resource",
+    "ResourceTemplate",
+    "Prompt",
+    "Implementation",
+];
+
+/// Keep the keys a result or catalogue item carries beyond what the schema
+/// declares.
+///
+/// `schema.ts` declares `interface Result { _meta?; [key: string]: unknown }`,
+/// inherited by every `*Result`, and a JSON Schema object without
+/// `additionalProperties` is open; the generated `schema.json` does not say so,
+/// and typify made each one a closed struct. A gateway re-serving an upstream
+/// through the typed client dropped every vendor or extension key at the top
+/// level of a result, a tool or a resource. Open, each gets a flattened
+/// `extra` map.
+pub fn open_results(schema: &mut Value) -> usize {
+    let key = defs_key(schema);
+    let Some(defs) = schema.get_mut(key).and_then(Value::as_object_mut) else {
+        return 0;
+    };
+    let mut opened = 0;
+    for (name, def) in defs.iter_mut() {
+        let wanted = name.ends_with("Result") || OPEN_ITEMS.contains(&name.as_str());
+        if let Value::Object(def) = def
+            && wanted
+            && def.get("type").and_then(Value::as_str) == Some("object")
+            && !def.contains_key("additionalProperties")
+        {
+            def.insert("additionalProperties".into(), Value::Object(Map::new()));
+            opened += 1;
+        }
+    }
+    opened
 }
 
 /// Let the `properties` of an embedded JSON Schema hold any subschema.
@@ -1220,6 +1262,7 @@ mod vendored {
                 string_consts_pinned: 39,
                 integer_consts_pinned: 0,
                 optional_objects_opened: 9,
+                results_opened: 18,
                 result_types_defaulted: 0,
                 cache_hints_defaulted: 0,
                 elicit_numbers_widened: 1,
@@ -1247,6 +1290,7 @@ mod vendored {
                 string_consts_pinned: 87,
                 integer_consts_pinned: 1,
                 optional_objects_opened: 23,
+                results_opened: 20,
                 result_types_defaulted: 0,
                 cache_hints_defaulted: 0,
                 elicit_numbers_widened: 1,
@@ -1282,6 +1326,7 @@ mod vendored {
                 // Five JSON-RPC codes and three MCP ones.
                 integer_consts_pinned: 8,
                 optional_objects_opened: 6,
+                results_opened: 21,
                 result_types_defaulted: 13,
                 cache_hints_defaulted: 7,
                 elicit_numbers_widened: 1,

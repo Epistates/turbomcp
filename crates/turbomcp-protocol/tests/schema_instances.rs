@@ -49,6 +49,21 @@ mod v0728 {
     include!("registry/2026-07-28.rs");
 }
 
+/// The definitions codegen opens (`normalize::open_results`).
+const OPEN: [fn(&str) -> bool; 2] = [
+    |name| name.ends_with("Result"),
+    |name| {
+        [
+            "Tool",
+            "Resource",
+            "ResourceTemplate",
+            "Prompt",
+            "Implementation",
+        ]
+        .contains(&name)
+    },
+];
+
 #[derive(Clone, Copy, PartialEq)]
 enum Size {
     Smallest,
@@ -72,7 +87,16 @@ impl Instances<'_> {
         let mut out = Vec::new();
         for member in members {
             for size in [Size::Smallest, Size::Largest] {
-                let instance = prose(name, self.build(member, size, 0));
+                let mut instance = prose(name, self.build(member, size, 0));
+                // A result or catalogue item is open (`schema.ts`'s
+                // `[key: string]: unknown`); the largest instance carries a key
+                // no revision defines, which must come back.
+                if size == Size::Largest
+                    && OPEN.iter().any(|open| open(name))
+                    && let Value::Object(fields) = &mut instance
+                {
+                    fields.insert("x-vendor".into(), json!({ "trace": [1, "two"] }));
+                }
                 if !out.contains(&instance) {
                     out.push(instance);
                 }

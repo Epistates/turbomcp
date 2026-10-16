@@ -34,8 +34,12 @@
 //!   empty `audience` is not plainly "no audience stated"), so something that
 //!   must re-send a peer's message exactly should forward the JSON, not the
 //!   typed value.
-//! - **Unknown keys** survive only where the schema leaves an object open
-//!   (`_meta`, embedded JSON Schemas, `Result`); elsewhere they are dropped.
+//! - **Unknown keys** survive on every result, tool, resource, resource
+//!   template, prompt and implementation (`schema.ts` declares results open),
+//!   in `_meta`, and in embedded JSON Schemas: the neutral types carry them
+//!   as `extra`, and a key the target revision declares is never written from
+//!   there. Inside other objects (a content block, an annotation) they are
+//!   dropped.
 //! - **Numbers** decode the same with `serde_json/arbitrary_precision` on.
 //!
 //! `no_std + alloc`: the generated types use only `core`/`alloc` paths (the

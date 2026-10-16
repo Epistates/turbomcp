@@ -229,6 +229,10 @@ pub struct Tool {
     /// conventions — e.g. server-local tags a catalog policy keys off).
     /// Empty = absent on the wire. Carried losslessly on both wire versions.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 /// Behavior hints describing a [`Tool`] to clients (the spec's
@@ -327,6 +331,7 @@ impl Tool {
     /// A tool with the given name and argument schema; no title/description.
     pub fn new(name: impl Into<String>, input_schema: Value) -> Self {
         Self {
+            extra: Map::new(),
             name: name.into(),
             title: None,
             description: None,
@@ -442,6 +447,10 @@ pub struct ListToolsResult {
     /// `io.modelcontextprotocol/` belong to the protocol and the framework
     /// sets them, so a handler's are not sent.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl ListToolsResult {
@@ -455,6 +464,7 @@ impl ListToolsResult {
     /// A single-page result over `tools`.
     pub fn new(tools: Vec<Tool>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             tools,
             next_cursor: None,
@@ -512,6 +522,10 @@ pub struct CallToolResult {
     /// `io.modelcontextprotocol/` belong to the protocol and the framework
     /// sets them, so a handler's are not sent.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl CallToolResult {
@@ -525,6 +539,7 @@ impl CallToolResult {
     /// A successful result carrying the given content blocks (text, image, audio).
     pub fn new(content: Vec<Content>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             content,
             is_error: false,
@@ -535,6 +550,7 @@ impl CallToolResult {
     /// A successful result carrying a single text block.
     pub fn text(s: impl Into<String>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             content: alloc::vec![Content::text(s)],
             is_error: false,
@@ -545,6 +561,7 @@ impl CallToolResult {
     /// A failed result (`is_error = true`) carrying a single text block.
     pub fn error(s: impl Into<String>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             content: alloc::vec![Content::text(s)],
             is_error: true,
@@ -855,12 +872,17 @@ pub struct Resource {
     pub icons: Vec<Icon>,
     /// Arbitrary namespaced `_meta` (empty = absent on the wire).
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl Resource {
     /// A resource with the given URI and name.
     pub fn new(uri: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
+            extra: Map::new(),
             uri: uri.into(),
             name: name.into(),
             title: None,
@@ -1075,6 +1097,10 @@ pub struct ListResourcesResult {
     /// `io.modelcontextprotocol/` belong to the protocol and the framework
     /// sets them, so a handler's are not sent.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl ListResourcesResult {
@@ -1088,6 +1114,7 @@ impl ListResourcesResult {
     /// A single-page result over `resources`.
     pub fn new(resources: Vec<Resource>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             resources,
             next_cursor: None,
@@ -1121,6 +1148,10 @@ pub struct ReadResourceResult {
     /// `io.modelcontextprotocol/` belong to the protocol and the framework
     /// sets them, so a handler's are not sent.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl ReadResourceResult {
@@ -1134,6 +1165,7 @@ impl ReadResourceResult {
     /// A result carrying the given contents.
     pub fn new(contents: Vec<ResourceContents>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             contents,
             cache: None,
@@ -1164,6 +1196,7 @@ impl ReadResourceResult {
     /// A result carrying a single text item.
     pub fn text(uri: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             contents: alloc::vec![ResourceContents::text(uri, text)],
             cache: None,
@@ -1205,12 +1238,17 @@ pub struct ResourceTemplate {
     pub icons: Vec<Icon>,
     /// Arbitrary namespaced `_meta` (empty = absent on the wire).
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl ResourceTemplate {
     /// A template with the given URI Template and name.
     pub fn new(uri_template: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
+            extra: Map::new(),
             uri_template: uri_template.into(),
             name: name.into(),
             title: None,
@@ -1279,6 +1317,10 @@ pub struct ListResourceTemplatesResult {
     /// `io.modelcontextprotocol/` belong to the protocol and the framework
     /// sets them, so a handler's are not sent.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl ListResourceTemplatesResult {
@@ -1292,6 +1334,7 @@ impl ListResourceTemplatesResult {
     /// A single-page result over `resource_templates`.
     pub fn new(resource_templates: Vec<ResourceTemplate>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             resource_templates,
             next_cursor: None,
@@ -1403,12 +1446,17 @@ pub struct Prompt {
     pub icons: Vec<Icon>,
     /// Arbitrary namespaced `_meta` (empty = absent on the wire).
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl Prompt {
     /// A prompt with the given name and no arguments.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
+            extra: Map::new(),
             name: name.into(),
             title: None,
             description: None,
@@ -1506,6 +1554,10 @@ pub struct ListPromptsResult {
     /// `io.modelcontextprotocol/` belong to the protocol and the framework
     /// sets them, so a handler's are not sent.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl ListPromptsResult {
@@ -1519,6 +1571,7 @@ impl ListPromptsResult {
     /// A single-page result over `prompts`.
     pub fn new(prompts: Vec<Prompt>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             prompts,
             next_cursor: None,
@@ -1552,6 +1605,10 @@ pub struct GetPromptResult {
     /// `io.modelcontextprotocol/` belong to the protocol and the framework
     /// sets them, so a handler's are not sent.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl GetPromptResult {
@@ -1565,6 +1622,7 @@ impl GetPromptResult {
     /// A result carrying the given messages.
     pub fn new(messages: Vec<PromptMessage>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             description: None,
             messages,
@@ -2994,6 +3052,10 @@ pub struct CompleteResult {
     /// `io.modelcontextprotocol/` belong to the protocol and the framework
     /// sets them, so a handler's are not sent.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision of the spec defines here (a vendor's, an
+    /// extension's), carried through so a gateway relays them. A key a
+    /// revision declares is never written from here, so it can't shadow a field.
+    pub extra: Map<String, Value>,
 }
 
 impl CompleteResult {
@@ -3007,6 +3069,7 @@ impl CompleteResult {
     /// A result carrying the given values.
     pub fn new(values: Vec<String>) -> Self {
         Self {
+            extra: Map::new(),
             meta: Map::new(),
             values,
             total: None,
@@ -3452,6 +3515,7 @@ impl From<Tool> for v0728::Tool {
                 extra: Map::new(),
             });
         v0728::Tool {
+            extra: undeclared(t.extra, v0728::Tool::DECLARED),
             annotations: t.annotations.map(Into::into),
             description: t.description,
             icons: t.icons.into_iter().map(Into::into).collect(),
@@ -3527,6 +3591,15 @@ fn outgoing_meta(mut meta: Map<String, Value>) -> Map<String, Value> {
 }
 
 /// [`outgoing_meta`] in the `2026-07-28` result shape.
+/// `extra` without the keys `declared` names. A key the target revision
+/// declares is its field's to write; written again from `extra` it would
+/// appear in the object twice (a `2025-06-18` peer's `icons`, unknown on its
+/// wire, re-sent on `2025-11-25`, where it is a field).
+pub(crate) fn undeclared(mut extra: Map<String, Value>, declared: &[&str]) -> Map<String, Value> {
+    extra.retain(|key, _| !declared.contains(&key.as_str()));
+    extra
+}
+
 fn result_meta(meta: Map<String, Value>) -> Option<v0728::ResultMetaObject> {
     let meta = outgoing_meta(meta);
     (!meta.is_empty()).then_some(v0728::ResultMetaObject {
@@ -3548,6 +3621,7 @@ impl From<ListToolsResult> for v0728::ListToolsResult {
     fn from(r: ListToolsResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
         v0728::ListToolsResult {
+            extra: undeclared(r.extra, v0728::ListToolsResult::DECLARED),
             cache_scope: match cache.scope {
                 CacheScope::Public => v0728::ListToolsResultCacheScope::Public,
                 CacheScope::Private => v0728::ListToolsResultCacheScope::Private,
@@ -3564,6 +3638,7 @@ impl From<ListToolsResult> for v0728::ListToolsResult {
 impl From<CallToolResult> for v0728::CallToolResult {
     fn from(r: CallToolResult) -> Self {
         v0728::CallToolResult {
+            extra: undeclared(r.extra, v0728::CallToolResult::DECLARED),
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: Some(r.is_error),
             meta: result_meta(r.meta),
@@ -3578,6 +3653,7 @@ impl From<CallToolResult> for v0728::CallToolResult {
 impl From<Resource> for v0728::Resource {
     fn from(r: Resource) -> Self {
         v0728::Resource {
+            extra: undeclared(r.extra, v0728::Resource::DECLARED),
             annotations: r.annotations.map(Into::into),
             description: r.description,
             icons: r.icons.into_iter().map(Into::into).collect(),
@@ -3671,6 +3747,7 @@ impl From<ListResourcesResult> for v0728::ListResourcesResult {
     fn from(r: ListResourcesResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
         v0728::ListResourcesResult {
+            extra: undeclared(r.extra, v0728::ListResourcesResult::DECLARED),
             cache_scope: match cache.scope {
                 CacheScope::Public => v0728::ListResourcesResultCacheScope::Public,
                 CacheScope::Private => v0728::ListResourcesResultCacheScope::Private,
@@ -3688,6 +3765,7 @@ impl From<ReadResourceResult> for v0728::ReadResourceResult {
     fn from(r: ReadResourceResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
         v0728::ReadResourceResult {
+            extra: undeclared(r.extra, v0728::ReadResourceResult::DECLARED),
             cache_scope: match cache.scope {
                 CacheScope::Public => v0728::ReadResourceResultCacheScope::Public,
                 CacheScope::Private => v0728::ReadResourceResultCacheScope::Private,
@@ -3703,6 +3781,7 @@ impl From<ReadResourceResult> for v0728::ReadResourceResult {
 impl From<ResourceTemplate> for v0728::ResourceTemplate {
     fn from(t: ResourceTemplate) -> Self {
         v0728::ResourceTemplate {
+            extra: undeclared(t.extra, v0728::ResourceTemplate::DECLARED),
             annotations: t.annotations.map(Into::into),
             description: t.description,
             icons: t.icons.into_iter().map(Into::into).collect(),
@@ -3719,6 +3798,7 @@ impl From<ListResourceTemplatesResult> for v0728::ListResourceTemplatesResult {
     fn from(r: ListResourceTemplatesResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
         v0728::ListResourceTemplatesResult {
+            extra: undeclared(r.extra, v0728::ListResourceTemplatesResult::DECLARED),
             cache_scope: match cache.scope {
                 CacheScope::Public => v0728::ListResourceTemplatesResultCacheScope::Public,
                 CacheScope::Private => v0728::ListResourceTemplatesResultCacheScope::Private,
@@ -3757,6 +3837,7 @@ impl From<PromptArgument> for v0728::PromptArgument {
 impl From<Prompt> for v0728::Prompt {
     fn from(p: Prompt) -> Self {
         v0728::Prompt {
+            extra: undeclared(p.extra, v0728::Prompt::DECLARED),
             arguments: p.arguments.into_iter().map(Into::into).collect(),
             description: p.description,
             icons: p.icons.into_iter().map(Into::into).collect(),
@@ -3780,6 +3861,7 @@ impl From<ListPromptsResult> for v0728::ListPromptsResult {
     fn from(r: ListPromptsResult) -> Self {
         let cache = r.cache.unwrap_or(CachePolicy::NO_CACHE);
         v0728::ListPromptsResult {
+            extra: undeclared(r.extra, v0728::ListPromptsResult::DECLARED),
             cache_scope: match cache.scope {
                 CacheScope::Public => v0728::ListPromptsResultCacheScope::Public,
                 CacheScope::Private => v0728::ListPromptsResultCacheScope::Private,
@@ -3796,6 +3878,7 @@ impl From<ListPromptsResult> for v0728::ListPromptsResult {
 impl From<GetPromptResult> for v0728::GetPromptResult {
     fn from(r: GetPromptResult) -> Self {
         v0728::GetPromptResult {
+            extra: undeclared(r.extra, v0728::GetPromptResult::DECLARED),
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
             meta: result_meta(r.meta),
@@ -3810,6 +3893,7 @@ impl From<CompleteResult> for v0728::CompleteResult {
     fn from(r: CompleteResult) -> Self {
         let r = r.capped();
         v0728::CompleteResult {
+            extra: undeclared(r.extra, v0728::CompleteResult::DECLARED),
             completion: v0728::CompleteResultCompletion {
                 has_more: r.has_more,
                 total: r.total.map(i64::from),
@@ -3959,6 +4043,7 @@ impl From<Tool> for legacy::Tool {
             extra: Map::new(),
         });
         legacy::Tool {
+            extra: undeclared(t.extra, legacy::Tool::DECLARED),
             annotations: t.annotations.map(Into::into),
             description: t.description,
             // A declared `#[tool(task)]` sets per-tool task support; otherwise
@@ -4023,6 +4108,7 @@ impl From<Icon> for legacy::Icon {
 impl From<ListToolsResult> for legacy::ListToolsResult {
     fn from(r: ListToolsResult) -> Self {
         legacy::ListToolsResult {
+            extra: undeclared(r.extra, legacy::ListToolsResult::DECLARED),
             meta: outgoing_meta(r.meta),
             next_cursor: r.next_cursor,
             tools: r.tools.into_iter().map(Into::into).collect(),
@@ -4039,6 +4125,7 @@ impl From<CallToolResult> for legacy::CallToolResult {
             _ => None,
         };
         legacy::CallToolResult {
+            extra: undeclared(r.extra, legacy::CallToolResult::DECLARED),
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: Some(r.is_error),
             meta: outgoing_meta(r.meta),
@@ -4052,6 +4139,7 @@ impl From<CallToolResult> for legacy::CallToolResult {
 impl From<Resource> for legacy::Resource {
     fn from(r: Resource) -> Self {
         legacy::Resource {
+            extra: undeclared(r.extra, legacy::Resource::DECLARED),
             annotations: r.annotations.map(Into::into),
             description: r.description,
             icons: r.icons.into_iter().map(Into::into).collect(),
@@ -4144,6 +4232,7 @@ impl From<ResourceContents> for legacy::EmbeddedResourceResource {
 impl From<ListResourcesResult> for legacy::ListResourcesResult {
     fn from(r: ListResourcesResult) -> Self {
         legacy::ListResourcesResult {
+            extra: undeclared(r.extra, legacy::ListResourcesResult::DECLARED),
             meta: outgoing_meta(r.meta),
             next_cursor: r.next_cursor,
             resources: r.resources.into_iter().map(Into::into).collect(),
@@ -4154,6 +4243,7 @@ impl From<ListResourcesResult> for legacy::ListResourcesResult {
 impl From<ReadResourceResult> for legacy::ReadResourceResult {
     fn from(r: ReadResourceResult) -> Self {
         legacy::ReadResourceResult {
+            extra: undeclared(r.extra, legacy::ReadResourceResult::DECLARED),
             contents: r.contents.into_iter().map(Into::into).collect(),
             meta: outgoing_meta(r.meta),
         }
@@ -4163,6 +4253,7 @@ impl From<ReadResourceResult> for legacy::ReadResourceResult {
 impl From<ResourceTemplate> for legacy::ResourceTemplate {
     fn from(t: ResourceTemplate) -> Self {
         legacy::ResourceTemplate {
+            extra: undeclared(t.extra, legacy::ResourceTemplate::DECLARED),
             annotations: t.annotations.map(Into::into),
             description: t.description,
             icons: t.icons.into_iter().map(Into::into).collect(),
@@ -4178,6 +4269,7 @@ impl From<ResourceTemplate> for legacy::ResourceTemplate {
 impl From<ListResourceTemplatesResult> for legacy::ListResourceTemplatesResult {
     fn from(r: ListResourceTemplatesResult) -> Self {
         legacy::ListResourceTemplatesResult {
+            extra: undeclared(r.extra, legacy::ListResourceTemplatesResult::DECLARED),
             meta: outgoing_meta(r.meta),
             next_cursor: r.next_cursor,
             resource_templates: r.resource_templates.into_iter().map(Into::into).collect(),
@@ -4210,6 +4302,7 @@ impl From<PromptArgument> for legacy::PromptArgument {
 impl From<Prompt> for legacy::Prompt {
     fn from(p: Prompt) -> Self {
         legacy::Prompt {
+            extra: undeclared(p.extra, legacy::Prompt::DECLARED),
             arguments: p.arguments.into_iter().map(Into::into).collect(),
             description: p.description,
             icons: p.icons.into_iter().map(Into::into).collect(),
@@ -4232,6 +4325,7 @@ impl From<PromptMessage> for legacy::PromptMessage {
 impl From<ListPromptsResult> for legacy::ListPromptsResult {
     fn from(r: ListPromptsResult) -> Self {
         legacy::ListPromptsResult {
+            extra: undeclared(r.extra, legacy::ListPromptsResult::DECLARED),
             meta: outgoing_meta(r.meta),
             next_cursor: r.next_cursor,
             prompts: r.prompts.into_iter().map(Into::into).collect(),
@@ -4242,6 +4336,7 @@ impl From<ListPromptsResult> for legacy::ListPromptsResult {
 impl From<GetPromptResult> for legacy::GetPromptResult {
     fn from(r: GetPromptResult) -> Self {
         legacy::GetPromptResult {
+            extra: undeclared(r.extra, legacy::GetPromptResult::DECLARED),
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
             meta: outgoing_meta(r.meta),
@@ -4255,6 +4350,7 @@ impl From<CompleteResult> for legacy::CompleteResult {
     fn from(r: CompleteResult) -> Self {
         let r = r.capped();
         legacy::CompleteResult {
+            extra: undeclared(r.extra, legacy::CompleteResult::DECLARED),
             completion: legacy::CompleteResultCompletion {
                 has_more: r.has_more,
                 total: r.total.map(i64::from),
@@ -4310,6 +4406,7 @@ impl From<v0728::ContentBlock> for Content {
 impl From<v0728::Tool> for Tool {
     fn from(t: v0728::Tool) -> Self {
         Tool {
+            extra: t.extra,
             name: t.name,
             title: t.title,
             description: t.description,
@@ -4355,6 +4452,7 @@ impl From<v0728::Icon> for Icon {
 impl From<v0728::ListToolsResult> for ListToolsResult {
     fn from(r: v0728::ListToolsResult) -> Self {
         ListToolsResult {
+            extra: r.extra,
             meta: incoming_meta(r.meta),
             tools: r.tools.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
@@ -4372,6 +4470,7 @@ impl From<v0728::ListToolsResult> for ListToolsResult {
 impl From<v0728::CallToolResult> for CallToolResult {
     fn from(r: v0728::CallToolResult) -> Self {
         CallToolResult {
+            extra: r.extra,
             meta: incoming_meta(r.meta),
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: r.is_error.unwrap_or(false),
@@ -4383,6 +4482,7 @@ impl From<v0728::CallToolResult> for CallToolResult {
 impl From<v0728::Resource> for Resource {
     fn from(r: v0728::Resource) -> Self {
         Resource {
+            extra: r.extra,
             uri: r.uri,
             name: r.name,
             title: r.title,
@@ -4410,6 +4510,7 @@ impl From<v0728::Annotations> for Annotations {
 impl From<v0728::ResourceLink> for Resource {
     fn from(l: v0728::ResourceLink) -> Self {
         Resource {
+            extra: Map::new(),
             uri: l.uri,
             name: l.name,
             title: l.title,
@@ -4468,6 +4569,7 @@ impl From<v0728::ReadResourceResultContentsItem> for ResourceContents {
 impl From<v0728::ListResourcesResult> for ListResourcesResult {
     fn from(r: v0728::ListResourcesResult) -> Self {
         ListResourcesResult {
+            extra: r.extra,
             meta: incoming_meta(r.meta),
             resources: r.resources.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
@@ -4485,6 +4587,7 @@ impl From<v0728::ListResourcesResult> for ListResourcesResult {
 impl From<v0728::ReadResourceResult> for ReadResourceResult {
     fn from(r: v0728::ReadResourceResult) -> Self {
         ReadResourceResult {
+            extra: r.extra,
             meta: incoming_meta(r.meta),
             contents: r.contents.into_iter().map(Into::into).collect(),
             cache: Some(CachePolicy::from_wire(
@@ -4501,6 +4604,7 @@ impl From<v0728::ReadResourceResult> for ReadResourceResult {
 impl From<v0728::ResourceTemplate> for ResourceTemplate {
     fn from(t: v0728::ResourceTemplate) -> Self {
         ResourceTemplate {
+            extra: t.extra,
             uri_template: t.uri_template,
             name: t.name,
             title: t.title,
@@ -4516,6 +4620,7 @@ impl From<v0728::ResourceTemplate> for ResourceTemplate {
 impl From<v0728::ListResourceTemplatesResult> for ListResourceTemplatesResult {
     fn from(r: v0728::ListResourceTemplatesResult) -> Self {
         ListResourceTemplatesResult {
+            extra: r.extra,
             meta: incoming_meta(r.meta),
             resource_templates: r.resource_templates.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
@@ -4553,6 +4658,7 @@ impl From<v0728::PromptArgument> for PromptArgument {
 impl From<v0728::Prompt> for Prompt {
     fn from(p: v0728::Prompt) -> Self {
         Prompt {
+            extra: p.extra,
             name: p.name,
             title: p.title,
             description: p.description,
@@ -4575,6 +4681,7 @@ impl From<v0728::PromptMessage> for PromptMessage {
 impl From<v0728::ListPromptsResult> for ListPromptsResult {
     fn from(r: v0728::ListPromptsResult) -> Self {
         ListPromptsResult {
+            extra: r.extra,
             meta: incoming_meta(r.meta),
             prompts: r.prompts.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
@@ -4592,6 +4699,7 @@ impl From<v0728::ListPromptsResult> for ListPromptsResult {
 impl From<v0728::GetPromptResult> for GetPromptResult {
     fn from(r: v0728::GetPromptResult) -> Self {
         GetPromptResult {
+            extra: r.extra,
             meta: incoming_meta(r.meta),
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
@@ -4602,6 +4710,7 @@ impl From<v0728::GetPromptResult> for GetPromptResult {
 impl From<v0728::CompleteResult> for CompleteResult {
     fn from(r: v0728::CompleteResult) -> Self {
         CompleteResult {
+            extra: r.extra,
             meta: incoming_meta(r.meta),
             values: r.completion.values,
             total: r
@@ -4648,6 +4757,7 @@ impl From<legacy::ContentBlock> for Content {
 impl From<legacy::Tool> for Tool {
     fn from(t: legacy::Tool) -> Self {
         Tool {
+            extra: t.extra,
             name: t.name,
             title: t.title,
             description: t.description,
@@ -4691,6 +4801,7 @@ impl From<legacy::Icon> for Icon {
 impl From<legacy::ListToolsResult> for ListToolsResult {
     fn from(r: legacy::ListToolsResult) -> Self {
         ListToolsResult {
+            extra: r.extra,
             meta: r.meta,
             tools: r.tools.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
@@ -4703,6 +4814,7 @@ impl From<legacy::ListToolsResult> for ListToolsResult {
 impl From<legacy::CallToolResult> for CallToolResult {
     fn from(r: legacy::CallToolResult) -> Self {
         CallToolResult {
+            extra: r.extra,
             meta: r.meta,
             content: r.content.into_iter().map(Into::into).collect(),
             is_error: r.is_error.unwrap_or(false),
@@ -4714,6 +4826,7 @@ impl From<legacy::CallToolResult> for CallToolResult {
 impl From<legacy::Resource> for Resource {
     fn from(r: legacy::Resource) -> Self {
         Resource {
+            extra: r.extra,
             uri: r.uri,
             name: r.name,
             title: r.title,
@@ -4741,6 +4854,7 @@ impl From<legacy::Annotations> for Annotations {
 impl From<legacy::ResourceLink> for Resource {
     fn from(l: legacy::ResourceLink) -> Self {
         Resource {
+            extra: Map::new(),
             uri: l.uri,
             name: l.name,
             title: l.title,
@@ -4799,6 +4913,7 @@ impl From<legacy::ReadResourceResultContentsItem> for ResourceContents {
 impl From<legacy::ListResourcesResult> for ListResourcesResult {
     fn from(r: legacy::ListResourcesResult) -> Self {
         ListResourcesResult {
+            extra: r.extra,
             meta: r.meta,
             resources: r.resources.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
@@ -4810,6 +4925,7 @@ impl From<legacy::ListResourcesResult> for ListResourcesResult {
 impl From<legacy::ReadResourceResult> for ReadResourceResult {
     fn from(r: legacy::ReadResourceResult) -> Self {
         ReadResourceResult {
+            extra: r.extra,
             meta: r.meta,
             contents: r.contents.into_iter().map(Into::into).collect(),
             cache: None,
@@ -4820,6 +4936,7 @@ impl From<legacy::ReadResourceResult> for ReadResourceResult {
 impl From<legacy::ResourceTemplate> for ResourceTemplate {
     fn from(t: legacy::ResourceTemplate) -> Self {
         ResourceTemplate {
+            extra: t.extra,
             uri_template: t.uri_template,
             name: t.name,
             title: t.title,
@@ -4835,6 +4952,7 @@ impl From<legacy::ResourceTemplate> for ResourceTemplate {
 impl From<legacy::ListResourceTemplatesResult> for ListResourceTemplatesResult {
     fn from(r: legacy::ListResourceTemplatesResult) -> Self {
         ListResourceTemplatesResult {
+            extra: r.extra,
             meta: r.meta,
             resource_templates: r.resource_templates.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
@@ -4866,6 +4984,7 @@ impl From<legacy::PromptArgument> for PromptArgument {
 impl From<legacy::Prompt> for Prompt {
     fn from(p: legacy::Prompt) -> Self {
         Prompt {
+            extra: p.extra,
             name: p.name,
             title: p.title,
             description: p.description,
@@ -4888,6 +5007,7 @@ impl From<legacy::PromptMessage> for PromptMessage {
 impl From<legacy::ListPromptsResult> for ListPromptsResult {
     fn from(r: legacy::ListPromptsResult) -> Self {
         ListPromptsResult {
+            extra: r.extra,
             meta: r.meta,
             prompts: r.prompts.into_iter().map(Into::into).collect(),
             next_cursor: r.next_cursor,
@@ -4899,6 +5019,7 @@ impl From<legacy::ListPromptsResult> for ListPromptsResult {
 impl From<legacy::GetPromptResult> for GetPromptResult {
     fn from(r: legacy::GetPromptResult) -> Self {
         GetPromptResult {
+            extra: r.extra,
             meta: r.meta,
             description: r.description,
             messages: r.messages.into_iter().map(Into::into).collect(),
@@ -4909,6 +5030,7 @@ impl From<legacy::GetPromptResult> for GetPromptResult {
 impl From<legacy::CompleteResult> for CompleteResult {
     fn from(r: legacy::CompleteResult) -> Self {
         CompleteResult {
+            extra: r.extra,
             meta: r.meta,
             values: r.completion.values,
             total: r
@@ -5757,6 +5879,53 @@ mod tests {
         let wire: legacy::Tool = Tool::new("t", json!({"type": "object"})).into();
         let back: Tool = wire.into();
         assert_eq!(back.task_support, None);
+    }
+
+    #[test]
+    fn a_key_no_revision_defines_crosses_every_wire() {
+        use crate::v2025_06_18::types as v0618;
+        let vendor = json!({ "trace": [1, "two"] });
+        let wire: v0728::CallToolResult = serde_json::from_value(json!({
+            "content": [], "resultType": "complete", "x-vendor": vendor
+        }))
+        .unwrap();
+        let result: CallToolResult = wire.into();
+        assert_eq!(result.extra.get("x-vendor"), Some(&vendor));
+
+        let legacy_wire = legacy::CallToolResult::from(result.clone());
+        assert_eq!(
+            serde_json::to_value(&legacy_wire).unwrap()["x-vendor"],
+            vendor
+        );
+        let oldest = serde_json::to_value(v0618::CallToolResult::from(legacy_wire)).unwrap();
+        assert_eq!(oldest["x-vendor"], vendor);
+        let draft = serde_json::to_value(v0728::CallToolResult::from(result)).unwrap();
+        assert_eq!(draft["x-vendor"], vendor);
+    }
+
+    /// `icons` is unknown on `2025-06-18`, so a peer that sends it there has it
+    /// kept as an extra; on `2025-11-25` it is a field, and the extra must not
+    /// write it a second time.
+    #[test]
+    fn an_extra_never_shadows_a_field_the_target_declares() {
+        use crate::v2025_06_18::types as v0618;
+        let oldest: v0618::Tool = serde_json::from_value(json!({
+            "name": "t", "inputSchema": { "type": "object" },
+            "icons": [{ "src": "https://example.com/i.png" }], "x-vendor": 1
+        }))
+        .unwrap();
+        assert!(oldest.extra.contains_key("icons"));
+        let legacy_wire = legacy::Tool::from(oldest);
+        let text = serde_json::to_string(&legacy_wire).unwrap();
+        assert!(text.matches("\"icons\"").count() <= 1, "{text}");
+        let tool: Tool = legacy_wire.into();
+        assert!(tool.extra.contains_key("x-vendor") && !tool.extra.contains_key("icons"));
+
+        // And from the neutral side, an extra named like a field is dropped.
+        let mut tool = Tool::new("t", json!({ "type": "object" }));
+        tool.extra.insert("name".into(), json!("shadow"));
+        let text = serde_json::to_string(&v0728::Tool::from(tool)).unwrap();
+        assert_eq!(text.matches("\"name\"").count(), 1, "{text}");
     }
 
     #[test]

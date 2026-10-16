@@ -155,7 +155,9 @@ impl RemoteServerBuilder {
         Self {
             target,
             auth: OutboundAuth::None,
-            client: ClientBuilder::new("turbomcp-proxy", env!("CARGO_PKG_VERSION")),
+            // One malformed item upstream costs that item, not the catalogue.
+            client: ClientBuilder::new("turbomcp-proxy", env!("CARGO_PKG_VERSION"))
+                .with_lenient_lists(true),
             catalog_ttl: DEFAULT_CATALOG_TTL,
             shutdown_grace: Duration::from_secs(2),
             forward_input: true,
@@ -541,6 +543,10 @@ impl RemoteServer {
     /// connection for every caller ([`UpstreamKey::Global`]), not reopened if
     /// it closes. The upstream's requests for input are bridged to
     /// downstream callers; handlers set on `client` for them are replaced.
+    /// A gateway usually wants
+    /// [`with_lenient_lists`](turbomcp_client::ClientBuilder::with_lenient_lists)
+    /// on `client`, as the builder's default client has it: one malformed
+    /// item upstream then costs that item, not the whole catalogue.
     ///
     /// # Errors
     /// The handshake failing.

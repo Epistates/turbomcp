@@ -46,8 +46,8 @@ fn main() -> Result<()> {
         .map(|defs| defs.keys().cloned().collect())
         .unwrap_or_default();
 
-    let schema: schemars::schema::RootSchema =
-        serde_json::from_value(value).context("interpreting normalized JSON as a RootSchema")?;
+    let schema: schemars::schema::RootSchema = serde_json::from_value(value.clone())
+        .context("interpreting normalized JSON as a RootSchema")?;
 
     let mut settings = TypeSpaceSettings::default();
     settings
@@ -76,6 +76,7 @@ use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, v
     let mut file = syn::parse_file(&body).context("parsing generated tokens as a Rust file")?;
     let lenient_fields = lenient::apply(&mut file);
     let pretty = docs::scrub(&to_no_std(&prettyplease::unparse(&file)), &defs);
+    let pretty = format!("{pretty}{}", declared_fields(&value, &pretty));
     // typify's shape for an `anyOf` it cannot discriminate: a struct with one
     // flattened `Option` per member, all filled by whatever fits. See
     // `normalize::drop_undiscriminated_unions`.
@@ -111,6 +112,37 @@ use ::alloc::{borrow::ToOwned, boxed::Box, format, string::{String, ToString}, v
         pretty.lines().count()
     );
     Ok(())
+}
+
+/// `DECLARED` for every open definition: the keys its schema names, so a
+/// conversion can keep `extra` (the keys it doesn't) from shadowing a field
+/// another revision declares, which would write the key twice.
+fn declared_fields(schema: &serde_json::Value, src: &str) -> String {
+    let types = names::generated_types(src);
+    let defs = schema
+        .get("$defs")
+        .or_else(|| schema.get("definitions"))
+        .and_then(serde_json::Value::as_object);
+    let mut out = String::new();
+    for (name, def) in defs.into_iter().flatten() {
+        let open = def
+            .get("additionalProperties")
+            .is_some_and(|rest| rest == &serde_json::Value::Bool(true) || rest.is_object());
+        let (Some(props), true, Some(ty)) = (
+            def.get("properties").and_then(serde_json::Value::as_object),
+            open,
+            names::rust_name(name, &types),
+        ) else {
+            continue;
+        };
+        let keys: Vec<String> = props.keys().map(|k| format!("{k:?}")).collect();
+        out.push_str(&format!(
+            "impl {ty} {{\n    /// The keys this revision declares for `{name}`; `extra` holds any other.\n    \
+             pub const DECLARED: &'static [&'static str] = &[{}];\n}}\n",
+            keys.join(", ")
+        ));
+    }
+    out
 }
 
 /// Rewrite typify's `::std::` absolute paths to `::alloc::`/`::core::` so the

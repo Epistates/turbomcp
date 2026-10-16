@@ -258,6 +258,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     ok_value(
         id,
         &legacy::CreateTaskResult {
+            extra: Default::default(),
             meta: Map::new(),
             task: to_wire_task(&snap),
         },
@@ -309,6 +310,7 @@ pub(super) async fn handle_tasks_method(
                 Ok((page, next_cursor)) => ok_value(
                     id,
                     &legacy::ListTasksResult {
+                        extra: Default::default(),
                         meta: Map::new(),
                         next_cursor,
                         tasks: page.iter().map(to_wire_task).collect(),

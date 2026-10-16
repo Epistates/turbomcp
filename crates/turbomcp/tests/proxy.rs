@@ -926,3 +926,44 @@ async fn sampling_and_roots_reach_the_caller_only_when_allowed() {
     };
     assert!(refused.to_lowercase().contains("sampling"), "{refused}");
 }
+
+#[derive(Clone)]
+struct Vendor;
+
+#[server(name = "vendor", version = "1.0.0")]
+impl Vendor {
+    /// Answers with a key no revision of the spec defines.
+    #[tool]
+    async fn traced(&self) -> neutral::CallToolResult {
+        let mut result = neutral::CallToolResult::text("ok");
+        result.extra.insert(
+            "x-vendor-trace".into(),
+            json!({ "span": "abc", "hops": [1, 2] }),
+        );
+        result
+    }
+}
+
+/// A result's top-level key that no revision defines (`schema.ts`:
+/// `[key: string]: unknown`) reaches the caller through the gateway, on every
+/// pair of revisions, instead of being dropped by the typed hop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_vendor_key_on_a_result_crosses_the_gateway() {
+    for upstream in [ConnectMode::Modern, ConnectMode::Legacy] {
+        for downstream in [ConnectMode::Modern, ConnectMode::Legacy] {
+            let remote = remote(Vendor.into_server(), upstream).await;
+            let client = turbomcp::testing::connect(
+                remote.into_server(),
+                ClientBuilder::new("agent", "1.0.0").with_connect_mode(downstream),
+            )
+            .await
+            .expect("downstream handshake");
+            let result = client.call_tool("traced", Map::new()).await.unwrap();
+            assert_eq!(
+                result.extra.get("x-vendor-trace"),
+                Some(&json!({ "span": "abc", "hops": [1, 2] })),
+                "{upstream:?} upstream, {downstream:?} downstream"
+            );
+        }
+    }
+}

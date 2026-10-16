@@ -612,6 +612,7 @@ impl From<v11::Tool> for v06::Tool {
     /// act on the field even if it were sent.
     fn from(t: v11::Tool) -> Self {
         let v11::Tool {
+            extra,
             annotations,
             description,
             execution: _,
@@ -623,6 +624,7 @@ impl From<v11::Tool> for v06::Tool {
             title,
         } = t;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             annotations: annotations.map(Into::into),
             description,
             input_schema: input_schema.into(),
@@ -637,6 +639,7 @@ impl From<v11::Tool> for v06::Tool {
 impl From<v06::Tool> for v11::Tool {
     fn from(t: v06::Tool) -> Self {
         let v06::Tool {
+            extra,
             annotations,
             description,
             input_schema,
@@ -646,6 +649,7 @@ impl From<v06::Tool> for v11::Tool {
             title,
         } = t;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             annotations: annotations.map(Into::into),
             description,
             execution: None,
@@ -665,6 +669,7 @@ impl From<v11::Resource> for v06::Resource {
     /// Drops `icons`.
     fn from(r: v11::Resource) -> Self {
         let v11::Resource {
+            extra,
             annotations,
             description,
             icons: _,
@@ -676,6 +681,7 @@ impl From<v11::Resource> for v06::Resource {
             uri,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             annotations: annotations.map(Into::into),
             description,
             meta,
@@ -691,6 +697,7 @@ impl From<v11::Resource> for v06::Resource {
 impl From<v06::Resource> for v11::Resource {
     fn from(r: v06::Resource) -> Self {
         let v06::Resource {
+            extra,
             annotations,
             description,
             meta,
@@ -701,6 +708,7 @@ impl From<v06::Resource> for v11::Resource {
             uri,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             annotations: annotations.map(Into::into),
             description,
             icons: Vec::new(),
@@ -718,6 +726,7 @@ impl From<v11::ResourceTemplate> for v06::ResourceTemplate {
     /// Drops `icons`.
     fn from(t: v11::ResourceTemplate) -> Self {
         let v11::ResourceTemplate {
+            extra,
             annotations,
             description,
             icons: _,
@@ -728,6 +737,7 @@ impl From<v11::ResourceTemplate> for v06::ResourceTemplate {
             uri_template,
         } = t;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             annotations: annotations.map(Into::into),
             description,
             meta,
@@ -742,6 +752,7 @@ impl From<v11::ResourceTemplate> for v06::ResourceTemplate {
 impl From<v06::ResourceTemplate> for v11::ResourceTemplate {
     fn from(t: v06::ResourceTemplate) -> Self {
         let v06::ResourceTemplate {
+            extra,
             annotations,
             description,
             meta,
@@ -751,6 +762,7 @@ impl From<v06::ResourceTemplate> for v11::ResourceTemplate {
             uri_template,
         } = t;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             annotations: annotations.map(Into::into),
             description,
             icons: Vec::new(),
@@ -803,6 +815,7 @@ impl From<v11::Prompt> for v06::Prompt {
     /// Drops `icons`.
     fn from(p: v11::Prompt) -> Self {
         let v11::Prompt {
+            extra,
             arguments,
             description,
             icons: _,
@@ -811,6 +824,7 @@ impl From<v11::Prompt> for v06::Prompt {
             title,
         } = p;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             arguments: arguments.into_iter().map(Into::into).collect(),
             description,
             meta,
@@ -823,6 +837,7 @@ impl From<v11::Prompt> for v06::Prompt {
 impl From<v06::Prompt> for v11::Prompt {
     fn from(p: v06::Prompt) -> Self {
         let v06::Prompt {
+            extra,
             arguments,
             description,
             meta,
@@ -830,6 +845,7 @@ impl From<v06::Prompt> for v11::Prompt {
             title,
         } = p;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             arguments: arguments.into_iter().map(Into::into).collect(),
             description,
             icons: Vec::new(),
@@ -865,11 +881,13 @@ impl From<v06::PromptMessage> for v11::PromptMessage {
 impl From<v11::ListToolsResult> for v06::ListToolsResult {
     fn from(r: v11::ListToolsResult) -> Self {
         let v11::ListToolsResult {
+            extra,
             meta,
             next_cursor,
             tools,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             meta,
             next_cursor,
             tools: tools.into_iter().map(Into::into).collect(),
@@ -880,11 +898,13 @@ impl From<v11::ListToolsResult> for v06::ListToolsResult {
 impl From<v06::ListToolsResult> for v11::ListToolsResult {
     fn from(r: v06::ListToolsResult) -> Self {
         let v06::ListToolsResult {
+            extra,
             meta,
             next_cursor,
             tools,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             meta,
             next_cursor,
             tools: tools.into_iter().map(Into::into).collect(),
@@ -895,12 +915,14 @@ impl From<v06::ListToolsResult> for v11::ListToolsResult {
 impl From<v11::CallToolResult> for v06::CallToolResult {
     fn from(r: v11::CallToolResult) -> Self {
         let v11::CallToolResult {
+            extra,
             content,
             is_error,
             meta,
             structured_content,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             content: content.into_iter().map(Into::into).collect(),
             is_error,
             meta,
@@ -912,12 +934,14 @@ impl From<v11::CallToolResult> for v06::CallToolResult {
 impl From<v06::CallToolResult> for v11::CallToolResult {
     fn from(r: v06::CallToolResult) -> Self {
         let v06::CallToolResult {
+            extra,
             content,
             is_error,
             meta,
             structured_content,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             content: content.into_iter().map(Into::into).collect(),
             is_error,
             meta,
@@ -929,11 +953,13 @@ impl From<v06::CallToolResult> for v11::CallToolResult {
 impl From<v11::ListResourcesResult> for v06::ListResourcesResult {
     fn from(r: v11::ListResourcesResult) -> Self {
         let v11::ListResourcesResult {
+            extra,
             meta,
             next_cursor,
             resources,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             meta,
             next_cursor,
             resources: resources.into_iter().map(Into::into).collect(),
@@ -944,11 +970,13 @@ impl From<v11::ListResourcesResult> for v06::ListResourcesResult {
 impl From<v06::ListResourcesResult> for v11::ListResourcesResult {
     fn from(r: v06::ListResourcesResult) -> Self {
         let v06::ListResourcesResult {
+            extra,
             meta,
             next_cursor,
             resources,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             meta,
             next_cursor,
             resources: resources.into_iter().map(Into::into).collect(),
@@ -959,11 +987,13 @@ impl From<v06::ListResourcesResult> for v11::ListResourcesResult {
 impl From<v11::ListResourceTemplatesResult> for v06::ListResourceTemplatesResult {
     fn from(r: v11::ListResourceTemplatesResult) -> Self {
         let v11::ListResourceTemplatesResult {
+            extra,
             meta,
             next_cursor,
             resource_templates,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             meta,
             next_cursor,
             resource_templates: resource_templates.into_iter().map(Into::into).collect(),
@@ -974,11 +1004,13 @@ impl From<v11::ListResourceTemplatesResult> for v06::ListResourceTemplatesResult
 impl From<v06::ListResourceTemplatesResult> for v11::ListResourceTemplatesResult {
     fn from(r: v06::ListResourceTemplatesResult) -> Self {
         let v06::ListResourceTemplatesResult {
+            extra,
             meta,
             next_cursor,
             resource_templates,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             meta,
             next_cursor,
             resource_templates: resource_templates.into_iter().map(Into::into).collect(),
@@ -988,8 +1020,13 @@ impl From<v06::ListResourceTemplatesResult> for v11::ListResourceTemplatesResult
 
 impl From<v11::ReadResourceResult> for v06::ReadResourceResult {
     fn from(r: v11::ReadResourceResult) -> Self {
-        let v11::ReadResourceResult { contents, meta } = r;
+        let v11::ReadResourceResult {
+            contents,
+            meta,
+            extra,
+        } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             contents: contents.into_iter().map(Into::into).collect(),
             meta,
         }
@@ -998,8 +1035,13 @@ impl From<v11::ReadResourceResult> for v06::ReadResourceResult {
 
 impl From<v06::ReadResourceResult> for v11::ReadResourceResult {
     fn from(r: v06::ReadResourceResult) -> Self {
-        let v06::ReadResourceResult { contents, meta } = r;
+        let v06::ReadResourceResult {
+            contents,
+            meta,
+            extra,
+        } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             contents: contents.into_iter().map(Into::into).collect(),
             meta,
         }
@@ -1009,11 +1051,13 @@ impl From<v06::ReadResourceResult> for v11::ReadResourceResult {
 impl From<v11::ListPromptsResult> for v06::ListPromptsResult {
     fn from(r: v11::ListPromptsResult) -> Self {
         let v11::ListPromptsResult {
+            extra,
             meta,
             next_cursor,
             prompts,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             meta,
             next_cursor,
             prompts: prompts.into_iter().map(Into::into).collect(),
@@ -1024,11 +1068,13 @@ impl From<v11::ListPromptsResult> for v06::ListPromptsResult {
 impl From<v06::ListPromptsResult> for v11::ListPromptsResult {
     fn from(r: v06::ListPromptsResult) -> Self {
         let v06::ListPromptsResult {
+            extra,
             meta,
             next_cursor,
             prompts,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             meta,
             next_cursor,
             prompts: prompts.into_iter().map(Into::into).collect(),
@@ -1039,11 +1085,13 @@ impl From<v06::ListPromptsResult> for v11::ListPromptsResult {
 impl From<v11::GetPromptResult> for v06::GetPromptResult {
     fn from(r: v11::GetPromptResult) -> Self {
         let v11::GetPromptResult {
+            extra,
             description,
             messages,
             meta,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             description,
             messages: messages.into_iter().map(Into::into).collect(),
             meta,
@@ -1054,11 +1102,13 @@ impl From<v11::GetPromptResult> for v06::GetPromptResult {
 impl From<v06::GetPromptResult> for v11::GetPromptResult {
     fn from(r: v06::GetPromptResult) -> Self {
         let v06::GetPromptResult {
+            extra,
             description,
             messages,
             meta,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             description,
             messages: messages.into_iter().map(Into::into).collect(),
             meta,
@@ -1098,8 +1148,13 @@ impl From<v06::CompleteResultCompletion> for v11::CompleteResultCompletion {
 
 impl From<v11::CompleteResult> for v06::CompleteResult {
     fn from(r: v11::CompleteResult) -> Self {
-        let v11::CompleteResult { completion, meta } = r;
+        let v11::CompleteResult {
+            completion,
+            meta,
+            extra,
+        } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             completion: completion.into(),
             meta,
         }
@@ -1108,8 +1163,13 @@ impl From<v11::CompleteResult> for v06::CompleteResult {
 
 impl From<v06::CompleteResult> for v11::CompleteResult {
     fn from(r: v06::CompleteResult) -> Self {
-        let v06::CompleteResult { completion, meta } = r;
+        let v06::CompleteResult {
+            completion,
+            meta,
+            extra,
+        } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             completion: completion.into(),
             meta,
         }
@@ -1123,6 +1183,7 @@ impl From<v11::Implementation> for v06::Implementation {
     /// additions to `Implementation`.
     fn from(i: v11::Implementation) -> Self {
         let v11::Implementation {
+            extra,
             description: _,
             icons: _,
             name,
@@ -1131,6 +1192,7 @@ impl From<v11::Implementation> for v06::Implementation {
             website_url: _,
         } = i;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             name,
             title,
             version,
@@ -1141,11 +1203,13 @@ impl From<v11::Implementation> for v06::Implementation {
 impl From<v06::Implementation> for v11::Implementation {
     fn from(i: v06::Implementation) -> Self {
         let v06::Implementation {
+            extra,
             name,
             title,
             version,
         } = i;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             description: None,
             icons: Vec::new(),
             name,
@@ -1259,6 +1323,7 @@ impl From<v06::ServerCapabilities> for v11::ServerCapabilities {
 impl From<v11::InitializeResult> for v06::InitializeResult {
     fn from(r: v11::InitializeResult) -> Self {
         let v11::InitializeResult {
+            extra,
             capabilities,
             instructions,
             meta,
@@ -1266,6 +1331,7 @@ impl From<v11::InitializeResult> for v06::InitializeResult {
             server_info,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             capabilities: capabilities.into(),
             instructions,
             meta,
@@ -1278,6 +1344,7 @@ impl From<v11::InitializeResult> for v06::InitializeResult {
 impl From<v06::InitializeResult> for v11::InitializeResult {
     fn from(r: v06::InitializeResult) -> Self {
         let v06::InitializeResult {
+            extra,
             capabilities,
             instructions,
             meta,
@@ -1285,6 +1352,7 @@ impl From<v06::InitializeResult> for v11::InitializeResult {
             server_info,
         } = r;
         Self {
+            extra: crate::neutral::undeclared(extra, Self::DECLARED),
             capabilities: capabilities.into(),
             instructions,
             meta,

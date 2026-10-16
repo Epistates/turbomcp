@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ClientBuilder::with_lenient_lists`: a list item the client can't decode
+  is left out (and logged at `warn` with its index and why) instead of
+  failing the whole `tools/list`, `resources/list`,
+  `resources/templates/list` or `prompts/list`. Off by default, as in every
+  other SDK; the gateway's default client turns it on, so one malformed
+  upstream tool doesn't hide the rest of the catalogue.
+
 - `ServerConfig`: every server setting in one value, built once and shared
   (`ServerBuilder::with_config`, `VersionDispatcher::with_config`).
   `with_inline_request_timeout` bounds a handler's inline question to a
@@ -1329,6 +1336,18 @@ Earlier in this cycle:
 
 ### Changed
 
+- **Breaking:** results and catalogue items keep the keys the spec doesn't
+  define. `schema.ts` declares every result open (`[key: string]: unknown`),
+  but each was a closed struct, so a gateway relaying an upstream through
+  the typed client dropped every vendor or extension key at the top level
+  of a result, tool, resource, template or prompt. The generated `*Result`,
+  `Tool`, `Resource`, `ResourceTemplate`, `Prompt` and `Implementation`
+  types gain a flattened `extra` (and a `DECLARED` list of the keys their
+  revision names); the neutral `Tool`, `Resource`, `ResourceTemplate`,
+  `Prompt`, `CallToolResult`, `ReadResourceResult`, `GetPromptResult`,
+  `CompleteResult` and the four list results gain `extra`, carried across
+  every wire. A key the target revision declares is never written from
+  `extra`, so it can't appear twice.
 - **Breaking:** the generated wire types drop the unions nothing can decode
   into: `ServerResult`, `ClientResult` (except `2026-07-28`'s, which is
   `Result`), `PrimitiveSchemaDefinition`, `EnumSchema` (except

@@ -120,6 +120,7 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     }
 
     let result = legacy::InitializeResult {
+        extra: Default::default(),
         capabilities: build_legacy_capabilities(
             router,
             router.capability_flags(server),
@@ -241,6 +242,7 @@ fn impl_to_wire<W: serde::de::DeserializeOwned>(
 
 fn to_legacy_impl(i: Implementation) -> legacy::Implementation {
     impl_to_wire(i, |i| legacy::Implementation {
+        extra: Default::default(),
         description: None,
         icons: Vec::new(),
         name: i.name,
@@ -350,6 +352,7 @@ fn build_discover_result<S: McpServerCore>(
             }),
     };
     v0728::DiscoverResult {
+        extra: Default::default(),
         cache_scope: match cache.scope {
             neutral::CacheScope::Private => v0728::DiscoverResultCacheScope::Private,
             neutral::CacheScope::Public => v0728::DiscoverResultCacheScope::Public,
@@ -393,6 +396,7 @@ pub(super) fn stamp_server_info(msg: &mut JsonRpcMessage, identity: Implementati
 
 fn to_draft_impl(i: Implementation) -> v0728::Implementation {
     impl_to_wire(i, |i| v0728::Implementation {
+        extra: Default::default(),
         description: None,
         icons: Vec::new(),
         name: i.name,

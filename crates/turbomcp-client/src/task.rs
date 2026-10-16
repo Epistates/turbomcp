@@ -141,6 +141,9 @@ pub struct TaskPage {
 /// How a [`Client::call_tool_detached`](crate::Client::call_tool_detached)
 /// call came back.
 #[derive(Debug)]
+// Returned once per call and matched at once, never held in bulk; boxing the
+// result would only cost every caller a deref.
+#[allow(clippy::large_enum_variant)]
 pub enum Detached {
     /// The server answered inline: there is no task.
     Done(neutral::CallToolResult),

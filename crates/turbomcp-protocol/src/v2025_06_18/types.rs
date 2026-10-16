@@ -301,6 +301,8 @@ pub struct CallToolResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub structured_content: ::core::option::Option<JsonObject>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 /// This notification can be sent by either side to indicate that it is cancelling a previously-issued request.
 ///
@@ -624,6 +626,8 @@ pub struct CompleteResult {
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///`CompleteResultCompletion`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -847,6 +851,8 @@ pub struct CreateMessageResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub stop_reason: ::core::option::Option<::alloc::string::String>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///`CreateMessageResultContent`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -999,6 +1005,8 @@ pub struct ElicitResult {
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 /// The user action in response to the elicitation.
 /// - "accept": User submitted the form/confirmed the action
@@ -1340,6 +1348,8 @@ pub struct GetPromptResult {
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///An image provided to or from an LLM.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -1423,6 +1433,8 @@ pub struct Implementation {
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
     pub version: ::alloc::string::String,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///This request is sent from the client to the server when it first connects, asking it to begin initialization.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -1508,6 +1520,8 @@ pub struct InitializeResult {
     pub protocol_version: ::alloc::string::String,
     #[serde(rename = "serverInfo")]
     pub server_info: Implementation,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///This notification is sent from the client to the server after initialization has finished.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -1977,6 +1991,8 @@ pub struct ListPromptsResult {
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     pub prompts: ::alloc::vec::Vec<Prompt>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///Sent from the client to request a list of resource templates the server has.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -2059,6 +2075,8 @@ pub struct ListResourceTemplatesResult {
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     #[serde(rename = "resourceTemplates")]
     pub resource_templates: ::alloc::vec::Vec<ResourceTemplate>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///Sent from the client to request a list of resources the server has.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -2140,6 +2158,8 @@ pub struct ListResourcesResult {
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     pub resources: ::alloc::vec::Vec<Resource>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 /// Sent from the server to request a list of root URIs from the client. Roots allow
 /// servers to ask for specific directories or files to operate on. A common example
@@ -2237,6 +2257,8 @@ pub struct ListRootsResult {
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
     pub roots: ::alloc::vec::Vec<Root>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///Sent from the client to request a list of tools the server has.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -2318,6 +2340,8 @@ pub struct ListToolsResult {
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
     pub tools: ::alloc::vec::Vec<Tool>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 /// The severity of a log message.
 ///
@@ -2632,7 +2656,7 @@ pub struct PaginatedRequestParams {
     pub cursor: ::core::option::Option<::alloc::string::String>,
 }
 ///`PaginatedResult`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct PaginatedResult {
     ///See [General fields: `_meta`](https://modelcontextprotocol.io/specification/2025-06-18/basic#meta) for notes on `_meta` usage.
     #[serde(
@@ -2648,6 +2672,8 @@ pub struct PaginatedResult {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub next_cursor: ::core::option::Option<::alloc::string::String>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///A ping, issued by either the server or the client, to check that the other party is still alive. The receiver must promptly respond, or else may be disconnected.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -2842,6 +2868,8 @@ pub struct Prompt {
     /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///Describes an argument that a prompt can accept.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3074,6 +3102,8 @@ pub struct ReadResourceResult {
         skip_serializing_if = "::serde_json::Map::is_empty"
     )]
     pub meta: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///`ReadResourceResultContentsItem`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3184,6 +3214,8 @@ pub struct Resource {
     pub title: ::core::option::Option<::alloc::string::String>,
     ///The URI of this resource.
     pub uri: ::alloc::string::String,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///The contents of a specific resource or sub-resource.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -3404,6 +3436,8 @@ pub struct ResourceTemplate {
     ///A URI template (according to RFC 6570) that can be used to construct resource URIs.
     #[serde(rename = "uriTemplate")]
     pub uri_template: ::alloc::string::String,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///A reference to a resource or resource template definition.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -4206,6 +4240,8 @@ pub struct Tool {
     /// if present).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 /// Additional properties describing a Tool to clients.
 ///
@@ -4444,4 +4480,114 @@ pub mod error {
             Self(value.into())
         }
     }
+}
+impl CallToolResult {
+    /// The keys this revision declares for `CallToolResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] =
+        &["_meta", "content", "isError", "structuredContent"];
+}
+impl CompleteResult {
+    /// The keys this revision declares for `CompleteResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "completion"];
+}
+impl CreateMessageResult {
+    /// The keys this revision declares for `CreateMessageResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] =
+        &["_meta", "content", "model", "role", "stopReason"];
+}
+impl ElicitResult {
+    /// The keys this revision declares for `ElicitResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "action", "content"];
+}
+impl GetPromptResult {
+    /// The keys this revision declares for `GetPromptResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "description", "messages"];
+}
+impl Implementation {
+    /// The keys this revision declares for `Implementation`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["name", "title", "version"];
+}
+impl InitializeResult {
+    /// The keys this revision declares for `InitializeResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &[
+        "_meta",
+        "capabilities",
+        "instructions",
+        "protocolVersion",
+        "serverInfo",
+    ];
+}
+impl ListPromptsResult {
+    /// The keys this revision declares for `ListPromptsResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "nextCursor", "prompts"];
+}
+impl ListResourceTemplatesResult {
+    /// The keys this revision declares for `ListResourceTemplatesResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "nextCursor", "resourceTemplates"];
+}
+impl ListResourcesResult {
+    /// The keys this revision declares for `ListResourcesResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "nextCursor", "resources"];
+}
+impl ListRootsResult {
+    /// The keys this revision declares for `ListRootsResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "roots"];
+}
+impl ListToolsResult {
+    /// The keys this revision declares for `ListToolsResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "nextCursor", "tools"];
+}
+impl PaginatedResult {
+    /// The keys this revision declares for `PaginatedResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "nextCursor"];
+}
+impl Prompt {
+    /// The keys this revision declares for `Prompt`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] =
+        &["_meta", "arguments", "description", "name", "title"];
+}
+impl ReadResourceResult {
+    /// The keys this revision declares for `ReadResourceResult`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "contents"];
+}
+impl Resource {
+    /// The keys this revision declares for `Resource`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &[
+        "_meta",
+        "annotations",
+        "description",
+        "mimeType",
+        "name",
+        "size",
+        "title",
+        "uri",
+    ];
+}
+impl ResourceTemplate {
+    /// The keys this revision declares for `ResourceTemplate`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &[
+        "_meta",
+        "annotations",
+        "description",
+        "mimeType",
+        "name",
+        "title",
+        "uriTemplate",
+    ];
+}
+impl Result {
+    /// The keys this revision declares for `Result`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta"];
+}
+impl Tool {
+    /// The keys this revision declares for `Tool`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &[
+        "_meta",
+        "annotations",
+        "description",
+        "inputSchema",
+        "name",
+        "outputSchema",
+        "title",
+    ];
 }
