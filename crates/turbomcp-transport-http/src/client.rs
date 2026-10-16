@@ -106,6 +106,66 @@ impl From<&str> for PumpFailure {
 /// Returns whether the caller should retry: `true` when a live session is now
 /// in place (this call established it, or a concurrent one already had) and
 /// `false` when there is no handshake to replay.
+/// The state a `2025-11-25` session holds besides its handshake: the log
+/// level the client chose and the resources it subscribed to. A replacement
+/// session starts without them, so recovery sets them up again; without it,
+/// `resources/updated` and log messages silently stopped after the server
+/// expired a session.
+#[derive(Default)]
+struct SessionReplay {
+    log_level: Option<serde_json::Value>,
+    subscriptions: std::collections::BTreeMap<String, Option<serde_json::Value>>,
+}
+
+impl SessionReplay {
+    fn record(&mut self, method: &str, params: Option<&serde_json::Value>) {
+        let uri = || {
+            params
+                .and_then(|p| p.get("uri"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        match method {
+            request::LOGGING_SET_LEVEL => self.log_level = params.cloned(),
+            request::RESOURCES_SUBSCRIBE => {
+                if let Some(uri) = uri() {
+                    self.subscriptions.insert(uri, params.cloned());
+                }
+            }
+            request::RESOURCES_UNSUBSCRIBE => {
+                if let Some(uri) = uri() {
+                    self.subscriptions.remove(&uri);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The requests that set this state up on a new session.
+    fn requests(&self) -> Vec<JsonRpcMessage> {
+        let level = self
+            .log_level
+            .iter()
+            .map(|params| (request::LOGGING_SET_LEVEL, Some(params.clone())));
+        let subscriptions = self
+            .subscriptions
+            .values()
+            .map(|params| (request::RESOURCES_SUBSCRIBE, params.clone()));
+        level
+            .chain(subscriptions)
+            .enumerate()
+            .map(|(n, (method, params))| {
+                // Ids of the transport's own, apart from the client's integers.
+                JsonRpcMessage::Request(turbomcp_core::JsonRpcRequest::new(
+                    format!("turbomcp-session-replay-{n}"),
+                    method,
+                    params,
+                ))
+            })
+            .collect()
+    }
+}
+
 async fn recover_session(shared: &Arc<Shared>, sent: Option<&str>) -> Result<bool, String> {
     let _single_flight = shared.recovery.lock().await;
     // Whoever held the lock first may have replaced the session already, in
@@ -162,10 +222,26 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
     else {
         return Err("re-initialize established no session".into());
     };
+    let is_sse = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("text/event-stream"));
+    // The frames are a repeat of a handshake the client has already
+    // processed, except for one thing: a server that negotiates a different
+    // revision this time has changed the wire under the client, which was
+    // told the first answer. Refuse it rather than speak the wrong shape.
+    let body = bounded_body(resp, &shared.limits).await.unwrap_or_default();
+    let negotiated = handshake_version(&body, is_sse);
+    let expected = shared.version.lock().clone();
+    if let (Some(negotiated), Some(expected)) = (&negotiated, &expected)
+        && negotiated != expected
+    {
+        return Err(format!(
+            "the replacement session negotiated {negotiated}, not {expected}"
+        ));
+    }
     *shared.session.lock() = Some(sid.clone());
-    // Drain the body so the connection can be reused; the frames are a repeat
-    // of a handshake the client has already processed.
-    let _ = bounded_body(resp, &shared.limits).await;
     // "After successful initialization, the client MUST send an `initialized`
     // notification." A new session is a new initialization, and a server may
     // refuse everything until it arrives.
@@ -178,7 +254,7 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
         .post(&shared.url)
         .header(ACCEPT, "application/json, text/event-stream")
         .header(CONTENT_TYPE, "application/json")
-        .header(headers::SESSION_ID, sid)
+        .header(headers::SESSION_ID, sid.as_str())
         .body(initialized);
     if let Some(version) = shared.version.lock().clone() {
         req = req.header(headers::PROTOCOL_VERSION, version);
@@ -198,15 +274,62 @@ async fn reinitialize(shared: &Arc<Shared>, handshake: &JsonRpcMessage) -> Resul
             resp.status()
         ));
     }
+    // The session's own state, set up again. Best effort: a refusal (a
+    // resource that no longer exists) is the server's answer to give, and
+    // the session itself is fine.
+    let replay = shared.replay.lock().requests();
+    for request in replay {
+        let Ok(body) = serde_json::to_string(&request) else {
+            continue;
+        };
+        let mut req = shared
+            .http
+            .post(&shared.url)
+            .header(ACCEPT, "application/json, text/event-stream")
+            .header(CONTENT_TYPE, "application/json")
+            .header(headers::SESSION_ID, sid.as_str())
+            .body(body);
+        if let Some(version) = shared.version.lock().clone() {
+            req = req.header(headers::PROTOCOL_VERSION, version);
+        }
+        let req = shared.authorize(req).await;
+        match req.send().await {
+            Ok(resp) => {
+                let _ = bounded_body(resp, &shared.limits).await;
+            }
+            Err(e) => tracing::debug!(error = %e, "could not restore session state"),
+        }
+    }
     Ok(())
+}
+
+/// The `protocolVersion` a handshake answer carries, in a JSON body or an
+/// SSE stream's `data` lines.
+fn handshake_version(body: &[u8], is_sse: bool) -> Option<String> {
+    let version = |frame: serde_json::Value| {
+        frame
+            .get("result")?
+            .get("protocolVersion")?
+            .as_str()
+            .map(str::to_owned)
+    };
+    if !is_sse {
+        return serde_json::from_slice(body).ok().and_then(version);
+    }
+    String::from_utf8_lossy(body)
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .filter_map(|data| serde_json::from_str(data.trim()).ok())
+        .find_map(version)
 }
 
 /// How long to wait before re-opening the standalone stream when the server
 /// sends no `retry:` of its own.
 const DEFAULT_SSE_RETRY: Duration = Duration::from_secs(1);
 
-/// Maximum accepted server retry delay. Larger delays stop recovery; they
-/// are never shortened, which would reconnect earlier than the server permits.
+/// How far refusal backoff grows the standalone stream's reconnect delay. A
+/// server `retry` longer than this is waited out as given, never shortened:
+/// that would reconnect earlier than the server permits.
 const MAX_SSE_RETRY: Duration = Duration::from_secs(30);
 
 /// How long the handshake waits for the standalone stream to be established
@@ -308,6 +431,9 @@ struct Shared {
     /// would mint a session per concurrent request, leaving every one but the
     /// last talking to a session the server has already replaced.
     recovery: tokio::sync::Mutex<()>,
+    /// What the session holds beyond the handshake, to set up again on a
+    /// replacement session.
+    replay: Mutex<SessionReplay>,
     /// The negotiated protocol version last seen on an outbound signal —
     /// the `MCP-Protocol-Version` header fallback for messages that carry no
     /// signal of their own (responses to server requests, notifications).
@@ -460,6 +586,7 @@ impl HttpClientTransport {
                 session: Mutex::new(None),
                 handshake: Mutex::new(None),
                 recovery: tokio::sync::Mutex::new(()),
+                replay: Mutex::default(),
                 version: Mutex::new(None),
                 inbound_tx,
                 listening: AtomicBool::new(false),
@@ -572,6 +699,10 @@ fn default_http_client(
 impl Transport for HttpClientTransport {
     type Error = HttpClientError;
 
+    /// Without a bearer source the connection has one principal (none). A
+    /// bearer source may hand out different principals' tokens, so the
+    /// client then keeps only results the server marked `cacheScope:
+    /// "public"`.
     fn allows_response_cache(&self) -> bool {
         self.shared.bearer.is_none()
     }
@@ -638,6 +769,12 @@ impl Transport for HttpClientTransport {
         {
             *self.shared.handshake.lock() = Some(msg.clone());
         }
+        if let JsonRpcMessage::Request(r) = &msg {
+            self.shared
+                .replay
+                .lock()
+                .record(&r.method, r.params.as_ref());
+        }
 
         // Learn the negotiated version here, in send order, not in the spawned
         // task: a task that has not run yet has not recorded it, so a DELETE
@@ -668,8 +805,18 @@ impl Transport for HttpClientTransport {
         // connection: treating it as a transport failure used to end the whole
         // client, and every in-flight call with it. Notifications and responses
         // are small and have no one waiting, so they are not held to the cap.
-        let permit = match Arc::clone(&shared.permits).try_acquire_owned() {
-            Ok(permit) => Some(permit),
+        // Nor is a `subscriptions/listen`: its POST is a stream that lives as
+        // long as the subscription, and holding a slot for each let a few
+        // subscriptions starve every ordinary call under a small `max_posts`.
+        let subscription =
+            matches!(&msg, JsonRpcMessage::Request(r) if r.method == request::SUBSCRIPTIONS_LISTEN);
+        let admitted = if subscription {
+            Ok(None)
+        } else {
+            Arc::clone(&shared.permits).try_acquire_owned().map(Some)
+        };
+        let permit = match admitted {
+            Ok(permit) => permit,
             Err(_) => match cancel {
                 None => None,
                 Some((id, _)) => {
@@ -1201,9 +1348,8 @@ async fn pump_sse(
                 Ok(())
             };
         };
-        if retry > MAX_SSE_RETRY {
-            return Err("SSE retry delay exceeds recovery limit".to_owned().into());
-        }
+        // "Clients MUST respect the `retry` field", however long: the call's
+        // own timeout bounds the wait.
         tokio::time::sleep(retry).await;
         let mut get = shared
             .http
@@ -1286,7 +1432,15 @@ async fn listen(shared: Arc<Shared>) {
             req = req.header(headers::LAST_EVENT_ID, id);
         }
 
-        let outcome = shared.authorize(req).await.send().await;
+        // Kept, so a challenge can say which token it refused.
+        let token = match &shared.bearer {
+            Some(source) => source.bearer().await,
+            None => None,
+        };
+        if let Some(token) = &token {
+            req = req.bearer_auth(token.as_str());
+        }
+        let outcome = req.send().await;
         // The server has answered the GET, one way or another: the stream is
         // up, or it has said it offers none. Either resolves what
         // [`connect_http`] is waiting on. Setting it repeatedly on reconnects
@@ -1372,6 +1526,35 @@ async fn listen(shared: Arc<Shared>) {
                 if status.as_u16() == 404 && last_event_id.take().is_some() {
                     continue;
                 }
+                // A `401`/`403` is the bearer source's to answer (refresh,
+                // re-authorize, step up), as it is for a POST: retrying with
+                // the token just refused got the same answer forever.
+                if matches!(status.as_u16(), 401 | 403)
+                    && let Some(source) = &shared.bearer
+                {
+                    let challenge = resp
+                        .headers()
+                        .get("www-authenticate")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned);
+                    match source
+                        .on_challenge(
+                            status.as_u16(),
+                            challenge.as_deref(),
+                            token.as_deref().map(String::as_str),
+                        )
+                        .await
+                    {
+                        Ok(true) if refusals == 0 => {
+                            refusals = 1;
+                            continue;
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::debug!(%error, "standalone sse stream: authorization failed");
+                        }
+                    }
+                }
                 if status.as_u16() == 404 && sent_session.is_some() {
                     match recover_session(&shared, sent_session.as_deref()).await {
                         // Reopen at once on the new session, but only once in
@@ -1397,11 +1580,9 @@ async fn listen(shared: Arc<Shared>) {
             }
         }
 
-        if retry > MAX_SSE_RETRY {
-            tracing::debug!("standalone SSE retry exceeds recovery limit");
-            return;
-        }
-        // Never sooner than the server asked; longer the more it refuses.
+        // Never sooner than the server asked (however long that is: the
+        // stream used to stop for good past 30 s); longer the more it
+        // refuses, up to `MAX_SSE_RETRY` or the server's own delay.
         let backoff = retry
             .saturating_mul(1 << refusals.min(5))
             .min(MAX_SSE_RETRY.max(retry));
@@ -1514,6 +1695,7 @@ mod tests {
             session: Mutex::new(None),
             handshake: Mutex::new(None),
             recovery: tokio::sync::Mutex::new(()),
+            replay: Mutex::default(),
             version: Mutex::new(None),
             inbound_tx: mpsc::channel(1).0,
             listening: AtomicBool::new(false),

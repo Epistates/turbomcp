@@ -27,7 +27,7 @@
 //! cold-path, user-provided trait object — exactly the case native AFIT can't
 //! store as `dyn`.
 
-use std::collections::BTreeSet;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -40,6 +40,59 @@ use turbomcp_protocol::neutral;
 
 use crate::error::{ClientError, ClientResult};
 
+/// What a handler knows about the server request it is answering, beyond the
+/// request's own params: passed to the `*_with` handler methods, whose
+/// defaults ignore it and call the plain ones.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct HandlerContext {
+    /// The server's JSON-RPC request id (`2025-*`); `None` for a
+    /// `2026-07-28` input request, which travels inside the call that needs
+    /// it and has an [`input_key`](Self::input_key) instead.
+    pub request_id: Option<turbomcp_core::RequestId>,
+    /// The `inputRequests` key a `2026-07-28` input request was sent under.
+    pub input_key: Option<String>,
+    /// The revision this connection negotiated.
+    pub protocol_version: ProtocolVersion,
+    /// The request's `_meta`, as the server sent it (trace context, the
+    /// related task, …).
+    pub meta: Map<String, Value>,
+    /// Fires when the server cancels the request (`notifications/cancelled`)
+    /// or the connection closes; the handler's future is dropped then too,
+    /// so this is for work it spawned.
+    pub cancellation: turbomcp_core::CancellationToken,
+}
+
+impl HandlerContext {
+    pub(crate) fn new(
+        protocol_version: ProtocolVersion,
+        params: Option<&Value>,
+        cancellation: turbomcp_core::CancellationToken,
+    ) -> Self {
+        Self {
+            request_id: None,
+            input_key: None,
+            protocol_version,
+            meta: params
+                .and_then(|p| p.get("_meta"))
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            cancellation,
+        }
+    }
+
+    pub(crate) fn with_request_id(mut self, id: turbomcp_core::RequestId) -> Self {
+        self.request_id = Some(id);
+        self
+    }
+
+    pub(crate) fn with_input_key(mut self, key: impl Into<String>) -> Self {
+        self.input_key = Some(key.into());
+        self
+    }
+}
+
 /// Answers `elicitation/create`: registering one declares `elicitation.form`.
 #[async_trait]
 pub trait ElicitationHandler: Send + Sync + 'static {
@@ -47,6 +100,17 @@ pub trait ElicitationHandler: Send + Sync + 'static {
     /// return their [`ElicitOutcome`](neutral::ElicitOutcome). Declining is
     /// always valid.
     async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome;
+
+    /// [`elicit`](Self::elicit), with what is known about the request. The
+    /// one the client calls; the default calls `elicit`.
+    async fn elicit_with(
+        &self,
+        ctx: &HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> neutral::ElicitOutcome {
+        let _ = ctx;
+        self.elicit(request).await
+    }
 
     /// Whether this client can also send the user out of band to a URL
     /// (`mode: "url"`), which declares `elicitation.url`.
@@ -65,6 +129,17 @@ pub trait ElicitationHandler: Send + Sync + 'static {
     async fn elicit_url(&self, request: neutral::ElicitUrlParams) -> neutral::ElicitOutcome {
         let _ = request;
         neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+    }
+
+    /// [`elicit_url`](Self::elicit_url), with what is known about the
+    /// request. The default calls `elicit_url`.
+    async fn elicit_url_with(
+        &self,
+        ctx: &HandlerContext,
+        request: neutral::ElicitUrlParams,
+    ) -> neutral::ElicitOutcome {
+        let _ = ctx;
+        self.elicit_url(request).await
     }
 
     /// An out-of-band interaction started by a URL-mode `elicitation/create`
@@ -92,6 +167,17 @@ pub trait SamplingHandler: Send + Sync + 'static {
         params: neutral::CreateMessageParams,
     ) -> ClientResult<neutral::CreateMessageResult>;
 
+    /// [`create_message`](Self::create_message), with what is known about
+    /// the request. The default calls `create_message`.
+    async fn create_message_with(
+        &self,
+        ctx: &HandlerContext,
+        params: neutral::CreateMessageParams,
+    ) -> ClientResult<neutral::CreateMessageResult> {
+        let _ = ctx;
+        self.create_message(params).await
+    }
+
     /// Which sampling features this client honours, declared as
     /// `sampling.context` / `sampling.tools`.
     ///
@@ -115,6 +201,13 @@ pub trait RootsHandler: Send + Sync + 'static {
     /// boundary this client never drew.
     async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>>;
 
+    /// [`list_roots`](Self::list_roots), with what is known about the
+    /// request. The default calls `list_roots`.
+    async fn list_roots_with(&self, ctx: &HandlerContext) -> ClientResult<Vec<neutral::Root>> {
+        let _ = ctx;
+        self.list_roots().await
+    }
+
     /// Whether this client emits `notifications/roots/list_changed` when its
     /// roots change, declared as `roots.listChanged`.
     ///
@@ -128,10 +221,16 @@ pub trait RootsHandler: Send + Sync + 'static {
 
 /// Observes server→client *notifications*. Declares no capability: receiving
 /// notifications is not something a client opts into.
+///
+/// Implement the typed hooks for the notifications you care about, or
+/// [`on_notification`](Self::on_notification) to see every one as sent; a
+/// notification reaches its typed hook (when it parses) and then
+/// `on_notification`. All default to doing nothing.
 #[async_trait]
 pub trait NotificationHandler: Send + Sync + 'static {
-    /// Observe `notifications/progress`, `notifications/message`,
-    /// `*_list_changed`, `resources/updated`, and the rest. Fire-and-forget.
+    /// Observe every notification: `notifications/progress`,
+    /// `notifications/message`, `*_list_changed`, `resources/updated`, and
+    /// the rest, as sent. Fire-and-forget.
     ///
     /// The response cache is invalidated by `list_changed` notifications
     /// independently of this hook, and
@@ -139,7 +238,70 @@ pub trait NotificationHandler: Send + Sync + 'static {
     /// [`ElicitationHandler::on_elicitation_complete`]. Progress for a call
     /// made with [`CallOptions::on_progress`](crate::CallOptions::on_progress)
     /// goes to that call instead of here.
-    async fn on_notification(&self, method: String, params: Option<Value>);
+    async fn on_notification(&self, method: String, params: Option<Value>) {
+        let _ = (method, params);
+    }
+
+    /// A `notifications/message` log entry (sent once the client chose a
+    /// level with `ClientBuilder::with_log_level` or `Client::set_level`).
+    async fn on_log_message(&self, message: neutral::LogMessage) {
+        let _ = message;
+    }
+
+    /// A `notifications/progress` update for `token` that no call claimed.
+    async fn on_progress(&self, token: Value, progress: neutral::Progress) {
+        let _ = (token, progress);
+    }
+
+    /// `notifications/resources/updated`: the resource at `uri` changed.
+    async fn on_resource_updated(&self, uri: String) {
+        let _ = uri;
+    }
+
+    /// `notifications/tools/list_changed`.
+    async fn on_tools_list_changed(&self) {}
+
+    /// `notifications/prompts/list_changed`.
+    async fn on_prompts_list_changed(&self) {}
+
+    /// `notifications/resources/list_changed`.
+    async fn on_resources_list_changed(&self) {}
+}
+
+/// Hand `method` to `handler`'s typed hook, when it has one and the params
+/// parse, then to its catch-all.
+pub(crate) async fn deliver_notification(
+    handler: &dyn NotificationHandler,
+    method: String,
+    params: Option<Value>,
+) {
+    use turbomcp_protocol::methods::notification;
+    let p = params.as_ref();
+    match method.as_str() {
+        notification::MESSAGE => {
+            if let Some(message) = p.and_then(neutral::LogMessage::from_params) {
+                handler.on_log_message(message).await;
+            }
+        }
+        notification::PROGRESS => {
+            if let (Some(token), Some(progress)) = (
+                p.and_then(|p| p.get("progressToken")).cloned(),
+                p.and_then(neutral::Progress::from_params),
+            ) {
+                handler.on_progress(token, progress).await;
+            }
+        }
+        notification::RESOURCES_UPDATED => {
+            if let Some(uri) = p.and_then(|p| p.get("uri")).and_then(Value::as_str) {
+                handler.on_resource_updated(uri.to_owned()).await;
+            }
+        }
+        notification::TOOLS_LIST_CHANGED => handler.on_tools_list_changed().await,
+        notification::PROMPTS_LIST_CHANGED => handler.on_prompts_list_changed().await,
+        notification::RESOURCES_LIST_CHANGED => handler.on_resources_list_changed().await,
+        _ => {}
+    }
+    handler.on_notification(method, params).await;
 }
 
 /// How many URL-mode elicitation ids a client remembers awaiting completion.
@@ -171,7 +333,8 @@ pub struct ClientHandlers {
     /// reached the handler, including one naming an id this client never saw.
     /// Shared across clones because the dispatcher and the notification router
     /// run on different tasks.
-    outstanding_elicitations: Arc<Mutex<BTreeSet<String>>>,
+    /// In the order they arrived, so the oldest goes first at the bound.
+    outstanding_elicitations: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl core::fmt::Debug for ClientHandlers {
@@ -276,14 +439,17 @@ impl ClientHandlers {
         }
         if let Some(id) = params.get("elicitationId").and_then(Value::as_str) {
             let mut outstanding = self.outstanding_elicitations.lock();
-            // A completion is a MAY, so some ids are never claimed; a bound
-            // keeps a long-lived client from holding them all.
-            if outstanding.len() >= MAX_OUTSTANDING_ELICITATIONS
-                && let Some(oldest) = outstanding.iter().next().cloned()
-            {
-                outstanding.remove(&oldest);
+            if outstanding.iter().any(|known| known == id) {
+                return;
             }
-            outstanding.insert(id.to_owned());
+            // A completion is a MAY, so some ids are never claimed; a bound
+            // keeps a long-lived client from holding them all, and the one
+            // that goes is the oldest (it used to be the smallest by string
+            // order, which could be the newest).
+            if outstanding.len() >= MAX_OUTSTANDING_ELICITATIONS {
+                outstanding.pop_front();
+            }
+            outstanding.push_back(id.to_owned());
         }
     }
 
@@ -292,7 +458,11 @@ impl ClientHandlers {
     /// `false` covers both halves of the spec's MUST: an id the server never
     /// sent us, and one a previous notification already completed.
     pub(crate) fn claim_elicitation(&self, id: &str) -> bool {
-        self.outstanding_elicitations.lock().remove(id)
+        let mut outstanding = self.outstanding_elicitations.lock();
+        match outstanding.iter().position(|known| known == id) {
+            Some(at) => outstanding.remove(at).is_some(),
+            None => false,
+        }
     }
 
     /// The capability declaration these handlers imply.
@@ -324,10 +494,11 @@ impl ClientHandlers {
 /// is rendered — `2025-06-18` has no multi-block sampling content.
 pub(crate) async fn dispatch_server_request(
     handlers: &ClientHandlers,
-    version: &ProtocolVersion,
+    ctx: &HandlerContext,
     method: &str,
     params: Option<Value>,
 ) -> Result<Value, JsonRpcError> {
+    let version = &ctx.protocol_version;
     match method {
         request::ELICITATION_CREATE => {
             let handler = handlers
@@ -343,28 +514,34 @@ pub(crate) async fn dispatch_server_request(
             // declared in client capabilities: -32602" is a client MUST on
             // both revisions that define modes. Declining instead tells the
             // server the *user* refused, which is a different and untrue fact.
-            let outcome = match params
+            match params
                 .as_ref()
                 .and_then(|p| p.get("mode"))
                 .map(|m| m.as_str())
             {
-                None | Some(Some("form")) => handler.elicit(parse_elicit_params(params)?).await,
+                None | Some(Some("form")) => {
+                    let request = parse_elicit_params(params)?;
+                    let schema = request.requested_schema.clone();
+                    let outcome = handler.elicit_with(ctx, request).await;
+                    check_form_answer(&schema, &outcome)?;
+                    Ok(elicit_outcome_value(&outcome, Mode::Form))
+                }
                 Some(Some("url")) => {
                     if !handler.supports_url_mode() {
                         return Err(invalid_params(
                             "this client did not declare elicitation.url",
                         ));
                     }
-                    handler.elicit_url(parse_elicit_url_params(params)?).await
+                    let outcome = handler
+                        .elicit_url_with(ctx, parse_elicit_url_params(params)?)
+                        .await;
+                    Ok(elicit_outcome_value(&outcome, Mode::Url))
                 }
-                Some(other) => {
-                    return Err(invalid_params(&format!(
-                        "this client did not declare elicitation mode {}",
-                        other.unwrap_or("<non-string>")
-                    )));
-                }
-            };
-            Ok(elicit_outcome_value(&outcome))
+                Some(other) => Err(invalid_params(&format!(
+                    "this client did not declare elicitation mode {}",
+                    other.unwrap_or("<non-string>")
+                ))),
+            }
         }
         request::SAMPLING_CREATE_MESSAGE => {
             let handler = handlers
@@ -393,7 +570,7 @@ pub(crate) async fn dispatch_server_request(
                 .validate()
                 .map_err(|e| invalid_params(&e.to_string()))?;
             let result = handler
-                .create_message(params)
+                .create_message_with(ctx, params)
                 .await
                 .map_err(handler_error)?;
             result
@@ -404,7 +581,7 @@ pub(crate) async fn dispatch_server_request(
             .roots
             .as_ref()
             .ok_or_else(|| not_supported(method))?
-            .list_roots()
+            .list_roots_with(ctx)
             .await
             .map(|roots| neutral::Root::list_to_wire(&roots))
             .map_err(handler_error),
@@ -438,26 +615,59 @@ fn not_supported(method: &str) -> JsonRpcError {
     }
 }
 
-/// Parse a URL-mode `elicitation/create` request's params.
+/// Parse a URL-mode `elicitation/create` request's params, refusing what the
+/// spec requires and a handler shouldn't have to check: "The `url` parameter
+/// MUST contain a valid URL", here an `http` or `https` one (a `file:`,
+/// `javascript:` or `data:` URL is not somewhere to send a user), and the
+/// `message` and `elicitationId` the schema requires.
 fn parse_elicit_url_params(
     params: Option<Value>,
 ) -> Result<neutral::ElicitUrlParams, JsonRpcError> {
     let params = params.ok_or_else(|| invalid_params("elicitation/create requires params"))?;
-    let message = params
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let url = params
-        .get("url")
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid_params("url-mode elicitation/create requires `url`"))?
-        .to_owned();
-    let mut out = neutral::ElicitUrlParams::new(message, url);
-    if let Some(id) = params.get("elicitationId").and_then(Value::as_str) {
-        out = out.with_elicitation_id(id);
+    let field = |name: &str| {
+        params.get(name).and_then(Value::as_str).ok_or_else(|| {
+            invalid_params(&format!("url-mode elicitation/create requires `{name}`"))
+        })
+    };
+    let message = field("message")?.to_owned();
+    let id = field("elicitationId")?.to_owned();
+    let url = field("url")?;
+    let parsed = url::Url::parse(url)
+        .map_err(|e| invalid_params(&format!("url-mode elicitation `url` is not a URL: {e}")))?;
+    if !matches!(parsed.scheme(), "https" | "http") {
+        return Err(invalid_params(&format!(
+            "url-mode elicitation `url` must be http or https, not `{}:`",
+            parsed.scheme()
+        )));
     }
-    Ok(out)
+    Ok(neutral::ElicitUrlParams::new(message, url).with_elicitation_id(id))
+}
+
+/// Hold a form answer to the schema it was asked for ("Clients SHOULD
+/// validate all responses against the provided schema"): a handler that
+/// returns something else would hand the server data it never agreed to
+/// take. A schema that doesn't compile can't be checked and isn't.
+fn check_form_answer(schema: &Value, outcome: &neutral::ElicitOutcome) -> Result<(), JsonRpcError> {
+    if outcome.action != neutral::ElicitAction::Accept {
+        return Ok(());
+    }
+    let Ok(validator) = jsonschema::validator_for(schema) else {
+        return Ok(());
+    };
+    validator
+        .validate(&Value::Object(outcome.content.clone()))
+        .map_err(|e| {
+            internal_error(&format!(
+                "the elicitation answer does not match requestedSchema: {e}"
+            ))
+        })
+}
+
+/// Which kind of elicitation an outcome answers.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Form,
+    Url,
 }
 
 /// Parse an `elicitation/create` request's params into [`neutral::ElicitParams`].
@@ -476,8 +686,9 @@ fn parse_elicit_params(params: Option<Value>) -> Result<neutral::ElicitParams, J
 }
 
 /// The wire shape of an [`ElicitOutcome`](neutral::ElicitOutcome): `{ action,
-/// content }`, where `content` is present only on `accept`.
-fn elicit_outcome_value(outcome: &neutral::ElicitOutcome) -> Value {
+/// content }`, where `content` is present only on a form-mode `accept` ("For
+/// URL mode: The `content` field is omitted").
+fn elicit_outcome_value(outcome: &neutral::ElicitOutcome, mode: Mode) -> Value {
     let action = match outcome.action {
         neutral::ElicitAction::Accept => "accept",
         neutral::ElicitAction::Decline => "decline",
@@ -485,7 +696,7 @@ fn elicit_outcome_value(outcome: &neutral::ElicitOutcome) -> Value {
     };
     let mut obj = Map::new();
     obj.insert("action".into(), json!(action));
-    if outcome.action == neutral::ElicitAction::Accept {
+    if outcome.action == neutral::ElicitAction::Accept && mode == Mode::Form {
         obj.insert("content".into(), Value::Object(outcome.content.clone()));
     }
     Value::Object(obj)
@@ -518,7 +729,12 @@ mod test_support {
         method: &str,
         params: Option<Value>,
     ) -> Result<Value, JsonRpcError> {
-        dispatch_server_request(handlers, &ProtocolVersion::V2025_11_25, method, params).await
+        let ctx = super::HandlerContext::new(
+            ProtocolVersion::V2025_11_25,
+            params.as_ref(),
+            turbomcp_core::CancellationToken::new(),
+        );
+        dispatch_server_request(handlers, &ctx, method, params).await
     }
 }
 
@@ -921,5 +1137,90 @@ mod must_tests {
         .expect_err("the handler rejected it");
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("non-empty"), "{}", err.message);
+    }
+
+    /// A url-mode request must carry an http(s) `url`, a `message` and an
+    /// `elicitationId`; an accepted one is answered without `content`.
+    #[tokio::test]
+    async fn url_mode_requests_are_checked_and_answered_without_content() {
+        struct Navigator;
+        #[async_trait]
+        impl ElicitationHandler for Navigator {
+            async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
+                neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+            }
+            fn supports_url_mode(&self) -> bool {
+                true
+            }
+            async fn elicit_url(&self, _r: neutral::ElicitUrlParams) -> neutral::ElicitOutcome {
+                neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+            }
+        }
+        let handlers = ClientHandlers {
+            elicitation: Some(Arc::new(Navigator)),
+            ..ClientHandlers::default()
+        };
+        let ask = |url: &str, id: Option<&str>| {
+            let mut params = json!({ "mode": "url", "message": "Go", "url": url });
+            if let Some(id) = id {
+                params["elicitationId"] = json!(id);
+            }
+            params
+        };
+        for (params, why) in [
+            (ask("file:///etc/passwd", Some("e")), "file:"),
+            (ask("javascript:alert(1)", Some("e")), "javascript:"),
+            (ask("not a url", Some("e")), "unparsable"),
+            (ask("https://ok.example", None), "no elicitationId"),
+        ] {
+            let err = dispatch(&handlers, request::ELICITATION_CREATE, Some(params))
+                .await
+                .expect_err(why);
+            assert_eq!(err.code, -32602, "{why}");
+        }
+        let answer = dispatch(
+            &handlers,
+            request::ELICITATION_CREATE,
+            Some(ask("https://ok.example", Some("e"))),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            answer,
+            json!({ "action": "accept" }),
+            "url mode omits content"
+        );
+    }
+
+    /// A form answer that breaks the schema it was asked for is not sent.
+    #[tokio::test]
+    async fn a_form_answer_must_match_its_schema() {
+        struct Sloppy;
+        #[async_trait]
+        impl ElicitationHandler for Sloppy {
+            async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
+                let mut content = Map::new();
+                content.insert("age".into(), json!("old"));
+                neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
+            }
+        }
+        let handlers = ClientHandlers {
+            elicitation: Some(Arc::new(Sloppy)),
+            ..ClientHandlers::default()
+        };
+        let err = dispatch(
+            &handlers,
+            request::ELICITATION_CREATE,
+            Some(json!({
+                "message": "Age?",
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": { "age": { "type": "integer" } },
+                },
+            })),
+        )
+        .await
+        .expect_err("refused");
+        assert_eq!(err.code, -32603);
     }
 }

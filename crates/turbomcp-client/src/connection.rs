@@ -48,7 +48,7 @@ use turbomcp_service::Transport;
 
 use crate::cache::ResponseCache;
 use crate::error::{ClientError, ClientResult};
-use crate::handler::{ClientHandlers, dispatch_server_request};
+use crate::handler::{ClientHandlers, HandlerContext, dispatch_server_request};
 use crate::input::{Answerer, InputRoutes, RouteKey};
 use crate::progress::ProgressRoutes;
 use crate::subscription::SubscriptionRoutes;
@@ -71,6 +71,10 @@ struct Inner {
     /// Frames the client wants to send (the actor owns the receiver). The actor
     /// holds only a `WeakSender`, so dropping all handles closes the channel.
     outbound: mpsc::Sender<Frame>,
+    /// Cancellations that found `outbound` full, sent once it drains (so
+    /// never ahead of the request they cancel). Bounded in practice by the
+    /// requests that can be pending.
+    overflow: mpsc::UnboundedSender<Frame>,
     /// In-flight requests awaiting a response (shared with the actor).
     pending: Arc<Pending>,
     /// Monotonic request-id source (process-local; integer ids).
@@ -94,10 +98,17 @@ struct Inner {
     progress: Arc<ProgressRoutes>,
     /// Live `subscriptions/listen` streams (shared with the actor).
     subscriptions: Arc<SubscriptionRoutes>,
-    /// How many server→client requests this client is answering right now.
-    /// A request's timeout stops while any are: the client, not the server,
-    /// is the one taking its time.
-    inbound: watch::Receiver<usize>,
+    /// The server→client requests this client is answering right now, by
+    /// the request of ours they belong to. A request's timeout stops while
+    /// its own are being answered (the client, not the server, is the one
+    /// taking its time), for at most `input_timeout` at a time.
+    inbound: watch::Receiver<Answering>,
+    /// The longest one request's timeout stays stopped for input.
+    input_timeout: Duration,
+    /// Bumped on each `notifications/tools/list_changed` (shared with the
+    /// actor), so what the client learned from `tools/list` can tell it is
+    /// out of date.
+    tools_generation: Arc<std::sync::atomic::AtomicU64>,
     /// Watches every request this connection sends.
     observer: Option<Arc<dyn crate::RequestObserver>>,
     /// The connection the transport carries, for the observer.
@@ -174,7 +185,13 @@ impl Connection {
     where
         T: Transport,
     {
-        Self::connect_with_cache(transport, request_timeout, handler, None, None)
+        Self::connect_with_cache(
+            transport,
+            (request_timeout, DEFAULT_INPUT_TIMEOUT),
+            handler,
+            None,
+            None,
+        )
     }
 
     /// [`connect`](Self::connect), plus a [`ResponseCache`] the actor
@@ -182,7 +199,7 @@ impl Connection {
     /// notifications (the [`Client`](crate::Client) wires this).
     pub(crate) fn connect_with_cache<T>(
         transport: T,
-        request_timeout: Duration,
+        (request_timeout, input_timeout): (Duration, Duration),
         handler: ClientHandlers,
         cache: Option<Arc<ResponseCache>>,
         observer: Option<Arc<dyn crate::RequestObserver>>,
@@ -192,6 +209,7 @@ impl Connection {
     {
         // Capacity mirrors the server driver's default outbound buffer.
         let (tx, rx) = mpsc::channel::<Frame>(1024);
+        let (overflow, overflow_rx) = mpsc::unbounded_channel::<Frame>();
         let pending: Arc<Pending> = Arc::new(Mutex::new(HashMap::new()));
         let weak_out = tx.downgrade();
         let shutdown = tokio_util::sync::CancellationToken::new();
@@ -201,11 +219,12 @@ impl Connection {
         let network = transport.network();
         let progress = Arc::new(ProgressRoutes::default());
         let subscriptions = Arc::new(SubscriptionRoutes::default());
-        let (inbound_tx, inbound) = watch::channel(0);
+        let (inbound_tx, inbound) = watch::channel(Answering::default());
         let input = Arc::new(InputRoutes::default());
+        let tools_generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
         tokio::spawn(actor(
             transport,
-            rx,
+            (rx, overflow_rx),
             SessionState {
                 pending: Arc::clone(&pending),
                 handler,
@@ -216,15 +235,19 @@ impl Connection {
                 subscriptions: Arc::clone(&subscriptions),
                 inbound: inbound_tx,
                 input: Arc::clone(&input),
+                tools_generation: Arc::clone(&tools_generation),
             },
             (shutdown.clone(), done.clone()),
         ));
         Self {
             inner: Arc::new(Inner {
                 outbound: tx,
+                overflow,
                 pending,
                 next_id: AtomicI64::new(1),
                 request_timeout,
+                input_timeout,
+                tools_generation,
                 negotiated,
                 shutdown,
                 done,
@@ -252,6 +275,11 @@ impl Connection {
         self.inner
             .input
             .register(RouteKey::Task(task_id.to_owned()), handlers)
+    }
+
+    /// How many times the server has said its tool list changed.
+    pub(crate) fn tools_generation(&self) -> u64 {
+        self.inner.tools_generation.load(Ordering::Acquire)
     }
 
     /// Record the revision the handshake settled on, so replies to
@@ -430,14 +458,18 @@ impl Connection {
             tokio::select! {
                 r = &mut reply_rx => break reply(r),
                 () = tokio::time::sleep_until(deadline) => {
-                    if *inbound.borrow() > 0 {
-                        // Paused: wait for the client to finish answering,
-                        // then give the request its full timeout again.
+                    if inbound.borrow().pauses(&id) {
+                        // Paused: wait for the client to finish answering this
+                        // request's questions (for so long at most), then give
+                        // the request its full timeout again.
+                        let cap = self.inner.input_timeout;
                         tokio::select! {
                             r = &mut reply_rx => break reply(r),
-                            _ = inbound.wait_for(|n| *n == 0) => {
-                                deadline = tokio::time::Instant::now() + timeout;
-                                continue;
+                            answered = tokio::time::timeout(cap, inbound.wait_for(|a| !a.pauses(&id))) => {
+                                if answered.is_ok() {
+                                    deadline = tokio::time::Instant::now() + timeout;
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -514,9 +546,10 @@ impl Connection {
     /// Tell the server to stop working on `id` (cancellation spec: receivers
     /// SHOULD stop processing, free resources, and send no response).
     ///
-    /// This runs from a `Drop`, which cannot await, so the fast path is
-    /// `try_send` preserves ordering with the request. If its queue is full,
-    /// cancel the connection instead of spawning an unbounded detached waiter.
+    /// This runs from a `Drop`, which cannot await. `try_send` keeps it in
+    /// order behind the request; when the queue is full it waits in the
+    /// overflow, which the actor sends once the queue has drained. Closing
+    /// the connection here instead failed every other call on it.
     pub(crate) fn cancel_on_wire(&self, id: &RequestId, reason: &str) {
         let params = serde_json::json!({ "requestId": id, "reason": reason });
         let msg = JsonRpcMessage::Notification(turbomcp_core::JsonRpcNotification::new(
@@ -525,10 +558,8 @@ impl Connection {
         ));
         match self.inner.outbound.try_send((msg, Extensions::new())) {
             Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                // No detached waiters during cancellation storms. Closing the
-                // overloaded connection cancels its transport-owned requests.
-                self.inner.shutdown.cancel();
+            Err(mpsc::error::TrySendError::Full(frame)) => {
+                let _ = self.inner.overflow.send(frame);
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 tracing::debug!(request_id = ?id, "connection closed; nothing to cancel");
@@ -613,14 +644,16 @@ struct SessionState {
     /// Live subscriptions.
     subscriptions: Arc<SubscriptionRoutes>,
     /// Published count of server→client requests in their handlers.
-    inbound: watch::Sender<usize>,
+    inbound: watch::Sender<Answering>,
     /// Per-call input handlers.
     input: Arc<InputRoutes>,
+    /// See `Inner::tools_generation`.
+    tools_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 async fn actor<T>(
     mut transport: T,
-    mut outbound: mpsc::Receiver<Frame>,
+    (mut outbound, mut overflow): (mpsc::Receiver<Frame>, mpsc::UnboundedReceiver<Frame>),
     state: SessionState,
     lifecycle: (
         tokio_util::sync::CancellationToken,
@@ -631,9 +664,57 @@ async fn actor<T>(
 {
     let (shutdown, done) = lifecycle;
     let _done = done.drop_guard();
-    let mut dispatch = Dispatch::new(&state.handler, transport.carries_headers());
+    // However the actor ends, a panic included, every waiting caller learns
+    // the connection is gone now, not when its own timeout runs out.
+    let _pending = ClearOnDrop(Arc::clone(&state.pending));
+    let mut dispatch = Dispatch::new(
+        &state.handler,
+        transport.carries_headers(),
+        turbomcp_core::CancellationToken::new(),
+    );
     loop {
-        let answering = dispatch.inflight.len();
+        // Parked task requests whose task was announced, or whose wait ran
+        // out: routed now, and never parked again.
+        let mut failed = false;
+        while let Some((request, related)) = dispatch.replay.pop_front() {
+            dispatch.replaying = true;
+            let reply = route_inbound(
+                JsonRpcMessage::Request(request),
+                None,
+                related.as_ref(),
+                &state,
+                &mut dispatch,
+            );
+            dispatch.replaying = false;
+            if let Some(reply) = reply {
+                let sent = tokio::select! {
+                    () = shutdown.cancelled() => false,
+                    result = tokio::time::timeout(Duration::from_secs(30), transport.send(reply)) => {
+                        matches!(result, Ok(Ok(())))
+                    }
+                };
+                if !sent {
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        if failed {
+            break;
+        }
+        let park_deadline = dispatch
+            .parked
+            .values()
+            .flatten()
+            .map(|parked| parked.since + PARK_FOR)
+            .min();
+        let mut answering = Answering::default();
+        for Inflight { related, .. } in dispatch.inflight.values() {
+            match related {
+                Some(id) => *answering.by_request.entry(id.clone()).or_default() += 1,
+                None => answering.unattributed += 1,
+            }
+        }
         state.inbound.send_if_modified(|n| {
             let changed = *n != answering;
             *n = answering;
@@ -641,6 +722,28 @@ async fn actor<T>(
         });
         tokio::select! {
             () = shutdown.cancelled() => break,
+            () = async {
+                match park_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                // No task was announced for these in time: route them as
+                // they are (to the client's own handler, or refused).
+                let now = tokio::time::Instant::now();
+                let mut expired = Vec::new();
+                dispatch.parked.retain(|_, waiting| {
+                    waiting.retain(|parked| {
+                        let keep = parked.since + PARK_FOR > now;
+                        if !keep {
+                            expired.push((parked.request.clone(), parked.related.clone()));
+                        }
+                        keep
+                    });
+                    !waiting.is_empty()
+                });
+                dispatch.replay.extend(expired);
+            },
             Some(finished) = dispatch.requests.join_next(), if !dispatch.requests.is_empty() => {
                 // An aborted task (the server cancelled it) was already
                 // forgotten when it was aborted.
@@ -664,6 +767,20 @@ async fn actor<T>(
                             result = tokio::time::timeout(Duration::from_secs(30), transport.send_with(msg, facts)) => {
                                 if !matches!(result, Ok(Ok(()))) { break; }
                             }
+                        }
+                        // Overflowed cancellations go out once everything
+                        // queued before them has.
+                        if outbound.is_empty() {
+                            let mut failed = false;
+                            while let Ok((msg, facts)) = overflow.try_recv() {
+                                tokio::select! {
+                                    () = shutdown.cancelled() => { failed = true; break; }
+                                    result = tokio::time::timeout(Duration::from_secs(30), transport.send_with(msg, facts)) => {
+                                        if !matches!(result, Ok(Ok(()))) { failed = true; break; }
+                                    }
+                                }
+                            }
+                            if failed { break; }
                         }
                     }
                     // All Connection handles dropped — nothing more to send.
@@ -733,6 +850,7 @@ async fn actor<T>(
     // it, a long-lived server accumulates one session per client that ever
     // connected), and WebSocket sends its Close frame. Best-effort — the
     // connection is already going away, so a failure here has no one to tell.
+    dispatch.cancel_root.cancel();
     dispatch.requests.abort_all();
     while dispatch.requests.join_next().await.is_some() {}
     state.subscriptions.lose_all();
@@ -740,6 +858,37 @@ async fn actor<T>(
         notifier.abort();
     }
     let _ = tokio::time::timeout(Duration::from_secs(5), transport.close()).await;
+}
+
+/// How long one request's timeout stays stopped while the client answers a
+/// server request of its: long enough for a person to read and answer an
+/// elicitation, short of forever.
+pub(crate) const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// The server→client requests in their handlers, by whose they are.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Answering {
+    /// Those the transport said belong to one of our requests.
+    by_request: HashMap<RequestId, usize>,
+    /// Those nothing attributes (stdio, WebSocket, a task's), which may
+    /// belong to any request in flight.
+    unattributed: usize,
+}
+
+impl Answering {
+    /// Whether request `id` waits on the client rather than the server.
+    fn pauses(&self, id: &RequestId) -> bool {
+        self.unattributed > 0 || self.by_request.contains_key(id)
+    }
+}
+
+/// Drops every waiting caller's sender when the actor ends.
+struct ClearOnDrop(Arc<Pending>);
+
+impl Drop for ClearOnDrop {
+    fn drop(&mut self) {
+        self.0.lock().clear();
+    }
 }
 
 /// How many server→client requests may be in handlers at once. Past it a
@@ -750,6 +899,35 @@ const MAX_INBOUND_REQUESTS: usize = 64;
 /// with a warning, rather than the connection closing.
 const NOTIFICATION_QUEUE: usize = 1024;
 
+/// How long a task's request waits for the result that names the task.
+const PARK_FOR: Duration = Duration::from_secs(2);
+
+/// A task's request that arrived before the task was announced.
+struct Parked {
+    since: tokio::time::Instant,
+    request: JsonRpcRequest,
+    related: Option<RequestId>,
+}
+
+/// The task a `2025-11-25` task's request names (`related-task`).
+fn related_task_id(req: &JsonRpcRequest) -> Option<&str> {
+    req.params
+        .as_ref()?
+        .get("_meta")?
+        .get(turbomcp_core::meta::keys::RELATED_TASK)?
+        .get("taskId")?
+        .as_str()
+}
+
+/// One server→client request in its handler.
+struct Inflight {
+    abort: AbortHandle,
+    /// The request of ours it belongs to, when the transport said.
+    related: Option<RequestId>,
+    /// Its handler's cancellation, fired when the server cancels it.
+    cancel: turbomcp_core::CancellationToken,
+}
+
 /// Where inbound work goes once the actor has read it.
 struct Dispatch {
     /// Notifications, in arrival order, for the one task that delivers them.
@@ -757,17 +935,32 @@ struct Dispatch {
     /// 90% before 10%, and a burst past 128 closed the connection.
     notes: Option<mpsc::Sender<(JsonRpcNotification, Option<String>)>>,
     notifier: Option<tokio::task::JoinHandle<()>>,
+    /// Notifications dropped since the handler last kept up.
+    dropping: u64,
     /// Server→client requests in their handlers, each task yielding its id.
     requests: JoinSet<RequestId>,
     /// The same requests by id, so a `notifications/cancelled` can stop one.
-    inflight: HashMap<RequestId, AbortHandle>,
+    inflight: HashMap<RequestId, Inflight>,
+    /// Task requests waiting for their task to be announced, by task id.
+    parked: HashMap<String, Vec<Parked>>,
+    /// Parked requests ready to be routed again.
+    replay: std::collections::VecDeque<(JsonRpcRequest, Option<RequestId>)>,
+    /// Set while routing a replayed request, which is never parked twice.
+    replaying: bool,
+    /// Parent of each handler's [`HandlerContext::cancellation`]: fired when
+    /// the connection ends.
+    cancel_root: turbomcp_core::CancellationToken,
     /// Whether the transport is Streamable HTTP, where on 2026-07-28 "The
     /// client MUST NOT send JSON-RPC responses".
     http: bool,
 }
 
 impl Dispatch {
-    fn new(handler: &ClientHandlers, http: bool) -> Self {
+    fn new(
+        handler: &ClientHandlers,
+        http: bool,
+        cancel_root: turbomcp_core::CancellationToken,
+    ) -> Self {
         let (notes, notifier) = if handler.elicitation.is_some()
             || handler.notifications.is_some()
             || !handler.extensions.is_empty()
@@ -781,8 +974,13 @@ impl Dispatch {
         Self {
             notes,
             notifier,
+            dropping: 0,
             requests: JoinSet::new(),
             inflight: HashMap::new(),
+            parked: HashMap::new(),
+            replay: std::collections::VecDeque::new(),
+            replaying: false,
+            cancel_root,
             http,
         }
     }
@@ -794,16 +992,26 @@ async fn deliver_notifications(
     handler: ClientHandlers,
 ) {
     while let Some((n, completed_elicitation)) = notes.recv().await {
-        // `elicitation/complete` reaches the elicitation handler's dedicated
-        // hook; everything reaches the notification observer.
-        if let (Some(h), Some(id)) = (&handler.elicitation, completed_elicitation) {
-            h.on_elicitation_complete(id).await;
-        }
-        // An extension's own notifications are its alone.
-        if let Some(extension) = handler.claiming_notification(&n.method) {
-            extension.on_notification(&n.method, n.params).await;
-        } else if let Some(h) = &handler.notifications {
-            h.on_notification(n.method, n.params).await;
+        let method = n.method.clone();
+        // A handler that panics loses that one notification, not every one
+        // after it: the task used to end, and later notifications were
+        // dropped without a word.
+        let delivered = turbomcp_service::catch_panic(async {
+            // `elicitation/complete` reaches the elicitation handler's
+            // dedicated hook; everything reaches the notification observer.
+            if let (Some(h), Some(id)) = (&handler.elicitation, completed_elicitation) {
+                h.on_elicitation_complete(id).await;
+            }
+            // An extension's own notifications are its alone.
+            if let Some(extension) = handler.claiming_notification(&n.method) {
+                extension.on_notification(&n.method, n.params).await;
+            } else if let Some(h) = &handler.notifications {
+                crate::handler::deliver_notification(h.as_ref(), n.method, n.params).await;
+            }
+        })
+        .await;
+        if let Err(panic) = delivered {
+            tracing::error!(panic, method = %method, "notification handler panicked");
         }
     }
 }
@@ -829,6 +1037,7 @@ fn route_inbound(
         subscriptions,
         inbound: _,
         input,
+        tools_generation,
     } = state;
     match msg {
         JsonRpcMessage::Response(resp) => {
@@ -845,6 +1054,12 @@ fn route_inbound(
                     .and_then(Value::as_str)
             {
                 input.became_task(id, task_id);
+                // Its questions that came first can be answered now.
+                if let Some(parked) = dispatch.parked.remove(task_id) {
+                    dispatch
+                        .replay
+                        .extend(parked.into_iter().map(|p| (p.request, p.related)));
+                }
             }
             complete_pending(resp, pending, subscriptions, failure);
             None
@@ -870,6 +1085,9 @@ fn route_inbound(
             if let Some(cache) = cache {
                 cache.on_notification(&n.method, n.params.as_ref());
             }
+            if n.method == notification::TOOLS_LIST_CHANGED {
+                tools_generation.fetch_add(1, Ordering::AcqRel);
+            }
             // "Receivers of cancellation notifications SHOULD: Stop processing
             // the cancelled request; Free associated resources; Not send a
             // response for the cancelled request." The server gave up on one
@@ -881,8 +1099,9 @@ fn route_inbound(
                     .and_then(|p| p.get("requestId"))
                     .and_then(|id| serde_json::from_value::<RequestId>(id.clone()).ok())
             {
-                if let Some(task) = dispatch.inflight.remove(&id) {
-                    task.abort();
+                if let Some(inflight) = dispatch.inflight.remove(&id) {
+                    inflight.cancel.cancel();
+                    inflight.abort.abort();
                 } else {
                     // Naming one of *our* requests: a `subscriptions/listen`
                     // the server is tearing down, which it does by "sending
@@ -913,14 +1132,19 @@ fn route_inbound(
                 None => {
                     tracing::trace!(method = %n.method, "client received notification (no handler)");
                 }
-                Some(notes) => {
-                    if let Err(mpsc::error::TrySendError::Full(_)) = notes.try_send((n, recognized))
-                    {
-                        tracing::warn!(
-                            "notification handler is {NOTIFICATION_QUEUE} behind; dropped a notification"
-                        );
+                Some(notes) => match notes.try_send((n, recognized)) {
+                    Ok(()) => dispatch.dropping = 0,
+                    // Said once per stretch of falling behind, not per drop.
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        dispatch.dropping += 1;
+                        if dispatch.dropping == 1 {
+                            tracing::warn!(
+                                "notification handler is {NOTIFICATION_QUEUE} behind; dropping notifications"
+                            );
+                        }
                     }
-                }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {}
+                },
             }
             None
         }
@@ -973,6 +1197,21 @@ fn route_inbound(
                     data: None,
                 },
             )))
+        }
+        JsonRpcMessage::Request(req)
+            if !dispatch.replaying
+                && related_task_id(&req).is_some_and(|task| input.may_become(task)) =>
+        {
+            // A task's question ahead of the result that names the task: held
+            // until that result arrives (or `PARK_FOR` passes), rather than
+            // answered by whoever could be named now.
+            let task = related_task_id(&req).unwrap_or_default().to_owned();
+            dispatch.parked.entry(task).or_default().push(Parked {
+                since: tokio::time::Instant::now(),
+                request: req,
+                related: related.cloned(),
+            });
+            None
         }
         JsonRpcMessage::Request(req) => {
             // SEP-2260: a request that belongs to a call made with its own
@@ -1039,6 +1278,10 @@ fn route_inbound(
                         .and_then(|p| p.get("_meta"))
                         .and_then(|m| m.get(turbomcp_core::meta::keys::RELATED_TASK))
                         .cloned();
+                    let cancel = dispatch.cancel_root.child_token();
+                    let ctx =
+                        HandlerContext::new(version.clone(), req.params.as_ref(), cancel.clone())
+                            .with_request_id(req.id.clone());
                     let task = dispatch.requests.spawn(async move {
                         let id = req.id.clone();
                         // A user handler that panics used to take the reply down
@@ -1048,7 +1291,7 @@ fn route_inbound(
                         // answer, even a `-32603` one.
                         let outcome = turbomcp_service::catch_panic(dispatch_server_request(
                             &handlers,
-                            &version,
+                            &ctx,
                             &req.method,
                             req.params,
                         ))
@@ -1090,7 +1333,14 @@ fn route_inbound(
                         }
                         id
                     });
-                    dispatch.inflight.insert(request_id, task);
+                    dispatch.inflight.insert(
+                        request_id,
+                        Inflight {
+                            abort: task,
+                            related: related.cloned(),
+                            cancel,
+                        },
+                    );
                     None
                 }
                 // No handler configured: refuse politely rather than hang the server.
@@ -1161,13 +1411,42 @@ fn complete_pending(
     subscriptions: &SubscriptionRoutes,
     failure: Option<turbomcp_service::TransportFailure>,
 ) {
+    let waiter = {
+        let mut pending = pending.lock();
+        match &resp.id {
+            // An error with no id: the server couldn't read a frame of ours
+            // well enough to find one. With a single request outstanding it
+            // can only be that one's; failing it now beats letting it wait
+            // out its timeout (a legacy server answering `server/discover`
+            // with `id: null` cost the probe five seconds). With several, it
+            // names none of them.
+            None if resp.error.is_some() && pending.len() == 1 => {
+                let only = pending.keys().next().cloned();
+                only.and_then(|id| pending.remove(&id))
+            }
+            None => {
+                tracing::warn!(error = ?resp.error, "server answered an unreadable frame");
+                return;
+            }
+            // Exact first; then the same integer spelled the other way (`1`
+            // echoed as `"1"`), which the base protocol forbids but some
+            // peers do. A tolerated id can't name some other request: ours
+            // are all integers.
+            Some(id) => pending.remove(id).or_else(|| {
+                let coerced = match id {
+                    RequestId::String(s) => s.parse::<i64>().ok().map(RequestId::Number),
+                    RequestId::Number(n) => Some(RequestId::String(n.to_string())),
+                };
+                coerced.and_then(|id| pending.remove(&id))
+            }),
+        }
+    };
     let Some(id) = &resp.id else {
-        // The server couldn't read a frame of ours well enough to find its
-        // id. Nothing is waiting on "no id", so all that's left is to say so.
-        tracing::warn!(error = ?resp.error, "server answered an unreadable frame");
+        if let (Some(waiter), Some(error)) = (waiter, resp.error) {
+            let _ = waiter.send(Err(ClientError::Rpc(error)));
+        }
         return;
     };
-    let waiter = pending.lock().remove(id);
     let Some(waiter) = waiter else {
         // A listen request completes at its acknowledgement; a response to it
         // afterwards is the server closing the subscription gracefully.
@@ -1193,6 +1472,67 @@ fn complete_pending(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn waiting(id: i64) -> (Arc<Pending>, oneshot::Receiver<Result<Value, ClientError>>) {
+        let pending: Arc<Pending> = Arc::default();
+        let (tx, rx) = oneshot::channel();
+        pending.lock().insert(RequestId::Number(id), tx);
+        (pending, rx)
+    }
+
+    /// A server request the transport attributes pauses only its own call's
+    /// timeout; one nothing attributes may be anyone's, so it pauses all.
+    #[test]
+    fn only_the_calls_a_server_request_belongs_to_wait_on_the_client() {
+        let mut answering = Answering::default();
+        answering.by_request.insert(RequestId::Number(1), 1);
+        assert!(answering.pauses(&RequestId::Number(1)));
+        assert!(!answering.pauses(&RequestId::Number(2)));
+        answering.unattributed = 1;
+        assert!(answering.pauses(&RequestId::Number(2)));
+    }
+
+    /// `1` echoed back as `"1"` still answers request 1.
+    #[test]
+    fn a_numeric_id_echoed_as_a_string_answers_its_request() {
+        let (pending, mut rx) = waiting(1);
+        let resp = JsonRpcResponse::success(RequestId::String("1".into()), json!({ "ok": true }));
+        complete_pending(resp, &pending, &SubscriptionRoutes::default(), None);
+        assert_eq!(rx.try_recv().unwrap().unwrap(), json!({ "ok": true }));
+    }
+
+    /// An id-less error answers the only request outstanding, and none of
+    /// several.
+    #[test]
+    fn an_id_less_error_answers_the_only_request_in_flight() {
+        let error = || JsonRpcError {
+            code: turbomcp_core::codes::INVALID_REQUEST,
+            message: "unreadable".into(),
+            data: None,
+        };
+        let (pending, mut rx) = waiting(1);
+        complete_pending(
+            JsonRpcResponse::error_without_id(error()),
+            &pending,
+            &SubscriptionRoutes::default(),
+            None,
+        );
+        assert!(
+            matches!(rx.try_recv().unwrap(), Err(ClientError::Rpc(e)) if e.code == turbomcp_core::codes::INVALID_REQUEST)
+        );
+
+        let (pending, mut first) = waiting(1);
+        let (tx, mut second) = oneshot::channel();
+        pending.lock().insert(RequestId::Number(2), tx);
+        complete_pending(
+            JsonRpcResponse::error_without_id(error()),
+            &pending,
+            &SubscriptionRoutes::default(),
+            None,
+        );
+        assert!(first.try_recv().is_err() && second.try_recv().is_err());
+        assert_eq!(pending.lock().len(), 2);
+    }
 
     /// The two carve-outs are MUST NOTs, and neither is reachable from an
     /// integration test: the handshake completes before a caller holds a client

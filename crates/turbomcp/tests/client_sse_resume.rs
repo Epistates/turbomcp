@@ -154,19 +154,23 @@ async fn cancelling_during_retry_prevents_get_and_close_waits_for_cleanup() {
     assert_eq!(f.state.resumes.load(Ordering::SeqCst), 0);
 }
 
+/// "Clients MUST respect the `retry` field", however long: a long delay is
+/// waited out (bounded by the call's own timeout), never shortened. It used to
+/// fail the call outright past 30 s.
 #[tokio::test]
-async fn excessive_retry_is_refused_instead_of_reconnecting_too_early() {
+async fn a_long_retry_is_waited_out_never_shortened() {
     let f = fixture(30_001).await;
-    let result = tokio::time::timeout(Duration::from_secs(1), f.client.list_tools(None))
-        .await
-        .expect("oversized retry fails promptly");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("SSE retry delay exceeds recovery limit")
+        tokio::time::timeout(Duration::from_secs(1), f.client.list_tools(None))
+            .await
+            .is_err(),
+        "still waiting on the server's delay"
     );
-    assert_eq!(f.state.resumes.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        f.state.resumes.load(Ordering::SeqCst),
+        0,
+        "no resume before the server allowed one"
+    );
     f.client.connection().close().await;
 }
 

@@ -27,6 +27,8 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "process", "io-uti
 futures = { workspace = true }
 # Validates `structuredContent` against the tool's declared `outputSchema`.
 jsonschema = { workspace = true }
+# Checks a url-mode elicitation's `url` before a handler sees it.
+url = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 # Signals a child server's whole process group at shutdown (safe API).

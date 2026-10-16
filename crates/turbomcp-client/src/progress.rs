@@ -82,7 +82,12 @@ impl ProgressRoutes {
         };
         if let (Some(callback), Some(progress)) = (callback, neutral::Progress::from_params(params))
         {
-            callback(progress);
+            // It runs on the connection's actor: a panic here would take the
+            // connection, and every call on it, down with it.
+            let run = std::panic::AssertUnwindSafe(|| callback(progress));
+            if std::panic::catch_unwind(run).is_err() {
+                tracing::error!(token, "progress callback panicked");
+            }
         }
         true
     }

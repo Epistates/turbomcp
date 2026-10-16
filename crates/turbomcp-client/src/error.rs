@@ -59,6 +59,11 @@ pub enum ClientError {
         /// What the validator objected to.
         reason: String,
     },
+
+    /// The client was configured inconsistently (two extensions claiming one
+    /// notification, say), found before anything was sent.
+    #[error("client configuration error: {0}")]
+    Config(String),
 }
 
 impl ClientError {

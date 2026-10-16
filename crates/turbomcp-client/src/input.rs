@@ -115,6 +115,16 @@ impl InputRoutes {
         self.routes.lock().is_empty()
     }
 
+    /// Whether a request naming task `task_id` should wait for the task to be
+    /// announced: no route knows the task yet, but a call with its own
+    /// handlers is in flight and may be about to become it (a server that
+    /// sends the task's first question before its `CreateTaskResult`).
+    pub(crate) fn may_become(&self, task_id: &str) -> bool {
+        let routes = self.routes();
+        !routes.contains_key(&RouteKey::Task(task_id.to_owned()))
+            && routes.keys().any(|key| matches!(key, RouteKey::Request(_)))
+    }
+
     /// Who answers a request that arrived `related` to one of ours or to
     /// one of our tasks (when the transport or its metadata could tell), with
     /// `in_flight` requests of ours pending.

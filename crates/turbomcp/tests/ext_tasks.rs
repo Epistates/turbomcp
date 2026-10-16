@@ -101,7 +101,7 @@ async fn connect() -> Client {
         )),
         ClientBuilder::new("workshop-client", "1.0.0")
             .with_connect_mode(ConnectMode::Modern)
-            .with_extension(EXTENSION_ID, json!({}))
+            .with_tasks()
             .with_elicitation(Confirm),
     )
     .await

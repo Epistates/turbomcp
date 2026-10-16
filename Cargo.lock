@@ -3805,6 +3805,7 @@ dependencies = [
  "turbomcp-protocol",
  "turbomcp-server",
  "turbomcp-service",
+ "url",
 ]
 
 [[package]]

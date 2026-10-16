@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use std::task::{Context, Poll};
@@ -44,6 +45,14 @@ pub enum SubscriptionEvent {
     ResourceUpdated {
         /// The resource that changed.
         uri: String,
+    },
+    /// The handle fell this many notifications behind and they were dropped
+    /// (the queue holds 1,024). A missed `*_list_changed` or
+    /// `resources/updated` would leave the application's view stale with
+    /// nothing to say so: refresh everything this subscription watches.
+    Lagged {
+        /// How many were dropped since the last event.
+        missed: u64,
     },
     /// Anything else on the stream (an extension's notifications).
     Other {
@@ -99,6 +108,9 @@ pub enum SubscriptionEnd {
 struct Route {
     events: mpsc::Sender<JsonRpcNotification>,
     end: oneshot::Sender<SubscriptionEnd>,
+    /// Notifications dropped on a full queue, reported as
+    /// [`SubscriptionEvent::Lagged`].
+    dropped: Arc<AtomicU64>,
 }
 
 /// The live subscriptions of one connection, by listen request id.
@@ -111,6 +123,7 @@ pub(crate) struct SubscriptionRoutes {
 pub(crate) struct RouteGuard {
     routes: Arc<SubscriptionRoutes>,
     id: RequestId,
+    dropped: Arc<AtomicU64>,
 }
 
 impl Drop for RouteGuard {
@@ -136,11 +149,20 @@ impl SubscriptionRoutes {
     ) {
         let (events, events_rx) = mpsc::channel(SUBSCRIPTION_QUEUE);
         let (end, end_rx) = oneshot::channel();
-        self.routes.lock().insert(id.clone(), Route { events, end });
+        let dropped = Arc::new(AtomicU64::new(0));
+        self.routes.lock().insert(
+            id.clone(),
+            Route {
+                events,
+                end,
+                dropped: Arc::clone(&dropped),
+            },
+        );
         (
             RouteGuard {
                 routes: Arc::clone(self),
                 id,
+                dropped,
             },
             events_rx,
             end_rx,
@@ -167,10 +189,13 @@ impl SubscriptionRoutes {
         if n.method != notification::SUBSCRIPTIONS_ACKNOWLEDGED
             && let Err(mpsc::error::TrySendError::Full(_)) = route.events.try_send(n.clone())
         {
-            tracing::warn!(
-                subscription = ?id,
-                "subscription is {SUBSCRIPTION_QUEUE} notifications behind; dropped one"
-            );
+            // Said once per lag, and reported to the handle as `Lagged`.
+            if route.dropped.fetch_add(1, Ordering::AcqRel) == 0 {
+                tracing::warn!(
+                    subscription = ?id,
+                    "subscription is {SUBSCRIPTION_QUEUE} notifications behind; dropping"
+                );
+            }
         }
     }
 
@@ -293,6 +318,10 @@ impl Subscription {
     fn poll_event(&mut self, cx: &mut Context<'_>) -> Poll<Option<SubscriptionEvent>> {
         if self.ended.is_some() {
             return Poll::Ready(None);
+        }
+        let missed = self._route.dropped.swap(0, Ordering::AcqRel);
+        if missed > 0 {
+            return Poll::Ready(Some(SubscriptionEvent::Lagged { missed }));
         }
         match self.events.poll_recv(cx) {
             Poll::Ready(Some(n)) => Poll::Ready(Some(SubscriptionEvent::from_notification(n))),

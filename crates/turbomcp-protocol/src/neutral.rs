@@ -606,6 +606,35 @@ impl Progress {
     }
 }
 
+/// One `notifications/message` log entry, as a client sees it. The same on
+/// every revision.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct LogMessage {
+    /// Its severity.
+    pub level: turbomcp_core::LogLevel,
+    /// The logger that emitted it, if named.
+    pub logger: Option<String>,
+    /// What was logged: any JSON value.
+    pub data: Value,
+}
+
+impl LogMessage {
+    /// Read a log entry from `notifications/message` params. `None` if they
+    /// carry no recognized `level`.
+    #[must_use]
+    pub fn from_params(params: &Value) -> Option<Self> {
+        Some(Self {
+            level: serde_json::from_value(params.get("level")?.clone()).ok()?,
+            logger: params
+                .get("logger")
+                .and_then(Value::as_str)
+                .map(String::from),
+            data: params.get("data").cloned().unwrap_or(Value::Null),
+        })
+    }
+}
+
 // ---- pagination ---------------------------------------------------------------
 
 /// Inbound parameters shared by every `*/list` method: an opaque pagination

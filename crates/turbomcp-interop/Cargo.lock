@@ -3098,6 +3098,7 @@ dependencies = [
  "turbomcp-core",
  "turbomcp-protocol",
  "turbomcp-service",
+ "url",
 ]
 
 [[package]]

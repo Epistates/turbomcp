@@ -36,7 +36,8 @@ pub use connection::{Connection, DEFAULT_REQUEST_TIMEOUT};
 pub use error::{ClientError, ClientResult};
 pub use extension::ClientExtension;
 pub use handler::{
-    ClientHandlers, ElicitationHandler, NotificationHandler, RootsHandler, SamplingHandler,
+    ClientHandlers, ElicitationHandler, HandlerContext, NotificationHandler, RootsHandler,
+    SamplingHandler,
 };
 pub use observe::{ClosedSession, OutboundRequest, RequestObserver, RequestScope};
 pub use options::CallOptions;

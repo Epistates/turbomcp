@@ -37,8 +37,8 @@ use crate::cache::ResponseCache;
 use crate::connection::{Connection, Wait};
 use crate::error::{ClientError, ClientResult};
 use crate::handler::{
-    ClientHandlers, ElicitationHandler, NotificationHandler, RootsHandler, SamplingHandler,
-    dispatch_server_request,
+    ClientHandlers, ElicitationHandler, HandlerContext, NotificationHandler, RootsHandler,
+    SamplingHandler, dispatch_server_request,
 };
 use crate::options::CallOptions;
 use crate::progress::Registration;
@@ -55,10 +55,13 @@ const MAX_MRTR_ROUNDS: usize = 16;
 const MAX_LIST_PAGES: usize = 10_000;
 
 /// `resultType: "task"` marks a `CreateTaskResult` (SEP-2663).
-const RESULT_TYPE_TASK: &str = "task";
+pub(crate) const RESULT_TYPE_TASK: &str = "task";
 
 /// The Tasks extension's identifier (SEP-2663).
 const TASKS_EXTENSION: &str = "io.modelcontextprotocol/tasks";
+
+/// The most `tasks/cancel` requests in flight for abandoned tasks.
+const MAX_ABANDONED_CANCELS: usize = 64;
 /// Poll cadence when the server suggests none, and the floor applied to a
 /// server-suggested `pollIntervalMs` (protects the server from a zero value).
 const DEFAULT_TASK_POLL_MS: u64 = 500;
@@ -119,6 +122,7 @@ pub struct ClientBuilder {
     extensions: Option<Map<String, Value>>,
     connect_mode: ConnectMode,
     request_timeout: Duration,
+    input_timeout: Duration,
     handler: ClientHandlers,
     response_cache: bool,
     log_level: Option<LogLevel>,
@@ -151,6 +155,7 @@ impl ClientBuilder {
             extensions: None,
             connect_mode: ConnectMode::Auto,
             request_timeout: crate::connection::DEFAULT_REQUEST_TIMEOUT,
+            input_timeout: crate::connection::DEFAULT_INPUT_TIMEOUT,
             handler: ClientHandlers::default(),
             response_cache: true,
             log_level: None,
@@ -215,18 +220,34 @@ impl ClientBuilder {
     /// # Panics
     /// When it collides with one already registered (its id, a claimed
     /// `resultType` or notification), or claims a core `resultType` or the
-    /// built-in Tasks' `task`.
+    /// built-in Tasks' `task`. [`try_with_client_extension`](Self::try_with_client_extension)
+    /// returns that as an error instead.
     #[must_use]
-    pub fn with_client_extension(mut self, extension: Arc<dyn crate::ClientExtension>) -> Self {
-        assert!(
-            !extension.result_types().contains(&RESULT_TYPE_TASK),
-            "client extension `{}` claims resultType `task`, which the built-in Tasks support handles",
-            extension.id()
-        );
-        crate::extension::check_registration(&self.handler.extensions, extension.as_ref());
+    pub fn with_client_extension(self, extension: Arc<dyn crate::ClientExtension>) -> Self {
+        match self.try_with_client_extension(extension) {
+            Ok(builder) => builder,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// [`with_client_extension`](Self::with_client_extension), refusing a
+    /// colliding registration with [`ClientError::Config`] rather than a
+    /// panic: for extensions chosen at run time (from configuration).
+    ///
+    /// # Errors
+    /// [`ClientError::Config`] naming the collision.
+    pub fn try_with_client_extension(
+        mut self,
+        extension: Arc<dyn crate::ClientExtension>,
+    ) -> ClientResult<Self> {
+        if let Some(conflict) =
+            crate::extension::registration_conflict(&self.handler.extensions, extension.as_ref())
+        {
+            return Err(ClientError::Config(conflict));
+        }
         self = self.with_extension(extension.id().to_owned(), extension.settings());
         self.handler.extensions.push(extension);
-        self
+        Ok(self)
     }
 
     /// Declare participation in an extension (`2026-07-28` `extensions`
@@ -237,6 +258,15 @@ impl ClientBuilder {
             .get_or_insert_with(Map::new)
             .insert(id.into(), value);
         self
+    }
+
+    /// Declare the Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663),
+    /// so a `2026-07-28` server may answer a long `tools/call` with a task
+    /// for [`call_tool_detached`](Client::call_tool_detached) to follow. On
+    /// `2025-11-25`, where Tasks are core, nothing needs declaring.
+    #[must_use]
+    pub fn with_tasks(self) -> Self {
+        self.with_extension(TASKS_EXTENSION, json!({}))
     }
 
     /// Choose the connect mode (default [`ConnectMode::Auto`]).
@@ -257,6 +287,36 @@ impl ClientBuilder {
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
+        self
+    }
+
+    /// Describe this client beyond the name and version [`new`](Self::new)
+    /// took: a title, description, website, icons. Sent as `clientInfo`
+    /// (`initialize`, or `_meta` on `2026-07-28`); the step-down to
+    /// `2025-06-18` drops what that revision lacks.
+    ///
+    /// ```
+    /// # use turbomcp_client::ClientBuilder;
+    /// # use turbomcp_core::Implementation;
+    /// let builder = ClientBuilder::new("acme-agent", "2.1.0").with_client_info(
+    ///     Implementation::new("acme-agent", "2.1.0")
+    ///         .with_title("Acme Agent")
+    ///         .with_website_url("https://acme.example"),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn with_client_info(mut self, info: Implementation) -> Self {
+        self.client_info = info;
+        self
+    }
+
+    /// The longest a request's timeout stays stopped while this client
+    /// answers a server request that belongs to it (an elicitation a person
+    /// is reading, say; default 10 minutes). Past it the request times out
+    /// as usual: an unanswered prompt can't hold a call forever.
+    #[must_use]
+    pub fn with_input_timeout(mut self, timeout: Duration) -> Self {
+        self.input_timeout = timeout;
         self
     }
 
@@ -311,11 +371,12 @@ impl ClientBuilder {
     where
         T: Transport,
     {
-        let cache = (self.response_cache && transport.allows_response_cache())
-            .then(|| Arc::new(ResponseCache::default()));
+        let cache = self
+            .response_cache
+            .then(|| Arc::new(ResponseCache::new(!transport.allows_response_cache())));
         let conn = Connection::connect_with_cache(
             transport,
-            self.request_timeout,
+            (self.request_timeout, self.input_timeout),
             self.handler.clone(),
             cache.clone(),
             self.observer.clone(),
@@ -373,14 +434,14 @@ impl ClientBuilder {
             instructions: outcome.instructions,
             request_meta,
             handler: self.handler.clone(),
-            tools: Arc::new(Mutex::new(HashMap::new())),
+            tools: Arc::new(Mutex::new(ToolCatalog::default())),
+            abandoned: Arc::new(tokio::sync::Semaphore::new(MAX_ABANDONED_CANCELS)),
             cache,
         };
         if let Some(level) = self.log_level
             && !client.version.is_stateless()
             && client.server_supports("logging")
         {
-            #[allow(deprecated)]
             client.set_level(level).await?;
         }
         Ok(client)
@@ -687,7 +748,10 @@ pub struct Client {
     /// Tool name → what `list_tools` last said about it: the `x-mcp-header`
     /// mirrors, its `taskSupport`, and its compiled `outputSchema`. Consulted
     /// on every `call_tool`.
-    tools: Arc<Mutex<HashMap<String, ToolFacts>>>,
+    tools: Arc<Mutex<ToolCatalog>>,
+    /// Bounds the `tasks/cancel` requests sent for abandoned tasks, which go
+    /// out on tasks of their own (see `CancelTaskOnDrop`).
+    abandoned: Arc<tokio::sync::Semaphore>,
     /// The SEP-2549 response cache (`None` = disabled at build time). Shared
     /// with the connection actor, which invalidates on notifications.
     cache: Option<Arc<ResponseCache>>,
@@ -843,6 +907,20 @@ impl Client {
         self.versioned_request(method, params).await
     }
 
+    /// Send a notification of your own (an extension's, say): the
+    /// fire-and-forget counterpart of [`request`](Self::request). `params`
+    /// go as given; `None` sends none.
+    ///
+    /// # Errors
+    /// [`ClientError::Closed`] if the connection is gone.
+    pub async fn notify(
+        &self,
+        method: &str,
+        params: Option<Map<String, Value>>,
+    ) -> ClientResult<()> {
+        self.conn.notify(method, params.map(Value::Object)).await
+    }
+
     /// Close the shared connection and wait for transport cleanup.
     pub async fn close(&self) {
         self.conn.close().await;
@@ -881,17 +959,43 @@ impl Client {
     async fn cached_request(
         &self,
         method: &str,
-        params: Map<String, Value>,
+        mut params: Map<String, Value>,
         discriminator: Option<&str>,
+        per: Option<&Prepared>,
     ) -> ClientResult<Value> {
         if let Some(cache) = &self.cache
             && let Some(hit) = cache.get(method, discriminator)
         {
             return Ok(hit);
         }
-        let v = self.versioned_request(method, params).await?;
-        if let Some(cache) = &self.cache {
-            cache.store(method, discriminator, &v);
+        let requested = self.cache.as_ref().map(|cache| cache.requesting(method));
+        let wait = match per {
+            Some(per) => {
+                per.stamp(&mut params);
+                per.wait()
+            }
+            None => Wait::default(),
+        };
+        let v = match self
+            .versioned_request_waiting(method, params, Extensions::new(), wait)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                // A refused cursor: the pages cached beside it may be from a
+                // list the server no longer has.
+                if let (Some(cache), Some(_), ClientError::Rpc(rpc)) =
+                    (&self.cache, discriminator, &e)
+                    && rpc.code == turbomcp_core::codes::INVALID_PARAMS
+                    && method != request::RESOURCES_READ
+                {
+                    cache.forget(method);
+                }
+                return Err(e);
+            }
+        };
+        if let (Some(cache), Some(requested)) = (&self.cache, requested) {
+            cache.store(method, discriminator, &v, requested);
         }
         Ok(v)
     }
@@ -944,13 +1048,39 @@ impl Client {
     /// # Errors
     /// [`ClientError::Protocol`] if the server never declared `tools`;
     /// otherwise propagates RPC and decode failures.
-    ///
-    /// # Panics
-    /// If another thread panicked while holding the client's tool cache.
     pub async fn list_tools(&self, cursor: Option<&str>) -> ClientResult<neutral::ListToolsResult> {
+        self.list_tools_inner(cursor, None).await
+    }
+
+    /// [`list_tools`](Self::list_tools) under `options`: its timeout, cancellation and
+    /// `_meta` (trace context, say).
+    ///
+    /// # Errors
+    /// As [`list_tools`](Self::list_tools), plus [`ClientError::Timeout`] and
+    /// [`ClientError::Cancelled`] by `options`.
+    pub async fn list_tools_with(
+        &self,
+        cursor: Option<&str>,
+        options: &CallOptions,
+    ) -> ClientResult<neutral::ListToolsResult> {
+        self.run(options, async {
+            let per = self.prepare(options)?;
+            self.list_tools_inner(cursor, Some(&per)).await
+        })
+        .await
+    }
+
+    async fn list_tools_inner(
+        &self,
+        cursor: Option<&str>,
+        per: Option<&Prepared>,
+    ) -> ClientResult<neutral::ListToolsResult> {
         self.require_server_capability("tools", request::TOOLS_LIST)?;
+        // Stamped before asking: a change announced while the list is in
+        // flight leaves what it says already out of date.
+        let generation = self.conn.tools_generation();
         let v = self
-            .cached_request(request::TOOLS_LIST, list_params(cursor), cursor)
+            .cached_request(request::TOOLS_LIST, list_params(cursor), cursor, per)
             .await?;
         let mut result: neutral::ListToolsResult =
             self.decode::<v0728::ListToolsResult, legacy::ListToolsResult, _>(v)?;
@@ -962,7 +1092,14 @@ impl Client {
         // block the rest. Applying that everywhere dropped perfectly good
         // tools over stdio. (Last-seen page wins; tools paginate cleanly.)
         let mirrors_headers = self.version.is_stateless() && self.conn.carries_headers();
-        let mut known = self.tools.lock();
+        let mut catalog = self.tools.lock();
+        // A first page starts a listing afresh: a tool a newer list leaves
+        // out is gone, not remembered as it was.
+        if cursor.is_none() || catalog.generation != generation {
+            catalog.facts.clear();
+        }
+        catalog.generation = generation;
+        let known = &mut catalog.facts;
         result.tools.retain(|tool| {
             let headers = if mirrors_headers {
                 match header_params_from_schema(&tool.input_schema) {
@@ -983,7 +1120,7 @@ impl Client {
             known.insert(tool.name.clone(), ToolFacts::learn(tool, headers));
             true
         });
-        drop(known);
+        drop(catalog);
         Ok(result)
     }
 
@@ -1154,6 +1291,7 @@ impl Client {
         task: Option<Option<i64>>,
     ) -> ClientResult<Value> {
         self.require_server_capability("tools", request::TOOLS_CALL)?;
+        self.refresh_stale_tools().await;
         let per = self.prepare(options)?;
         let task = task.map(|ttl| match ttl {
             Some(ttl) => json!({ "ttl": ttl }),
@@ -1222,13 +1360,7 @@ impl Client {
         {
             return Ok(None);
         }
-        let known = |client: &Self| {
-            client
-                .tools
-                .lock()
-                .get(name)
-                .map(|facts| facts.task_support)
-        };
+        let known = |client: &Self| client.tool_facts(name).map(|facts| facts.task_support);
         // Whether this tool takes a task is only knowable from its
         // definition. Learn it once rather than guess: guessing wrong either
         // way is a `-32601` for a tool the server lists.
@@ -1315,12 +1447,7 @@ impl Client {
         if result.is_error {
             return Ok(());
         }
-        let Some(validator) = self
-            .tools
-            .lock()
-            .get(name)
-            .and_then(|facts| facts.output.clone())
-        else {
+        let Some(validator) = self.tool_facts(name).and_then(|facts| facts.output) else {
             return Ok(());
         };
         let violation = |reason: String| ClientError::OutputSchema {
@@ -1347,7 +1474,7 @@ impl Client {
         arguments: &Map<String, Value>,
     ) -> (Map<String, Value>, Extensions) {
         let mut mirrors = std::collections::BTreeMap::new();
-        if let Some(facts) = self.tools.lock().get(name) {
+        if let Some(facts) = self.tool_facts(name) {
             for param in &facts.headers {
                 let mut value: Option<&Value> = None;
                 for (i, segment) in param.path.iter().enumerate() {
@@ -1381,9 +1508,35 @@ impl Client {
         &self,
         cursor: Option<&str>,
     ) -> ClientResult<neutral::ListResourcesResult> {
+        self.list_resources_inner(cursor, None).await
+    }
+
+    /// [`list_resources`](Self::list_resources) under `options`: its timeout, cancellation and
+    /// `_meta` (trace context, say).
+    ///
+    /// # Errors
+    /// As [`list_resources`](Self::list_resources), plus [`ClientError::Timeout`] and
+    /// [`ClientError::Cancelled`] by `options`.
+    pub async fn list_resources_with(
+        &self,
+        cursor: Option<&str>,
+        options: &CallOptions,
+    ) -> ClientResult<neutral::ListResourcesResult> {
+        self.run(options, async {
+            let per = self.prepare(options)?;
+            self.list_resources_inner(cursor, Some(&per)).await
+        })
+        .await
+    }
+
+    async fn list_resources_inner(
+        &self,
+        cursor: Option<&str>,
+        per: Option<&Prepared>,
+    ) -> ClientResult<neutral::ListResourcesResult> {
         self.require_server_capability("resources", request::RESOURCES_LIST)?;
         let v = self
-            .cached_request(request::RESOURCES_LIST, list_params(cursor), cursor)
+            .cached_request(request::RESOURCES_LIST, list_params(cursor), cursor, per)
             .await?;
         self.decode::<v0728::ListResourcesResult, legacy::ListResourcesResult, _>(v)
     }
@@ -1449,6 +1602,10 @@ impl Client {
         }
         let mut params = Map::new();
         params.insert("uri".into(), json!(&uri));
+        let requested = self
+            .cache
+            .as_ref()
+            .map(|cache| cache.requesting(request::RESOURCES_READ));
         let (v, retried) = self
             .mrtr_rounds(request::RESOURCES_READ, params, Extensions::new(), &per)
             .await?;
@@ -1456,10 +1613,10 @@ impl Client {
         // asked and said (or on the server's sealed state): "Results from
         // requests that include `inputResponses` or `requestState` MUST NOT
         // be cached", or the next read of the URI skips the question.
-        if let Some(cache) = &self.cache
+        if let (Some(cache), Some(requested)) = (&self.cache, requested)
             && !retried
         {
-            cache.store(request::RESOURCES_READ, Some(&uri), &v);
+            cache.store(request::RESOURCES_READ, Some(&uri), &v, requested);
         }
         self.decode::<v0728::ReadResourceResult, legacy::ReadResourceResult, _>(v)
     }
@@ -1472,12 +1629,39 @@ impl Client {
         &self,
         cursor: Option<&str>,
     ) -> ClientResult<neutral::ListResourceTemplatesResult> {
+        self.list_resource_templates_inner(cursor, None).await
+    }
+
+    /// [`list_resource_templates`](Self::list_resource_templates) under `options`: its timeout, cancellation and
+    /// `_meta` (trace context, say).
+    ///
+    /// # Errors
+    /// As [`list_resource_templates`](Self::list_resource_templates), plus [`ClientError::Timeout`] and
+    /// [`ClientError::Cancelled`] by `options`.
+    pub async fn list_resource_templates_with(
+        &self,
+        cursor: Option<&str>,
+        options: &CallOptions,
+    ) -> ClientResult<neutral::ListResourceTemplatesResult> {
+        self.run(options, async {
+            let per = self.prepare(options)?;
+            self.list_resource_templates_inner(cursor, Some(&per)).await
+        })
+        .await
+    }
+
+    async fn list_resource_templates_inner(
+        &self,
+        cursor: Option<&str>,
+        per: Option<&Prepared>,
+    ) -> ClientResult<neutral::ListResourceTemplatesResult> {
         self.require_server_capability("resources", request::RESOURCES_TEMPLATES_LIST)?;
         let v = self
             .cached_request(
                 request::RESOURCES_TEMPLATES_LIST,
                 list_params(cursor),
                 cursor,
+                per,
             )
             .await?;
         self.decode::<v0728::ListResourceTemplatesResult, legacy::ListResourceTemplatesResult, _>(v)
@@ -1510,9 +1694,35 @@ impl Client {
         &self,
         cursor: Option<&str>,
     ) -> ClientResult<neutral::ListPromptsResult> {
+        self.list_prompts_inner(cursor, None).await
+    }
+
+    /// [`list_prompts`](Self::list_prompts) under `options`: its timeout, cancellation and
+    /// `_meta` (trace context, say).
+    ///
+    /// # Errors
+    /// As [`list_prompts`](Self::list_prompts), plus [`ClientError::Timeout`] and
+    /// [`ClientError::Cancelled`] by `options`.
+    pub async fn list_prompts_with(
+        &self,
+        cursor: Option<&str>,
+        options: &CallOptions,
+    ) -> ClientResult<neutral::ListPromptsResult> {
+        self.run(options, async {
+            let per = self.prepare(options)?;
+            self.list_prompts_inner(cursor, Some(&per)).await
+        })
+        .await
+    }
+
+    async fn list_prompts_inner(
+        &self,
+        cursor: Option<&str>,
+        per: Option<&Prepared>,
+    ) -> ClientResult<neutral::ListPromptsResult> {
         self.require_server_capability("prompts", request::PROMPTS_LIST)?;
         let v = self
-            .cached_request(request::PROMPTS_LIST, list_params(cursor), cursor)
+            .cached_request(request::PROMPTS_LIST, list_params(cursor), cursor, per)
             .await?;
         self.decode::<v0728::ListPromptsResult, legacy::ListPromptsResult, _>(v)
     }
@@ -1592,6 +1802,32 @@ impl Client {
         &self,
         params: neutral::CompleteParams,
     ) -> ClientResult<neutral::CompleteResult> {
+        self.complete_inner(params, None).await
+    }
+
+    /// [`complete`](Self::complete) under `options`: its timeout,
+    /// cancellation and `_meta`.
+    ///
+    /// # Errors
+    /// As [`complete`](Self::complete), plus [`ClientError::Timeout`] and
+    /// [`ClientError::Cancelled`] by `options`.
+    pub async fn complete_with(
+        &self,
+        params: neutral::CompleteParams,
+        options: &CallOptions,
+    ) -> ClientResult<neutral::CompleteResult> {
+        self.run(options, async {
+            let per = self.prepare(options)?;
+            self.complete_inner(params, Some(&per)).await
+        })
+        .await
+    }
+
+    async fn complete_inner(
+        &self,
+        params: neutral::CompleteParams,
+        per: Option<&Prepared>,
+    ) -> ClientResult<neutral::CompleteResult> {
         self.require_server_capability("completions", request::COMPLETION_COMPLETE)?;
         let reference = match &params.reference {
             neutral::CompletionReference::Prompt { name } => {
@@ -1618,8 +1854,15 @@ impl Client {
                 json!({ "arguments": params.context_arguments }),
             );
         }
+        let wait = match per {
+            Some(per) => {
+                per.stamp(&mut wire);
+                per.wait()
+            }
+            None => Wait::default(),
+        };
         let v = self
-            .versioned_request(request::COMPLETION_COMPLETE, wire)
+            .versioned_request_waiting(request::COMPLETION_COMPLETE, wire, Extensions::new(), wait)
             .await?;
         self.decode::<v0728::CompleteResult, legacy::CompleteResult, _>(v)
     }
@@ -1728,14 +1971,17 @@ impl Client {
     ///
     /// Until a client calls this the server sends no log messages at all, so
     /// on `2025-11-25` this is the opt-in for server logging; messages arrive
-    /// at [`NotificationHandler::on_notification`]. `2026-07-28` replaced the
+    /// at [`NotificationHandler::on_log_message`]. `2026-07-28` replaced the
     /// RPC with a per-request level, which
     /// [`ClientBuilder::with_log_level`] sets on every revision.
+    ///
+    /// `2026-07-28` deprecates logging (SEP-2577); on the stateful revisions
+    /// it is first-class, so this carries no `#[deprecated]` mark, which would
+    /// warn every client using it where it isn't.
     ///
     /// # Errors
     /// [`ClientError::Protocol`] on `2026-07-28`, or if the server never
     /// declared `logging`; otherwise propagates RPC failures.
-    #[deprecated(note = "SEP-2577 deprecates logging; still functional on 2025-11-25")]
     pub async fn set_level(&self, level: LogLevel) -> ClientResult<()> {
         self.require_stateful(
             request::LOGGING_SET_LEVEL,
@@ -1964,19 +2210,21 @@ impl Client {
                                 .and_then(Value::as_str)
                                 .unwrap_or_default();
                             let req_params = req.get("params").cloned();
-                            let answer = dispatch_server_request(
-                                handler,
-                                &self.version,
-                                req_method,
-                                req_params,
+                            let ctx = HandlerContext::new(
+                                self.version.clone(),
+                                req_params.as_ref(),
+                                turbomcp_core::CancellationToken::new(),
                             )
-                            .await
-                            .map_err(|e| {
-                                ClientError::Protocol(format!(
-                                    "input handler failed: {}",
-                                    e.message
-                                ))
-                            })?;
+                            .with_input_key(key.clone());
+                            let answer =
+                                dispatch_server_request(handler, &ctx, req_method, req_params)
+                                    .await
+                                    .map_err(|e| {
+                                        ClientError::Protocol(format!(
+                                            "input handler for `{key}` ({req_method}) failed: {}",
+                                            e.message
+                                        ))
+                                    })?;
                             answered.insert(key.clone());
                             responses.insert(key.clone(), answer);
                         }
@@ -2189,12 +2437,18 @@ impl Client {
                             .and_then(Value::as_str)
                             .unwrap_or_default();
                         let req_params = req.get("params").cloned();
-                        dispatch_server_request(handler, version, req_method, req_params)
+                        let ctx = HandlerContext::new(
+                            version.clone(),
+                            req_params.as_ref(),
+                            turbomcp_core::CancellationToken::new(),
+                        )
+                        .with_input_key(key.clone());
+                        dispatch_server_request(handler, &ctx, req_method, req_params)
                             .await
                             .map(|answer| (key.clone(), answer))
                             .map_err(|e| {
                                 ClientError::Protocol(format!(
-                                    "input handler failed: {}",
+                                    "input handler for `{key}` ({req_method}) failed: {}",
                                     e.message
                                 ))
                             })
@@ -2498,18 +2752,59 @@ impl Drop for CancelTaskOnDrop<'_> {
         let Some(task_id) = self.task_id.take() else {
             return;
         };
-        // `Drop` can't await, so the cancel goes out on its own task. One per
-        // abandoned task, bounded by the request timeout, and nothing to do
-        // outside a runtime (the connection is going with it).
+        // `Drop` can't await, so the cancel goes out on its own task: at most
+        // `MAX_ABANDONED_CANCELS` at once, each bounded by the request
+        // timeout, and nothing to do outside a runtime (the connection is
+        // going with it). Past the bound the task is left to its TTL rather
+        // than spawning without limit in a storm of abandoned calls.
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let Ok(permit) = Arc::clone(&self.client.abandoned).try_acquire_owned() else {
+            tracing::debug!(%task_id, "too many abandoned tasks being cancelled; left to its TTL");
             return;
         };
         let client = self.client.clone();
         runtime.spawn(async move {
+            let _permit = permit;
             if let Err(error) = client.task_cancel(&task_id).await {
                 tracing::debug!(%task_id, %error, "tasks/cancel for an abandoned task failed");
             }
         });
+    }
+}
+
+/// What the last `tools/list` said, and which `tools/list_changed` it is
+/// current to.
+#[derive(Default)]
+struct ToolCatalog {
+    facts: HashMap<String, ToolFacts>,
+    generation: u64,
+}
+
+impl Client {
+    /// What `tools/list` said about `name`, unless the server has since said
+    /// its tools changed: a tool's `outputSchema` or `taskSupport` may be
+    /// different now, and holding a call to the old one refused results the
+    /// server was right to send.
+    fn tool_facts(&self, name: &str) -> Option<ToolFacts> {
+        let catalog = self.tools.lock();
+        (catalog.generation == self.conn.tools_generation())
+            .then(|| catalog.facts.get(name).cloned())
+            .flatten()
+    }
+
+    /// Learn the tools again before a call, when what this client knew is out
+    /// of date (and it knew something: a client that never listed doesn't
+    /// start now). A failed listing leaves the facts unknown.
+    async fn refresh_stale_tools(&self) {
+        let stale = {
+            let catalog = self.tools.lock();
+            !catalog.facts.is_empty() && catalog.generation != self.conn.tools_generation()
+        };
+        if stale && let Err(e) = self.list_all_tools().await {
+            tracing::debug!(error = %e, "could not re-learn the tools after list_changed");
+        }
     }
 }
 

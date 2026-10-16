@@ -46,6 +46,29 @@ impl Implementation {
             extra: Map::new(),
         }
     }
+
+    /// Set the human-friendly title (builder style).
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// Set the `description` (`2025-11-25` onwards; builder style).
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.extra
+            .insert("description".into(), Value::String(description.into()));
+        self
+    }
+
+    /// Set the `websiteUrl` (`2025-11-25` onwards; builder style).
+    #[must_use]
+    pub fn with_website_url(mut self, url: impl Into<String>) -> Self {
+        self.extra
+            .insert("websiteUrl".into(), Value::String(url.into()));
+        self
+    }
 }
 
 /// MCP logging severity (`LoggingLevel`). Stable across versions.

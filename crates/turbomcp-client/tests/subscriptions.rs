@@ -338,10 +338,6 @@ async fn subscribe_and_unsubscribe_and_set_level_round_trip() {
         .unsubscribe_resource("file:///watched.txt")
         .await
         .expect("unsubscribe");
-    #[expect(
-        deprecated,
-        reason = "SEP-2577 deprecates logging; still live on 2025-11-25"
-    )]
     client
         .set_level(LogLevel::Warning)
         .await
@@ -432,7 +428,6 @@ async fn stateful_only_methods_are_refused_locally_on_2026_07_28() {
     let refusals = [
         client.subscribe_resource("file:///a").await.map(drop),
         client.unsubscribe_resource("file:///a").await.map(drop),
-        #[expect(deprecated, reason = "the refusal is the point")]
         client.set_level(LogLevel::Info).await.map(drop),
         client.task_list(None).await.map(drop),
         client.ping().await,

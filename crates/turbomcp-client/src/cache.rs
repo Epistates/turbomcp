@@ -9,12 +9,16 @@
 //! whose wire has no cache fields) is never stored, so the cache is inert
 //! unless the server opts in.
 //!
-//! Scope note: this cache is per-[`Client`](crate::Client) connection — one
-//! principal — so both `"private"` and `"public"` responses are safe to hold.
-//! `cacheScope` distinguishes *shared intermediaries*, which this is not.
+//! Scope: this cache is per-[`Client`](crate::Client) connection. On a
+//! transport that guarantees one principal for the connection, `"private"`
+//! and `"public"` results are both its to hold. On one that can't (an HTTP
+//! transport whose bearer source may present different principals' tokens),
+//! only `cacheScope: "public"` results are kept: a `"private"` one (the
+//! default) is valid only "for the same authorization context".
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -41,9 +45,69 @@ type Key = (String, Option<String>);
 #[derive(Debug, Default)]
 pub(crate) struct ResponseCache {
     entries: Mutex<HashMap<Key, Entry>>,
+    /// Whether only `cacheScope: "public"` results may be kept (see the
+    /// module docs).
+    public_only: bool,
+    /// Per [`Family`], how many notifications have invalidated it, so a
+    /// response requested before one isn't stored after it.
+    generations: [AtomicU64; 3],
 }
 
+/// What one notification invalidates.
+#[derive(Clone, Copy)]
+enum Family {
+    Tools,
+    Prompts,
+    /// Lists, templates and reads: `resources/list_changed` drops all three.
+    Resources,
+}
+
+impl Family {
+    fn of_method(method: &str) -> Option<Self> {
+        match method {
+            request::TOOLS_LIST => Some(Self::Tools),
+            request::PROMPTS_LIST => Some(Self::Prompts),
+            request::RESOURCES_LIST
+            | request::RESOURCES_TEMPLATES_LIST
+            | request::RESOURCES_READ => Some(Self::Resources),
+            _ => None,
+        }
+    }
+
+    fn of_notification(method: &str) -> Option<Self> {
+        match method {
+            notification::TOOLS_LIST_CHANGED => Some(Self::Tools),
+            notification::PROMPTS_LIST_CHANGED => Some(Self::Prompts),
+            notification::RESOURCES_LIST_CHANGED | notification::RESOURCES_UPDATED => {
+                Some(Self::Resources)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Where a response came from, for [`ResponseCache::store`]: the generation of
+/// its family when it was requested.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Requested(Option<u64>);
+
 impl ResponseCache {
+    /// A cache that keeps only `cacheScope: "public"` results when
+    /// `public_only`.
+    pub(crate) fn new(public_only: bool) -> Self {
+        Self {
+            public_only,
+            ..Self::default()
+        }
+    }
+
+    /// Forget every page of `method`: the server refused one of its cursors
+    /// ("clients SHOULD discard cached pages" for a cursor it no longer
+    /// honours), so the rest may be from a list that no longer exists.
+    pub(crate) fn forget(&self, method: &str) {
+        self.entries.lock().retain(|(m, _), _| m != method);
+    }
+
     /// A fresh cached result for `method` + `discriminator`, if any. Expired
     /// entries are dropped on the way out.
     pub(crate) fn get(&self, method: &str, discriminator: Option<&str>) -> Option<Value> {
@@ -59,10 +123,31 @@ impl ResponseCache {
         }
     }
 
+    /// Note the generation `method`'s family is at, before requesting it.
+    pub(crate) fn requesting(&self, method: &str) -> Requested {
+        Requested(
+            Family::of_method(method).map(|f| self.generations[f as usize].load(Ordering::Acquire)),
+        )
+    }
+
     /// Store a raw result if its `ttlMs` declares it cacheable. Per SEP-2549,
     /// `ttlMs: 0` means immediately stale and a missing `ttlMs` behaves like
-    /// `0` — neither is stored.
-    pub(crate) fn store(&self, method: &str, discriminator: Option<&str>, value: &Value) {
+    /// `0` — neither is stored. Nor is one whose family a notification
+    /// invalidated after it was `requested`: "the cached response ... should
+    /// be considered immediately stale", and storing it late would make it
+    /// fresh for its whole `ttlMs`.
+    pub(crate) fn store(
+        &self,
+        method: &str,
+        discriminator: Option<&str>,
+        value: &Value,
+        requested: Requested,
+    ) {
+        if let (Some(family), Requested(Some(then))) = (Family::of_method(method), requested)
+            && self.generations[family as usize].load(Ordering::Acquire) != then
+        {
+            return;
+        }
         let Some(ttl_ms) = value
             .get("ttlMs")
             .and_then(Value::as_u64)
@@ -70,6 +155,10 @@ impl ResponseCache {
         else {
             return;
         };
+        // `"private"` is the default scope.
+        if self.public_only && value.get("cacheScope").and_then(Value::as_str) != Some("public") {
+            return;
+        }
         let mut entries = self.entries.lock();
         if entries.len() >= MAX_ENTRIES {
             entries.retain(|_, e| e.expires_at > Instant::now());
@@ -96,6 +185,9 @@ impl ResponseCache {
     /// drops templates and reads — the resource set changed under them), and
     /// `resources/updated` drops the named URI's read entry.
     pub(crate) fn on_notification(&self, method: &str, params: Option<&Value>) {
+        if let Some(family) = Family::of_notification(method) {
+            self.generations[family as usize].fetch_add(1, Ordering::AcqRel);
+        }
         let mut entries = self.entries.lock();
         match method {
             notification::TOOLS_LIST_CHANGED => {
@@ -134,16 +226,63 @@ mod tests {
     #[test]
     fn zero_or_missing_ttl_is_never_stored() {
         let cache = ResponseCache::default();
-        cache.store("tools/list", None, &json!({ "tools": [], "ttlMs": 0 }));
-        cache.store("tools/list", None, &json!({ "tools": [] }));
+        cache.store(
+            "tools/list",
+            None,
+            &json!({ "tools": [], "ttlMs": 0 }),
+            Requested(None),
+        );
+        cache.store("tools/list", None, &json!({ "tools": [] }), Requested(None));
         assert!(cache.get("tools/list", None).is_none());
+    }
+
+    #[test]
+    fn without_one_principal_only_public_results_are_kept() {
+        let cache = ResponseCache::new(true);
+        let private = json!({ "tools": [], "ttlMs": 60_000 });
+        cache.store("tools/list", None, &private, Requested(None));
+        assert!(
+            cache.get("tools/list", None).is_none(),
+            "private is the default"
+        );
+        let public = json!({ "tools": [], "ttlMs": 60_000, "cacheScope": "public" });
+        cache.store("tools/list", None, &public, Requested(None));
+        assert!(cache.get("tools/list", None).is_some());
+        cache.forget("tools/list");
+        assert!(cache.get("tools/list", None).is_none());
+    }
+
+    /// A response requested before a `list_changed` and stored after it is
+    /// not cached: it predates the change.
+    #[test]
+    fn a_response_that_predates_an_invalidation_is_not_stored() {
+        let cache = ResponseCache::default();
+        let requested = cache.requesting("tools/list");
+        cache.on_notification(notification::TOOLS_LIST_CHANGED, None);
+        cache.store(
+            "tools/list",
+            None,
+            &json!({ "tools": [], "ttlMs": 60_000 }),
+            requested,
+        );
+        assert!(cache.get("tools/list", None).is_none());
+        // Another family's notification doesn't spoil it.
+        let requested = cache.requesting("tools/list");
+        cache.on_notification(notification::PROMPTS_LIST_CHANGED, None);
+        cache.store(
+            "tools/list",
+            None,
+            &json!({ "tools": [], "ttlMs": 60_000 }),
+            requested,
+        );
+        assert!(cache.get("tools/list", None).is_some());
     }
 
     #[test]
     fn fresh_entries_hit_and_cursors_are_distinct_entries() {
         let cache = ResponseCache::default();
         let result = json!({ "tools": [], "ttlMs": 60_000 });
-        cache.store("tools/list", None, &result);
+        cache.store("tools/list", None, &result, Requested(None));
         assert_eq!(cache.get("tools/list", None), Some(result));
         // A different discriminator (cursor) is a different entry.
         assert!(cache.get("tools/list", Some("page2")).is_none());
@@ -152,7 +291,12 @@ mod tests {
     #[test]
     fn entries_expire_after_their_ttl() {
         let cache = ResponseCache::default();
-        cache.store("tools/list", None, &json!({ "tools": [], "ttlMs": 15 }));
+        cache.store(
+            "tools/list",
+            None,
+            &json!({ "tools": [], "ttlMs": 15 }),
+            Requested(None),
+        );
         assert!(cache.get("tools/list", None).is_some(), "fresh: a hit");
         std::thread::sleep(Duration::from_millis(40));
         assert!(
@@ -165,16 +309,27 @@ mod tests {
     fn at_capacity_the_soonest_to_expire_entry_is_evicted() {
         let cache = ResponseCache::default();
         // Entry 0 expires first; fill the rest of the capacity with later ones.
-        cache.store("tools/list", Some("cursor-0"), &json!({ "ttlMs": 10_000 }));
+        cache.store(
+            "tools/list",
+            Some("cursor-0"),
+            &json!({ "ttlMs": 10_000 }),
+            Requested(None),
+        );
         for i in 1..MAX_ENTRIES {
             cache.store(
                 "tools/list",
                 Some(&format!("cursor-{i}")),
                 &json!({ "ttlMs": 100_000 }),
+                Requested(None),
             );
         }
         // Admitting one more evicts the soonest-to-expire (entry 0), not the new one.
-        cache.store("tools/list", Some("overflow"), &json!({ "ttlMs": 100_000 }));
+        cache.store(
+            "tools/list",
+            Some("overflow"),
+            &json!({ "ttlMs": 100_000 }),
+            Requested(None),
+        );
         assert!(cache.get("tools/list", Some("cursor-0")).is_none());
         assert!(cache.get("tools/list", Some("cursor-1")).is_some());
         assert!(cache.get("tools/list", Some("overflow")).is_some());
@@ -184,11 +339,21 @@ mod tests {
     fn list_changed_invalidates_its_capability() {
         let cache = ResponseCache::default();
         let result = json!({ "ttlMs": 60_000 });
-        cache.store(request::TOOLS_LIST, None, &result);
-        cache.store(request::RESOURCES_LIST, None, &result);
-        cache.store(request::RESOURCES_TEMPLATES_LIST, None, &result);
-        cache.store(request::RESOURCES_READ, Some("file:///a"), &result);
-        cache.store(request::PROMPTS_LIST, None, &result);
+        cache.store(request::TOOLS_LIST, None, &result, Requested(None));
+        cache.store(request::RESOURCES_LIST, None, &result, Requested(None));
+        cache.store(
+            request::RESOURCES_TEMPLATES_LIST,
+            None,
+            &result,
+            Requested(None),
+        );
+        cache.store(
+            request::RESOURCES_READ,
+            Some("file:///a"),
+            &result,
+            Requested(None),
+        );
+        cache.store(request::PROMPTS_LIST, None, &result, Requested(None));
 
         cache.on_notification(notification::TOOLS_LIST_CHANGED, None);
         assert!(cache.get(request::TOOLS_LIST, None).is_none());
@@ -205,7 +370,7 @@ mod tests {
         assert!(cache.get(request::PROMPTS_LIST, None).is_some());
 
         // The prompts branch fires too (each capability invalidates only its own).
-        cache.store(request::TOOLS_LIST, None, &result);
+        cache.store(request::TOOLS_LIST, None, &result, Requested(None));
         cache.on_notification(notification::PROMPTS_LIST_CHANGED, None);
         assert!(cache.get(request::PROMPTS_LIST, None).is_none());
         assert!(cache.get(request::TOOLS_LIST, None).is_some());
@@ -215,8 +380,18 @@ mod tests {
     fn resources_updated_invalidates_only_the_named_uri() {
         let cache = ResponseCache::default();
         let result = json!({ "ttlMs": 60_000 });
-        cache.store(request::RESOURCES_READ, Some("file:///a"), &result);
-        cache.store(request::RESOURCES_READ, Some("file:///b"), &result);
+        cache.store(
+            request::RESOURCES_READ,
+            Some("file:///a"),
+            &result,
+            Requested(None),
+        );
+        cache.store(
+            request::RESOURCES_READ,
+            Some("file:///b"),
+            &result,
+            Requested(None),
+        );
         cache.on_notification(
             notification::RESOURCES_UPDATED,
             Some(&json!({ "uri": "file:///a" })),

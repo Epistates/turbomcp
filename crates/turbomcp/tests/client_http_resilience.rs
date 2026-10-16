@@ -27,6 +27,7 @@ struct Seen {
     rpc: String,
     session: Option<String>,
     version: Option<String>,
+    auth: Option<String>,
 }
 
 type Script = dyn Fn(&Mock, &str, &Value, Option<&str>) -> Response + Send + Sync;
@@ -72,6 +73,7 @@ impl Mock {
             rpc: rpc.to_owned(),
             session: session.clone(),
             version: get("mcp-protocol-version"),
+            auth: get("authorization"),
         });
         session
     }
@@ -507,5 +509,156 @@ async fn a_200_that_is_not_a_stream_is_backed_off() {
     assert!(
         gets <= 2,
         "backed off (1s, then 2s, …): {gets} GETs in 2.5s"
+    );
+}
+
+/// An `initialize` answer at `version`, minting `session-N`, that offers
+/// resource subscriptions and logging.
+fn initialize_offering(mock: &Mock, id: &Value, version: &str) -> Response {
+    let n = mock.handshakes.fetch_add(1, Ordering::SeqCst);
+    let body = json!({ "jsonrpc": "2.0", "id": id, "result": {
+        "protocolVersion": version,
+        "capabilities": { "resources": { "subscribe": true }, "logging": {}, "tools": {} },
+        "serverInfo": { "name": "mock", "version": "1.0" }
+    }});
+    ([("mcp-session-id", format!("session-{n}"))], Json(body)).into_response()
+}
+
+/// A recovered session gets its subscriptions and log level back: the server
+/// forgot them with the old session, and `resources/updated` and log
+/// messages stopped without a word.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_recovered_session_gets_its_subscriptions_and_log_level_back() {
+    let mock = Mock::new(|mock, rpc, msg, session| {
+        if let Some(sid) = session
+            && mock.expired.lock().unwrap().iter().any(|e| e == sid)
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        match rpc {
+            "initialize" => initialize_offering(mock, &msg["id"], "2025-11-25"),
+            "<stream>" => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+            "tools/list" => result(&msg["id"], json!({ "tools": [] })),
+            "resources/subscribe" | "logging/setLevel" => result(&msg["id"], json!({})),
+            _ => StatusCode::ACCEPTED.into_response(),
+        }
+    });
+    let url = serve(Arc::clone(&mock)).await;
+    let client = ClientBuilder::new("keeper", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .connect(HttpClientTransport::new(&url).unwrap())
+        .await
+        .expect("handshake");
+    client.subscribe_resource("mem://watched").await.unwrap();
+    client.set_level(turbomcp::LogLevel::Warning).await.unwrap();
+
+    mock.expired.lock().unwrap().push("session-0".into());
+    client.list_tools(None).await.expect("recovered");
+
+    let on_new = |rpc: &str| {
+        mock.seen(rpc)
+            .iter()
+            .any(|s| s.session.as_deref() == Some("session-1"))
+    };
+    assert!(on_new("resources/subscribe"), "the subscription is renewed");
+    assert!(on_new("logging/setLevel"), "the log level is set again");
+}
+
+/// A replacement session that negotiates another revision is refused: the
+/// client was told the first answer and speaks its shape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_replacement_session_on_another_revision_is_refused() {
+    let mock = Mock::new(|mock, rpc, msg, session| {
+        if let Some(sid) = session
+            && mock.expired.lock().unwrap().iter().any(|e| e == sid)
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        match rpc {
+            "initialize" if mock.handshakes.load(Ordering::SeqCst) == 0 => {
+                initialize_offering(mock, &msg["id"], "2025-11-25")
+            }
+            "initialize" => initialize_offering(mock, &msg["id"], "2025-06-18"),
+            "<stream>" => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+            "tools/list" => result(&msg["id"], json!({ "tools": [] })),
+            _ => StatusCode::ACCEPTED.into_response(),
+        }
+    });
+    let url = serve(Arc::clone(&mock)).await;
+    let client = ClientBuilder::new("strict", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .connect(HttpClientTransport::new(&url).unwrap())
+        .await
+        .expect("handshake");
+    mock.expired.lock().unwrap().push("session-0".into());
+    let err = client.list_tools(None).await.expect_err("refused");
+    assert!(err.to_string().contains("negotiated 2025-06-18"), "{err}");
+}
+
+/// Swaps its token once the server challenges the old one.
+struct Rotating {
+    token: Mutex<String>,
+}
+
+#[turbomcp::client::async_trait]
+impl turbomcp::client::BearerSource for Rotating {
+    async fn bearer(&self) -> Option<turbomcp::client::Zeroizing<String>> {
+        Some(turbomcp::client::Zeroizing::new(
+            self.token.lock().unwrap().clone(),
+        ))
+    }
+
+    async fn on_challenge(
+        &self,
+        status: u16,
+        _header: Option<&str>,
+        _rejected: Option<&str>,
+    ) -> Result<bool, String> {
+        if status == 401 {
+            *self.token.lock().unwrap() = "fresh".into();
+            return Ok(true);
+        }
+        Ok(false)
+    }
+}
+
+/// The standalone stream answers a `401` through the bearer source, as a
+/// POST does: it used to retry the refused token forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_standalone_stream_answers_an_auth_challenge() {
+    let mock = Mock::new(|mock, rpc, msg, _| match rpc {
+        "initialize" => initialize(mock, &msg["id"]),
+        "<stream>" => {
+            let fresh = mock
+                .seen("<stream>")
+                .last()
+                .is_some_and(|s| s.auth.as_deref() == Some("Bearer fresh"));
+            if fresh {
+                idle_stream()
+            } else {
+                StatusCode::UNAUTHORIZED.into_response()
+            }
+        }
+        _ => StatusCode::ACCEPTED.into_response(),
+    });
+    let url = serve(Arc::clone(&mock)).await;
+    let source = Arc::new(Rotating {
+        token: Mutex::new("stale".into()),
+    });
+    let _client = ClientBuilder::new("rotating", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .connect(
+            HttpClientTransport::new(&url)
+                .unwrap()
+                .with_bearer_source(source),
+        )
+        .await
+        .expect("handshake");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let gets = mock.seen("<stream>");
+    assert!(
+        gets.iter()
+            .any(|s| s.auth.as_deref() == Some("Bearer fresh")),
+        "the stream came back with the refreshed token: {gets:?}"
     );
 }

@@ -571,7 +571,7 @@ async fn task_client(terminal: Value, ttl_ms: u64) -> Client {
     // the Tasks extension; to anyone else it is an unrecognized result type.
     ClientBuilder::new("tasks", "1.0.0")
         .with_connect_mode(ConnectMode::Modern)
-        .with_extension("io.modelcontextprotocol/tasks", json!({}))
+        .with_tasks()
         .connect(transport_for(client_io))
         .await
         .unwrap()
@@ -984,4 +984,177 @@ async fn a_request_the_server_cancels_is_stopped_and_never_answered() {
         answered.lock().unwrap().is_empty(),
         "no reply to a cancelled request"
     );
+}
+
+/// Answers every elicitation with its own name, to show who was asked.
+struct Answerer(&'static str);
+
+#[async_trait]
+impl ElicitationHandler for Answerer {
+    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+        let mut content = Map::new();
+        content.insert("who".into(), json!(self.0));
+        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
+    }
+}
+
+/// A server that sends a task's first question before the `CreateTaskResult`
+/// naming the task: the question still reaches the call's own handler. It
+/// can't be attributed when it arrives, so the client holds it until the
+/// result that names the task; answering at once went to the client's
+/// global handler.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_task_question_ahead_of_its_task_reaches_the_calls_handler() {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        let (rd, mut wr) = split(server_io);
+        let mut lines = BufReader::new(rd).lines();
+        let mut answer = Value::Null;
+        while let Ok(Some(line)) = lines.next_line().await {
+            let frame: Value = serde_json::from_str(&line).expect("valid json");
+            let reply =
+                |result: Value| json!({ "jsonrpc": "2.0", "id": frame["id"], "result": result });
+            let out = match frame.get("method").and_then(Value::as_str) {
+                Some("initialize") => vec![reply(json!({
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {
+                        "tools": {},
+                        "tasks": { "requests": { "tools": { "call": {} } } },
+                    },
+                    "serverInfo": { "name": "early", "version": "1.0" }
+                }))],
+                Some("tools/list") => vec![reply(json!({ "tools": [{
+                    "name": "slow",
+                    "inputSchema": { "type": "object" },
+                    "execution": { "taskSupport": "optional" },
+                }]}))],
+                Some("tools/call") => vec![
+                    // The question first, then the task it belongs to.
+                    json!({
+                        "jsonrpc": "2.0", "id": "e-1", "method": "elicitation/create",
+                        "params": {
+                            "message": "Who?",
+                            "requestedSchema": {
+                                "type": "object",
+                                "properties": { "who": { "type": "string" } },
+                            },
+                            "_meta": { "io.modelcontextprotocol/related-task": { "taskId": "t-1" } },
+                        },
+                    }),
+                    reply(json!({ "task": {
+                        "taskId": "t-1", "status": "working",
+                        "createdAt": "2026-10-16T00:00:00Z",
+                        "lastUpdatedAt": "2026-10-16T00:00:00Z",
+                        "ttl": 60000, "pollInterval": 20,
+                    }})),
+                ],
+                Some("tasks/get") => vec![reply(json!({
+                    "taskId": "t-1",
+                    "status": if answer.is_null() { "working" } else { "completed" },
+                    "createdAt": "2026-10-16T00:00:00Z",
+                    "lastUpdatedAt": "2026-10-16T00:00:00Z",
+                    "ttl": 60000, "pollInterval": 20,
+                }))],
+                Some("tasks/result") if !answer.is_null() => vec![reply(json!({
+                    "content": [{ "type": "text", "text": answer["content"]["who"] }],
+                }))],
+                Some("tasks/result") => continue,
+                Some(_) => continue,
+                // The client's answer to `e-1`.
+                None => {
+                    answer = frame["result"].clone();
+                    continue;
+                }
+            };
+            for frame in out {
+                wr.write_all(format!("{frame}\n").as_bytes()).await.unwrap();
+            }
+        }
+    });
+
+    let client = ClientBuilder::new("early", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .with_elicitation(Answerer("global"))
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        client.call_tool_with(
+            "slow",
+            Map::new(),
+            &turbomcp_client::CallOptions::new()
+                .with_elicitation(Answerer("call"))
+                .task(Some(60_000)),
+        ),
+    )
+    .await
+    .expect("the task finishes")
+    .expect("a result");
+    assert_eq!(result.text_content().as_deref(), Some("call"));
+}
+
+/// Panics on `boom`, records everything else.
+#[derive(Clone, Default)]
+struct Fragile {
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl NotificationHandler for Fragile {
+    async fn on_log_message(&self, message: neutral::LogMessage) {
+        let text = message.data.as_str().unwrap_or_default().to_owned();
+        assert!(text != "boom", "a handler bug");
+        self.seen.lock().unwrap().push(text);
+    }
+}
+
+/// A notification handler that panics loses that one notification, not the
+/// rest: the delivery task used to end, and every later notification was
+/// dropped without a word.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panicking_notification_handler_keeps_getting_notifications() {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        let (rd, mut wr) = split(server_io);
+        let mut lines = BufReader::new(rd).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let frame: Value = serde_json::from_str(&line).expect("valid json");
+            match frame.get("method").and_then(Value::as_str) {
+                Some("initialize") => {
+                    let reply = json!({ "jsonrpc": "2.0", "id": frame["id"], "result": {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": { "logging": {} },
+                        "serverInfo": { "name": "noisy", "version": "1.0" }
+                    }});
+                    wr.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                }
+                Some("notifications/initialized") => {
+                    for data in ["boom", "after"] {
+                        let note = json!({
+                            "jsonrpc": "2.0",
+                            "method": "notifications/message",
+                            "params": { "level": "info", "data": data },
+                        });
+                        wr.write_all(format!("{note}\n").as_bytes()).await.unwrap();
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+    let spy = Fragile::default();
+    let _client = ClientBuilder::new("fragile", "1.0.0")
+        .with_connect_mode(ConnectMode::Legacy)
+        .with_notifications(spy.clone())
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    for _ in 0..50 {
+        if !spy.seen.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(*spy.seen.lock().unwrap(), vec!["after".to_owned()]);
 }

@@ -83,7 +83,9 @@ pub trait Transport: Send + 'static {
     /// Transport-specific failure (I/O, protocol framing).
     type Error: core::error::Error + Send + Sync + 'static;
 
-    /// Whether this transport guarantees one stable principal for cached results.
+    /// Whether this transport guarantees one stable principal, so a client
+    /// may cache `cacheScope: "private"` results; otherwise it caches only
+    /// `"public"` ones.
     fn allows_response_cache(&self) -> bool {
         true
     }

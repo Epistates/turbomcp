@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Client handler context: `ElicitationHandler::elicit_with`/`elicit_url_with`,
+  `SamplingHandler::create_message_with` and `RootsHandler::list_roots_with`
+  receive a `HandlerContext` (the request id or `inputRequests` key, the
+  negotiated revision, the request's `_meta`, and a cancellation token the
+  server's `notifications/cancelled` fires). Their defaults call the
+  existing methods, so handlers that don't need it change nothing.
+- Typed notifications: `NotificationHandler::on_log_message`
+  (`neutral::LogMessage`), `on_progress`, `on_resource_updated` and
+  `on_{tools,prompts,resources}_list_changed`, each called before the
+  catch-all `on_notification`, which no longer has to be implemented.
+- `CallOptions` for more calls: `list_tools_with`, `list_resources_with`,
+  `list_resource_templates_with`, `list_prompts_with` and `complete_with`
+  (timeout, cancellation, `_meta`).
+- `ClientBuilder::with_tasks` (declares the Tasks extension for
+  `2026-07-28`), `with_client_info` (title, description, website and icons
+  in `clientInfo`, with `Implementation::with_title`/`with_description`/
+  `with_website_url`), `with_input_timeout`, and
+  `try_with_client_extension` (a collision is `ClientError::Config` rather
+  than a panic). `Client::notify` sends a notification of your own.
+- `SubscriptionEvent::Lagged { missed }`: the subscription fell behind and
+  dropped notifications, so refresh what it watches.
 - `ServerProcess` (`turbomcp-client`), the server behind a stdio
   connection: `shutdown` runs the spec's sequence (wait for the server to
   exit once its input closes, then `SIGTERM`, then `SIGKILL`, to its whole
@@ -390,6 +411,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- URL-mode elicitations are checked before a handler sees them: the `url`
+  must parse and be `http` or `https` (a `file:`, `javascript:` or `data:`
+  URL is refused with `-32602`), and `message` and `elicitationId` are
+  required. A form answer that breaks its `requestedSchema` is not sent.
+- A server that leaves an elicitation unanswered can no longer stop every
+  call's timeout: the pause applies only to the calls the request belongs
+  to (where the transport says), and for at most `with_input_timeout`
+  (10 minutes by default).
 - The HTTP listener caps connections and closes one that takes over the
   header-read timeout to send a request's headers, idle keep-alives
   included. `axum::serve` set neither (hyper's timeout is inert without a
@@ -570,6 +599,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A panicking progress callback no longer takes the connection down (it
+  ran on the connection's actor, and every call waited out its timeout), a
+  panicking notification handler loses only that notification instead of
+  every later one, and an actor that ends any way fails its waiting calls
+  at once.
+- Cancelling a dropped call when the outbound queue is full no longer
+  closes the connection for every other call: the cancel waits in an
+  overflow queue sent once the queue drains, behind the request it cancels.
+- What `tools/list` taught the client (output schemas, task support,
+  header mirrors) is re-learned after `tools/list_changed` instead of
+  applied to the changed tools forever, and a tool a newer list omits is
+  forgotten.
+- The response cache doesn't store a result requested before a
+  notification invalidated it, honours `cacheScope` (with a bearer source,
+  whose principal may change, only `"public"` results are cached, where
+  nothing was), and drops a list's pages when the server refuses a cursor.
+- HTTP session recovery restores the session's `logging/setLevel` and
+  `resources/subscribe` state on the replacement session, and refuses one
+  that negotiates a different revision.
+- Elicitation: URL-mode `accept` omits `content`, as the spec says.
+- A response id echoed as a string (`"1"` for `1`) answers its request, and
+  an id-less error answers the only request outstanding instead of leaving
+  it to time out.
+- A server `retry` longer than 30 s is waited out instead of failing the
+  call or stopping the standalone stream ("clients MUST respect the
+  `retry` field"), and the standalone stream answers `401`/`403`
+  challenges through the bearer source.
+- A `2025-11-25` task's request that arrives before the `CreateTaskResult`
+  naming the task is held until it does (2 s at most), so it reaches the
+  call's own handler rather than the client's.
+- Live `subscriptions/listen` streams no longer hold `max_posts` slots, a
+  failing MRTR input handler's error names its key, abandoned tasks'
+  `tasks/cancel` requests are bounded, and the oldest unclaimed URL-mode
+  elicitation id is the one forgotten at the bound.
+- `Client::set_level` no longer carries `#[deprecated]`: `2026-07-28`
+  deprecates logging, but it is first-class on the stateful revisions.
 - Session recovery over HTTP kept the dead session id until the new one
   replaced it: calls started during the re-handshake went out without a
   session, got the server's final `400`, and failed.

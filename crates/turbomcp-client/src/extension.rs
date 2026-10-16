@@ -68,45 +68,51 @@ pub trait ClientExtension: Send + Sync + 'static {
     }
 }
 
-/// Refuse a registration that would collide with one already made: the
-/// first match winning silently is how plugins corrupt each other.
-///
-/// # Panics
-/// On a duplicate id, a `resultType` or notification claimed twice, or a
-/// claim on a core result type.
-pub(crate) fn check_registration(
+/// Why a registration would collide with one already made, if it would:
+/// the first match winning silently is how plugins corrupt each other. A
+/// duplicate id, a `resultType` or notification claimed twice, or a claim on
+/// a core result type (or the built-in Tasks' `task`).
+pub(crate) fn registration_conflict(
     existing: &[std::sync::Arc<dyn ClientExtension>],
     new: &dyn ClientExtension,
-) {
+) -> Option<String> {
     use turbomcp_protocol::neutral::result_type::{COMPLETE, INPUT_REQUIRED};
     for claimed in new.result_types() {
-        assert!(
-            *claimed != COMPLETE && *claimed != INPUT_REQUIRED,
-            "client extension `{}` claims the core resultType `{claimed}`",
-            new.id()
-        );
+        if *claimed == COMPLETE || *claimed == INPUT_REQUIRED {
+            return Some(format!(
+                "client extension `{}` claims the core resultType `{claimed}`",
+                new.id()
+            ));
+        }
+        if *claimed == crate::client::RESULT_TYPE_TASK {
+            return Some(format!(
+                "client extension `{}` claims resultType `task`, which the built-in Tasks support handles",
+                new.id()
+            ));
+        }
     }
     for other in existing {
-        assert!(
-            other.id() != new.id(),
-            "client extension `{}` registered twice",
-            new.id()
-        );
+        if other.id() == new.id() {
+            return Some(format!("client extension `{}` registered twice", new.id()));
+        }
         for claimed in new.result_types() {
-            assert!(
-                !other.result_types().contains(claimed),
-                "client extensions `{}` and `{}` both claim resultType `{claimed}`",
-                other.id(),
-                new.id()
-            );
+            if other.result_types().contains(claimed) {
+                return Some(format!(
+                    "client extensions `{}` and `{}` both claim resultType `{claimed}`",
+                    other.id(),
+                    new.id()
+                ));
+            }
         }
         for method in new.notifications() {
-            assert!(
-                !other.notifications().contains(method),
-                "client extensions `{}` and `{}` both claim `{method}`",
-                other.id(),
-                new.id()
-            );
+            if other.notifications().contains(method) {
+                return Some(format!(
+                    "client extensions `{}` and `{}` both claim `{method}`",
+                    other.id(),
+                    new.id()
+                ));
+            }
         }
     }
+    None
 }
