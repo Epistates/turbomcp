@@ -92,6 +92,34 @@ fn whole(value: f64) -> Option<i64> {
     (n as f64 == value).then_some(n)
 }
 
+/// A JSON integer, spelled however: JSON Schema counts a number with a zero
+/// fractional part as an integer, so `1000.0` is `1000` and `3.5` is an error.
+///
+/// # Errors
+/// A value that is not a whole number within `i64`.
+pub(crate) fn integer<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
+    to_i64(Number::deserialize(deserializer)?)
+}
+
+/// An optional JSON integer, as [`integer`]; `null` is absent.
+///
+/// # Errors
+/// As [`integer`].
+pub(crate) fn option_integer<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error> {
+    Option::<Number>::deserialize(deserializer)?
+        .map(to_i64)
+        .transpose()
+}
+
+fn to_i64<E: serde::de::Error>(number: Number) -> Result<i64, E> {
+    number
+        .as_i64()
+        .or_else(|| number.as_f64().and_then(whole))
+        .ok_or_else(|| E::custom(format_args!("not an integer: {number}")))
+}
+
 /// Any JSON value, with a present `null` kept as `Some(Value::Null)`.
 ///
 /// `Option<Value>` alone reads `null` as `None`, so a tool whose structured
@@ -190,6 +218,51 @@ mod tests {
         assert_eq!(text(-0.0, None), r#"{"progress":-0.0}"#);
         assert_eq!(text(1e300, None), r#"{"progress":1e+300}"#);
         assert_eq!(text(-3.0, None), r#"{"progress":-3}"#);
+    }
+
+    #[derive(Deserialize)]
+    struct Counts {
+        #[serde(deserialize_with = "super::integer")]
+        max_tokens: i64,
+        #[serde(default, deserialize_with = "super::option_integer")]
+        ttl: Option<i64>,
+    }
+
+    #[test]
+    fn integers_accept_any_whole_spelling_and_nothing_else() {
+        let counts = |s: &str| serde_json::from_str::<Counts>(s);
+        let c = counts(r#"{"max_tokens": 1000.0, "ttl": 60000}"#).unwrap();
+        assert_eq!((c.max_tokens, c.ttl), (1000, Some(60000)));
+        let c = counts(r#"{"max_tokens": -2, "ttl": null}"#).unwrap();
+        assert_eq!((c.max_tokens, c.ttl), (-2, None));
+        assert_eq!(counts(r#"{"max_tokens": 1e3}"#).unwrap().max_tokens, 1000);
+        assert!(counts(r#"{"max_tokens": 3.5}"#).is_err());
+        assert!(counts(r#"{"max_tokens": 1e300}"#).is_err());
+        assert!(counts(r#"{"max_tokens": "1"}"#).is_err());
+    }
+
+    /// On a generated type: `2025-11-25`'s `Task.ttl` is required but
+    /// nullable, so it takes a whole float and `null`, and absence still fails.
+    #[test]
+    fn a_required_nullable_integer_keeps_its_requiredness() {
+        let task = |ttl: Option<serde_json::Value>| {
+            let mut doc = json!({
+                "taskId": "t", "status": "working",
+                "createdAt": "2026-01-01T00:00:00Z", "lastUpdatedAt": "2026-01-01T00:00:00Z",
+                "pollInterval": 500.0
+            });
+            if let Some(ttl) = ttl {
+                doc["ttl"] = ttl;
+            }
+            serde_json::from_value::<crate::v2025_11_25::types::Task>(doc)
+        };
+        let decoded = task(Some(json!(60000.0))).unwrap();
+        assert_eq!(
+            (decoded.ttl, decoded.poll_interval),
+            (Some(60000), Some(500))
+        );
+        assert_eq!(task(Some(Value::Null)).unwrap().ttl, None);
+        assert!(task(None).is_err(), "an absent required ttl decoded");
     }
 
     #[derive(Deserialize)]

@@ -508,6 +508,7 @@ pub struct CancelTaskResult {
         rename = "pollInterval",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub poll_interval: ::core::option::Option<i64>,
     ///Current task state.
     pub status: TaskStatus,
@@ -525,7 +526,7 @@ pub struct CancelTaskResult {
     #[serde(rename = "taskId")]
     pub task_id: ::alloc::string::String,
     ///Actual retention duration from creation in milliseconds, null for unlimited.
-    #[serde(deserialize_with = "::core::option::Option::deserialize")]
+    #[serde(deserialize_with = "crate::lenient::option_integer")]
     pub ttl: ::core::option::Option<i64>,
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
@@ -1078,6 +1079,7 @@ pub struct CompleteResultCompletion {
     pub has_more: ::core::option::Option<bool>,
     ///The total number of completion options available. This can exceed the number of values actually sent in the response.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub total: ::core::option::Option<i64>,
     ///An array of completion values. Must not exceed 100 items.
     pub values: ::alloc::vec::Vec<::alloc::string::String>,
@@ -1236,6 +1238,7 @@ pub struct CreateMessageRequestParams {
     ///
     /// The client MAY choose to sample fewer tokens than the requested maximum.
     #[serde(rename = "maxTokens")]
+    #[serde(deserialize_with = "crate::lenient::integer")]
     pub max_tokens: i64,
     pub messages: ::alloc::vec::Vec<SamplingMessage>,
     #[serde(
@@ -2138,6 +2141,7 @@ impl ::core::convert::From<Result> for EmptyResult {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Error {
     ///The error type that occurred.
+    #[serde(deserialize_with = "crate::lenient::integer")]
     pub code: i64,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
@@ -2546,6 +2550,7 @@ pub struct GetTaskResult {
         rename = "pollInterval",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub poll_interval: ::core::option::Option<i64>,
     ///Current task state.
     pub status: TaskStatus,
@@ -2563,7 +2568,7 @@ pub struct GetTaskResult {
     #[serde(rename = "taskId")]
     pub task_id: ::alloc::string::String,
     ///Actual retention duration from creation in milliseconds, null for unlimited.
-    #[serde(deserialize_with = "::core::option::Option::deserialize")]
+    #[serde(deserialize_with = "crate::lenient::option_integer")]
     pub ttl: ::core::option::Option<i64>,
     #[serde(flatten)]
     pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
@@ -5310,6 +5315,7 @@ pub struct Resource {
     ///
     /// This can be used by Hosts to display file sizes and estimate context window usage.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub size: ::core::option::Option<i64>,
     /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
     /// even by those unfamiliar with domain-specific terminology.
@@ -5384,6 +5390,7 @@ pub struct ResourceLink {
     ///
     /// This can be used by Hosts to display file sizes and estimate context window usage.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub size: ::core::option::Option<i64>,
     /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
     /// even by those unfamiliar with domain-specific terminology.
@@ -6421,11 +6428,13 @@ pub struct StringSchema {
         rename = "maxLength",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub max_length: ::core::option::Option<i64>,
     #[serde(
         rename = "minLength",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub min_length: ::core::option::Option<i64>,
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
@@ -6677,6 +6686,7 @@ pub struct Task {
         rename = "pollInterval",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub poll_interval: ::core::option::Option<i64>,
     ///Current task state.
     pub status: TaskStatus,
@@ -6694,7 +6704,7 @@ pub struct Task {
     #[serde(rename = "taskId")]
     pub task_id: ::alloc::string::String,
     ///Actual retention duration from creation in milliseconds, null for unlimited.
-    #[serde(deserialize_with = "::core::option::Option::deserialize")]
+    #[serde(deserialize_with = "crate::lenient::option_integer")]
     pub ttl: ::core::option::Option<i64>,
 }
 ///Common params for any task-augmented request.
@@ -6732,6 +6742,7 @@ pub struct TaskAugmentedRequestParamsMeta {
 pub struct TaskMetadata {
     ///Requested duration in milliseconds to retain task from creation.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub ttl: ::core::option::Option<i64>,
 }
 ///The status of a task.
@@ -6919,6 +6930,7 @@ pub struct TaskStatusNotificationParams {
         rename = "pollInterval",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub poll_interval: ::core::option::Option<i64>,
     ///Current task state.
     pub status: TaskStatus,
@@ -6936,7 +6948,7 @@ pub struct TaskStatusNotificationParams {
     #[serde(rename = "taskId")]
     pub task_id: ::alloc::string::String,
     ///Actual retention duration from creation in milliseconds, null for unlimited.
-    #[serde(deserialize_with = "::core::option::Option::deserialize")]
+    #[serde(deserialize_with = "crate::lenient::option_integer")]
     pub ttl: ::core::option::Option<i64>,
 }
 ///Text provided to or from an LLM.
@@ -7040,12 +7052,14 @@ pub struct TitledMultiSelectEnumSchema {
         rename = "maxItems",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub max_items: ::core::option::Option<i64>,
     ///Minimum number of items to select.
     #[serde(
         rename = "minItems",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub min_items: ::core::option::Option<i64>,
     ///Optional title for the enum field.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
@@ -7887,12 +7901,14 @@ pub struct UntitledMultiSelectEnumSchema {
         rename = "maxItems",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub max_items: ::core::option::Option<i64>,
     ///Minimum number of items to select.
     #[serde(
         rename = "minItems",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub min_items: ::core::option::Option<i64>,
     ///Optional title for the enum field.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]

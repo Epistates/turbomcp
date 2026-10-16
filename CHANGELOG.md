@@ -743,6 +743,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An integer field takes a whole number however it is spelled: JSON Schema
+  counts `1000.0` as an integer, and a Python peer computing `maxTokens`, a
+  task `ttl` or a `pollInterval` as a float sends exactly that, which failed
+  the whole message. `3.5` is still refused, a required-but-nullable `ttl`
+  is still required, and a union's integer arm (`RequestId`) stays exact.
 - A whole number in a float field is written as an integer: a progress of
   `50`, a schema's `"minimum": 0` and a priority of `1` went back out as
   `50.0`, `0.0` and `1.0`. The same number to JSON, but a proxy respelled

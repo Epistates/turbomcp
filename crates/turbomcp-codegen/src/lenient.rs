@@ -13,6 +13,10 @@
 //! - `Option<serde_json::Value>`: present `null` is `Some(Null)`, not absent.
 //!   `structuredContent` and `error.data` may be any JSON value, `null`
 //!   included, and a proxy must re-send what it was sent.
+//! - A named `i64` / `Option<i64>` field: a whole number however it is
+//!   spelled. JSON Schema counts `1000.0` as an integer, and a Python peer
+//!   computing `maxTokens` as a float sends exactly that; `3.5` still fails.
+//!   A union's integer arm (`RequestId`) is left exact.
 //! - `ttlMs`: negative or float-spelled values are tolerated (caching).
 
 use quote::ToTokens;
@@ -33,12 +37,16 @@ impl VisitMut for Lenient {
         if let Some((key, name)) = codec(field) {
             let path = format!("crate::lenient::{name}");
             let key = quote::format_ident!("{key}");
+            // typify marks a required-but-nullable field with
+            // `deserialize_with = Option::deserialize`, so absence stays an
+            // error. Ours replaces it, and that field gets no `default`.
+            let required = take_option_deserialize(field);
             // A decoder replaces serde's "absent `Option` is `None`" rule, so
             // an optional field needs `default` back.
             let optional = compact(&field.ty).starts_with("::std::option::Option<");
             field
                 .attrs
-                .push(if optional && !serde_has(field, "default") {
+                .push(if optional && !required && !serde_has(field, "default") {
                     parse_quote!(#[serde(default, #key = #path)])
                 } else {
                     parse_quote!(#[serde(#key = #path)])
@@ -57,8 +65,29 @@ fn codec(field: &Field) -> Option<(&'static str, &'static str)> {
         "::std::option::Option<f64>" => Some(("with", "option_float")),
         "::std::option::Option<::serde_json::Value>" => Some(("deserialize_with", "present")),
         "u64" if renamed_to(field, "ttlMs") => Some(("deserialize_with", "ttl_ms")),
+        "i64" if field.ident.is_some() => Some(("deserialize_with", "integer")),
+        "::std::option::Option<i64>" if field.ident.is_some() => {
+            Some(("deserialize_with", "option_integer"))
+        }
         _ => None,
     }
+}
+
+/// Remove a lone `#[serde(deserialize_with = "…Option::deserialize")]`;
+/// whether there was one.
+fn take_option_deserialize(field: &mut Field) -> bool {
+    let before = field.attrs.len();
+    field.attrs.retain(|attr| {
+        let text: String = attr
+            .to_token_stream()
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        !(text.starts_with("#[serde(deserialize_with=")
+            && text.ends_with("option::Option::deserialize\")]"))
+    });
+    field.attrs.len() != before
 }
 
 fn compact(ty: &syn::Type) -> String {
@@ -127,6 +156,11 @@ mod tests {
                 #[serde(rename = "ttlMs", default)]
                 pub ttl_ms: u64,
                 pub count: u64,
+                #[serde(rename = "maxTokens")]
+                pub max_tokens: i64,
+                pub ttl: ::std::option::Option<i64>,
+                #[serde(deserialize_with = "::std::option::Option::deserialize")]
+                pub retained: ::std::option::Option<i64>,
             }
             pub enum V { Number(f64), Integer(i64) }
             "#,
@@ -139,6 +173,19 @@ mod tests {
             "#[serde(rename = \"ttlMs\", default)]\n    #[serde(deserialize_with = \"crate::lenient::ttl_ms\")]"
         ));
         assert!(out.contains("Number(#[serde(with = \"crate::lenient::float\")] f64)"));
-        assert_eq!(out.matches("crate::lenient::").count(), 5);
+        assert!(out.contains("#[serde(deserialize_with = \"crate::lenient::integer\")]"));
+        assert!(
+            out.contains(
+                "#[serde(default, deserialize_with = \"crate::lenient::option_integer\")]"
+            )
+        );
+        // A union's integer arm stays exact.
+        assert!(out.contains("Integer(i64)"));
+        // Required but nullable: typify's decoder is replaced, no `default`.
+        assert!(!out.contains("Option::deserialize"));
+        assert!(out.contains(
+            "#[serde(deserialize_with = \"crate::lenient::option_integer\")]\n    pub retained"
+        ));
+        assert_eq!(out.matches("crate::lenient::").count(), 8);
     }
 }

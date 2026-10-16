@@ -1112,6 +1112,7 @@ pub struct CompleteResultCompletion {
     pub has_more: ::core::option::Option<bool>,
     ///The total number of completion options available. This can exceed the number of values actually sent in the response.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub total: ::core::option::Option<i64>,
     ///An array of completion values. Must not exceed 100 items.
     pub values: ::alloc::vec::Vec<::alloc::string::String>,
@@ -1276,6 +1277,7 @@ pub struct CreateMessageRequestParams {
     ///
     /// The client MAY choose to sample fewer tokens than the requested maximum.
     #[serde(rename = "maxTokens")]
+    #[serde(deserialize_with = "crate::lenient::integer")]
     pub max_tokens: i64,
     pub messages: ::alloc::vec::Vec<SamplingMessage>,
     ///Optional metadata to pass through to the LLM provider. The format of this metadata is provider-specific.
@@ -2203,6 +2205,7 @@ impl ::core::convert::From<Result> for EmptyResult {
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct Error {
     ///The error type that occurred.
+    #[serde(deserialize_with = "crate::lenient::integer")]
     pub code: i64,
     ///Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.).
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
@@ -6209,6 +6212,7 @@ pub struct Resource {
     ///
     /// This can be used by Hosts to display file sizes and estimate context window usage.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub size: ::core::option::Option<i64>,
     /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
     /// even by those unfamiliar with domain-specific terminology.
@@ -6279,6 +6283,7 @@ pub struct ResourceLink {
     ///
     /// This can be used by Hosts to display file sizes and estimate context window usage.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub size: ::core::option::Option<i64>,
     /// Intended for UI and end-user contexts — optimized to be human-readable and easily understood,
     /// even by those unfamiliar with domain-specific terminology.
@@ -7052,11 +7057,13 @@ pub struct StringSchema {
         rename = "maxLength",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub max_length: ::core::option::Option<i64>,
     #[serde(
         rename = "minLength",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub min_length: ::core::option::Option<i64>,
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
     pub title: ::core::option::Option<::alloc::string::String>,
@@ -7655,12 +7662,14 @@ pub struct TitledMultiSelectEnumSchema {
         rename = "maxItems",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub max_items: ::core::option::Option<i64>,
     ///Minimum number of items to select.
     #[serde(
         rename = "minItems",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub min_items: ::core::option::Option<i64>,
     ///Optional title for the enum field.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
@@ -8398,12 +8407,14 @@ pub struct UntitledMultiSelectEnumSchema {
         rename = "maxItems",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub max_items: ::core::option::Option<i64>,
     ///Minimum number of items to select.
     #[serde(
         rename = "minItems",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
+    #[serde(default, deserialize_with = "crate::lenient::option_integer")]
     pub min_items: ::core::option::Option<i64>,
     ///Optional title for the enum field.
     #[serde(skip_serializing_if = "::core::option::Option::is_none")]
