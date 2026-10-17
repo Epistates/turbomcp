@@ -3997,6 +3997,7 @@ dependencies = [
  "parking_lot",
  "reqwest",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite",

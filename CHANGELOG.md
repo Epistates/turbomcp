@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MCP Server Cards (SEP-2127, extension `io.modelcontextprotocol/server-card`):
+  the public document that tells a client or registry where and how to
+  connect before it does. `HttpConfig::with_server_card` serves one at
+  `GET {path}/server-card`, the location MCP reserves, filling what the card
+  leaves unset from the running server (`version`, `title`, `description`,
+  `websiteUrl`, `icons` from `serverInfo`; each remote's
+  `supportedProtocolVersions` from the revisions served) so it can't
+  contradict `server/discover`. It answers every origin (CORS `*`, its own
+  preflight included, whatever the endpoint's origin policy), as
+  `application/mcp-server-card+json`, cacheable for an hour with a strong
+  `ETag` and `304` on `If-None-Match`, and counts against the per-IP limit.
+  `fetch_server_card` (client) asks for the card media type, revalidates by
+  `ETag` and checks the card. `turbomcp::server_card` has the types and
+  their constraints, tested against the extension's own schema and
+  examples (vendored from the snapshot the SEP cites).
+  `ServerHandle::server_info` (defaulted) is how a transport learns who it
+  serves.
+
 - `ClientBuilder::with_lenient_lists`: a list item the client can't decode
   is left out (and logged at `warn` with its index and why) instead of
   failing the whole `tools/list`, `resources/list`,
@@ -750,6 +768,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `turbomcp proxy` installs its `SIGTERM`/`SIGINT` handlers before it binds,
+  so a signal that lands between binding the listener and serving drains
+  the gateway; it took the default action and killed the process instead.
 - An integer field takes a whole number however it is spelled: JSON Schema
   counts `1000.0` as an integer, and a Python peer computing `maxTokens`, a
   task `ttl` or a `pollInterval` as a float sends exactly that, which failed

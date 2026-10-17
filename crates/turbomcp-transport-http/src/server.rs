@@ -1,5 +1,6 @@
 //! The server half: an axum endpoint that drives an [`McpService`].
 
+mod card;
 mod config;
 #[cfg(fuzzing)]
 pub(crate) mod fuzzing;
@@ -176,6 +177,8 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         .supported_versions
         .clone()
         .unwrap_or_else(|| server.supported_versions());
+    let server_info = server.server_info();
+    let supported_for_card = supported_versions.clone();
     let session_terminator = config
         .session_terminator
         .clone()
@@ -246,6 +249,12 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         Some(cors) => app.layer(cors),
         None => app,
     };
+    // Outside the endpoint's CORS policy (a card is for every origin), inside
+    // the per-IP gate and the admission pool.
+    let app = match card_routes(server_info.as_ref(), &supported_for_card, &config) {
+        Some(card) => app.merge(card),
+        None => app,
+    };
     app.layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
             let admission = admission.clone();
@@ -270,6 +279,24 @@ pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
             }
         },
     ))
+}
+
+/// The Server Card's routes, when one is configured and survives
+/// derivation (a card whose server leaves a required field empty is refused,
+/// loudly, rather than served invalid).
+fn card_routes(
+    info: Option<&turbomcp_core::Implementation>,
+    versions: &[ProtocolVersion],
+    config: &HttpConfig,
+) -> Option<Router> {
+    let card = config.server_card.clone()?;
+    match card::Card::build(card, info, versions) {
+        Ok(card) => Some(card::routes(card, &config.path)),
+        Err(e) => {
+            tracing::error!(error = %e, "not serving the Server Card");
+            None
+        }
+    }
 }
 
 /// The admission pool: a permit per in-flight request, held until its body

@@ -123,6 +123,12 @@ pub use turbomcp_protocol::neutral;
 /// renamed method silently stops matching.
 pub use turbomcp_protocol::methods;
 
+/// MCP Server Cards (SEP-2127): the public document that describes a remote
+/// server before anyone connects. Serve one with
+/// `HttpConfig::with_server_card` (feature `http`); fetch one with
+/// `client::fetch_server_card` (features `client` + `http`).
+pub use turbomcp_protocol::server_card;
+
 /// Reading the component tags that `#[tool(tags(…))]` / `#[resource(tags(…))]`
 /// / `#[prompt(tags(…))]` write into a component's `_meta`.
 pub use turbomcp_server::tags;
@@ -481,8 +487,8 @@ pub mod client {
     #[cfg(feature = "http")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
     pub use turbomcp_transport_http::{
-        BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, Zeroizing,
-        connect_http,
+        BearerSource, FetchedCard, HttpClientError, HttpClientLimits, HttpClientTransport,
+        Zeroizing, connect_http, fetch_server_card,
     };
 
     #[cfg(feature = "websocket")]

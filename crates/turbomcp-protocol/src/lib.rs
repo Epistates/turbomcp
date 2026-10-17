@@ -55,6 +55,7 @@ use turbomcp_core as _;
 mod lenient;
 pub mod methods;
 pub mod neutral;
+pub mod server_card;
 pub mod v2025_06_18;
 pub mod v2025_11_25;
 pub mod v2026_07_28;

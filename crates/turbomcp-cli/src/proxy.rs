@@ -229,28 +229,43 @@ async fn connect(
 
 /// Resolves on `SIGINT` (Ctrl-C) or, on Unix, `SIGTERM` (what `docker stop`
 /// and systemd send).
-async fn terminated() {
+///
+/// The Unix handlers are installed when this is called, not when the future
+/// is first polled: called first thing, a signal that lands after the
+/// listener is bound but before serving is polled is a shutdown, where it
+/// used to take the default action and kill the process without draining.
+fn terminated() -> impl std::future::Future<Output = ()> {
     #[cfg(unix)]
     {
-        let mut term =
-            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(term) => term,
-                Err(e) => {
-                    tracing::warn!(error = %e, "SIGTERM can't be handled; Ctrl-C still can");
-                    let _ = tokio::signal::ctrl_c().await;
-                    return;
+        use tokio::signal::unix::{SignalKind, signal};
+        let term = signal(SignalKind::terminate());
+        let int = signal(SignalKind::interrupt());
+        async move {
+            match (term, int) {
+                (Ok(mut term), Ok(mut int)) => {
+                    tokio::select! {
+                        _ = term.recv() => {}
+                        _ = int.recv() => {}
+                    }
                 }
-            };
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
+                (term, int) => {
+                    if let Some(e) = term.as_ref().err().or(int.as_ref().err()) {
+                        tracing::warn!(error = %e, "a shutdown signal can't be handled");
+                    }
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+            }
         }
     }
     #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
+    async {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 pub async fn run(args: ProxyArgs) -> Result<()> {
+    // Before anything binds or spawns: see `terminated`.
+    let terminated = terminated();
     let loaded = crate::config::load(&args.config, &args.only).context(Failure::Usage)?;
     for (name, reason) in &loaded.skipped {
         if args.strict {
@@ -375,9 +390,10 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
         }
     };
     tokio::pin!(serving);
+    tokio::pin!(terminated);
     let result = tokio::select! {
         result = &mut serving => result,
-        () = terminated() => {
+        () = &mut terminated => {
             // In-flight requests get to finish, within the drain window.
             // Over stdio there is nothing to drain.
             shutdown.cancel();

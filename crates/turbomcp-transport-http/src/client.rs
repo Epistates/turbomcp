@@ -57,6 +57,9 @@ use crate::headers;
 
 #[cfg(feature = "websocket")]
 mod websocket;
+
+mod server_card;
+pub use server_card::{FetchedCard, fetch_server_card};
 #[cfg(feature = "websocket")]
 pub use websocket::{WebSocketClientTransport, connect_websocket};
 
@@ -81,6 +84,9 @@ pub enum HttpClientError {
          or allow_cleartext_bearer() for a network you trust"
     )]
     CleartextBearer(String),
+    /// A Server Card could not be fetched or is not a valid card.
+    #[error("server card: {0}")]
+    ServerCard(String),
 }
 
 /// A request's share of [`HttpClientLimits::max_posts`], held from admission

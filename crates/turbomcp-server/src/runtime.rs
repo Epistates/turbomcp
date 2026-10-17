@@ -136,6 +136,10 @@ where
         self.dispatcher.supported_versions().to_vec()
     }
 
+    fn server_info(&self) -> Option<turbomcp_core::Implementation> {
+        Some(self.dispatcher.server_info())
+    }
+
     fn session_terminator(&self) -> Option<Arc<dyn SessionTerminator>> {
         Some(Arc::new(self.dispatcher.session_terminator()))
     }

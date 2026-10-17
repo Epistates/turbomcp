@@ -463,6 +463,12 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         &self.supported
     }
 
+    /// The server's `serverInfo`, as the handshake reports it.
+    #[must_use]
+    pub fn server_info(&self) -> turbomcp_core::Implementation {
+        self.server.server_info()
+    }
+
     /// A dispatcher for `server` with `router`'s registered capabilities and
     /// the default [`ServerConfig`]. The accepted versions are
     /// [`McpServerCore::supported_versions`].

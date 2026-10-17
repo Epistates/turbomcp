@@ -48,6 +48,13 @@ pub trait ServerHandle: Clone + Send + Sync + 'static {
     /// The revisions this server serves.
     fn supported_versions(&self) -> Vec<ProtocolVersion>;
 
+    /// Who this server says it is (`serverInfo`), for what a transport
+    /// publishes about it ahead of a connection, such as a Server Card. A bare
+    /// service has nothing to say.
+    fn server_info(&self) -> Option<turbomcp_core::Implementation> {
+        None
+    }
+
     /// Ends a stateful session on request (HTTP `DELETE`), if the server
     /// supports that.
     fn session_terminator(&self) -> Option<Arc<dyn SessionTerminator>>;

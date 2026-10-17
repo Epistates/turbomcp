@@ -111,6 +111,7 @@ pub struct HttpConfig {
     pub(super) trusted_proxies: Vec<IpNet>,
     pub(super) supported_versions: Option<Vec<ProtocolVersion>>,
     pub(super) health_path: Option<String>,
+    pub(super) server_card: Option<turbomcp_protocol::server_card::ServerCard>,
     pub(super) calls: TaskTracker,
     pub(super) event_store: Option<Arc<dyn EventStore>>,
     pub(super) sse_polling: Option<SsePolling>,
@@ -191,6 +192,7 @@ impl Default for HttpConfig {
             trusted_proxies: Vec::new(),
             supported_versions: None,
             health_path: None,
+            server_card: None,
             calls: TaskTracker::new(),
             // Resumable by default, within the store's byte budget: the
             // `2025-11-25` transport SHOULD prime each stream, and an event
@@ -481,6 +483,43 @@ impl HttpConfig {
     pub fn with_health_check(mut self, path: impl Into<String>) -> Self {
         self.health_path = Some(path.into());
         self
+    }
+
+    /// Publish `card` (SEP-2127) at `GET {path}/server-card`, the location
+    /// MCP reserves for it, for clients and registries to discover before
+    /// they connect.
+    ///
+    /// What the card leaves unset is filled from the running server, so it
+    /// can't contradict what `server/discover` says: `version`, `title`,
+    /// `description`, `websiteUrl` and `icons` from its `serverInfo`, and each
+    /// remote's `supportedProtocolVersions` from the revisions it serves. The
+    /// name (reverse DNS) and the public URL of each remote are yours to set:
+    /// behind a proxy the server can't know them.
+    ///
+    /// The card is public and read-only: it is served to any origin without
+    /// authentication, as `application/mcp-server-card+json`, cacheable for an
+    /// hour with an `ETag` (`If-None-Match` answers `304`), and it counts
+    /// against the per-IP limit. It must carry no credentials or per-user data.
+    ///
+    /// # Errors
+    /// A field the card sets breaks the card's constraints (a name that isn't
+    /// reverse DNS, a description over 100 characters, a remote URL that isn't
+    /// `http(s)://` or a `{variable}`).
+    pub fn with_server_card(
+        mut self,
+        card: turbomcp_protocol::server_card::ServerCard,
+    ) -> Result<Self, turbomcp_protocol::server_card::ServerCardError> {
+        // What the server will fill in can't be checked yet; the rest can.
+        let mut probe = card.clone();
+        if probe.version.is_empty() {
+            probe.version = "0".into();
+        }
+        if probe.description.is_empty() {
+            probe.description = "-".into();
+        }
+        probe.validate()?;
+        self.server_card = Some(card);
+        Ok(self)
     }
 
     /// Make response streams on a session (`2025-06-18` / `2025-11-25`)

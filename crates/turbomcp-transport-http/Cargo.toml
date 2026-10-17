@@ -15,7 +15,7 @@ categories = ["network-programming", "web-programming::http-server", "web-progra
 [features]
 default = ["server"]
 # The axum endpoint: `router`, `serve_http`, `HttpConfig`.
-server = ["dep:axum", "dep:hyper", "dep:hyper-util", "dep:ipnet", "dep:url", "dep:mime", "dep:tower", "dep:tower-http", "dep:uuid", "tokio/net", "turbomcp-service/governor", "dep:tokio-util"]
+server = ["dep:axum", "dep:hyper", "dep:hyper-util", "dep:ipnet", "dep:url", "dep:mime", "dep:tower", "dep:tower-http", "dep:uuid", "tokio/net", "turbomcp-service/governor", "dep:tokio-util", "dep:turbomcp-protocol", "dep:sha2"]
 # `HttpClientTransport` for turbomcp-client, and `connect_http`.
 client = [
     "dep:reqwest",
@@ -61,6 +61,8 @@ url = { workspace = true, optional = true }
 # client
 turbomcp-client = { workspace = true, optional = true }
 turbomcp-protocol = { workspace = true, optional = true }
+# The Server Card's `ETag`.
+sha2 = { workspace = true, optional = true }
 turbomcp-auth = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 eventsource-stream = { workspace = true, optional = true }

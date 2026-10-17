@@ -139,7 +139,8 @@ pub mod fuzzing {
 #[cfg(feature = "client")]
 #[cfg_attr(docsrs, doc(cfg(feature = "client")))]
 pub use client::{
-    BearerSource, HttpClientError, HttpClientLimits, HttpClientTransport, Zeroizing, connect_http,
+    BearerSource, FetchedCard, HttpClientError, HttpClientLimits, HttpClientTransport, Zeroizing,
+    connect_http, fetch_server_card,
 };
 #[cfg(all(feature = "client", feature = "websocket"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "client", feature = "websocket"))))]

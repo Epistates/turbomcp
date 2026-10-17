@@ -1,0 +1,2 @@
+github.com/modelcontextprotocol/ext-server-card at 526201bbc80231daa40ffcdecfc9da4e54e5dc93,
+the snapshot SEP-2127 (Final) cites: schema.json and examples/ServerCard/{valid,invalid}.
