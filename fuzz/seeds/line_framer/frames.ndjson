@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add","arguments":{"a":1},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}
+{"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":"t","progress":0.5,"total":1}}
+not json
+{"jsonrpc":"2.0","id":"x","error":{"code":-32602,"message":"bad","data":null}}

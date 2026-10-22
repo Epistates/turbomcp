@@ -1,0 +1,1 @@
+{"tools":[{"name":"add","title":"Add","description":"Adds","inputSchema":{"type":"object","properties":{"a":{"type":"integer"}},"required":["a"]},"annotations":{"readOnlyHint":true},"icons":[{"src":"https://x/i.png"}],"_meta":{"io.turbomcp/tags":["math"]}}],"nextCursor":"c1","resultType":"complete","ttlMs":5000,"cacheScope":"public"}

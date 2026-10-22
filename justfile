@@ -610,10 +610,14 @@ fuzz secs='30':
   cd fuzz
   for target in codec_decode mcp_header_codec uri_template sonic_decode \
                 decode_frame line_framer request_state request_binding composite_cursor \
-                header_mirrors http_headers client_ip sse_stream wire_convert; do
+                header_mirrors http_headers client_ip sse_stream wire_convert client_answers; do
     echo "==> fuzzing $target for {{secs}}s"
-    cargo +nightly fuzz run "$target" --target "$host" -- \
-      -max_total_time={{secs}} -rss_limit_mb=4096
+    # The generated corpus, then the checked-in seeds (read-only), with the
+    # MCP dictionary: unguided, a JSON target never reaches a real message.
+    mkdir -p "corpus/$target"
+    seeds=""; [ -d "seeds/$target" ] && seeds="seeds/$target"
+    cargo +nightly fuzz run "$target" --target "$host" "corpus/$target" $seeds -- \
+      -dict=mcp.dict -max_total_time={{secs}} -rss_limit_mb=4096
   done
   echo "All fuzz targets survived {{secs}}s each."
 
@@ -624,8 +628,10 @@ fuzz-long target secs='3600':
   set -euo pipefail
   host="$(rustc +nightly -vV | sed -n 's/^host: //p')"
   cd fuzz
-  cargo +nightly fuzz run "{{target}}" --target "$host" -- \
-    -max_total_time={{secs}} -rss_limit_mb=4096
+  mkdir -p "corpus/{{target}}"
+  seeds=""; [ -d "seeds/{{target}}" ] && seeds="seeds/{{target}}"
+  cargo +nightly fuzz run "{{target}}" --target "$host" "corpus/{{target}}" $seeds -- \
+    -dict=mcp.dict -max_total_time={{secs}} -rss_limit_mb=4096
 
 # Comprehensive security analysis
 [group: 'security']
