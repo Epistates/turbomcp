@@ -89,12 +89,28 @@ impl Upstairs {
             }
             other => format!("{other:?}"),
         };
-        let roots = ctx.client.list_roots("roots").await?;
-        let roots: Vec<&str> = roots.iter().map(|r| r.uri.as_str()).collect();
+        let listed = ctx.client.list_roots("roots").await?;
+        let roots: Vec<&str> = listed.roots.iter().map(|r| r.uri.as_str()).collect();
+        // What the caller said beyond the spec, at the top of each answer and
+        // on a root: each must survive the hop to here.
+        let vendor = |extra: &Map<String, Value>| {
+            extra
+                .get("x-vendor")
+                .and_then(Value::as_str)
+                .unwrap_or("-")
+                .to_owned()
+        };
+        let root_extra = listed
+            .roots
+            .first()
+            .map_or("-".into(), |r| vendor(&r.extra));
         Ok(format!(
-            "who={} draft={draft} roots={}",
+            "who={} draft={draft} roots={} extras={},{},{},{root_extra}",
             who.unwrap_or("nobody"),
-            roots.join(",")
+            roots.join(","),
+            vendor(&confirmed.extra),
+            vendor(&reply.extra),
+            vendor(&listed.extra),
         ))
     }
 
@@ -475,10 +491,12 @@ struct Caller(&'static str);
 #[async_trait]
 impl ElicitationHandler for Caller {
     async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(
+        let mut outcome = neutral::ElicitOutcome::new(
             neutral::ElicitAction::Accept,
             args(json!({ "who": self.0 })),
-        )
+        );
+        outcome.extra.insert("x-vendor".into(), json!("e"));
+        outcome
     }
 }
 
@@ -488,19 +506,20 @@ impl SamplingHandler for Caller {
         &self,
         _params: neutral::CreateMessageParams,
     ) -> ClientResult<neutral::CreateMessageResult> {
-        Ok(neutral::CreateMessageResult::text(
-            "model",
-            format!("by {}", self.0),
-        ))
+        let mut result = neutral::CreateMessageResult::text("model", format!("by {}", self.0));
+        result.extra.insert("x-vendor".into(), json!("s"));
+        Ok(result)
     }
 }
 
 #[async_trait]
 impl RootsHandler for Caller {
-    async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>> {
-        Ok(vec![
-            neutral::Root::new(format!("file:///{}", self.0)).unwrap(),
-        ])
+    async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
+        let mut root = neutral::Root::new(format!("file:///{}", self.0)).unwrap();
+        root.extra.insert("x-vendor".into(), json!("o"));
+        let mut listed = neutral::ListRootsResult::new(vec![root]);
+        listed.extra.insert("x-vendor".into(), json!("r"));
+        Ok(listed)
     }
 }
 
@@ -534,7 +553,7 @@ async fn upstream_questions_reach_the_caller_on_every_pair_of_revisions() {
                 .unwrap_or_else(|e| panic!("{pair}: {e}"));
             assert_eq!(
                 result.text_content().as_deref(),
-                Some("who=ada draft=by ada roots=file:///ada"),
+                Some("who=ada draft=by ada roots=file:///ada extras=e,s,r,o"),
                 "{pair}"
             );
         }

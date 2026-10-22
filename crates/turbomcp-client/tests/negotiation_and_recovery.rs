@@ -497,8 +497,8 @@ async fn packaged_sampling_and_roots_reach_the_handler_and_return() {
     }
     #[async_trait]
     impl RootsHandler for Sampler {
-        async fn list_roots(&self) -> Result<Vec<neutral::Root>, ClientError> {
-            Ok(Vec::new())
+        async fn list_roots(&self) -> Result<neutral::ListRootsResult, ClientError> {
+            Ok(neutral::ListRootsResult::default())
         }
     }
 
@@ -766,12 +766,13 @@ async fn a_roots_client_declares_and_emits_list_changed() {
     struct Watched;
     #[async_trait]
     impl RootsHandler for Watched {
-        async fn list_roots(&self) -> Result<Vec<neutral::Root>, ClientError> {
+        async fn list_roots(&self) -> Result<neutral::ListRootsResult, ClientError> {
             Ok(vec![
                 neutral::Root::new("file:///work")
                     .expect("a file URI")
                     .with_name("work"),
-            ])
+            ]
+            .into())
         }
         fn list_changed(&self) -> bool {
             true

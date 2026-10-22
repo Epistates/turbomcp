@@ -203,12 +203,15 @@ pub trait RootsHandler: Send + Sync + 'static {
     /// A [`Root`](neutral::Root) can only be built from a `file://` URI, which
     /// is the one shape rule the roots spec states — a root is a permission
     /// statement, and a server acting on `https://…` would be acting on a
-    /// boundary this client never drew.
-    async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>>;
+    /// boundary this client never drew. A `Vec<Root>` converts with `.into()`.
+    async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult>;
 
     /// [`list_roots`](Self::list_roots), with what is known about the
     /// request. The default calls `list_roots`.
-    async fn list_roots_with(&self, ctx: &HandlerContext) -> ClientResult<Vec<neutral::Root>> {
+    async fn list_roots_with(
+        &self,
+        ctx: &HandlerContext,
+    ) -> ClientResult<neutral::ListRootsResult> {
         let _ = ctx;
         self.list_roots().await
     }
@@ -532,7 +535,7 @@ pub(crate) async fn dispatch_server_request(
                         .await
                         .map_err(handler_error)?;
                     check_form_answer(&schema, &outcome)?;
-                    Ok(elicit_outcome_value(&outcome, Mode::Form))
+                    Ok(outcome.to_wire(version))
                 }
                 Some(Some("url")) => {
                     if !handler.supports_url_mode() {
@@ -544,7 +547,13 @@ pub(crate) async fn dispatch_server_request(
                         .elicit_url_with(ctx, parse_elicit_url_params(params)?)
                         .await
                         .map_err(handler_error)?;
-                    Ok(elicit_outcome_value(&outcome, Mode::Url))
+                    // A URL-mode answer carries no content: the form, if any,
+                    // was filled in out of band.
+                    let mut wire = outcome.to_wire(version);
+                    if let Some(obj) = wire.as_object_mut() {
+                        obj.remove("content");
+                    }
+                    Ok(wire)
                 }
                 Some(other) => Err(invalid_params(&format!(
                     "this client did not declare elicitation mode {}",
@@ -592,7 +601,7 @@ pub(crate) async fn dispatch_server_request(
             .ok_or_else(|| not_supported(method))?
             .list_roots_with(ctx)
             .await
-            .map(|roots| neutral::Root::list_to_wire(&roots))
+            .map(|roots| roots.to_wire(version))
             .map_err(handler_error),
         other => Err(JsonRpcError {
             code: turbomcp_core::codes::METHOD_NOT_FOUND,
@@ -672,13 +681,6 @@ fn check_form_answer(schema: &Value, outcome: &neutral::ElicitOutcome) -> Result
         })
 }
 
-/// Which kind of elicitation an outcome answers.
-#[derive(Clone, Copy, PartialEq)]
-enum Mode {
-    Form,
-    Url,
-}
-
 /// Parse an `elicitation/create` request's params into [`neutral::ElicitParams`].
 fn parse_elicit_params(params: Option<Value>) -> Result<neutral::ElicitParams, JsonRpcError> {
     let params = params.ok_or_else(|| invalid_params("elicitation/create requires params"))?;
@@ -692,23 +694,6 @@ fn parse_elicit_params(params: Option<Value>) -> Result<neutral::ElicitParams, J
         .cloned()
         .unwrap_or_else(|| json!({}));
     Ok(neutral::ElicitParams::new(message, requested_schema))
-}
-
-/// The wire shape of an [`ElicitOutcome`](neutral::ElicitOutcome): `{ action,
-/// content }`, where `content` is present only on a form-mode `accept` ("For
-/// URL mode: The `content` field is omitted").
-fn elicit_outcome_value(outcome: &neutral::ElicitOutcome, mode: Mode) -> Value {
-    let action = match outcome.action {
-        neutral::ElicitAction::Accept => "accept",
-        neutral::ElicitAction::Decline => "decline",
-        neutral::ElicitAction::Cancel => "cancel",
-    };
-    let mut obj = Map::new();
-    obj.insert("action".into(), json!(action));
-    if outcome.action == neutral::ElicitAction::Accept && mode == Mode::Form {
-        obj.insert("content".into(), Value::Object(outcome.content.clone()));
-    }
-    Value::Object(obj)
 }
 
 fn invalid_params(msg: &str) -> JsonRpcError {
@@ -786,8 +771,8 @@ mod tests {
     }
     #[async_trait]
     impl RootsHandler for Agentic {
-        async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>> {
-            Ok(Vec::new())
+        async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
+            Ok(neutral::ListRootsResult::default())
         }
         fn list_changed(&self) -> bool {
             true
@@ -1098,13 +1083,14 @@ mod must_tests {
         struct Mixed;
         #[async_trait]
         impl RootsHandler for Mixed {
-            async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>> {
+            async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
                 Ok(vec![
                     neutral::Root::new("file:///workspace").expect("a file URI"),
                     neutral::Root::new("file:///tmp/scratch")
                         .expect("a file URI")
                         .with_name("scratch"),
-                ])
+                ]
+                .into())
             }
         }
         assert!(

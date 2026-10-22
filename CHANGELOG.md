@@ -1369,6 +1369,18 @@ Earlier in this cycle:
   `CompleteResult` and the four list results gain `extra`, carried across
   every wire. A key the target revision declares is never written from
   `extra`, so it can't appear twice.
+- **Breaking:** a client's answers keep them too, so a gateway relays an
+  elicitation, sampling or roots answer whole in both directions (the
+  legacy request path and `2026-07-28` `inputResponses` alike).
+  `CreateMessageResult` and `Root` gain `extra`; `ElicitOutcome` gains
+  `meta` and `extra` (and `PartialEq`, `to_wire`, `from_wire`, which the
+  client and the server now share instead of each hand-rolling the shape).
+  Roots answer with a `ListRootsResult { roots, meta, extra }`:
+  `RootsHandler::list_roots` / `list_roots_with` and
+  `ClientHandle::list_roots` return it where they returned `Vec<Root>`
+  (a `Vec<Root>` converts with `.into()`), and
+  `Root::list_from_wire` / `list_to_wire` are
+  `ListRootsResult::from_wire` / `to_wire`.
 - **Breaking:** the generated wire types drop the unions nothing can decode
   into: `ServerResult`, `ClientResult` (except `2026-07-28`'s, which is
   `Result`), `PrimitiveSchemaDefinition`, `EnumSchema` (except

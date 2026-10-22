@@ -39,7 +39,7 @@ use chacha20poly1305::aead::{Aead as _, KeyInit as _, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use turbomcp_core::{
     JsonRpcRequest, JsonRpcResponse, McpError, McpResult, ProtocolVersion, RequestId,
@@ -973,11 +973,11 @@ impl ClientHandle {
     ///
     /// Deprecated by `2026-07-28` (SEP-2577), first-class before it; like
     /// [`create_message`](Self::create_message), it carries no `#[deprecated]`.
-    pub async fn list_roots(&self, key: &str) -> McpResult<Vec<neutral::Root>> {
+    pub async fn list_roots(&self, key: &str) -> McpResult<neutral::ListRootsResult> {
         let raw = self
             .request_raw(key, request::ROOTS_LIST, "roots", json!({}))
             .await?;
-        Ok(neutral::Root::list_from_wire(&raw))
+        Ok(neutral::ListRootsResult::from_wire(&raw))
     }
 
     /// Stash typed resume state for every later round of this request, until
@@ -1303,13 +1303,6 @@ fn elicit_url_request_value(
     })
 }
 
-#[derive(serde::Deserialize)]
-struct RawElicitResult {
-    action: String,
-    #[serde(default)]
-    content: Map<String, Value>,
-}
-
 /// The client's answer to a form elicitation, checked against what was asked.
 ///
 /// "Servers SHOULD validate received data matches the requested schema"
@@ -1336,24 +1329,8 @@ fn checked_outcome(
 }
 
 fn parse_elicit_outcome(raw: &Value) -> McpResult<neutral::ElicitOutcome> {
-    let parsed: RawElicitResult = serde_json::from_value(raw.clone())
-        .map_err(|e| McpError::invalid_params(format!("invalid elicit response: {e}")))?;
-    let action = match parsed.action.as_str() {
-        "accept" => neutral::ElicitAction::Accept,
-        "decline" => neutral::ElicitAction::Decline,
-        "cancel" => neutral::ElicitAction::Cancel,
-        other => {
-            return Err(McpError::invalid_params(format!(
-                "invalid elicit action: {other}"
-            )));
-        }
-    };
-    let content = if action == neutral::ElicitAction::Accept {
-        parsed.content
-    } else {
-        Map::new()
-    };
-    Ok(neutral::ElicitOutcome::new(action, content))
+    neutral::ElicitOutcome::from_wire(raw)
+        .map_err(|e| McpError::invalid_params(format!("invalid elicit response: {e}")))
 }
 
 #[cfg(test)]
@@ -1392,6 +1369,7 @@ mod tests {
     }
 
     use super::*;
+    use serde_json::Map;
 
     /// A minimal schema inside the form subset, for the tests that care about
     /// delivery rather than what is being asked.

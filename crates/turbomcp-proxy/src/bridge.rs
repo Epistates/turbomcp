@@ -234,7 +234,7 @@ impl SamplingHandler for Bridge {
 
 #[async_trait]
 impl RootsHandler for Bridge {
-    async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>> {
+    async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
         let key = self.key("roots", &"roots/list")?;
         let asked = self.inner.handle.list_roots(&key).await;
         self.settle(asked).await.map_err(|e| self.client_error(&e))
@@ -334,7 +334,7 @@ impl SamplingHandler for UpstreamHandlers {
 
 #[async_trait]
 impl RootsHandler for UpstreamHandlers {
-    async fn list_roots(&self) -> ClientResult<Vec<neutral::Root>> {
+    async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
         Err(ClientError::Rpc(unattributed()))
     }
 }

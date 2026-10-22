@@ -6837,6 +6837,8 @@ pub struct Root {
     /// This restriction may be relaxed in future versions of the protocol to allow
     /// other URI schemes.
     pub uri: ::alloc::string::String,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 ///Describes a message issued to or received from an LLM API.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
@@ -8891,6 +8893,10 @@ impl Result {
 impl ResultMetaObject {
     /// The keys this revision declares for `ResultMetaObject`; `extra` holds any other.
     pub const DECLARED: &'static [&'static str] = &["io.modelcontextprotocol/serverInfo"];
+}
+impl Root {
+    /// The keys this revision declares for `Root`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "name", "uri"];
 }
 impl SubscriptionsListenResult {
     /// The keys this revision declares for `SubscriptionsListenResult`; `extra` holds any other.

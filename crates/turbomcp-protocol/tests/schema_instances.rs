@@ -59,6 +59,7 @@ const OPEN: [fn(&str) -> bool; 2] = [
             "ResourceTemplate",
             "Prompt",
             "Implementation",
+            "Root",
         ]
         .contains(&name)
     },

@@ -426,7 +426,7 @@ impl Everything {
         &self,
         ctx: &CallToolContext,
     ) -> McpResult<String> {
-        let count = ctx.client.list_roots("client_roots").await?.len();
+        let count = ctx.client.list_roots("client_roots").await?.roots.len();
         Ok(format!("client reported {count} root(s)"))
     }
 

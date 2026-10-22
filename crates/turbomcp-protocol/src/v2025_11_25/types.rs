@@ -5918,6 +5918,8 @@ pub struct Root {
     /// This restriction may be relaxed in future versions of the protocol to allow
     /// other URI schemes.
     pub uri: ::alloc::string::String,
+    #[serde(flatten)]
+    pub extra: ::serde_json::Map<::alloc::string::String, ::serde_json::Value>,
 }
 /// A notification from the client to the server, informing it that the list of roots has changed.
 /// This notification should be sent whenever the client adds, removes, or modifies any root.
@@ -8410,6 +8412,10 @@ impl ResourceTemplate {
 impl Result {
     /// The keys this revision declares for `Result`; `extra` holds any other.
     pub const DECLARED: &'static [&'static str] = &["_meta"];
+}
+impl Root {
+    /// The keys this revision declares for `Root`; `extra` holds any other.
+    pub const DECLARED: &'static [&'static str] = &["_meta", "name", "uri"];
 }
 impl Tool {
     /// The keys this revision declares for `Tool`; `extra` holds any other.

@@ -559,13 +559,15 @@ pub fn open_optional_objects(schema: &mut Value) -> usize {
     }
 }
 
-/// The catalogue items a gateway relays whole, beside the results.
-const OPEN_ITEMS: [&str; 5] = [
+/// The items a gateway relays whole, beside the results: the catalogue's,
+/// and a client's roots.
+const OPEN_ITEMS: [&str; 6] = [
     "Tool",
     "Resource",
     "ResourceTemplate",
     "Prompt",
     "Implementation",
+    "Root",
 ];
 
 /// Keep the keys a result or catalogue item carries beyond what the schema
@@ -1262,7 +1264,7 @@ mod vendored {
                 string_consts_pinned: 39,
                 integer_consts_pinned: 0,
                 optional_objects_opened: 9,
-                results_opened: 18,
+                results_opened: 19,
                 result_types_defaulted: 0,
                 cache_hints_defaulted: 0,
                 elicit_numbers_widened: 1,
@@ -1290,7 +1292,7 @@ mod vendored {
                 string_consts_pinned: 87,
                 integer_consts_pinned: 1,
                 optional_objects_opened: 23,
-                results_opened: 20,
+                results_opened: 21,
                 result_types_defaulted: 0,
                 cache_hints_defaulted: 0,
                 elicit_numbers_widened: 1,
@@ -1326,7 +1328,7 @@ mod vendored {
                 // Five JSON-RPC codes and three MCP ones.
                 integer_consts_pinned: 8,
                 optional_objects_opened: 6,
-                results_opened: 21,
+                results_opened: 22,
                 result_types_defaulted: 13,
                 cache_hints_defaulted: 7,
                 elicit_numbers_widened: 1,

@@ -24,6 +24,45 @@ use crate::v2025_06_18::types as v06;
 use crate::v2025_11_25::types as legacy;
 use crate::v2026_07_28::types as v0728;
 
+/// The keys each revision declares for the generated type `$ty`: one
+/// revision's list (`declared!(Root, version)`) or all three
+/// (`declared!(Root)`, for reading a value whose revision isn't known).
+macro_rules! declared {
+    ($ty:ident, $version:expr) => {
+        match $version {
+            ProtocolVersion::V2026_07_28 => v0728::$ty::DECLARED,
+            ProtocolVersion::V2025_06_18 => v06::$ty::DECLARED,
+            _ => legacy::$ty::DECLARED,
+        }
+    };
+    ($ty:ident) => {
+        &[
+            v0728::$ty::DECLARED,
+            legacy::$ty::DECLARED,
+            v06::$ty::DECLARED,
+        ]
+    };
+}
+
+/// Write `extra` into a hand-built wire object: only the keys `declared`
+/// doesn't name and `out` doesn't already hold, so an extra can't shadow a
+/// field.
+fn write_extra(out: &mut Map<String, Value>, extra: &Map<String, Value>, declared: &[&str]) {
+    for (key, value) in extra {
+        if !declared.contains(&key.as_str()) && !out.contains_key(key) {
+            out.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+/// The keys of a wire object that no revision declares.
+fn read_extra(obj: &Map<String, Value>, declared: &[&[&str]]) -> Map<String, Value> {
+    obj.iter()
+        .filter(|(key, _)| !declared.iter().any(|d| d.contains(&key.as_str())))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
 /// Canonical draft `resultType` wire strings.
 ///
 /// The draft schema made `ResultType` an open string (SEP-2322: extensible
@@ -1847,20 +1886,94 @@ fn is_enum_items(items: &Value) -> bool {
 }
 
 /// What the client answered to an elicitation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct ElicitOutcome {
     /// The user's action.
     pub action: ElicitAction,
     /// Submitted form values (present only on `Accept` in form mode).
     pub content: Map<String, Value>,
+    /// Arbitrary `_meta`. Empty = absent on the wire.
+    pub meta: Map<String, Value>,
+    /// Top-level keys no revision defines, carried through so a gateway
+    /// relays them; a key a revision declares is never written from here.
+    pub extra: Map<String, Value>,
 }
 
 impl ElicitOutcome {
     /// An outcome with the given action and submitted content.
     #[must_use]
     pub fn new(action: ElicitAction, content: Map<String, Value>) -> Self {
-        Self { action, content }
+        Self {
+            action,
+            content,
+            meta: Map::new(),
+            extra: Map::new(),
+        }
+    }
+
+    /// Add one `_meta` entry (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
+    /// Render for `version`. `content` goes out only on `Accept`; a URL-mode
+    /// answer has none, so its sender removes it.
+    #[must_use]
+    pub fn to_wire(&self, version: &ProtocolVersion) -> Value {
+        let mut out = Map::new();
+        let action = match self.action {
+            ElicitAction::Accept => "accept",
+            ElicitAction::Decline => "decline",
+            ElicitAction::Cancel => "cancel",
+        };
+        out.insert("action".into(), Value::String(action.into()));
+        if self.action == ElicitAction::Accept {
+            out.insert("content".into(), Value::Object(self.content.clone()));
+        }
+        if !self.meta.is_empty() {
+            out.insert("_meta".into(), Value::Object(self.meta.clone()));
+        }
+        write_extra(&mut out, &self.extra, declared!(ElicitResult, version));
+        Value::Object(out)
+    }
+
+    /// Parse a client's answer. Submitted content counts only on `Accept`.
+    ///
+    /// # Errors
+    /// A missing or unknown `action`, or a `content` that isn't an object.
+    pub fn from_wire(value: &Value) -> Result<Self, String> {
+        let obj = value
+            .as_object()
+            .ok_or_else(|| "an elicitation result must be an object".to_string())?;
+        let action = match obj.get("action").and_then(Value::as_str) {
+            Some("accept") => ElicitAction::Accept,
+            Some("decline") => ElicitAction::Decline,
+            Some("cancel") => ElicitAction::Cancel,
+            Some(other) => return Err(alloc::format!("unknown elicitation action `{other}`")),
+            None => return Err("an elicitation result needs `action`".to_string()),
+        };
+        let content = match obj.get("content") {
+            None | Some(Value::Null) => Map::new(),
+            Some(Value::Object(content)) => content.clone(),
+            Some(_) => return Err("elicitation `content` must be an object".to_string()),
+        };
+        Ok(Self {
+            action,
+            content: if action == ElicitAction::Accept {
+                content
+            } else {
+                Map::new()
+            },
+            meta: obj
+                .get("_meta")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            extra: read_extra(obj, declared!(ElicitResult)),
+        })
     }
 
     /// Whether the user accepted.
@@ -1888,6 +2001,9 @@ pub struct Root {
     pub name: Option<String>,
     /// Arbitrary `_meta`. Empty = absent on the wire.
     pub meta: Map<String, Value>,
+    /// Keys no revision defines on a root, carried through so a gateway
+    /// relays them; a key a revision declares is never written from here.
+    pub extra: Map<String, Value>,
 }
 
 impl Root {
@@ -1903,6 +2019,7 @@ impl Root {
             uri,
             name: None,
             meta: Map::new(),
+            extra: Map::new(),
         })
     }
 
@@ -1916,44 +2033,23 @@ impl Root {
     /// Parse one wire root, rejecting a non-`file://` URI.
     #[must_use]
     pub fn from_wire(value: &Value) -> Option<Self> {
-        let root = Self::new(value.get("uri")?.as_str()?)?;
+        let obj = value.as_object()?;
+        let root = Self::new(obj.get("uri")?.as_str()?)?;
         Some(Self {
-            name: value.get("name").and_then(Value::as_str).map(Into::into),
-            meta: value
+            name: obj.get("name").and_then(Value::as_str).map(Into::into),
+            meta: obj
                 .get("_meta")
                 .and_then(Value::as_object)
                 .cloned()
                 .unwrap_or_default(),
+            extra: read_extra(obj, declared!(Root)),
             ..root
         })
     }
 
-    /// Parse a `roots/list` result, dropping entries that are not `file://`
-    /// URIs. Dropping rather than failing is deliberate: one malformed root
-    /// should not cost the handler the roots the client got right.
+    /// Render one root for `version`.
     #[must_use]
-    pub fn list_from_wire(value: &Value) -> Vec<Self> {
-        value
-            .get("roots")
-            .and_then(Value::as_array)
-            .map(|roots| roots.iter().filter_map(Self::from_wire).collect())
-            .unwrap_or_default()
-    }
-
-    /// Render a `roots/list` result from a set of roots.
-    #[must_use]
-    pub fn list_to_wire(roots: &[Self]) -> Value {
-        let mut out = Map::new();
-        out.insert(
-            "roots".into(),
-            Value::Array(roots.iter().map(Self::to_wire).collect()),
-        );
-        Value::Object(out)
-    }
-
-    /// Render one root.
-    #[must_use]
-    pub fn to_wire(&self) -> Value {
+    pub fn to_wire(&self, version: &ProtocolVersion) -> Value {
         let mut out = Map::new();
         out.insert("uri".into(), Value::String(self.uri.clone()));
         if let Some(n) = &self.name {
@@ -1962,7 +2058,84 @@ impl Root {
         if !self.meta.is_empty() {
             out.insert("_meta".into(), Value::Object(self.meta.clone()));
         }
+        write_extra(&mut out, &self.extra, declared!(Root, version));
         Value::Object(out)
+    }
+}
+
+/// Result of `roots/list`: the filesystem boundaries a client exposes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ListRootsResult {
+    /// The roots.
+    pub roots: Vec<Root>,
+    /// Arbitrary `_meta`. Empty = absent on the wire.
+    pub meta: Map<String, Value>,
+    /// Top-level keys no revision defines, carried through so a gateway
+    /// relays them; a key a revision declares is never written from here.
+    pub extra: Map<String, Value>,
+}
+
+impl ListRootsResult {
+    /// A result listing `roots`.
+    #[must_use]
+    pub fn new(roots: Vec<Root>) -> Self {
+        Self {
+            roots,
+            meta: Map::new(),
+            extra: Map::new(),
+        }
+    }
+
+    /// Add one `_meta` entry (builder style).
+    #[must_use]
+    pub fn with_meta_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.meta.insert(key.into(), value);
+        self
+    }
+
+    /// Parse a client's answer, dropping entries that are not `file://`
+    /// roots. Dropping rather than failing is deliberate: one malformed root
+    /// should not cost the handler the roots the client got right.
+    #[must_use]
+    pub fn from_wire(value: &Value) -> Self {
+        let Some(obj) = value.as_object() else {
+            return Self::default();
+        };
+        Self {
+            roots: obj
+                .get("roots")
+                .and_then(Value::as_array)
+                .map(|roots| roots.iter().filter_map(Root::from_wire).collect())
+                .unwrap_or_default(),
+            meta: obj
+                .get("_meta")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            extra: read_extra(obj, declared!(ListRootsResult)),
+        }
+    }
+
+    /// Render for `version`.
+    #[must_use]
+    pub fn to_wire(&self, version: &ProtocolVersion) -> Value {
+        let mut out = Map::new();
+        out.insert(
+            "roots".into(),
+            Value::Array(self.roots.iter().map(|r| r.to_wire(version)).collect()),
+        );
+        if !self.meta.is_empty() {
+            out.insert("_meta".into(), Value::Object(self.meta.clone()));
+        }
+        write_extra(&mut out, &self.extra, declared!(ListRootsResult, version));
+        Value::Object(out)
+    }
+}
+
+impl From<Vec<Root>> for ListRootsResult {
+    fn from(roots: Vec<Root>) -> Self {
+        Self::new(roots)
     }
 }
 
@@ -2561,6 +2734,9 @@ pub struct CreateMessageResult {
     pub stop_reason: Option<String>,
     /// Arbitrary `_meta`. Empty = absent on the wire.
     pub meta: Map<String, Value>,
+    /// Top-level keys no revision defines, carried through so a gateway
+    /// relays them; a key a revision declares is never written from here.
+    pub extra: Map<String, Value>,
 }
 
 impl CreateMessageResult {
@@ -2572,6 +2748,7 @@ impl CreateMessageResult {
             model: model.into(),
             stop_reason: None,
             meta: Map::new(),
+            extra: Map::new(),
         }
     }
 
@@ -2625,6 +2802,11 @@ impl CreateMessageResult {
         if !self.meta.is_empty() {
             out.insert("_meta".into(), Value::Object(self.meta.clone()));
         }
+        write_extra(
+            &mut out,
+            &self.extra,
+            declared!(CreateMessageResult, version),
+        );
         Ok(Value::Object(out))
     }
 
@@ -2664,6 +2846,7 @@ impl CreateMessageResult {
                 .and_then(Value::as_object)
                 .cloned()
                 .unwrap_or_default(),
+            extra: read_extra(obj, declared!(CreateMessageResult)),
         })
     }
 }
@@ -6554,17 +6737,70 @@ mod tests {
             assert!(Root::new(bad).is_none(), "{bad}");
         }
 
-        let roots = Root::list_from_wire(&json!({ "roots": [
+        let result = ListRootsResult::from_wire(&json!({ "roots": [
             { "uri": "file:///ok", "name": "ok" },
             { "uri": "https://example.com/evil" },
             { "name": "no uri at all" },
         ]}));
+        let roots = &result.roots;
         assert_eq!(roots.len(), 1, "only the file:// root survives");
         assert_eq!(roots[0].uri, "file:///ok");
         assert_eq!(roots[0].name.as_deref(), Some("ok"));
         assert_eq!(
-            Root::list_to_wire(&roots),
+            result.to_wire(&ProtocolVersion::V2025_11_25),
             json!({ "roots": [{ "uri": "file:///ok", "name": "ok" }] })
         );
+    }
+
+    /// A client's answers keep what no revision defines, at the top and on
+    /// each root, and never let it shadow a field.
+    #[test]
+    fn client_answers_keep_unknown_keys_without_shadowing_fields() {
+        let vendor = json!({ "trace": [1, "two"] });
+        for version in [
+            ProtocolVersion::V2025_06_18,
+            ProtocolVersion::V2025_11_25,
+            ProtocolVersion::V2026_07_28,
+        ] {
+            let roots = ListRootsResult::from_wire(&json!({
+                "roots": [{ "uri": "file:///w", "x-root": 1 }],
+                "_meta": { "com.example/k": true },
+                "x-vendor": vendor,
+            }));
+            assert_eq!(roots.extra.get("x-vendor"), Some(&vendor));
+            assert_eq!(roots.roots[0].extra.get("x-root"), Some(&json!(1)));
+            let wire = roots.to_wire(&version);
+            assert_eq!(wire["x-vendor"], vendor, "{version}");
+            assert_eq!(wire["roots"][0]["x-root"], json!(1), "{version}");
+            assert_eq!(wire["_meta"]["com.example/k"], json!(true), "{version}");
+
+            let mut sampled = CreateMessageResult::text("m", "hi");
+            sampled.extra.insert("x-vendor".into(), vendor.clone());
+            sampled.extra.insert("model".into(), json!("shadow"));
+            let wire = sampled.to_wire(&version).unwrap();
+            assert_eq!(wire["x-vendor"], vendor, "{version}");
+            assert_eq!(wire["model"], "m", "{version}");
+            let back = CreateMessageResult::from_wire(&wire).unwrap();
+            assert_eq!(back.extra.get("x-vendor"), Some(&vendor));
+            assert!(!back.extra.contains_key("model"));
+
+            let elicited = ElicitOutcome::from_wire(&json!({
+                "action": "accept", "content": { "n": 1 },
+                "_meta": { "com.example/k": 1 }, "x-vendor": vendor
+            }))
+            .unwrap();
+            assert_eq!(elicited.meta.get("com.example/k"), Some(&json!(1)));
+            let wire = elicited.to_wire(&version);
+            assert_eq!(wire["x-vendor"], vendor, "{version}");
+            assert_eq!(wire["content"], json!({ "n": 1 }), "{version}");
+            assert_eq!(ElicitOutcome::from_wire(&wire).unwrap(), elicited);
+        }
+        // Content counts only on an accept, and a bad action is refused.
+        let declined =
+            ElicitOutcome::from_wire(&json!({ "action": "decline", "content": { "n": 1 } }))
+                .unwrap();
+        assert!(declined.content.is_empty());
+        assert!(ElicitOutcome::from_wire(&json!({ "action": "maybe" })).is_err());
+        assert!(ElicitOutcome::from_wire(&json!({ "content": {} })).is_err());
     }
 }

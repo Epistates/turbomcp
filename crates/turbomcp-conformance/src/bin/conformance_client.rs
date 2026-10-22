@@ -102,8 +102,8 @@ impl SamplingHandler for Basic {
 
 #[turbomcp::client::async_trait]
 impl RootsHandler for Basic {
-    async fn list_roots(&self) -> turbomcp::client::ClientResult<Vec<neutral::Root>> {
-        Ok(Vec::new())
+    async fn list_roots(&self) -> turbomcp::client::ClientResult<neutral::ListRootsResult> {
+        Ok(neutral::ListRootsResult::default())
     }
 }
 
@@ -147,8 +147,8 @@ impl SamplingHandler for AutoAnswer {
 
 #[turbomcp::client::async_trait]
 impl RootsHandler for AutoAnswer {
-    async fn list_roots(&self) -> turbomcp::client::ClientResult<Vec<neutral::Root>> {
-        Ok(Vec::new())
+    async fn list_roots(&self) -> turbomcp::client::ClientResult<neutral::ListRootsResult> {
+        Ok(neutral::ListRootsResult::default())
     }
 }
 
