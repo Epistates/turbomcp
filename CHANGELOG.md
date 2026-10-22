@@ -535,6 +535,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The lockfiles take `rustls-webpki` 0.103.16 and `webpki-root-certs`
+  1.0.10 (RUSTSEC-2026-0382, RUSTSEC-2026-0383): certificate paths through
+  the distrusted emSign intermediates, whose private keys are public, are
+  refused. Both reach TurboMCP through `reqwest`'s rustls stack (the HTTP
+  client, OAuth, the gateway's upstreams, OTLP export); a downstream build
+  picks the fix up with `cargo update -p rustls-webpki -p webpki-root-certs`.
+
 - The gateway judges its visibility policy on tags it gave, not tags an
   upstream wrote: `io.turbomcp/*` metadata from an upstream is dropped
   unless `trust_upstream_tags(true)` (scopes are kept only when the
