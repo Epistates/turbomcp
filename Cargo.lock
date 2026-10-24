@@ -3843,7 +3843,7 @@ dependencies = [
  "anyhow",
  "prettyplease",
  "quote",
- "schemars 0.8.22",
+ "schemars 1.2.3",
  "serde_json",
  "syn 3.0.9",
  "typify",
