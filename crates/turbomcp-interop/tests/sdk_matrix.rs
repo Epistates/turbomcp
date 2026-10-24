@@ -86,7 +86,7 @@ impl Sdk {
         }
         if matches!(self, Self::TypeScript) && !self.dir().join("node_modules").exists() {
             let status = Command::new("npm")
-                .args(["ci", "--silent"])
+                .args(["ci", "--silent", "--ignore-scripts"])
                 .current_dir(self.dir())
                 .status()
                 .await

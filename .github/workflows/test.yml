@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
+# Read-only token for every job; none of them writes to the repository.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -19,7 +23,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Free up disk space
       run: |
@@ -32,12 +38,13 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
       with:
+        toolchain: stable
         components: rustfmt, clippy
 
     - name: Cache cargo registry & target
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/bin/
@@ -120,21 +127,25 @@ jobs:
         os: [windows-latest, macos-latest]
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      with:
+        toolchain: stable
 
     # turbomcp-telemetry's `otlp` feature exports over gRPC (tonic), whose build
     # script needs protoc. The Linux jobs apt-get it; this installs the same tool
     # on both runners.
     - name: Install protoc
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
       with:
         tool: protoc
 
     - name: Cache cargo registry & target
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry/index/
@@ -169,21 +180,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Install system dependencies
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      with:
+        toolchain: stable
 
     - name: Install cargo-hack
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
       with:
         tool: cargo-hack
 
     - name: Cache cargo registry & target
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry/index/
@@ -201,7 +216,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Free up disk space
       run: |
@@ -217,10 +234,12 @@ jobs:
     # API) would pass CI and break downstream consumers pinned to 1.88. This job
     # catches that.
     - name: Install Rust 1.88
-      uses: dtolnay/rust-toolchain@1.88
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      with:
+        toolchain: '1.88'
 
     - name: Cache cargo registry
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry/index/
@@ -237,13 +256,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     # Advisories (RUSTSEC), license policy, banned/duplicate crates, and source
     # provenance — all governed by deny.toml. Fails the build on a new
     # vulnerability or a disallowed license.
     - name: cargo-deny
-      uses: EmbarkStudios/cargo-deny-action@v2
+      uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       with:
         command: check advisories bans licenses sources
 
@@ -259,20 +280,25 @@ jobs:
     # crate's directory and left the root lockfile stale, and all ten jobs passed
     # because none of them builds `--locked`.
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     # rustfmt because `just codegen` formats what it emits, and the checked-in
     # types are formatted — without it every file would "differ".
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
       with:
+        toolchain: stable
         components: rustfmt
 
     - name: Install just
-      uses: taiki-e/install-action@just
+      uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      with:
+        tool: just
 
     - name: Cache cargo registry
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry/index/
@@ -289,7 +315,7 @@ jobs:
       run: echo "ref=$(just --evaluate mcp_schema_ref)" >> "$GITHUB_OUTPUT"
 
     - name: Check out the MCP schema
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: modelcontextprotocol/modelcontextprotocol
         ref: ${{ steps.schema.outputs.ref }}
@@ -312,15 +338,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
       with:
+        toolchain: stable
         targets: wasm32-unknown-unknown
 
     - name: Cache cargo registry
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/bin/
@@ -351,7 +380,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Free up disk space
       run: |
@@ -369,12 +400,15 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
       with:
+        toolchain: stable
         components: llvm-tools-preview
 
     - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@cargo-llvm-cov
+      uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      with:
+        tool: cargo-llvm-cov
 
     # The exclusion regex and the floor are read out of the justfile below, so
     # `just coverage-text` locally and this job can never disagree about what is
@@ -382,10 +416,12 @@ jobs:
     # updated the justfile and left this workflow silently counting ~9k lines of
     # @generated wire types.
     - name: Install just
-      uses: taiki-e/install-action@just
+      uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      with:
+        tool: just
 
     - name: Cache cargo registry
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/bin/
@@ -437,7 +473,7 @@ jobs:
         fi
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v7
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
         files: lcov.info
         fail_ci_if_error: false
@@ -458,30 +494,36 @@ jobs:
     timeout-minutes: 30
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
       with:
+        toolchain: stable
         components: rustfmt, clippy
 
     - name: Install pnpm
-      uses: pnpm/action-setup@v6
+      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       with:
-        version: 10
+        # 11+ holds back releases younger than a day and blocks exotic
+        # subdependencies by default, `dlx` included: a worm-published version
+        # of something in the harness's tree is not resolved on its first day.
+        version: 12
 
     # No `cache: pnpm` here: that keys off a pnpm-lock.yaml, and this suite has
     # no Node project — it `pnpm dlx`es a pinned package straight from the
     # registry. The step would fail looking for a lockfile that shouldn't exist.
     - name: Install Node
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: '22'
 
     # Keyed on this crate's own lockfile, and caching its own target dir — it
     # shares neither with the workspace.
     - name: Cache cargo registry & target
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry/index/
@@ -532,11 +574,14 @@ jobs:
     # ended up running nowhere while both READMEs claimed it ran "on every
     # change". Same shape of hole the conformance suite had, and the same fix.
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
       with:
+        toolchain: stable
         components: rustfmt, clippy
 
     - name: Install system dependencies
@@ -545,7 +590,7 @@ jobs:
     # Keyed on this crate's own lockfile, and caching its own target dir — it
     # shares neither with the workspace.
     - name: Cache cargo registry & target
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ~/.cargo/registry/index/
@@ -568,24 +613,26 @@ jobs:
     # The peer SDKs of the HTTP matrix (`tests/sdk_matrix.rs`): the official
     # TypeScript, Python and Go SDKs, each from its own lockfile.
     - name: Install Node
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: '22'
         cache: npm
         cache-dependency-path: crates/turbomcp-interop/sdks/ts/package-lock.json
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v10.2.0
+      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
     - name: Install Go
-      uses: actions/setup-go@v7
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: '1.25'
+        go-version: '1.27'
         cache-dependency-path: crates/turbomcp-interop/sdks/go/go.sum
 
     - name: Install the TypeScript peer
       working-directory: crates/turbomcp-interop/sdks/ts
-      run: npm ci
+      # None of the peer's dependencies needs an install script; running none
+      # means a compromised version of one cannot run code at install time.
+      run: npm ci --ignore-scripts
 
     # A missing toolchain skips its peers locally; here it is a failure.
     # Bounded by the command as well as the step, so a hang fails with its
@@ -614,13 +661,17 @@ jobs:
     # is a pre-release, semver-checks treats the bump as major and passes; it
     # becomes a real gate for patch and minor releases from 4.0.0 on.
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      with:
+        toolchain: stable
 
     - name: Install cargo-semver-checks
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
       with:
         tool: cargo-semver-checks
 

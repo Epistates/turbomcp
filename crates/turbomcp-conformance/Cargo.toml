@@ -42,9 +42,9 @@ serde_json = "1"
 #
 # Kept on the same version and TLS backend as the workspace's `reqwest`, since
 # the `OAuthClient` this hands its client to is built against that one.
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "net", "time", "io-util"] }
 schemars = "1"
-base64 = "0.22"
+base64 = "0.23"

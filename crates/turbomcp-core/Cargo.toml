@@ -18,7 +18,7 @@ serde = { version = "1", default-features = false, features = ["derive", "alloc"
 # gain an ulp on values like 2.5e-308 (the workspace build enables it anyway).
 serde_json = { version = "1", default-features = false, features = ["alloc", "float_roundtrip"] }
 hashbrown = { version = "0.17", features = ["serde"] }
-bytes = { version = "1.11.1", default-features = false }
+bytes = { version = "1.12.1", default-features = false }
 # std-only: CancellationToken integration lives behind the `std` feature.
 tokio-util = { workspace = true, optional = true }
 

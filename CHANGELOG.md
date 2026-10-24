@@ -541,6 +541,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused. Both reach TurboMCP through `reqwest`'s rustls stack (the HTTP
   client, OAuth, the gateway's upstreams, OTLP export); a downstream build
   picks the fix up with `cargo update -p rustls-webpki -p webpki-root-certs`.
+- `tokio` is required at 1.54 or later (RUSTSEC-2026-0386: `AsyncFd::new`
+  and related constructors violate I/O safety, fixed in 1.53.3), so a
+  downstream lockfile can't resolve an affected release under TurboMCP.
+- `jsonschema` 0.60.1, which checks tool arguments, elicitation answers
+  and structured output. 0.59 stops counting a regex match that hits the
+  engine's backtrack limit as a non-match, which let `not` and
+  `patternProperties` accept invalid input. 0.60.1 fixes a panic on numbers
+  beyond `f64` in `const`, `enum`, bounds and `type: integer` when another
+  crate in the build enables `serde_json/arbitrary_precision` (the
+  configuration the `arbitrary_precision` fixture covers).
 
 - The gateway judges its visibility policy on tags it gave, not tags an
   upstream wrote: `io.turbomcp/*` metadata from an upstream is dropped
@@ -1594,8 +1604,9 @@ Earlier in this cycle:
   an HTTP server 158 (was 211).
   - `opentelemetry`/`opentelemetry_sdk`/`opentelemetry-otlp` 0.33 and
     `tracing-opentelemetry` 0.34 (their types appear in
-    `turbomcp-telemetry`'s API), `jsonschema` 0.58, and every compatible
-    update.
+    `turbomcp-telemetry`'s API), `jsonschema` 0.60,
+    `serde_json_canonicalizer` 0.4, and every compatible update, with each
+    manifest's floor raised to the version the lockfile tests.
   - The wire types are regenerated with `typify` 0.8. On 2025-11-25 a task
     without `ttl` (required, nullable) is now refused rather than read as
     unlimited; the rest is equivalent (plus `Default` derives and `Display`
@@ -1874,6 +1885,21 @@ Earlier in this cycle:
   runs all of them. They run with a checked-in dictionary of JSON syntax and
   MCP keys (`fuzz/mcp.dict`) and seed messages (`fuzz/seeds/`): unguided, a
   JSON target's corpus held not one real message after millions of runs.
+- CI pins every GitHub Action to a commit, with its release in a comment
+  that Dependabot keeps current; `release.yml`'s pins live in
+  `dist-workspace.toml`, and dist is 0.33.1, which refreshes its certificate
+  lists. A tag can be moved to new code; a commit can't. Every job runs
+  with a read-only token, and no checkout leaves that token in
+  `.git/config` for a build script to read. The conformance harness runs
+  under pnpm 12, which won't resolve a release less than a day old (`dlx`
+  included); the TypeScript interop peer installs with `--ignore-scripts`.
+- The workspace resolves with Cargo's resolver 3, so `cargo update` keeps
+  the lockfile on versions the 1.88 MSRV builds.
+- The interop peers take the TypeScript SDK 2.4.0 (and `zod` 4.6.7,
+  GHSA-mrhx-c7xc-m3w5), Python `opentelemetry-api` 1.45.1
+  (GHSA-xcq7-p3pf-p88h), and `golang.org/x/sys` 0.49 (GO-2026-5024), and
+  CI builds the Go peer with Go 1.27; 1.25 no longer gets security fixes.
+  `rmcp` is 3.7.
 
 ## [4.0.0-alpha.5] - 2026-09-13
 

@@ -24,7 +24,9 @@ members = [
 #   - turbomcp-conformance: official MCP conformance suite (Node harness driver).
 # Run them on their own (`cd crates/<crate> && cargo test`).
 exclude = ["crates/turbomcp-interop", "crates/turbomcp-conformance"]
-resolver = "2"
+# 3: `cargo update` picks versions whose `rust-version` the workspace's MSRV
+# meets, so the lockfile stays buildable on 1.88 (the MSRV CI job).
+resolver = "3"
 
 [workspace.lints.rust]
 # `cargo fuzz` sets `--cfg fuzzing`; the crates expose fuzz entry points under it.
@@ -60,36 +62,36 @@ const_is_empty = "allow"
 # for every `tokio = { workspace = true }` member, so listing them here leaked
 # `process`, `signal` and `net` into crates that need none of them. Each crate
 # opts into what it uses.
-tokio = { version = "1.52" }
-tokio-util = { version = "0.7.18" }
-futures = "0.3.32"
+tokio = { version = "1.54" }
+tokio-util = { version = "0.7.20" }
+futures = "0.3.34"
 pin-project-lite = "0.2.17"
 
 # URI template (RFC 6570) matching for #[resource("…/{var}")] — the pattern core
-regex = "1.11"
+regex = "1.13"
 percent-encoding = "2.3"
 
 # Serialization with performance focus. `float_roundtrip` makes serde_json's
 # float *parsing* correctly rounded (without it, extreme-exponent values like
 # 2.5e-308 gain 1 ulp on decode — wire fidelity is worth the small parse cost).
-serde = { version = "1.0.228", features = ["derive", "rc"] }
-serde_json = { version = "1.0.149", features = ["raw_value", "preserve_order", "float_roundtrip"] }
-sonic-rs = "0.5.8"   # High-performance JSON (core `simd` codec)
+serde = { version = "1.0.229", features = ["derive", "rc"] }
+serde_json = { version = "1.0.154", features = ["raw_value", "preserve_order", "float_roundtrip"] }
+sonic-rs = "0.5.10"   # High-performance JSON (core `simd` codec)
 
 # Schema validation and generation
-schemars = { version = "1.2.1" }
-jsonschema = { version = "0.58", default-features = false }
+schemars = { version = "1.2.3" }
+jsonschema = { version = "0.60", default-features = false }
 
 # HTTP/WebSocket/Network
-reqwest = { version = "0.13.3", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
 eventsource-stream = "0.2.3"
 axum = { version = "0.8.9", features = ["tracing"] }
 # The HTTP transport's accept loop (header-read timeout, connection cap): the
 # hyper stack axum already builds on.
-hyper = { version = "1.11", default-features = false }
+hyper = { version = "1.12", default-features = false }
 hyper-util = { version = "0.1.21", default-features = false }
 # The header types axum and reqwest share, for the HTTP transport's names.
-http = "1.4"
+http = "1.5"
 mime = "0.3.17"
 tower = { version = "0.5.3", features = ["util", "retry", "timeout", "limit"] }
 # Only CORS is used; compression/trace/timeout/limit pulled brotli, flate2 and
@@ -99,10 +101,10 @@ tower-http = { version = "0.7.1", default-features = false, features = ["cors"] 
 tokio-tungstenite = { version = "0.29.0", default-features = false }
 
 # Error handling and diagnostics
-thiserror = "2.0.18"
-async-trait = "0.1.89"
-anyhow = "1.0.102"
-clap = { version = "4.5", features = ["derive", "env"] }
+thiserror = "2.0.21"
+async-trait = "0.1.92"
+anyhow = "1.0.104"
+clap = { version = "4.6", features = ["derive", "env"] }
 
 # Observability and monitoring
 tracing = "0.1.44"
@@ -131,27 +133,27 @@ sha2 = "0.10"
 # moves to crypto-common 0.2; all of them move together).
 chacha20poly1305 = "0.10"
 # Wipes secrets on drop. Already linked (rustls, aws-lc-rs, the AEAD).
-zeroize = "1.8"
+zeroize = "1.9"
 # RFC 8785 canonical JSON, for the MRTR request binding.
-serde_json_canonicalizer = "0.3"
+serde_json_canonicalizer = "0.4"
 serde_path_to_error = "0.1.20"
 # OS randomness for keys (uuid already links it).
 getrandom = "0.4"
 base64 = "0.23.1"
-uuid = { version = "1.23", features = ["v4"] }
+uuid = { version = "1.26", features = ["v4"] }
 # OAuth 2.1 client flows (auth-code + PKCE + token exchange); HTTP is supplied
 # by our reqwest adapter, so no default features.
 oauth2 = { version = "5", default-features = false }
-jsonwebtoken = { version = "11.0", features = ["aws_lc_rs", "use_pem"] }
+jsonwebtoken = { version = "11.1", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling (RFC 3339 timestamps on task records)
-time = { version = "0.3.47", features = ["serde", "macros"] }
+time = { version = "0.3.55", features = ["serde", "macros"] }
 
 # Memory and performance optimizations
-bytes = "1.11.1"
+bytes = "1.12.1"
 
 # Caching
-moka = { version = "0.12.15", default-features = false }
+moka = { version = "0.12.16", default-features = false }
 # Locks that don't poison: one panic under a registry lock no longer
 # turns into a permanent outage of that registry (already linked via tokio).
 parking_lot = "0.12"
@@ -164,7 +166,7 @@ governor = { version = "0.10.4", default-features = false, features = ["std", "q
 # Development and testing
 criterion = { version = "0.8.2", features = ["html_reports"] }
 trybuild = "1.0"
-insta = { version = "1.47", features = ["json", "redactions"] }
+insta = { version = "1.49", features = ["json", "redactions"] }
 
 # Internal workspace crate dependencies.
 # `default-features = false` on turbomcp-core / turbomcp-protocol keeps the

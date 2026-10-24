@@ -91,8 +91,7 @@ allow = [
     "0BSD",                             # Public domain equivalent
     "Unlicense",                        # Public domain
     "Unicode-3.0",                      # Unicode data tables only
-    "MPL-2.0",                          # Required by webpki-roots (TLS certificates)
-    "CDLA-Permissive-2.0",              # Required by webpki-roots (certificate data)
+    "CDLA-Permissive-2.0",              # Required by webpki-root-certs (certificate data)
 ]
 
 # Note: cargo-deny v0.18+ doesn't support explicit license deny lists

@@ -12,7 +12,7 @@ members = ["cargo:."]
 # the release exists finishes the job.
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
-cargo-dist-version = "0.33.0"
+cargo-dist-version = "0.33.1"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
@@ -29,3 +29,12 @@ install-updater = false
 create-release = false
 # Attest build provenance for every artifact (`gh attestation verify`)
 github-attestations = true
+
+# The release workflow runs with `id-token: write` and `attestations: write`, so
+# every action in it is pinned to a commit: a tag can be moved to new code, a
+# commit cannot. Keep these in step with the pins in `test.yml`.
+[dist.github-action-commits]
+"actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
+"actions/upload-artifact" = "cf430e030ddbb5b0abf93d22962f4752f3646cd9" # v7.0.2
+"actions/download-artifact" = "9000827ccba6bdab643e8b6fd33ac0654aef8333" # v8.0.2
+"actions/attest" = "1e69f48acb82d1966a394da916b4c1698aa569d6" # v4.2.2
