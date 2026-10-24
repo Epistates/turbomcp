@@ -24,6 +24,24 @@ updates:
       # Majors stay separate — they are the ones that move MSRV or behaviour.
       cargo-minor:
         update-types: [minor, patch]
+    # Held on purpose; each reason is beside the pin in the root Cargo.toml.
+    # Revisit when the named dependents move, then lift the entry.
+    ignore:
+      # The digest 0.10 generation: axum's WebSocket (sha1) and oauth2 5 link
+      # it, so 0.11 is a second RustCrypto stack, which deny.toml refuses.
+      - dependency-name: hmac
+        versions: [">= 0.13"]
+      - dependency-name: sha2
+        versions: [">= 0.11"]
+      - dependency-name: chacha20poly1305
+        versions: [">= 0.11"]
+      # The version axum 0.8's `ws` feature uses: one tungstenite, not two.
+      - dependency-name: tokio-tungstenite
+        versions: [">= 0.30"]
+      # turbomcp-codegen's 0.8: typify 0.8's API is schemars 0.8's types.
+      # The workspace's schemars is 1.x and still takes minor updates.
+      - dependency-name: schemars
+        update-types: ["version-update:semver-major"]
 
   # turbomcp-conformance and turbomcp-interop are excluded from the workspace and
   # carry their own lockfiles, so nothing above reaches them. Only `rmcp` is
