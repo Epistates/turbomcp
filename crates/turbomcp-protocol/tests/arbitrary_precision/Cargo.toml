@@ -8,7 +8,9 @@ publish = false
 # in a build, so it must not unify into the main workspace's tests.
 [workspace]
 
-[dependencies]
+# Everything here serves the decode test in `tests/`, so it is all dev
+# dependencies; the feature applies to that build all the same.
+[dev-dependencies]
 turbomcp-protocol = { path = "../.." }
 serde = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
