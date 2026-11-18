@@ -17,6 +17,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::OnceCell;
 use turbomcp::client::{ClientBuilder, ConnectMode, connect_http};
 use turbomcp::http::{Http, HttpConfig};
 use turbomcp::prelude::*;
@@ -84,19 +85,30 @@ impl Sdk {
             eprintln!("skipping {self:?}: `{}` not found", self.toolchain());
             return false;
         }
-        if matches!(self, Self::TypeScript) && !self.dir().join("node_modules").exists() {
-            let status = Command::new("bun")
-                .args([
-                    "install",
-                    "--frozen-lockfile",
-                    "--silent",
-                    "--ignore-scripts",
-                ])
-                .current_dir(self.dir())
-                .status()
-                .await
-                .expect("bun runs");
-            assert!(status.success(), "bun install --frozen-lockfile failed");
+        if matches!(self, Self::TypeScript) {
+            // Both TypeScript tests start at once. Without the cell, each sees
+            // no `node_modules` and installs into it, and one can run Node
+            // while the other is still rewriting the tree.
+            static INSTALLED: OnceCell<()> = OnceCell::const_new();
+            INSTALLED
+                .get_or_init(|| async {
+                    if self.dir().join("node_modules").exists() {
+                        return;
+                    }
+                    let status = Command::new("bun")
+                        .args([
+                            "install",
+                            "--frozen-lockfile",
+                            "--silent",
+                            "--ignore-scripts",
+                        ])
+                        .current_dir(self.dir())
+                        .status()
+                        .await
+                        .expect("bun runs");
+                    assert!(status.success(), "bun install --frozen-lockfile failed");
+                })
+                .await;
         }
         true
     }
@@ -154,19 +166,20 @@ impl Sdk {
 
     /// Run the peer's client against `url` in `era`; what it printed.
     async fn call(self, url: &str, era: &str) -> Value {
+        // stderr is captured, not inherited, so a failure carries its own
+        // reason instead of leaving it interleaved with the other peers' output.
         let out = tokio::time::timeout(
             Duration::from_secs(120),
-            self.command("client")
-                .args([url, era])
-                .stderr(Stdio::inherit())
-                .output(),
+            self.command("client").args([url, era]).output(),
         )
         .await
         .expect("the peer client finishes")
         .expect("the peer client runs");
         assert!(
             out.status.success(),
-            "{self:?} client failed in the {era} era"
+            "{self:?} client failed in the {era} era ({}); its stderr:\n{}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr),
         );
         let stdout = String::from_utf8(out.stdout).unwrap();
         let line = stdout.lines().last().expect("a JSON line");
