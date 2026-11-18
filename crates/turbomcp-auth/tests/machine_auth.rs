@@ -260,7 +260,11 @@ async fn private_key_jwt_sends_a_signed_assertion_instead_of_a_secret() {
         ClientCredentials::public("signer"),
     )
     .with_private_key_jwt(
-        ClientAssertion::new(EncodingKey::from_secret(key), Algorithm::HS256).with_key_id("k1"),
+        ClientAssertion::new(
+            EncodingKey::from_secret(key).expect("a non-empty HMAC key"),
+            Algorithm::HS256,
+        )
+        .with_key_id("k1"),
     )
     .with_network_policy(NetworkPolicy::default())
     .unwrap();
@@ -282,7 +286,7 @@ async fn private_key_jwt_sends_a_signed_assertion_instead_of_a_secret() {
     validation.set_issuer(&["signer"]);
     let claims = jsonwebtoken::decode::<Value>(
         &form["client_assertion"],
-        &DecodingKey::from_secret(key),
+        &DecodingKey::from_secret(key).expect("a non-empty HMAC key"),
         &validation,
     )
     .expect("a valid assertion")

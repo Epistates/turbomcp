@@ -79,11 +79,11 @@ percent-encoding = "2.3"
 # 2.5e-308 gain 1 ulp on decode — wire fidelity is worth the small parse cost).
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.154", features = ["raw_value", "preserve_order", "float_roundtrip"] }
-sonic-rs = "0.5.10"   # High-performance JSON (core `simd` codec)
+sonic-rs = "0.5.11"   # High-performance JSON (core `simd` codec)
 
 # Schema validation and generation
 schemars = { version = "1.2.3" }
-jsonschema = { version = "0.60", default-features = false }
+jsonschema = { version = "0.61", default-features = false }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
@@ -95,7 +95,7 @@ hyper = { version = "1.12", default-features = false }
 hyper-util = { version = "0.1.21", default-features = false }
 # The header types axum and reqwest share, for the HTTP transport's names.
 http = "1.5"
-mime = "0.3.17"
+mime = "0.3.18"
 tower = { version = "0.5.3", features = ["util", "retry", "timeout", "limit"] }
 # Only CORS is used; compression/trace/timeout/limit pulled brotli, flate2 and
 # async-compression into every HTTP server build for nothing.
@@ -147,13 +147,13 @@ uuid = { version = "1.26", features = ["v4"] }
 # OAuth 2.1 client flows (auth-code + PKCE + token exchange); HTTP is supplied
 # by our reqwest adapter, so no default features.
 oauth2 = { version = "5", default-features = false }
-jsonwebtoken = { version = "11.1", features = ["aws_lc_rs", "use_pem"] }
+jsonwebtoken = { version = "12.0", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling (RFC 3339 timestamps on task records)
 time = { version = "0.3.55", features = ["serde", "macros"] }
 
 # Memory and performance optimizations
-bytes = "1.12.1"
+bytes = "1.12.2"
 
 # Caching
 moka = { version = "0.12.16", default-features = false }

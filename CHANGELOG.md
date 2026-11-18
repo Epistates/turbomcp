@@ -550,7 +550,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `patternProperties` accept invalid input. 0.60.1 fixes a panic on numbers
   beyond `f64` in `const`, `enum`, bounds and `type: integer` when another
   crate in the build enables `serde_json/arbitrary_precision` (the
-  configuration the `arbitrary_precision` fixture covers).
+  configuration the `arbitrary_precision` fixture covers). 0.61 makes `.`
+  in `pattern` and `patternProperties` reject every line terminator,
+  stops `format: "date-time"`, `"date"` and `"time"` accepting `+`, `,`,
+  `-`, `.` or `/` where RFC 3339 requires a digit, and judges whole floats
+  past 2^53 correctly in the numeric keywords.
+- `jsonwebtoken` 12, which verifies bearer tokens in `turbomcp-auth`: it
+  refuses a token whose `crit` header names an extension it doesn't
+  understand, closes the remaining type confusion in `sub`, `iss` and
+  `aud`, and refuses an empty HMAC key. `JwkSource` returns its
+  `DecodingKey` and takes its `Algorithm` (re-exported as
+  `turbomcp_auth::Algorithm`), so an implementation of `JwkSource` moves to
+  `jsonwebtoken` 12 as well.
 
 - The gateway judges its visibility policy on tags it gave, not tags an
   upstream wrote: `io.turbomcp/*` metadata from an upstream is dropped
@@ -1604,7 +1615,7 @@ Earlier in this cycle:
   an HTTP server 158 (was 211).
   - `opentelemetry`/`opentelemetry_sdk`/`opentelemetry-otlp` 0.33 and
     `tracing-opentelemetry` 0.34 (their types appear in
-    `turbomcp-telemetry`'s API), `jsonschema` 0.60,
+    `turbomcp-telemetry`'s API), `jsonschema` 0.61, `jsonwebtoken` 12,
     `serde_json_canonicalizer` 0.4, and every compatible update, with each
     manifest's floor raised to the version the lockfile tests.
   - The wire types are regenerated with `typify` 0.8. On 2025-11-25 a task
@@ -1887,8 +1898,7 @@ Earlier in this cycle:
   JSON target's corpus held not one real message after millions of runs.
 - CI pins every GitHub Action to a commit, with its release in a comment
   that Dependabot keeps current; `release.yml`'s pins live in
-  `dist-workspace.toml`, and dist is 0.33.1, which refreshes its certificate
-  lists. A tag can be moved to new code; a commit can't. Every job runs
+  `dist-workspace.toml`, and dist is 0.34.0. A tag can be moved to new code; a commit can't. Every job runs
   with a read-only token, and no checkout leaves that token in
   `.git/config` for a build script to read. The conformance harness runs
   under pnpm 12, which won't resolve a release less than a day old (`dlx`
@@ -1899,7 +1909,10 @@ Earlier in this cycle:
   GHSA-mrhx-c7xc-m3w5), Python `opentelemetry-api` 1.45.1
   (GHSA-xcq7-p3pf-p88h), and `golang.org/x/sys` 0.49 (GO-2026-5024), and
   CI builds the Go peer with Go 1.27; 1.25 no longer gets security fixes.
-  `rmcp` is 3.7.
+  The TypeScript peer's lockfile takes `hono` 4.13.17 and
+  `@hono/node-server` 2.1.6 (GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq,
+  GHSA-jpvv-r467-5p4w and four more), and `golang.org/x/sys` is 0.50.
+  `rmcp` is 3.11.
 
 ## [4.0.0-alpha.5] - 2026-09-13
 

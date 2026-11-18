@@ -65,8 +65,14 @@ feature-depth = 1
 #db-path = "$CARGO_HOME/advisory-dbs"
 # The url(s) of the advisory databases to use
 #db-urls = ["https://github.com/rustsec/advisory-db"]
-# No advisory ignores are currently required.
-ignore = []
+# Each ignore names the only path the crate takes into a build. Lift it when
+# that path closes.
+ignore = [
+    # chrono is unmaintained (informational; no fixed release). It arrives only
+    # through oauth2 5, behind turbomcp-auth's `oauth-client` feature, and
+    # oauth2 has not released since 5.0.0 (2025-01).
+    { id = "RUSTSEC-2026-0543", reason = "chrono, via oauth2 5 (oauth-client only); no oauth2 release without it" },
+]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
 # Setting this to true can be helpful if you have special authentication requirements that cargo-deny does not support.
@@ -199,7 +205,7 @@ deny = [
 
 # Known duplicates, all upstream splits.
 skip = [
-    { crate = "base64@0.22", reason = "axum, hyper-util, jsonwebtoken, tonic, pem, oauth2 on 0.22; reqwest and we on 0.23" },
+    { crate = "base64@0.22", reason = "axum, tonic and oauth2 on 0.22; reqwest, jsonwebtoken, pem and we on 0.23" },
     { crate = "getrandom@0.2", reason = "rand 0.8, via oauth2 5 (client-oauth only)" },
     { crate = "getrandom@0.3", reason = "rand 0.9 (tungstenite, opentelemetry_sdk) and ahash (jsonschema); uuid is on 0.4" },
     { crate = "hashbrown@0.16", reason = "governor and regress; indexmap and we are on 0.17" },
@@ -207,6 +213,7 @@ skip = [
     { crate = "rand@0.8", reason = "oauth2 5 (client-oauth only)" },
     { crate = "rand_chacha@0.3", reason = "rand 0.8, via oauth2 5" },
     { crate = "rand_core@0.6", reason = "rand 0.8, via oauth2 5" },
+    { crate = "rand_core@0.9", reason = "rand 0.9 (tungstenite, opentelemetry_sdk); signature 3, via jsonwebtoken 12, is on 0.10" },
     { crate = "thiserror@1", reason = "oauth2 5 (client-oauth only)" },
     { crate = "thiserror-impl@1", reason = "thiserror 1, via oauth2 5" },
     { crate = "tower-http@0.6", reason = "reqwest 0.13's HTTP client stack; our server is on 0.7" },

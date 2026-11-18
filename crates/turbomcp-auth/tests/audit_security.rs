@@ -24,7 +24,7 @@ async fn jwt_rejects_token_before_nbf() {
         .as_secs();
     let mut header = Header::new(Algorithm::HS256);
     header.kid = Some("test".into());
-    let token = jsonwebtoken::encode(&header, &serde_json::json!({"sub":"alice","aud":"mcp","iss":"issuer","exp":now+7200,"nbf":now+3600}), &EncodingKey::from_secret(secret)).unwrap();
+    let token = jsonwebtoken::encode(&header, &serde_json::json!({"sub":"alice","aud":"mcp","iss":"issuer","exp":now+7200,"nbf":now+3600}), &EncodingKey::from_secret(secret).expect("a non-empty HMAC key")).unwrap();
     assert!(validator.validate(&token).await.is_err());
 }
 #[tokio::test]

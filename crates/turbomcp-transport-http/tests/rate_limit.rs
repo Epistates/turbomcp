@@ -97,7 +97,12 @@ fn token(sub: &str) -> String {
     let claims = json!({
         "sub": sub, "aud": RESOURCE, "iss": ISSUER, "exp": 4_102_444_800i64,
     });
-    encode(&header, &claims, &EncodingKey::from_secret(SECRET)).unwrap()
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret(SECRET).expect("a non-empty HMAC key"),
+    )
+    .unwrap()
 }
 
 fn call_request(auth: Option<&str>) -> Request<Body> {

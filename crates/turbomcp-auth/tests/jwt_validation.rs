@@ -43,7 +43,12 @@ fn future_exp() -> i64 {
 fn sign(claims: Value) -> String {
     let mut header = Header::new(Algorithm::HS256);
     header.kid = Some(KID.to_owned());
-    encode(&header, &claims, &EncodingKey::from_secret(SECRET)).expect("sign")
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret(SECRET).expect("a non-empty HMAC key"),
+    )
+    .expect("sign")
 }
 
 fn good_claims() -> Value {
@@ -233,7 +238,12 @@ async fn kid_resolution_failures_are_rejected() {
     let rs = resource_server();
     let mut header = Header::new(Algorithm::HS256);
     header.kid = Some("no-such-kid".to_owned());
-    let token = encode(&header, &good_claims(), &EncodingKey::from_secret(SECRET)).unwrap();
+    let token = encode(
+        &header,
+        &good_claims(),
+        &EncodingKey::from_secret(SECRET).expect("a non-empty HMAC key"),
+    )
+    .unwrap();
     assert!(matches!(
         rs.authenticate(Some(&bearer(&token))).await,
         AuthDecision::Challenge { status: 401, .. }
@@ -253,7 +263,7 @@ async fn kid_resolution_failures_are_rejected() {
     let kidless = encode(
         &Header::new(Algorithm::HS256),
         &good_claims(),
-        &EncodingKey::from_secret(SECRET),
+        &EncodingKey::from_secret(SECRET).expect("a non-empty HMAC key"),
     )
     .unwrap();
     assert!(matches!(
@@ -321,7 +331,12 @@ async fn an_untyped_token_is_refused_when_access_tokens_must_be_typed() {
     let mut header = Header::new(Algorithm::HS256);
     header.kid = Some(KID.to_owned());
     header.typ = Some("at+jwt".to_owned());
-    let typed = encode(&header, &good_claims(), &EncodingKey::from_secret(SECRET)).unwrap();
+    let typed = encode(
+        &header,
+        &good_claims(),
+        &EncodingKey::from_secret(SECRET).expect("a non-empty HMAC key"),
+    )
+    .unwrap();
     validator
         .validate(&typed)
         .await

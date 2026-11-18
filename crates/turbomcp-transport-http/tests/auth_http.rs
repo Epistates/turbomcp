@@ -105,7 +105,12 @@ fn token_with_scope(scope: Option<&str>) -> String {
     if let Some(scope) = scope {
         claims["scope"] = json!(scope);
     }
-    encode(&header, &claims, &EncodingKey::from_secret(SECRET)).unwrap()
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret(SECRET).expect("a non-empty HMAC key"),
+    )
+    .unwrap()
 }
 
 fn call_request(auth: Option<&str>) -> Request<Body> {
@@ -454,7 +459,7 @@ async fn a_get_stream_ends_when_its_token_expires() {
     let short = encode(
         &header,
         &json!({ "sub": "alice", "aud": RESOURCE, "iss": ISSUER, "exp": now + 2 }),
-        &EncodingKey::from_secret(SECRET),
+        &EncodingKey::from_secret(SECRET).expect("a non-empty HMAC key"),
     )
     .unwrap();
     let bearer = format!("Bearer {short}");
