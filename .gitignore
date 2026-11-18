@@ -156,3 +156,6 @@ fuzz/target/
 
 # Maintained release guidance must ship with the documentation checker.
 !scripts/RELEASE_CHECKLIST.md
+
+# Extra git checkouts of this repo (git worktree add .worktrees/<name>).
+.worktrees/
