@@ -7,21 +7,30 @@ use std::process::{Command, Output};
 use serde_json::Value;
 
 /// The `hello_world` example, built if this run didn't build it.
+///
+/// The target dir is the nearest ancestor of this test binary that cargo
+/// marked with `CACHEDIR.TAG`. Counting levels up from the binary stopped
+/// working in Rust 1.100, which moved test binaries from
+/// `<target>/<profile>/deps/` to `<target>/<profile>/build/<package>/<hash>/out/`;
+/// examples are still copied to `<target>/<profile>/examples/`.
 fn hello_world() -> PathBuf {
-    let mut dir = std::env::current_exe().expect("test binary path");
-    dir.pop(); // …/<profile>/deps
-    dir.pop(); // …/<profile>
-    let path = dir
+    let exe = std::env::current_exe().expect("test binary path");
+    let target = exe
+        .ancestors()
+        .find(|dir| dir.join("CACHEDIR.TAG").is_file())
+        .expect("the test binary is inside a cargo target dir");
+    let profile = exe
+        .strip_prefix(target)
+        .ok()
+        .and_then(|rest| rest.components().next())
+        .and_then(|dir| dir.as_os_str().to_str())
+        .unwrap_or("debug")
+        .to_owned();
+    let path = target
+        .join(&profile)
         .join("examples")
         .join(format!("hello_world{}", std::env::consts::EXE_SUFFIX));
     if !path.is_file() {
-        let profile = dir
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("debug")
-            .to_owned();
-        let mut target = dir.clone();
-        target.pop();
         let mut cargo = Command::new(env!("CARGO"));
         cargo
             .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -35,7 +44,7 @@ fn hello_world() -> PathBuf {
                 "client",
             ])
             .arg("--target-dir")
-            .arg(&target);
+            .arg(target);
         if profile == "release" {
             cargo.arg("--release");
         }

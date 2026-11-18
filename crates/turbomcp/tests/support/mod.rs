@@ -10,22 +10,15 @@
 /// for examples, so build it on demand: the outer build has finished by the
 /// time tests run, so the nested invocation takes the target-dir lock cleanly.
 pub fn example_bin(name: &str) -> std::path::PathBuf {
-    let mut target_dir = std::env::current_exe().expect("test binary path");
-    target_dir.pop(); // …/<profile>/deps
-    target_dir.pop(); // …/<profile>
-    let profile = target_dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("debug")
-        .to_string();
+    let (target_dir, profile) = target_dir_and_profile();
     let path = target_dir
+        .join(&profile)
         .join("examples")
         .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
     if path.is_file() {
         return path;
     }
 
-    target_dir.pop(); // the target dir cargo is actually using
     let mut cargo = std::process::Command::new(env!("CARGO"));
     cargo
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -43,4 +36,28 @@ pub fn example_bin(name: &str) -> std::path::PathBuf {
         path.display()
     );
     path
+}
+
+/// The target dir this test binary was built in, and the profile directory
+/// under it (`debug`, `release`).
+///
+/// The target dir is the nearest ancestor cargo marked with `CACHEDIR.TAG`.
+/// Counting levels up from the binary stopped working in Rust 1.100, which
+/// moved test binaries from `<target>/<profile>/deps/` to
+/// `<target>/<profile>/build/<package>/<hash>/out/`; examples are still copied
+/// to `<target>/<profile>/examples/`.
+fn target_dir_and_profile() -> (std::path::PathBuf, String) {
+    let exe = std::env::current_exe().expect("test binary path");
+    let target_dir = exe
+        .ancestors()
+        .find(|dir| dir.join("CACHEDIR.TAG").is_file())
+        .expect("the test binary is inside a cargo target dir");
+    let profile = exe
+        .strip_prefix(target_dir)
+        .ok()
+        .and_then(|rest| rest.components().next())
+        .and_then(|dir| dir.as_os_str().to_str())
+        .unwrap_or("debug")
+        .to_owned();
+    (target_dir.to_path_buf(), profile)
 }
