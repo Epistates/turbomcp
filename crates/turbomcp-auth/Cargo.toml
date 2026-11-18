@@ -28,7 +28,7 @@ http-jwks = ["network", "jwt"]
 # The OAuth 2.1 *client* half: authorization-code + PKCE flows, RFC 9728/8414
 # discovery, client registration (CIMD / pre-registered / DCR), RFC 9207 iss
 # validation, issuer-keyed credential store.
-oauth-client = ["network", "dep:oauth2", "dep:url"]
+oauth-client = ["network", "dep:oauth2", "dep:url", "dep:subtle"]
 # Opaque access tokens validated by RFC 7662 introspection against the
 # authorization server, with a short SHA-256-keyed answer cache.
 introspection = [
@@ -37,7 +37,7 @@ introspection = [
 
 [dependencies]
 parking_lot = { workspace = true }
-subtle = { workspace = true }
+subtle = { workspace = true, optional = true }
 zeroize = { workspace = true, features = ["serde"] }
 turbomcp-core = { workspace = true }
 turbomcp-service = { workspace = true }
