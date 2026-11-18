@@ -29,13 +29,16 @@ fn baseline_path() -> PathBuf {
 /// Run the client suite at one spec version and return every check.
 async fn run_harness(spec_version: &str) -> Vec<CheckResult> {
     let out_dir = harness::tempdir("client");
-    let mut command = tokio::process::Command::new("pnpm");
+    let mut command = tokio::process::Command::new("bunx");
+    command.args(harness::BUNX_FLAGS);
     if harness::raw_upstream() {
-        command.arg("dlx").arg(CONFORMANCE_PKG);
+        command.arg(CONFORMANCE_PKG);
     } else {
+        // `--package` puts the pinned package's `.bin` first on PATH and runs
+        // the system Node, which is how the fixture finds the bundle it patches.
         command
-            .arg(format!("--package={CONFORMANCE_PKG}"))
-            .arg("dlx")
+            .arg("--package")
+            .arg(CONFORMANCE_PKG)
             .arg("node")
             .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/corrected-client.mjs"));
     }
@@ -51,7 +54,7 @@ async fn run_harness(spec_version: &str) -> Vec<CheckResult> {
         .arg(&out_dir)
         .output()
         .await
-        .expect("spawn pnpm dlx conformance client");
+        .expect("spawn bunx conformance client");
 
     let checks = harness::parse_checks_from_dir(&out_dir, spec_version);
     assert!(

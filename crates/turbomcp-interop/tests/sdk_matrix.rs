@@ -85,13 +85,18 @@ impl Sdk {
             return false;
         }
         if matches!(self, Self::TypeScript) && !self.dir().join("node_modules").exists() {
-            let status = Command::new("npm")
-                .args(["ci", "--silent", "--ignore-scripts"])
+            let status = Command::new("bun")
+                .args([
+                    "install",
+                    "--frozen-lockfile",
+                    "--silent",
+                    "--ignore-scripts",
+                ])
                 .current_dir(self.dir())
                 .status()
                 .await
-                .expect("npm runs");
-            assert!(status.success(), "npm ci failed");
+                .expect("bun runs");
+            assert!(status.success(), "bun install --frozen-lockfile failed");
         }
         true
     }

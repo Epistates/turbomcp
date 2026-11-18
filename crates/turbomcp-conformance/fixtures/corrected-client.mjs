@@ -10,7 +10,7 @@ for (const entry of process.env.PATH.split(delimiter)) {
   if (!existsSync(join(entry, 'conformance'))) continue;
   try { root = dirname(createRequire(join(entry, 'probe.cjs')).resolve('@modelcontextprotocol/conformance/package.json')); break; } catch {}
 }
-if (!root) throw new Error('Run with pnpm --package=@modelcontextprotocol/conformance@0.2.0-alpha.12 dlx node');
+if (!root) throw new Error('Run with bunx --package @modelcontextprotocol/conformance@0.2.0-alpha.12 node');
 let source = readFileSync(join(root, 'dist/index.js'), 'utf8');
 const expected = 'b56fb575e61edaac83c2008af40a6a78b47815c4038a02a9b04cd336d38832a0';
 if (createHash('sha256').update(source).digest('hex') !== expected) throw new Error('Upstream bundle changed; review fixture corrections');

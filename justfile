@@ -455,16 +455,16 @@ test-examples:
   cargo build --examples
   @echo "Examples build completed"
 
-# Run both official MCP conformance suites, server and client (needs pnpm)
+# Run both official MCP conformance suites, server and client (needs bun + Node)
 [group: 'test']
 conformance:
   #!/usr/bin/env bash
   set -euo pipefail
   # Separate from `just test` on purpose: this crate is excluded from the
-  # workspace (own lockfile, spawns `pnpm dlx`), so the main gate never depends
+  # workspace (own lockfile, spawns `bunx`), so the main gate never depends
   # on a Node toolchain. CI runs it as its own job.
   #
-  # STRICT makes a missing `pnpm` a failure rather than a skip — invoking this
+  # STRICT makes a missing `bunx` a failure rather than a skip — invoking this
   # recipe is an explicit request for conformance results, and a silent skip
   # here is indistinguishable from a pass.
   cd crates/turbomcp-conformance

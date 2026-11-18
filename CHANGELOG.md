@@ -1900,17 +1900,24 @@ Earlier in this cycle:
   that Dependabot keeps current; `release.yml`'s pins live in
   `dist-workspace.toml`, and dist is 0.34.0. A tag can be moved to new code; a commit can't. Every job runs
   with a read-only token, and no checkout leaves that token in
-  `.git/config` for a build script to read. The conformance harness runs
-  under pnpm 12, which won't resolve a release less than a day old (`dlx`
-  included); the TypeScript interop peer installs with `--ignore-scripts`.
+  `.git/config` for a build script to read.
+- The conformance harness and the TypeScript interop peer run on bun in
+  place of pnpm and npm. The harness is `bunx`ed with
+  `--minimum-release-age 604800 --ignore-scripts`, so nothing in its
+  unlocked dependency tree younger than seven days is resolved and no
+  install script runs, on a CI runner as on a developer machine (pnpm 12
+  held releases back one day). The TypeScript peer is pinned by a checked-in
+  `bun.lock` (replacing `package-lock.json`) and installs with
+  `bun install --frozen-lockfile --ignore-scripts`. Contributors running
+  `just conformance` or the interop suite need bun and Node on `PATH`.
 - The workspace resolves with Cargo's resolver 3, so `cargo update` keeps
   the lockfile on versions the 1.88 MSRV builds.
 - The interop peers take the TypeScript SDK 2.4.0 (and `zod` 4.6.7,
   GHSA-mrhx-c7xc-m3w5), Python `opentelemetry-api` 1.45.1
   (GHSA-xcq7-p3pf-p88h), and `golang.org/x/sys` 0.49 (GO-2026-5024), and
   CI builds the Go peer with Go 1.27; 1.25 no longer gets security fixes.
-  The TypeScript peer's lockfile takes `hono` 4.13.17 and
-  `@hono/node-server` 2.1.6 (GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq,
+  The TypeScript peer's lockfile takes `hono` 4.13.18,
+  `@hono/node-server` 2.1.7 and `jose` 6.2.17 (GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq,
   GHSA-jpvv-r467-5p4w and four more), and `golang.org/x/sys` is 0.50.
   `rmcp` is 3.11.
 

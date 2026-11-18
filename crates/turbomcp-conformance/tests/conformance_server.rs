@@ -4,8 +4,8 @@
 //!
 //! The harness connects as an MCP client to `--url <addr>/mcp`, runs each
 //! *server* scenario, and reports per-check results. We stand the server up on
-//! an ephemeral port, then shell out to `pnpm dlx
-//! @modelcontextprotocol/conformance server …`, parse its JSON, and assert
+//! an ephemeral port, then shell out to `bunx
+//! @modelcontextprotocol/conformance@<pin> server …`, parse its JSON, and assert
 //! against an expected-failures baseline checked in beside this test
 //! (`conformance-baseline-server.json`).
 //!
@@ -13,9 +13,9 @@
 //! `conformance_client.rs`. Everything they share is in
 //! [`turbomcp_conformance::harness`].
 //!
-//! Requirements: `pnpm` on `PATH`. If it is absent the test is skipped
-//! (logged), not failed — this crate is `exclude`d from the main gate precisely
-//! so a missing Node toolchain never breaks `just test`. That graceful skip is
+//! Requirements: `bunx` (bun) and Node on `PATH`. If `bunx` is absent the test
+//! is skipped (logged), not failed — this crate is `exclude`d from the main gate
+//! precisely so a missing Node toolchain never breaks `just test`. That graceful skip is
 //! exactly how a gate comes to measure nothing, so it is opt-out: set
 //! `TURBOMCP_CONFORMANCE_STRICT` and a missing toolchain is a failure instead.
 //!
@@ -96,8 +96,8 @@ async fn spawn_server() -> (String, CancellationToken, tokio::task::JoinHandle<(
 /// Run the harness against `url` at one spec version and return every check.
 async fn run_harness(url: &str, spec_version: &str) -> Vec<CheckResult> {
     let out_dir = harness::tempdir("server");
-    let output = tokio::process::Command::new("pnpm")
-        .arg("dlx")
+    let output = tokio::process::Command::new("bunx")
+        .args(harness::BUNX_FLAGS)
         .arg(CONFORMANCE_PKG)
         .arg("server")
         .arg("--url")
@@ -111,7 +111,7 @@ async fn run_harness(url: &str, spec_version: &str) -> Vec<CheckResult> {
         .arg(&out_dir)
         .output()
         .await
-        .expect("spawn pnpm dlx conformance");
+        .expect("spawn bunx conformance");
 
     assert!(
         output.status.success(),

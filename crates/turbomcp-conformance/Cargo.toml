@@ -12,7 +12,7 @@ publish = false
 # Cargo.lock and is run directly:
 #
 #     just conformance                                    # from the repo root
-#     cd crates/turbomcp-conformance && cargo test        # skips without pnpm
+#     cd crates/turbomcp-conformance && cargo test        # skips without bunx
 #
 # Two suites, opposite directions:
 #
@@ -22,7 +22,7 @@ publish = false
 #     mock server per scenario and runs the `conformance-client` binary below
 #     against it (`conformance client --command …`).
 #
-# `pnpm` must be on PATH for either.
+# `bunx` (bun) and Node must be on PATH for either.
 
 # Driven by the harness's `client` mode, one process per scenario. It is a real
 # binary rather than a test because the harness spawns it: the scenario name

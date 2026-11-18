@@ -35,7 +35,7 @@ should not depend on — a Node toolchain and a heavy `rmcp` dependency tree
 respectively — so they have their own lockfiles and their own commands:
 
 ```bash
-just conformance                                  # official MCP conformance, needs pnpm
+just conformance                                  # official MCP conformance, needs bun + Node
 cd crates/turbomcp-interop && cargo test          # cross-SDK interop against rmcp
 just fuzz                                         # cargo-fuzz targets, nightly
 ```

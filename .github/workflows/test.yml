@@ -504,17 +504,22 @@ jobs:
         toolchain: stable
         components: rustfmt, clippy
 
-    - name: Install pnpm
-      uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+    # The tests `bunx` the pinned harness package (exact version, see
+    # `CONFORMANCE_PKG`) straight from the registry, with no lockfile for its
+    # dependency tree. Release-age hold: bun's 7-day cooldown on developer
+    # machines comes from a user-wide ~/.bunfig.toml, which a runner does not
+    # have, so the tests pass `--minimum-release-age 604800` (plus
+    # `--ignore-scripts`) on every bunx call themselves
+    # (`harness::BUNX_FLAGS`). That keeps the one-day hold pnpm 11+ applied
+    # here by default, now at 7 days. pnpm's block on exotic subdependencies
+    # has no bun equivalent.
+    - name: Install Bun
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       with:
-        # 11+ holds back releases younger than a day and blocks exotic
-        # subdependencies by default, `dlx` included: a worm-published version
-        # of something in the harness's tree is not resolved on its first day.
-        version: 12
+        bun-version: 1.4.4
 
-    # No `cache: pnpm` here: that keys off a pnpm-lock.yaml, and this suite has
-    # no Node project — it `pnpm dlx`es a pinned package straight from the
-    # registry. The step would fail looking for a lockfile that shouldn't exist.
+    # The harness CLI and the client fixture run on Node. No dependency cache:
+    # there is no Node project or lockfile here to key one on.
     - name: Install Node
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
@@ -544,7 +549,7 @@ jobs:
       working-directory: crates/turbomcp-conformance
       run: cargo clippy --all-targets -- -D warnings
 
-    # STRICT turns the "no pnpm on PATH" skip into a failure. Without it a
+    # STRICT turns the "no bunx on PATH" skip into a failure. Without it a
     # runner that lost its Node toolchain would report this job green having
     # verified nothing — the precise failure mode this suite exists to catch.
     #
@@ -616,8 +621,11 @@ jobs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: '22'
-        cache: npm
-        cache-dependency-path: crates/turbomcp-interop/sdks/ts/package-lock.json
+
+    - name: Install Bun
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version: 1.4.4
 
     - name: Install uv
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -632,7 +640,7 @@ jobs:
       working-directory: crates/turbomcp-interop/sdks/ts
       # None of the peer's dependencies needs an install script; running none
       # means a compromised version of one cannot run code at install time.
-      run: npm ci --ignore-scripts
+      run: bun install --frozen-lockfile --ignore-scripts
 
     # A missing toolchain skips its peers locally; here it is a failure.
     # Bounded by the command as well as the step, so a hang fails with its

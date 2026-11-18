@@ -14,7 +14,7 @@
 //!
 //! ```text
 //! just conformance                                    # from the repo root
-//! cd crates/turbomcp-conformance && cargo test        # skips without pnpm
+//! cd crates/turbomcp-conformance && cargo test        # skips without bunx
 //! ```
 
 pub mod harness;

@@ -10,8 +10,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// The conformance package + version both suites are pinned to. `pnpm dlx`
-/// resolves (and caches) it; pinning keeps runs reproducible.
+/// The conformance package + version both suites are pinned to. `bunx`
+/// resolves it into bun's global cache, never into this crate; pinning keeps
+/// runs reproducible.
 ///
 /// This is the `alpha` dist-tag, not `latest`. `latest` is still 0.1.16, which
 /// predates the `2026-07-28` freeze entirely and has no requirement set for it
@@ -22,23 +23,37 @@ use std::path::{Path, PathBuf};
 /// Review them and both inventories whenever this package pin changes.
 pub const CONFORMANCE_PKG: &str = "@modelcontextprotocol/conformance@0.2.0-alpha.12";
 
+/// Flags every `bunx` run of [`CONFORMANCE_PKG`] starts with.
+///
+/// The package pin is exact, but its dependency tree resolves fresh from the
+/// registry on a cold cache, with no lockfile. So:
+///
+/// - `--minimum-release-age 604800` skips any version younger than 7 days, so a
+///   worm-published release in that tree is not run on its first days. A
+///   developer machine already gets 7 days from a user-wide `~/.bunfig.toml`;
+///   a CI runner has none, so it is passed here and both run under one rule.
+///   (pnpm, which this replaced, held releases back one day by default.)
+/// - `--ignore-scripts` runs no install script from that tree. The harness
+///   needs none, and pnpm ran none by default either.
+pub const BUNX_FLAGS: [&str; 3] = ["--minimum-release-age", "604800", "--ignore-scripts"];
+
 /// Run the unmodified upstream client fixtures for comparison.
 #[must_use]
 pub fn raw_upstream() -> bool {
     std::env::var("TURBOMCP_CONFORMANCE_UPSTREAM").as_deref() == Ok("1")
 }
 
-/// Set this to turn the "no Node toolchain" skip into a failure.
+/// Set this to turn the "no bun/Node toolchain" skip into a failure.
 ///
 /// The skip exists for a developer who ran the whole crate incidentally, not
 /// for a run that asked for conformance. CI and `just conformance` both set
 /// this, because **a skip in CI is indistinguishable from a pass**.
 pub const STRICT_ENV: &str = "TURBOMCP_CONFORMANCE_STRICT";
 
-/// Is `pnpm` runnable? (Skip the suite gracefully if not.)
+/// Is `bunx` runnable? (Skip the suite gracefully if not.)
 #[must_use]
-pub fn pnpm_available() -> bool {
-    std::process::Command::new("pnpm")
+pub fn bunx_available() -> bool {
+    std::process::Command::new("bunx")
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -51,19 +66,19 @@ pub fn pnpm_available() -> bool {
 /// caller should skip.
 ///
 /// # Panics
-/// When `pnpm` is absent but [`STRICT_ENV`] is set — this run asked for
+/// When `bunx` is absent but [`STRICT_ENV`] is set — this run asked for
 /// conformance and cannot deliver it.
 #[must_use]
 pub fn toolchain_ready(suite: &str) -> bool {
-    if pnpm_available() {
+    if bunx_available() {
         return true;
     }
     assert!(
         std::env::var_os(STRICT_ENV).is_none(),
-        "{STRICT_ENV} is set but `pnpm` is not on PATH — this run asked for conformance \
-         and cannot deliver it. Install pnpm, or unset {STRICT_ENV} to allow the skip.",
+        "{STRICT_ENV} is set but `bunx` is not on PATH — this run asked for conformance \
+         and cannot deliver it. Install bun, or unset {STRICT_ENV} to allow the skip.",
     );
-    eprintln!("SKIP {suite}: `pnpm` not found on PATH (Node toolchain required).");
+    eprintln!("SKIP {suite}: `bunx` not found on PATH (bun and Node required).");
     false
 }
 

@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "description": "TypeScript SDK peers for turbomcp's cross-SDK interop tests.",
+  "packageManager": "bun@1.4.4",
+  "trustedDependencies": [],
   "dependencies": {
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
