@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0-alpha.6] - 2026-11-18
+
+The largest alpha so far: two months and 165 commits since alpha.5. It adds
+the gateway (`turbomcp-proxy`, and the `turbomcp` command rebuilt for v4 with
+prebuilt binaries), which serves remote MCP servers beside local tools behind
+one endpoint, with OAuth on both sides. It also adds MCP Server Cards, typed
+elicitation, resumable client tasks, per-tool step-up authorization, and one
+`#[tool(task)]` marker for Tasks on both `2025-11-25` and `2026-07-28`. Underneath, every
+transport serves through one runtime, WebSocket is a route on the HTTP
+endpoint, and server-initiated messages go through a per-connection `Peer`. A
+security pass bounded what one caller can hold (sessions, streams, tasks, the
+event store, schema compilation) and wipes secrets from memory.
+
+Almost every public surface changed, and each change is marked **Breaking:**
+where it is described below. The list under "Upgrading from 4.0.0-alpha.5"
+gathers them by area.
+
+### Upgrading from 4.0.0-alpha.5
+
+- **Crates.** `turbomcp-codec`, `turbomcp-transport-stdio` and
+  `turbomcp-transport-ws` are gone: their code is `turbomcp_core::codec`,
+  `turbomcp_service::io` and a route on `turbomcp-transport-http`. They stay
+  on crates.io at alpha.5. The HTTP client transport moved from
+  `turbomcp-client` to `turbomcp-transport-http` (feature `client`). Through
+  the `turbomcp` facade nothing moves. `turbomcp-proxy` and `turbomcp-cli`
+  publish their first 4.x versions.
+- **Serving.** One runtime: `ServerBuilder::layer(…).serve(target)` for stdio,
+  a `Pipe`, or `Http` (WebSocket via `HttpConfig::with_websocket`). Every
+  server setting lives in `ServerConfig`. `Transport` is three methods, the
+  service seam is `Service<McpRequest>`, and the shutdown token and a
+  handler's cancellation are one `CancellationToken` type. The prelude no longer exports the raw `serve_stdio`.
+- **Errors.** `McpError` renders per revision through `to_jsonrpc_error`,
+  carries data (`McpError::Rpc`, `InsufficientScope`), and
+  `ToolNotFound` is `-32602`. `JsonRpcResponse::id` is optional.
+- **Client.** Neutral types where it spoke JSON, per-call `CallOptions`,
+  `listen` returns a `Subscription`, tasks read typed (`TaskInfo`),
+  `ClientHandler` split into four per-feature traits, and `connect_child`
+  returns a `ServerProcess`.
+- **Results and wire types.** Results and catalogue items keep unknown keys;
+  the generated wire types drop the unions nothing could decode; `Claims` is
+  an `Arc`.
+- **Tasks.** One task store fronts both wires, the input seam is a
+  `TaskLink`, `TaskBackend::complete` takes a `TaskOutcome`, and
+  `#[tool(task)]` drives the `2026-07-28` extension too.
+- **Auth.** Secrets are `Zeroizing<String>` (`TokenSet`, `ClientCredentials`,
+  `BearerSource`), machine authorization binds to one authorization server,
+  and `Preregistered::issuer` is required.
+- **HTTP.** `enable_cors` is gone (CORS follows the Origin policy), status
+  codes follow the request's revision, and session streams have their own
+  budget.
+- **Composition.** `Composite` joins prefixes with `__` instead of `.`, and
+  `with_extension` refuses a colliding registration.
+- **Telemetry.** Spans and metrics follow the OpenTelemetry MCP semantic
+  conventions; the tower service is `TraceContextService`.
+- **Non-exhaustive.** `ServeConfig`, `Image`, `Audio`, `ConnectMode`,
+  `ClientCredentials` and more: build them with `new` and the `with_*`
+  setters.
+- **Dependencies.** `jsonwebtoken` 12, whose `DecodingKey` and `Algorithm`
+  appear in `JwkSource`, and `tokio` 1.54 or later.
+  `cargo-semver-checks` doesn't flag public-dependency majors.
+
 ### Added
 
 - MCP Server Cards (SEP-2127, extension `io.modelcontextprotocol/server-card`):
@@ -1920,6 +1981,10 @@ Earlier in this cycle:
   `@hono/node-server` 2.1.7 and `jose` 6.2.17 (GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq,
   GHSA-jpvv-r467-5p4w and four more), and `golang.org/x/sys` is 0.50.
   `rmcp` is 3.11.
+- `just publish-order` lists only publishable crates. It took every
+  dependency named `turbomcp*`, dev dependencies included, so the
+  unpublished `turbomcp-wire-check` sorted second and `just publish` would
+  have stopped on it after publishing `turbomcp-macros`.
 
 ## [4.0.0-alpha.5] - 2026-09-13
 
