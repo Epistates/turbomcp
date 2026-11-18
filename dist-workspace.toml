@@ -27,6 +27,11 @@ install-path = "CARGO_HOME"
 install-updater = false
 # Upload to the release written by hand rather than generating one
 create-release = false
+# release.yml is hand-edited after generation: the plan passes only the build
+# matrix between jobs, because the runner drops a job output its secret masker
+# touches, and the full manifest carries the CHANGELOG. See the comment on the
+# plan job's outputs; re-apply those edits after `dist generate`.
+allow-dirty = ["ci"]
 # Attest build provenance for every artifact (`gh attestation verify`)
 github-attestations = true
 

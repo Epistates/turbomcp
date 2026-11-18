@@ -1985,6 +1985,13 @@ Earlier in this cycle:
   dependency named `turbomcp*`, dev dependencies included, so the
   unpublished `turbomcp-wire-check` sorted second and `just publish` would
   have stopped on it after publishing `turbomcp-macros`.
+- The release workflow passes only the build matrix between jobs. It passed
+  dist's whole manifest, which carries the CHANGELOG section, and the
+  Actions runner drops a job output its secret masker touches: text such as
+  `Bearer error=...` matched, the matrix arrived empty, and every binary
+  build was skipped. A release whose builds didn't all succeed now fails
+  instead of publishing. `release.yml` is hand-edited after `dist generate`
+  (`allow-dirty = ["ci"]`).
 
 ## [4.0.0-alpha.5] - 2026-09-13
 
