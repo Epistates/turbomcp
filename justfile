@@ -885,9 +885,15 @@ publish-order:
   # crates.io resolves a dependency the moment it is published, so a crate
   # published before something it depends on is rejected — and a release cannot
   # be undone, only yanked, which leaves a partial release on the index forever.
+  #
+  # Only edges between publishable crates count. An unpublished dependency
+  # (`turbomcp-wire-check` is a dev-dependency of the server and client) would
+  # otherwise appear as a node, and `just publish` would stop on it partway
+  # through, after publishing whatever sorted before it.
   cargo metadata --no-deps --format-version 1 | jq -r '
-    .packages[] | select(.publish != []) | .name as $n
-    | ([.dependencies[].name | select(startswith("turbomcp"))] | unique) as $deps
+    [.packages[] | select(.publish != []) | .name] as $publishable
+    | .packages[] | select(.publish != []) | .name as $n
+    | ([.dependencies[].name | select(. as $d | any($publishable[]; . == $d))] | unique) as $deps
     | if ($deps | length) == 0 then "\($n) \($n)" else ($deps[] | "\(.) \($n)") end
   ' | tsort
 
