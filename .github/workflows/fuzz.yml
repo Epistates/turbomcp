@@ -28,13 +28,15 @@ jobs:
           - fuzz_message_validation
           - fuzz_capability_parsing
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
 
       - name: Cache cargo-fuzz binary
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-fuzz
           key: cargo-fuzz-${{ runner.os }}
@@ -43,7 +45,7 @@ jobs:
         run: command -v cargo-fuzz || cargo install cargo-fuzz --locked
 
       - name: Cache fuzz build artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.FUZZ_DIR }}/fuzz/target
           key: fuzz-target-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('crates/turbomcp-protocol/Cargo.toml') }}
@@ -51,7 +53,7 @@ jobs:
             fuzz-target-${{ runner.os }}-${{ matrix.target }}-
 
       - name: Restore fuzz corpus
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.FUZZ_DIR }}/fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
@@ -75,7 +77,7 @@ jobs:
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crash-${{ matrix.target }}
           path: |
@@ -84,7 +86,7 @@ jobs:
 
       - name: Upload corpus artifact (nightly only)
         if: github.event_name == 'schedule'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-corpus-${{ matrix.target }}
           path: ${{ env.FUZZ_DIR }}/fuzz/corpus/${{ matrix.target }}/
