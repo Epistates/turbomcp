@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the upstream schema, so a schema erratum or a codegen fix can change them
   in any release. The `neutral` types are the contract; convert through
   their `From` impls.
+- **Breaking:** the turbomcp crates require each other at exactly the same
+  version (`=`), as serde does serde_derive. Mixing versions across the
+  family was already unsupported; now cargo enforces it.
 
 ### Removed
 
