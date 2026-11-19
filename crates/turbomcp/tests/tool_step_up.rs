@@ -49,11 +49,7 @@ impl BearerValidator for Tokens {
             };
             let mut claims = Map::new();
             claims.insert("scope".into(), Value::String(scopes.join(" ")));
-            Ok(AuthPrincipal {
-                subject: "alice".into(),
-                scopes,
-                claims,
-            })
+            Ok(AuthPrincipal::new("alice", claims))
         })
     }
 }

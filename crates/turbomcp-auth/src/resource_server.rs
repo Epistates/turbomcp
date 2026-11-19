@@ -114,31 +114,28 @@ impl<V: BearerValidator> ResourceServer<V> {
             params.push(("scope".to_owned(), self.required_scopes.join(" ")));
         }
         params.push(("resource_metadata".to_owned(), self.metadata_url.clone()));
-        AuthDecision::Challenge {
-            status: 401,
-            www_authenticate: www_authenticate(&params),
-        }
+        AuthDecision::challenge(401, www_authenticate(&params))
     }
 
     /// The 400 for a malformed Bearer `Authorization` header (RFC 6750 §3.1
     /// `invalid_request`).
     fn bad_request(&self) -> AuthDecision {
-        AuthDecision::Challenge {
-            status: 400,
-            www_authenticate: www_authenticate(&[
+        AuthDecision::challenge(
+            400,
+            www_authenticate(&[
                 ("error".to_owned(), "invalid_request".to_owned()),
                 ("resource_metadata".to_owned(), self.metadata_url.clone()),
             ]),
-        }
+        )
     }
 
     /// The 403 challenge for a valid token lacking a required scope
     /// (RFC 6750 §3.1: `error="insufficient_scope"`).
     fn forbidden(&self) -> AuthDecision {
-        AuthDecision::Challenge {
-            status: 403,
-            www_authenticate: self.insufficient_scope_challenge(&self.required_scopes),
-        }
+        AuthDecision::challenge(
+            403,
+            self.insufficient_scope_challenge(&self.required_scopes),
+        )
     }
 
     fn insufficient_scope_challenge(&self, scopes: &[String]) -> String {
@@ -169,9 +166,7 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
                 Ok(principal) => principal,
                 Err(AuthError::Unavailable(e)) => {
                     tracing::warn!(error = %e, "bearer token undecided: backend unavailable");
-                    return AuthDecision::Unavailable {
-                        retry_after_secs: UNAVAILABLE_RETRY_AFTER_SECS,
-                    };
+                    return AuthDecision::unavailable(UNAVAILABLE_RETRY_AFTER_SECS);
                 }
                 Err(e) => {
                     tracing::debug!(error = %e, "bearer token rejected");
@@ -186,10 +181,10 @@ impl<V: BearerValidator> HttpAuthenticator for ResourceServer<V> {
             ) {
                 return self.forbidden();
             }
-            AuthDecision::Allow(turbomcp_core::Identity::Bearer {
-                sub: principal.subject,
-                claims: principal.claims.into(),
-            })
+            AuthDecision::Allow(turbomcp_core::Identity::bearer(
+                principal.subject,
+                principal.claims,
+            ))
         })
     }
 

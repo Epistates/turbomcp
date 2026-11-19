@@ -82,10 +82,7 @@ async fn a_change_on_one_replica_reaches_a_stream_on_another() {
 #[test]
 fn changes_serialize_for_any_bus() {
     assert_eq!(
-        serde_json::to_value(Change::ResourceUpdated {
-            uri: "file:///a".into()
-        })
-        .unwrap(),
+        serde_json::to_value(Change::resource_updated("file:///a")).unwrap(),
         json!({ "change": "resource_updated", "uri": "file:///a" })
     );
     assert_eq!(

@@ -91,7 +91,9 @@ pub enum ApplicationType {
 #[non_exhaustive]
 pub enum RegistrationStrategy {
     /// Pre-registered credentials for a known authorization server (highest
-    /// priority when available).
+    /// priority when available). Build it with
+    /// [`RegistrationStrategy::preregistered`].
+    #[non_exhaustive]
     Preregistered {
         /// The credentials issued at registration time.
         credentials: ClientCredentials,
@@ -106,7 +108,9 @@ pub enum RegistrationStrategy {
     },
     /// OAuth Client ID Metadata Documents: the HTTPS URL of a metadata
     /// document this client hosts, used verbatim as the `client_id`. Usable
-    /// when the AS advertises `client_id_metadata_document_supported`.
+    /// when the AS advertises `client_id_metadata_document_supported`. Build
+    /// it with [`RegistrationStrategy::metadata_document`].
+    #[non_exhaustive]
     MetadataDocument {
         /// The HTTPS URL (must have a path component) that serves the JSON
         /// metadata document; becomes the `client_id`.
@@ -125,6 +129,24 @@ pub enum RegistrationStrategy {
 }
 
 impl RegistrationStrategy {
+    /// Credentials pre-registered at the authorization server `issuer`.
+    #[must_use]
+    pub fn preregistered(credentials: ClientCredentials, issuer: impl Into<String>) -> Self {
+        Self::Preregistered {
+            credentials,
+            issuer: issuer.into(),
+        }
+    }
+
+    /// A Client ID Metadata Document served at `client_id_url`, which becomes
+    /// the `client_id`.
+    #[must_use]
+    pub fn metadata_document(client_id_url: impl Into<String>) -> Self {
+        Self::MetadataDocument {
+            client_id_url: client_id_url.into(),
+        }
+    }
+
     /// The spec's priority chain over whichever of the three this client has.
     #[must_use]
     pub fn in_spec_order(
@@ -177,6 +199,7 @@ impl RegistrationStrategy {
 /// The RFC 7591 registration request this client sends when falling back to
 /// Dynamic Client Registration.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct DynamicRegistration {
     /// Human-readable client name shown on consent screens.
     pub client_name: String,
@@ -435,13 +458,11 @@ mod chain_tests {
         assert_eq!(got.client_id, "pre");
 
         let elsewhere = RegistrationStrategy::Chain(vec![
-            RegistrationStrategy::Preregistered {
-                credentials: ClientCredentials::public("pre"),
-                issuer: "https://other.example".into(),
-            },
-            RegistrationStrategy::MetadataDocument {
-                client_id_url: "https://client.example/meta.json".into(),
-            },
+            RegistrationStrategy::preregistered(
+                ClientCredentials::public("pre"),
+                "https://other.example",
+            ),
+            RegistrationStrategy::metadata_document("https://client.example/meta.json"),
         ]);
         let err = obtain_credentials(&http, &as_meta, &elsewhere)
             .await

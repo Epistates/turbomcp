@@ -36,11 +36,21 @@ pub enum Change {
     ResourcesListChanged,
     /// `notifications/prompts/list_changed`.
     PromptsListChanged,
-    /// `notifications/resources/updated` for `uri`.
+    /// `notifications/resources/updated` for `uri`. Build it with
+    /// [`Change::resource_updated`].
+    #[non_exhaustive]
     ResourceUpdated {
         /// The resource that changed.
         uri: String,
     },
+}
+
+impl Change {
+    /// The resource at `uri` changed.
+    #[must_use]
+    pub fn resource_updated(uri: impl Into<String>) -> Self {
+        Self::ResourceUpdated { uri: uri.into() }
+    }
 }
 
 /// A [`NotificationBus`] could not publish.

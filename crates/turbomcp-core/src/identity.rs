@@ -38,19 +38,12 @@ pub enum Identity {
     /// No authentication was declared.
     #[default]
     Anonymous,
-    /// Bearer-token identity (PASETO/JWT).
+    /// Bearer-token identity (PASETO/JWT). Build one with
+    /// [`Identity::bearer`]; match it with `Identity::Bearer { sub, .. }`.
+    #[non_exhaustive]
     Bearer {
         /// Authenticated subject.
         sub: String,
-        /// Decoded claims.
-        claims: Claims,
-    },
-    /// DPoP-bound identity (RFC 9449).
-    Dpop {
-        /// Authenticated subject.
-        sub: String,
-        /// JWK thumbprint (`jkt`) the token is bound to.
-        jkt: String,
         /// Decoded claims.
         claims: Claims,
     },
@@ -59,6 +52,16 @@ pub enum Identity {
 }
 
 impl Identity {
+    /// A bearer-token identity: the authenticated subject and the token's
+    /// validated claims (a map converts with `.into()`, or pass a [`Claims`]).
+    #[must_use]
+    pub fn bearer(sub: impl Into<String>, claims: impl Into<Claims>) -> Self {
+        Self::Bearer {
+            sub: sub.into(),
+            claims: claims.into(),
+        }
+    }
+
     /// Stable issuer-and-subject key for identity-bound sessions and quotas.
     /// Token rotation and scope changes preserve this key. Anonymous callers
     /// have no key; callers must not log the returned identity data.
@@ -78,7 +81,7 @@ impl Identity {
     pub fn subject(&self) -> Option<&str> {
         match self {
             Self::Anonymous => None,
-            Self::Bearer { sub, .. } | Self::Dpop { sub, .. } => Some(sub),
+            Self::Bearer { sub, .. } => Some(sub),
             Self::Custom(c) => c.subject(),
         }
     }
@@ -96,7 +99,7 @@ impl Identity {
     pub fn claim_keys(&self) -> Vec<&str> {
         match self {
             Self::Anonymous | Self::Custom(_) => Vec::new(),
-            Self::Bearer { claims, .. } | Self::Dpop { claims, .. } => Self::claim_keys_of(claims),
+            Self::Bearer { claims, .. } => Self::claim_keys_of(claims),
         }
     }
 
@@ -113,7 +116,7 @@ impl Identity {
     pub fn claim(&self, key: &str) -> Option<&Value> {
         match self {
             Self::Anonymous => None,
-            Self::Bearer { claims, .. } | Self::Dpop { claims, .. } => claims.get(key),
+            Self::Bearer { claims, .. } => claims.get(key),
             Self::Custom(c) => c.claim(key),
         }
     }
@@ -149,12 +152,6 @@ impl fmt::Debug for Identity {
                 .field("sub", sub)
                 .field("claim_keys", &Self::claim_keys_of(claims))
                 .finish(),
-            Self::Dpop { sub, jkt, claims } => f
-                .debug_struct("Identity::Dpop")
-                .field("sub", sub)
-                .field("jkt", jkt)
-                .field("claim_keys", &Self::claim_keys_of(claims))
-                .finish(),
             Self::Custom(c) => f
                 .debug_struct("Identity::Custom")
                 .field("sub", &c.subject())
@@ -173,30 +170,9 @@ mod tests {
     fn debug_does_not_leak_claim_values() {
         let mut claims = serde_json::Map::new();
         claims.insert("email".into(), json!("secret@example.com"));
-        let id = Identity::Bearer {
-            sub: "user-1".into(),
-            claims: claims.into(),
-        };
+        let id = Identity::bearer("user-1", claims);
         let dbg = format!("{id:?}");
         assert!(dbg.contains("user-1"));
-        assert!(dbg.contains("email")); // key shown
-        assert!(!dbg.contains("secret@example.com")); // value hidden
-    }
-
-    #[test]
-    fn dpop_identity_exposes_subject_and_redacts_claims() {
-        let mut claims = serde_json::Map::new();
-        claims.insert("email".into(), json!("secret@example.com"));
-        let id = Identity::Dpop {
-            sub: "user-2".into(),
-            jkt: "thumb-1".into(),
-            claims: claims.into(),
-        };
-        assert_eq!(id.subject(), Some("user-2"));
-        assert!(id.is_authenticated());
-        assert_eq!(id.claim_keys(), ["email"]);
-        let dbg = format!("{id:?}");
-        assert!(dbg.contains("thumb-1")); // jkt is a binding, not a claim value
         assert!(dbg.contains("email")); // key shown
         assert!(!dbg.contains("secret@example.com")); // value hidden
     }
@@ -235,10 +211,7 @@ mod tests {
         // `scp` array alone (Azure-style).
         let mut claims = serde_json::Map::new();
         claims.insert("scp".into(), json!(["mcp:use", "admin"]));
-        let id = Identity::Bearer {
-            sub: "u".into(),
-            claims: claims.into(),
-        };
+        let id = Identity::bearer("u", claims);
         assert!(id.has_scopes(&["mcp:use", "admin"]));
         assert!(!id.has_scopes(&["other"]));
 
@@ -246,18 +219,12 @@ mod tests {
         let mut claims = serde_json::Map::new();
         claims.insert("scope".into(), json!("read write"));
         claims.insert("scp".into(), json!(["admin"]));
-        let id = Identity::Bearer {
-            sub: "u".into(),
-            claims: claims.into(),
-        };
+        let id = Identity::bearer("u", claims);
         assert!(id.has_scopes(&["read", "write", "admin"]));
         // Non-string entries in `scp` are skipped, not an error.
         let mut claims = serde_json::Map::new();
         claims.insert("scp".into(), json!(["ok", 42]));
-        let id = Identity::Bearer {
-            sub: "u".into(),
-            claims: claims.into(),
-        };
+        let id = Identity::bearer("u", claims);
         assert_eq!(id.granted_scopes(), ["ok"]);
     }
 }

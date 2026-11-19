@@ -338,9 +338,9 @@ async fn sessions_bind_issuer_and_subject_and_keep_anonymous_separate() {
     use turbomcp_service::SessionTerminator;
     let mut dispatcher = ServerBuilder::new(Echo).with_tools().build();
     let terminator = dispatcher.session_terminator();
-    let identity = |issuer: &str| Identity::Bearer {
-        sub: "alice".into(),
-        claims: serde_json::from_value(json!({"iss":issuer})).unwrap(),
+    let identity = |issuer: &str| {
+        let claims: Map<String, Value> = serde_json::from_value(json!({"iss": issuer})).unwrap();
+        Identity::bearer("alice", claims)
     };
     let alice = identity("issuer-a");
     for (sid, principal) in [("owned", alice.clone()), ("anonymous", Identity::Anonymous)] {

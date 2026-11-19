@@ -88,10 +88,10 @@ where
 /// A request whose transport authenticated alice, the way HTTP attaches it.
 fn identity_request() -> McpRequest {
     let claims = json!({ "email": "a@b.example", "scope": "read" });
-    McpRequest::new(JsonRpcRequest::new(1, "tools/call", None)).with(Identity::Bearer {
-        sub: "alice".into(),
-        claims: claims.as_object().unwrap().clone().into(),
-    })
+    McpRequest::new(JsonRpcRequest::new(1, "tools/call", None)).with(Identity::bearer(
+        "alice",
+        claims.as_object().unwrap().clone(),
+    ))
 }
 
 async fn drive(policy: SpanPolicy, req: impl Into<McpRequest>) -> HashMap<String, String> {

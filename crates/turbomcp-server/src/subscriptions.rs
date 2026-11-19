@@ -793,10 +793,8 @@ impl ServerNotifier {
     /// `uri`'s content changed (`notifications/resources/updated`), delivered
     /// to every subscription that listed it.
     pub async fn resource_updated(&self, uri: &str) {
-        self.announce(crate::bus::Change::ResourceUpdated {
-            uri: uri.to_owned(),
-        })
-        .await;
+        self.announce(crate::bus::Change::resource_updated(uri.to_owned()))
+            .await;
     }
 }
 

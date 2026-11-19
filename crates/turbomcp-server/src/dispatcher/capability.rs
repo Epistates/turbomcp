@@ -413,7 +413,7 @@ async fn completion_refusal<S: McpServerCore>(
     reference: &neutral::CompletionReference,
 ) -> McpResult<Option<McpError>> {
     match reference {
-        neutral::CompletionReference::Prompt { name } => {
+        neutral::CompletionReference::Prompt { name, .. } => {
             let unknown = McpError::invalid_params(format!("unknown prompt: {name}"));
             let Some(fut) = router.dispatch_lookup_prompt(
                 server.clone(),
@@ -429,7 +429,7 @@ async fn completion_refusal<S: McpServerCore>(
                 _ => Some(unknown),
             })
         }
-        neutral::CompletionReference::ResourceTemplate { uri } => {
+        neutral::CompletionReference::ResourceTemplate { uri, .. } => {
             let unknown = McpError::resource_not_found(uri.clone());
             if let Some(fut) = router.dispatch_lookup_resource(
                 server.clone(),

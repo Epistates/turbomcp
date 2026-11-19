@@ -162,10 +162,7 @@ impl HttpAuthenticator for Tokens {
     fn authenticate<'a>(&'a self, authorization: Option<&'a str>) -> AuthFuture<'a> {
         Box::pin(async move {
             if authorization != Some("Bearer good") {
-                return AuthDecision::Challenge {
-                    status: 401,
-                    www_authenticate: "Bearer realm=\"ws\"".to_owned(),
-                };
+                return AuthDecision::challenge(401, "Bearer realm=\"ws\"".to_owned());
             }
             let mut claims = Map::new();
             if let Some(ttl) = self.ttl {
@@ -175,10 +172,7 @@ impl HttpAuthenticator for Tokens {
                     .as_secs();
                 claims.insert("exp".into(), json!(now + ttl));
             }
-            AuthDecision::Allow(Identity::Bearer {
-                sub: "tester".into(),
-                claims: claims.into(),
-            })
+            AuthDecision::Allow(Identity::bearer("tester", claims))
         })
     }
 

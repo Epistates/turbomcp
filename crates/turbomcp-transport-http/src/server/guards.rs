@@ -58,10 +58,11 @@ pub(super) async fn enforce_auth<S>(
         AuthDecision::Challenge {
             status,
             www_authenticate,
+            ..
         } => Err(Box::new(challenge_response(status, &www_authenticate))),
-        AuthDecision::Unavailable { retry_after_secs } => {
-            Err(Box::new(super::reject::auth_unavailable(retry_after_secs)))
-        }
+        AuthDecision::Unavailable {
+            retry_after_secs, ..
+        } => Err(Box::new(super::reject::auth_unavailable(retry_after_secs))),
         // A decision this transport doesn't know is not an authorization.
         _ => Err(Box::new(challenge_response(401, "Bearer"))),
     }

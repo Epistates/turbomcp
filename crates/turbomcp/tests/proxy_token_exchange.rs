@@ -59,11 +59,7 @@ impl BearerValidator for Table {
                 .find(|(t, _)| *t == token)
                 .map(|(_, s)| *s)
                 .ok_or_else(|| AuthError::InvalidToken("unknown token".into()))?;
-            Ok(AuthPrincipal {
-                subject: subject.into(),
-                scopes: vec![],
-                claims: Map::new(),
-            })
+            Ok(AuthPrincipal::new(subject, Map::new()))
         })
     }
 }

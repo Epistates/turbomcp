@@ -24,12 +24,11 @@ use turbomcp::ext_tasks::wire::{
 
 /// A `Task` carrying the polling fields the client depends on.
 fn task(status: TaskStatus) -> Task {
-    Task {
-        status,
-        ttl_ms: Some(60_000),
-        poll_interval_ms: Some(250),
-        ..Task::working("task-123", "2026-01-01T00:00:00Z")
-    }
+    let mut task = Task::working("task-123", "2026-01-01T00:00:00Z");
+    task.status = status;
+    task.ttl_ms = Some(60_000);
+    task.poll_interval_ms = Some(250);
+    task
 }
 
 #[test]
@@ -113,11 +112,9 @@ fn input_required_task_exposes_the_request_envelope_the_client_dispatches() {
 fn unlimited_ttl_serializes_as_null_not_absent() {
     // The client reads `ttlMs` as `Option<u64>`; a null (unlimited) must poll
     // forever, and its absence-vs-null must stay stable.
-    let v = serde_json::to_value(DetailedTask::new(Task {
-        ttl_ms: None,
-        ..Task::working("t", "2026-01-01T00:00:00Z")
-    }))
-    .unwrap();
+    let mut task = Task::working("t", "2026-01-01T00:00:00Z");
+    task.ttl_ms = None;
+    let v = serde_json::to_value(DetailedTask::new(task)).unwrap();
     assert!(v["ttlMs"].is_null());
     assert_eq!(v.get("ttlMs"), Some(&Value::Null));
 }

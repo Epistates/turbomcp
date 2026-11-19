@@ -251,17 +251,16 @@ pub(super) fn parse_complete_params(
     // The `ref` is a discriminated union keyed on `type` (`ref/prompt` carries
     // `name`; `ref/resource` carries `uri`).
     let reference = match raw.reference.type_.as_str() {
-        "ref/prompt" => neutral::CompletionReference::Prompt {
-            name: raw
-                .reference
+        "ref/prompt" => neutral::CompletionReference::prompt(
+            raw.reference
                 .name
                 .ok_or_else(|| McpError::invalid_params("ref/prompt completion requires `name`"))?,
-        },
-        "ref/resource" => neutral::CompletionReference::ResourceTemplate {
-            uri: raw.reference.uri.ok_or_else(|| {
+        ),
+        "ref/resource" => {
+            neutral::CompletionReference::resource_template(raw.reference.uri.ok_or_else(|| {
                 McpError::invalid_params("ref/resource completion requires `uri`")
-            })?,
-        },
+            })?)
+        }
         other => {
             return Err(McpError::invalid_params(format!(
                 "unknown completion ref type: {other}"

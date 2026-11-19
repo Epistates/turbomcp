@@ -60,11 +60,7 @@ impl BearerValidator for Tokens {
             };
             let mut claims = Map::new();
             claims.insert("scope".into(), Value::String(scopes.join(" ")));
-            Ok(AuthPrincipal {
-                subject: "deploy-bot".into(),
-                scopes,
-                claims,
-            })
+            Ok(AuthPrincipal::new("deploy-bot", claims))
         })
     }
 }

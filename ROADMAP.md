@@ -59,9 +59,9 @@ Saying no is part of a roadmap.
 - **`2024-11-05` and `2025-03-26`.** Supporting five revisions is a real cost
   and `rmcp` already does it well. If you need those peers, use `rmcp` — the
   README says so too.
-- **DPoP (RFC 9449).** Still absent from the MCP specification. An
-  `Identity::Dpop` variant exists; a validator will follow the spec, not lead
-  it.
+- **DPoP (RFC 9449).** Still absent from the MCP specification. Support will
+  follow the spec, not lead it; `Identity` is non-exhaustive, so a DPoP
+  variant can be added in a minor release.
 - **Legacy SSE resumability (`Last-Event-ID` replay on the server).** A MAY on
   `2025-11-25` that `2026-07-28` removed entirely. Building it would serve one
   deprecating revision.

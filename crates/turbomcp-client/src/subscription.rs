@@ -42,6 +42,7 @@ pub enum SubscriptionEvent {
     /// `notifications/resources/list_changed`.
     ResourcesListChanged,
     /// `notifications/resources/updated` for a watched resource.
+    #[non_exhaustive]
     ResourceUpdated {
         /// The resource that changed.
         uri: String,
@@ -50,11 +51,13 @@ pub enum SubscriptionEvent {
     /// (the queue holds 1,024). A missed `*_list_changed` or
     /// `resources/updated` would leave the application's view stale with
     /// nothing to say so: refresh everything this subscription watches.
+    #[non_exhaustive]
     Lagged {
         /// How many were dropped since the last event.
         missed: u64,
     },
     /// Anything else on the stream (an extension's notifications).
+    #[non_exhaustive]
     Other {
         /// The notification method.
         method: String,

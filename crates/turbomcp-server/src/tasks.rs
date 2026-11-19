@@ -191,6 +191,8 @@ pub enum TaskOutcome {
     /// It answered, but the answer is a failure: a `2025-11-25` tool result
     /// with `isError: true`. The task is `failed`, and its outcome is still
     /// exactly this result, as the request itself would have answered.
+    /// Build it with [`TaskOutcome::failed_result`].
+    #[non_exhaustive]
     FailedResult {
         /// The result.
         result: Value,
@@ -202,6 +204,13 @@ pub enum TaskOutcome {
 }
 
 impl TaskOutcome {
+    /// The request answered `result`, a failure (`isError: true`), with
+    /// `message` for the task's `statusMessage`.
+    #[must_use]
+    pub fn failed_result(result: Value, message: Option<String>) -> Self {
+        Self::FailedResult { result, message }
+    }
+
     /// A task that ran out its TTL (`ttl_ms`) before it finished: `failed`.
     #[must_use]
     pub fn expired(ttl_ms: i64) -> Self {
@@ -1157,10 +1166,10 @@ mod tests {
         let snap = create(&s, &sess(), None).await;
         s.complete(
             &snap.task_id,
-            TaskOutcome::FailedResult {
-                result: json!({ "isError": true }),
-                message: Some("the tool reported an error".into()),
-            },
+            TaskOutcome::failed_result(
+                json!({ "isError": true }),
+                Some("the tool reported an error".into()),
+            ),
         )
         .await;
         let got = s.get(&sess(), &snap.task_id).await.unwrap();

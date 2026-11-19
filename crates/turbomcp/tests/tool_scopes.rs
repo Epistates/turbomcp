@@ -42,10 +42,7 @@ fn ctx(scope: Option<&str>) -> CallToolContext {
         Some(s) => {
             let mut claims = serde_json::Map::new();
             claims.insert("scope".into(), json!(s));
-            Identity::Bearer {
-                sub: "u".into(),
-                claims: claims.into(),
-            }
+            Identity::bearer("u", claims)
         }
         None => Identity::Anonymous,
     };
@@ -106,14 +103,10 @@ async fn through_the_dispatcher_a_denial_is_a_tool_error() {
             },
         })),
     ))
-    .with(Identity::Bearer {
-        sub: "u".into(),
-        claims: json!({ "scope": "read" })
-            .as_object()
-            .unwrap()
-            .clone()
-            .into(),
-    });
+    .with(Identity::bearer(
+        "u",
+        json!({ "scope": "read" }).as_object().unwrap().clone(),
+    ));
     let Some(JsonRpcMessage::Response(r)) = svc.ready().await.unwrap().call(request).await.unwrap()
     else {
         panic!("expected a response");
@@ -134,14 +127,7 @@ async fn unscoped_tool_allows_anyone() {
 }
 
 fn reader() -> Identity {
-    Identity::Bearer {
-        sub: "u".into(),
-        claims: json!({ "scope": "read" })
-            .as_object()
-            .unwrap()
-            .clone()
-            .into(),
-    }
+    Identity::bearer("u", json!({ "scope": "read" }).as_object().unwrap().clone())
 }
 
 /// The refusal a task-augmented call to a scoped tool must get: the tool

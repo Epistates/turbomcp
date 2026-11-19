@@ -103,14 +103,10 @@ fn as_caller(id: i64, method: &str, params: Value, scopes: &str) -> McpRequest {
     if scopes.is_empty() {
         return request;
     }
-    request.with(turbomcp::Identity::Bearer {
-        sub: "alice".into(),
-        claims: json!({ "scope": scopes })
-            .as_object()
-            .unwrap()
-            .clone()
-            .into(),
-    })
+    request.with(turbomcp::Identity::bearer(
+        "alice",
+        json!({ "scope": scopes }).as_object().unwrap().clone(),
+    ))
 }
 
 async fn respond<S>(svc: &mut S, req: impl Into<McpRequest>) -> JsonRpcResponse

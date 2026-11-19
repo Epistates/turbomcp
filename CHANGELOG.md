@@ -29,8 +29,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `turbomcp-server`: `quota_key`, `ttl_elapsed` and `TaskSlot`.
   - `turbomcp`: the `SessionStreams` re-export.
 
+- **Breaking:** enum variants with fields that applications build or
+  match get `#[non_exhaustive]`, so a field can be added later, and a
+  constructor to build them with:
+  `Identity::bearer`, `AuthDecision::challenge` / `unavailable`,
+  `CompletionReference::prompt` / `resource_template`,
+  `RegistrationStrategy::preregistered` / `metadata_document`,
+  `Change::resource_updated` and `TaskOutcome::failed_result`. The gateway's
+  `Upstream` variants keep their `stdio` / `http` / `websocket`
+  constructors, and the client's `SubscriptionEvent` variants are only
+  matched. A pattern on any of them needs `..`.
+- **Breaking:** spec-shaped types that the spec will grow are
+  `#[non_exhaustive]`: the neutral `ToolAnnotations`, `Icon`, `IconTheme`,
+  `Annotations`, `CachePolicy`, `CacheScope` and `ToolChoice`; the Tasks
+  extension's `Task`, `CreateTaskResult`, `DetailedTask` and
+  `UpdateTaskParams`; `turbomcp-auth`'s `ResourceMetadata`,
+  `DynamicRegistration` and `AuthPrincipal`; and `HttpFailure`. Build them
+  with their constructors: new are `AuthPrincipal::new` (scopes read from
+  the claims), `HttpFailure::new` with `with_rpc` / `with_www_authenticate`
+  / `with_retry_after`, `Icon::with_mime_type` / `with_sizes` /
+  `with_theme` and `ToolAnnotations::with_title`. `ToolChoice` is no longer
+  `Copy`, so a mode that names a tool can be added.
+
 ### Removed
 
+- **Breaking:** `Identity::Dpop`. Nothing produced it, and the MCP spec
+  hasn't defined DPoP; `Identity` is non-exhaustive, so a variant can come
+  back when it does.
 - **Breaking:** the deprecated `ProtocolVersion::Draft` and
   `turbomcp_protocol::draft` aliases for `2026-07-28`. Upstream's `draft`
   schema has since moved on from `2026-07-28`, so the old name now points

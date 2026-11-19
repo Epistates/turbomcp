@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// An RFC 9728 Protected Resource Metadata document.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ResourceMetadata {
     /// The resource's canonical URI. Tokens MUST carry this in their `aud`.
     pub resource: String,

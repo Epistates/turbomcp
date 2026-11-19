@@ -244,7 +244,7 @@ async fn an_unreachable_backend_is_a_503_not_a_rejection() {
     );
     let decision = rs.authenticate(Some("Bearer boom")).await;
     assert!(
-        matches!(decision, AuthDecision::Unavailable { retry_after_secs } if retry_after_secs > 0),
+        matches!(decision, AuthDecision::Unavailable { retry_after_secs, .. } if retry_after_secs > 0),
         "{decision:?}"
     );
 }

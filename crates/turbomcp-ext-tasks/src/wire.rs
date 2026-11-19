@@ -48,6 +48,7 @@ impl TaskStatus {
 /// Operational metadata about ongoing work (SEP-2663 §Tasks). The base shape
 /// shared by [`CreateTaskResult`] and [`DetailedTask`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Task {
     /// Stable identifier for this task.
     #[serde(rename = "taskId")]
@@ -101,6 +102,7 @@ impl Task {
 /// result to indicate the request will be processed asynchronously (SEP-2663
 /// §Task Creation).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CreateTaskResult {
     /// Always [`RESULT_TYPE_TASK`].
     #[serde(rename = "resultType")]
@@ -125,6 +127,7 @@ impl CreateTaskResult {
 /// task state, with status-specific fields inlined (SEP-2663 §Task Polling).
 /// The `resultType` is `"complete"` (the standard `tasks/get` result shape).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DetailedTask {
     /// Always [`RESULT_TYPE_COMPLETE`].
     #[serde(rename = "resultType")]
@@ -186,6 +189,7 @@ impl DetailedTask {
 /// `tasks/update` params: `inputResponses` for an `input_required` task
 /// (SEP-2663 §Task Update Requests).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UpdateTaskParams {
     /// The task to update.
     #[serde(rename = "taskId")]

@@ -86,6 +86,7 @@ async fn missing_header_is_bare_401() {
     let AuthDecision::Challenge {
         status,
         www_authenticate,
+        ..
     } = rs.authenticate(None).await
     else {
         panic!("expected challenge");
@@ -105,6 +106,7 @@ async fn wrong_audience_is_401_invalid_token() {
     let AuthDecision::Challenge {
         status,
         www_authenticate,
+        ..
     } = rs.authenticate(Some(&bearer(&sign(claims)))).await
     else {
         panic!("expected challenge");
@@ -157,6 +159,7 @@ async fn insufficient_scope_is_403() {
     let AuthDecision::Challenge {
         status,
         www_authenticate,
+        ..
     } = rs.authenticate(Some(&bearer(&sign(claims)))).await
     else {
         panic!("expected challenge");
@@ -179,6 +182,7 @@ async fn algorithm_outside_the_allowlist_is_rejected() {
     let AuthDecision::Challenge {
         status,
         www_authenticate,
+        ..
     } = rs.authenticate(Some(&bearer(&sign(good_claims())))).await
     else {
         panic!("HS256 must not pass an RS256-only validator");
@@ -367,6 +371,7 @@ async fn malformed_and_foreign_authorization_headers() {
         AuthDecision::Challenge {
             status,
             www_authenticate,
+            ..
         } => {
             assert_eq!(status, 400);
             assert!(
@@ -380,6 +385,7 @@ async fn malformed_and_foreign_authorization_headers() {
         AuthDecision::Challenge {
             status,
             www_authenticate,
+            ..
         } => {
             assert_eq!(status, 401);
             assert!(!www_authenticate.contains("error="), "{www_authenticate}");

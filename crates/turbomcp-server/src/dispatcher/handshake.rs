@@ -356,6 +356,8 @@ fn build_discover_result<S: McpServerCore>(
         cache_scope: match cache.scope {
             neutral::CacheScope::Private => v0728::DiscoverResultCacheScope::Private,
             neutral::CacheScope::Public => v0728::DiscoverResultCacheScope::Public,
+            // A scope this wire can't express: the narrower one is safe.
+            _ => v0728::DiscoverResultCacheScope::Private,
         },
         capabilities,
         instructions: server.instructions(),

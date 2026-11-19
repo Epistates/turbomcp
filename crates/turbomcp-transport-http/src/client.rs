@@ -1258,12 +1258,12 @@ async fn pump(
         if let JsonRpcMessage::Request(r) = &msg {
             shared.failures.lock().insert(
                 r.id.clone(),
-                TransportFailure::Http(HttpFailure {
-                    status: status.as_u16(),
-                    message: message.clone(),
-                    rpc,
-                    www_authenticate,
-                    retry_after,
+                TransportFailure::Http({
+                    let mut failure = HttpFailure::new(status.as_u16(), message.clone());
+                    failure.rpc = rpc;
+                    failure.www_authenticate = www_authenticate;
+                    failure.retry_after = retry_after;
+                    failure
                 }),
             );
         }

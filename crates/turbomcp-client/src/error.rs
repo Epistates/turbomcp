@@ -178,13 +178,9 @@ mod tests {
             ClientError::Closed.to_mcp_error(&v),
             McpError::Transport(_)
         ));
-        let unauthorized = ClientError::Http(Box::new(turbomcp_service::HttpFailure {
-            status: 401,
-            message: "unauthorized".into(),
-            rpc: None,
-            www_authenticate: Some("Bearer".into()),
-            retry_after: None,
-        }));
+        let unauthorized = ClientError::Http(Box::new(
+            turbomcp_service::HttpFailure::new(401, "unauthorized").with_www_authenticate("Bearer"),
+        ));
         assert!(matches!(
             unauthorized.to_mcp_error(&v),
             McpError::Authentication(_)

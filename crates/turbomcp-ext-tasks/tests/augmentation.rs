@@ -325,10 +325,10 @@ async fn another_issuer_cannot_read_update_or_cancel_a_task() {
         params["_meta"] = draft_meta();
         let request = McpRequest::new(JsonRpcRequest::new(id, method, Some(params)));
         match issuer {
-            Some(issuer) => request.with(Identity::Bearer {
-                sub: "alice".into(),
-                claims: json!({ "iss": issuer }).as_object().unwrap().clone().into(),
-            }),
+            Some(issuer) => request.with(Identity::bearer(
+                "alice",
+                json!({ "iss": issuer }).as_object().unwrap().clone(),
+            )),
             None => request,
         }
     };

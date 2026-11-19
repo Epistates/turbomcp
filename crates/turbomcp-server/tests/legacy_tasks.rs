@@ -677,10 +677,7 @@ async fn a_task_is_stopped_at_its_ttl_without_being_polled() {
 
 /// Send `req` on `svc` as the authenticated `alice`.
 async fn as_alice(svc: &mut Svc, req: JsonRpcRequest) -> Value {
-    let identity = turbomcp_core::Identity::Bearer {
-        sub: "alice".into(),
-        claims: serde_json::Map::new().into(),
-    };
+    let identity = turbomcp_core::Identity::bearer("alice", serde_json::Map::new());
     let request = turbomcp_core::McpRequest::new(req).with(identity);
     match svc.ready().await.unwrap().call(request).await.unwrap() {
         Some(JsonRpcMessage::Response(r)) => {

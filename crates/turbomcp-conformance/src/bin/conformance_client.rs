@@ -369,42 +369,41 @@ async fn run_auth(url: &str, context: &ScenarioContext) -> Result<(), String> {
     let strategy = match context.client_id.as_deref() {
         // A `client_id` that is an HTTPS URL is a metadata document, used
         // verbatim as the id rather than registered for.
-        Some(id) if id.starts_with("https://") => RegistrationStrategy::MetadataDocument {
-            client_id_url: id.to_string(),
-        },
-        Some(id) => RegistrationStrategy::Preregistered {
-            credentials: match context.client_secret.as_deref() {
+        Some(id) if id.starts_with("https://") => {
+            RegistrationStrategy::metadata_document(id.to_string())
+        }
+        Some(id) => {
+            let credentials = match context.client_secret.as_deref() {
                 Some(secret) => ClientCredentials::confidential(id, secret),
                 None => ClientCredentials::public(id),
-            },
+            };
             // The scenario hands us credentials without naming their issuer:
             // they are for whichever authorization server the resource names,
             // which is the scenario's premise. A real deployment knows the
             // issuer it registered at; here it is discovered, and the binding
             // is made explicitly rather than by default.
-            issuer: {
-                let probe = OAuthClient::new(
-                    url,
-                    REDIRECT_URI,
-                    RegistrationStrategy::Dynamic(DynamicRegistration::native(
-                        "turbomcp-conformance-client",
-                        vec![REDIRECT_URI.to_string()],
-                    )),
-                )
-                .with_network_policy(turbomcp::auth::NetworkPolicy::default())
-                .map_err(|e| e.to_string())?;
-                probe
-                    .discover(None)
-                    .await
-                    .map_err(|e| e.to_string())?
-                    .server
-                    .issuer
-            },
-        },
+            let probe = OAuthClient::new(
+                url,
+                REDIRECT_URI,
+                RegistrationStrategy::Dynamic(DynamicRegistration::native(
+                    "turbomcp-conformance-client",
+                    vec![REDIRECT_URI.to_string()],
+                )),
+            )
+            .with_network_policy(turbomcp::auth::NetworkPolicy::default())
+            .map_err(|e| e.to_string())?;
+            let issuer = probe
+                .discover(None)
+                .await
+                .map_err(|e| e.to_string())?
+                .server
+                .issuer;
+            RegistrationStrategy::preregistered(credentials, issuer)
+        }
         None if std::env::var("MCP_CONFORMANCE_SCENARIO").as_deref() == Ok("auth/basic-cimd") => {
-            RegistrationStrategy::MetadataDocument {
-                client_id_url: "https://conformance-test.local/client-metadata.json".into(),
-            }
+            RegistrationStrategy::metadata_document(
+                "https://conformance-test.local/client-metadata.json",
+            )
         }
         None => RegistrationStrategy::Dynamic(DynamicRegistration::native(
             "turbomcp-conformance-client",

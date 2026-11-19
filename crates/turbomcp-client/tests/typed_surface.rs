@@ -182,9 +182,7 @@ async fn typed_surface_round_trips_on_both_wires() {
 
         let completions = client
             .complete(neutral::CompleteParams::new(
-                neutral::CompletionReference::Prompt {
-                    name: "greet".into(),
-                },
+                neutral::CompletionReference::prompt("greet"),
                 neutral::CompletionArgument::new("text", "al"),
             ))
             .await

@@ -280,10 +280,8 @@ mod tests {
     fn caller(scopes: &str) -> RequestContext {
         let mut claims = serde_json::Map::new();
         claims.insert("scope".into(), json!(scopes));
-        RequestContext::new(ProtocolVersion::V2025_11_25).with_identity(Identity::Bearer {
-            sub: "alice".into(),
-            claims: claims.into(),
-        })
+        RequestContext::new(ProtocolVersion::V2025_11_25)
+            .with_identity(Identity::bearer("alice", claims))
     }
 
     fn tool(meta: Value) -> neutral::Tool {

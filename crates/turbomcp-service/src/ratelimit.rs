@@ -34,7 +34,7 @@ use governor::{DefaultKeyedRateLimiter, Quota};
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 #[non_exhaustive]
 pub enum RateKey {
-    /// Per authenticated subject (`Identity::Bearer`/`Dpop`/`Custom` subject).
+    /// Per authenticated subject (an `Identity::Bearer` or `Custom` subject).
     Subject(String),
     /// Per source IP (anonymous requests). Build it with
     /// [`client`](Self::client), which counts an IPv6 client by its `/64`.

@@ -1878,10 +1878,10 @@ impl Client {
     ) -> ClientResult<neutral::CompleteResult> {
         self.require_server_capability("completions", request::COMPLETION_COMPLETE)?;
         let reference = match &params.reference {
-            neutral::CompletionReference::Prompt { name } => {
+            neutral::CompletionReference::Prompt { name, .. } => {
                 json!({ "type": "ref/prompt", "name": name })
             }
-            neutral::CompletionReference::ResourceTemplate { uri } => {
+            neutral::CompletionReference::ResourceTemplate { uri, .. } => {
                 json!({ "type": "ref/resource", "uri": uri })
             }
             other => {

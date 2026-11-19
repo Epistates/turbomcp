@@ -54,11 +54,9 @@ impl BearerValidator for OnlyMcpAccess {
             if token != "mcp-access" {
                 return Err(AuthError::InvalidToken("unknown token".into()));
             }
-            Ok(AuthPrincipal {
-                subject: "alice@corp.example".into(),
-                scopes: vec!["mcp:tools".into()],
-                claims: Map::new(),
-            })
+            let mut principal = AuthPrincipal::new("alice@corp.example", Map::new());
+            principal.scopes = vec!["mcp:tools".into()];
+            Ok(principal)
         })
     }
 }

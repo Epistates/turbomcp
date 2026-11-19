@@ -1368,7 +1368,7 @@ impl WithCompletions for CompositeServer {
             // A prompt reference names a prompt. A prefixed one routes exactly;
             // an unprefixed one is resolved the same way `get_prompt` resolves
             // it, so completion and the call it completes for agree on the owner.
-            neutral::CompletionReference::Prompt { name } => {
+            neutral::CompletionReference::Prompt { name, .. } => {
                 let routed = self
                     .resolve(name, |mount, name| {
                         mount

@@ -223,10 +223,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
                         match serde_json::to_value(legacy::CallToolResult::from(result)) {
                             // "when the tool result has `isError` set to `true`,
                             // the task should reach `failed` status."
-                            Ok(v) if failed => TaskOutcome::FailedResult {
-                                result: v,
-                                message: Some("the tool reported an error".to_owned()),
-                            },
+                            Ok(v) if failed => TaskOutcome::failed_result(v, Some("the tool reported an error".to_owned())),
                             Ok(v) => TaskOutcome::Completed(v),
                             Err(e) => TaskOutcome::Error(JsonRpcError {
                                 code: turbomcp_core::codes::INTERNAL_ERROR,

@@ -178,10 +178,7 @@ impl turbomcp::HttpAuthenticator for KeyCheck {
             if authorization == Some("Bearer let-me-in") {
                 turbomcp::AuthDecision::Allow(turbomcp::Identity::Anonymous)
             } else {
-                turbomcp::AuthDecision::Challenge {
-                    status: 401,
-                    www_authenticate: "Bearer".into(),
-                }
+                turbomcp::AuthDecision::challenge(401, "Bearer")
             }
         })
     }

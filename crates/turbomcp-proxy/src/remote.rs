@@ -775,7 +775,7 @@ impl RemoteServer {
                 let owned = matches!(remote.find_resource(&link, &uri).await, Ok(Some(_)))
                     || matches!(remote.find_template(&link, &uri).await, Ok(Some(_)));
                 if owned {
-                    let _ = remote.inner.changes.send(Change::ResourceUpdated { uri });
+                    let _ = remote.inner.changes.send(Change::resource_updated(uri));
                 } else {
                     tracing::debug!(
                         upstream = %remote.inner.label,
@@ -919,7 +919,7 @@ impl Pending {
             Ok(Change::ToolsListChanged) => self.tools = true,
             Ok(Change::PromptsListChanged) => self.prompts = true,
             Ok(Change::ResourcesListChanged) => self.resources = true,
-            Ok(Change::ResourceUpdated { uri }) => {
+            Ok(Change::ResourceUpdated { uri, .. }) => {
                 self.updated.insert(uri);
             }
             Ok(_) => {}

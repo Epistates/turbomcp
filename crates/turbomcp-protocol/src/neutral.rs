@@ -278,6 +278,7 @@ pub struct Tool {
 /// `ToolAnnotations`). Every field is a **hint**, not a guarantee: clients
 /// must not rely on them for safety decisions about untrusted servers.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ToolAnnotations {
     /// Human-readable title (display precedence: `Tool::title`, then this,
     /// then `Tool::name`).
@@ -300,6 +301,13 @@ impl ToolAnnotations {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A human-readable title for the tool.
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
     }
 
     /// Mark the tool read-only (does not modify its environment).
@@ -334,6 +342,7 @@ impl ToolAnnotations {
 /// A sized icon resource (`ui` display hint on tools, resources, prompts).
 /// `src` is an HTTP(S) URL or a base64 `data:` URI.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Icon {
     /// URI of the icon resource (HTTP/HTTPS or `data:`).
     pub src: String,
@@ -355,10 +364,36 @@ impl Icon {
             theme: None,
         }
     }
+
+    /// Declare the image's MIME type.
+    #[must_use]
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    /// Declare the sizes it's drawn for (`"48x48"`, `"any"` for scalable).
+    #[must_use]
+    pub fn with_sizes<I, S>(mut self, sizes: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.sizes = sizes.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Declare the color scheme it's designed for.
+    #[must_use]
+    pub fn with_theme(mut self, theme: IconTheme) -> Self {
+        self.theme = Some(theme);
+        self
+    }
 }
 
 /// The color scheme an [`Icon`] is designed for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IconTheme {
     /// For light backgrounds.
     Light,
@@ -821,6 +856,7 @@ impl SubscriptionFilter {
 
 /// Whether shared intermediaries may cache a response (SEP-2549).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CacheScope {
     /// Only the requesting client may cache the response.
     Private,
@@ -839,6 +875,7 @@ pub enum CacheScope {
 /// (in `turbomcp-server`); a handler-set policy on a result wins over that
 /// default. Complements — never replaces — the `*_list_changed` notifications.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CachePolicy {
     /// Freshness hint in milliseconds; `0` means immediately stale.
     pub ttl_ms: u64,
@@ -988,6 +1025,7 @@ impl Resource {
 /// spec's `Annotations`): who the item is for, how important it is, and when
 /// it last changed. All advisory.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Annotations {
     /// Intended audience(s); empty = unspecified.
     pub audience: Vec<Role>,
@@ -2407,7 +2445,8 @@ impl IncludeContext {
 }
 
 /// How the model may use the offered tools.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ToolChoice {
     /// The model decides. The wire default.
     #[default]
@@ -2421,7 +2460,7 @@ pub enum ToolChoice {
 impl ToolChoice {
     /// The wire string.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Auto => "auto",
             Self::Required => "required",
@@ -2648,7 +2687,7 @@ impl CreateMessageParams {
             }
             out.insert("tools".into(), Value::Array(tools));
         }
-        if let Some(c) = self.tool_choice {
+        if let Some(c) = &self.tool_choice {
             let mut choice = Map::new();
             choice.insert("mode".into(), Value::String(c.as_str().into()));
             out.insert("toolChoice".into(), Value::Object(choice));
@@ -3298,15 +3337,31 @@ const MAX_COMPLETION_VALUES: usize = 100;
 #[non_exhaustive]
 pub enum CompletionReference {
     /// An argument of a prompt, by prompt name.
+    #[non_exhaustive]
     Prompt {
         /// Prompt name.
         name: String,
     },
     /// A variable of a resource template, by URI (template).
+    #[non_exhaustive]
     ResourceTemplate {
         /// Resource URI or URI template.
         uri: String,
     },
+}
+
+impl CompletionReference {
+    /// An argument of the prompt `name`.
+    #[must_use]
+    pub fn prompt(name: impl Into<String>) -> Self {
+        Self::Prompt { name: name.into() }
+    }
+
+    /// A variable of the resource template `uri`.
+    #[must_use]
+    pub fn resource_template(uri: impl Into<String>) -> Self {
+        Self::ResourceTemplate { uri: uri.into() }
+    }
 }
 
 /// The argument being completed: its name and the partial value typed so far.
@@ -5669,12 +5724,12 @@ mod tests {
                     .idempotent(true)
                     .open_world(false),
             )
-            .with_icon(Icon {
-                src: "https://example.com/audit.png".into(),
-                mime_type: Some("image/png".into()),
-                sizes: alloc::vec!["48x48".into()],
-                theme: Some(IconTheme::Dark),
-            })
+            .with_icon(
+                Icon::new("https://example.com/audit.png")
+                    .with_mime_type("image/png")
+                    .with_sizes(alloc::vec!["48x48"])
+                    .with_theme(IconTheme::Dark),
+            )
             .with_meta_entry("com.example/tags", json!(["read", "safety"]))
     }
 
@@ -6246,12 +6301,8 @@ mod tests {
 
     #[test]
     fn icon_theme_light_round_trips_both_wires() {
-        let tool = Tool::new("t", json!({"type": "object"})).with_icon(Icon {
-            src: "https://example.com/i.png".into(),
-            mime_type: None,
-            sizes: alloc::vec![],
-            theme: Some(IconTheme::Light),
-        });
+        let tool = Tool::new("t", json!({"type": "object"}))
+            .with_icon(Icon::new("https://example.com/i.png").with_theme(IconTheme::Light));
         let wire: v0728::Tool = tool.clone().into();
         let v = serde_json::to_value(&wire).unwrap();
         assert_eq!(v["icons"][0]["theme"], "light");

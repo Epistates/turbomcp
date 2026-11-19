@@ -15,6 +15,7 @@ pub enum Upstream {
     ///
     /// Nothing runs unless the operator names it: there is no implicit
     /// command, shell, or `PATH` search beyond the OS's own for `command`.
+    #[non_exhaustive]
     Stdio {
         /// The program.
         command: String,
@@ -29,6 +30,7 @@ pub enum Upstream {
     },
     /// A Streamable HTTP endpoint (feature `http`).
     #[cfg(feature = "http")]
+    #[non_exhaustive]
     Http {
         /// The MCP endpoint URL.
         url: String,
@@ -38,6 +40,7 @@ pub enum Upstream {
     },
     /// A WebSocket endpoint (feature `websocket`).
     #[cfg(feature = "websocket")]
+    #[non_exhaustive]
     WebSocket {
         /// The `ws://` or `wss://` URL.
         url: String,

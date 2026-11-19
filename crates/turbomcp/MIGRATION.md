@@ -434,7 +434,7 @@ one workspace while you migrate the server/client code.
 | `turbomcp-openapi` | Not ported. Planned post-GA. |
 | `turbomcp-wasm` / `turbomcp-wasm-macros` | No WASM *transport* at GA, but the foundation (`turbomcp-core`, `-codec`, `-protocol`) builds `no_std` for `wasm32-unknown-unknown` — CI enforces it on every run. The bindings layer is a later effort. |
 | `turbomcp-grpc` | Not ported, and unlikely to be: gRPC is not an MCP-spec transport. |
-| `turbomcp-dpop` | Not ported. DPoP (RFC 9449) is still absent from the MCP spec; `Identity::Dpop` exists in v4 but has no validator. |
+| `turbomcp-dpop` | Not ported. DPoP (RFC 9449) is still absent from the MCP spec. |
 
 `turbomcp-tcp`, `turbomcp-unix`, `turbomcp-transport-streamable`, `turbomcp-wire`,
 and `turbomcp-types` were internal decompositions of the v3 SDK; their roles are

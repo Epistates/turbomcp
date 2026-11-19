@@ -31,7 +31,7 @@ use zeroize::Zeroizing;
 
 use crate::NetworkPolicy;
 use crate::error::AuthError;
-use crate::validator::{AuthPrincipal, BearerValidator, extract_scopes};
+use crate::validator::{AuthPrincipal, BearerValidator};
 
 /// How the resource server authenticates to the introspection endpoint ("the
 /// protected resource MUST also be authenticated", RFC 7662 §2.1).
@@ -398,15 +398,7 @@ impl IntrospectionValidator {
             .and_then(Value::as_str)
             .ok_or_else(|| AuthError::InvalidToken("the token names no subject".into()))?
             .to_owned();
-        let scopes = extract_scopes(&claims);
-        Ok((
-            AuthPrincipal {
-                subject,
-                scopes,
-                claims,
-            },
-            exp,
-        ))
+        Ok((AuthPrincipal::new(subject, claims), exp))
     }
 }
 

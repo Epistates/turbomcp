@@ -169,10 +169,7 @@ fn bench_dispatch_authenticated(c: &mut Criterion) {
             json!(format!("value-{i}-{}", "x".repeat(40))),
         );
     }
-    let identity = turbomcp::Identity::Bearer {
-        sub: "user-1234".into(),
-        claims: claims.into(),
-    };
+    let identity = turbomcp::Identity::bearer("user-1234", claims);
     c.bench_function("dispatch/tools_call_authenticated", |b| {
         b.to_async(&rt).iter(|| {
             let mut svc = svc.clone();

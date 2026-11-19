@@ -423,7 +423,7 @@ impl Link {
                                 Event::ToolsListChanged => Change::ToolsListChanged,
                                 Event::PromptsListChanged => Change::PromptsListChanged,
                                 Event::ResourcesListChanged => Change::ResourcesListChanged,
-                                Event::ResourceUpdated { uri } => Change::ResourceUpdated { uri },
+                                Event::ResourceUpdated { uri, .. } => Change::resource_updated(uri),
                                 _ => continue,
                             };
                             let _ = tap.send(change);
@@ -473,7 +473,7 @@ impl Link {
                 }
                 invalidate(&siblings, change.as_ref());
                 match change {
-                    Some(Change::ResourceUpdated { uri }) => {
+                    Some(Change::ResourceUpdated { uri, .. }) => {
                         if updates.try_send((weak.clone(), uri)).is_err() {
                             tracing::debug!(
                                 "resource updates arriving faster than checked; dropped"
@@ -523,9 +523,7 @@ impl NotificationHandler for ChangeTap {
                 .and_then(|p| p.get("uri"))
                 .and_then(Value::as_str)
             {
-                Some(uri) => Change::ResourceUpdated {
-                    uri: uri.to_owned(),
-                },
+                Some(uri) => Change::resource_updated(uri.to_owned()),
                 None => return,
             },
             _ => return,

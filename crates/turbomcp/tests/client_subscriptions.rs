@@ -240,11 +240,10 @@ async fn concurrent_subscriptions_each_see_their_own() {
         next(&mut tools).await,
         Some(SubscriptionEvent::ToolsListChanged)
     );
-    assert_eq!(
-        next(&mut watched).await,
-        Some(SubscriptionEvent::ResourceUpdated {
-            uri: "demo://watched".into()
-        })
+    let event = next(&mut watched).await;
+    assert!(
+        matches!(&event, Some(SubscriptionEvent::ResourceUpdated { uri, .. }) if uri == "demo://watched"),
+        "{event:?}"
     );
     // Neither saw the other's.
     for sub in [&mut tools, &mut watched] {

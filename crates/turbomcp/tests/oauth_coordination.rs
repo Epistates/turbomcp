@@ -88,10 +88,7 @@ async fn fixture(expiring: bool, reject_refresh: bool) -> Fixture {
         OAuthClient::new(
             resource,
             "http://localhost/callback",
-            RegistrationStrategy::Preregistered {
-                credentials: ClientCredentials::public("test-client"),
-                issuer: base,
-            },
+            RegistrationStrategy::preregistered(ClientCredentials::public("test-client"), base),
         )
         .with_network_policy(turbomcp::auth::NetworkPolicy::default())
         .expect("the mock authorization server is on loopback"),

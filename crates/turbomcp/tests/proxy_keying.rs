@@ -127,10 +127,7 @@ async fn caller(remote: &RemoteServer, name: &'static str, authenticated: bool) 
         .into_server()
         .layer(tower::util::MapRequestLayer::new(move |req: McpRequest| {
             if authenticated {
-                req.with(Identity::Bearer {
-                    sub: name.into(),
-                    claims: Map::new().into(),
-                })
+                req.with(Identity::bearer(name, Map::new()))
             } else {
                 req
             }

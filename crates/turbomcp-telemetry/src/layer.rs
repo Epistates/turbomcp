@@ -345,14 +345,10 @@ mod tests {
         let req = request_with_meta(json!({
             "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
         }));
-        let alice = Identity::Bearer {
-            sub: "alice".into(),
-            claims: json!({ "scope": "read" })
-                .as_object()
-                .unwrap()
-                .clone()
-                .into(),
-        };
+        let alice = Identity::bearer(
+            "alice",
+            json!({ "scope": "read" }).as_object().unwrap().clone(),
+        );
         let resp = svc.oneshot(McpRequest::new(req).with(alice)).await.unwrap();
         assert!(matches!(resp, Some(JsonRpcMessage::Response(_))));
     }

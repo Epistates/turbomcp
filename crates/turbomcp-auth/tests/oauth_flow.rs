@@ -480,10 +480,10 @@ async fn preregistered_credentials_bound_to_a_different_issuer_error_out() {
     let engine = OAuthClient::new(
         format!("{base}/mcp"),
         "http://127.0.0.1:19999/callback",
-        RegistrationStrategy::Preregistered {
-            credentials: turbomcp_auth::client::ClientCredentials::public("pre-1"),
-            issuer: "https://old-as.example".into(),
-        },
+        RegistrationStrategy::preregistered(
+            turbomcp_auth::client::ClientCredentials::public("pre-1"),
+            "https://old-as.example",
+        ),
     )
     .with_network_policy(turbomcp_auth::NetworkPolicy::default())
     .expect("the mock authorization server is on loopback");

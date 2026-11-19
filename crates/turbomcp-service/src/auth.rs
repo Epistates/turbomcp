@@ -142,7 +142,9 @@ pub enum AuthDecision {
     Allow(Identity),
     /// Rejected: answer this HTTP status with this `WWW-Authenticate` header
     /// value. 401 for a missing/invalid token, 403 for insufficient scope
-    /// (MCP authorization spec §Access).
+    /// (MCP authorization spec §Access). Build one with
+    /// [`AuthDecision::challenge`].
+    #[non_exhaustive]
     Challenge {
         /// HTTP status code (401 or 403).
         status: u16,
@@ -153,11 +155,31 @@ pub enum AuthDecision {
     /// introspection endpoint) can't be reached. Answered `503` with
     /// `Retry-After` and no challenge: the token may be perfectly good, and a
     /// `401 invalid_token` would send every client to re-authorize over what
-    /// is an outage on this side.
+    /// is an outage on this side. Build one with [`AuthDecision::unavailable`].
+    #[non_exhaustive]
     Unavailable {
         /// Seconds the client should wait before retrying.
         retry_after_secs: u64,
     },
+}
+
+impl AuthDecision {
+    /// Reject with HTTP `status` (401 or 403) and this `WWW-Authenticate`
+    /// header value.
+    #[must_use]
+    pub fn challenge(status: u16, www_authenticate: impl Into<String>) -> Self {
+        Self::Challenge {
+            status,
+            www_authenticate: www_authenticate.into(),
+        }
+    }
+
+    /// Undecided because the token can't be checked right now: answered `503`
+    /// with `Retry-After: retry_after_secs`.
+    #[must_use]
+    pub fn unavailable(retry_after_secs: u64) -> Self {
+        Self::Unavailable { retry_after_secs }
+    }
 }
 
 #[cfg(test)]

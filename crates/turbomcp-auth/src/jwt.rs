@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::error::AuthError;
 use crate::jwks::JwkSource;
-use crate::validator::{AuthPrincipal, BearerValidator, extract_scopes};
+use crate::validator::{AuthPrincipal, BearerValidator};
 
 /// A JWT resource-server validator: signature (via JWKS) + `aud` binding +
 /// `iss` + `exp`, per the MCP authorization spec.
@@ -139,12 +139,7 @@ fn principal_from_claims(claims: Map<String, Value>) -> Result<AuthPrincipal, Au
         .and_then(Value::as_str)
         .ok_or_else(|| AuthError::InvalidToken("token has no `sub` claim".to_owned()))?
         .to_owned();
-    let scopes = extract_scopes(&claims);
-    Ok(AuthPrincipal {
-        subject,
-        scopes,
-        claims,
-    })
+    Ok(AuthPrincipal::new(subject, claims))
 }
 
 /// Explicit issuer-to-validator routing for independent authorization servers.

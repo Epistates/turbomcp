@@ -274,6 +274,7 @@ pub enum TransportFailure {
 /// Structured HTTP failure, preserving protocol errors and retry challenges.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error("HTTP {status}: {message}")]
+#[non_exhaustive]
 pub struct HttpFailure {
     /// HTTP response status.
     pub status: u16,
@@ -285,4 +286,40 @@ pub struct HttpFailure {
     pub www_authenticate: Option<String>,
     /// Server retry guidance, retained verbatim for caller policy.
     pub retry_after: Option<String>,
+}
+
+impl HttpFailure {
+    /// The server answered HTTP `status`; `message` summarizes it (never with
+    /// a bearer credential in it).
+    #[must_use]
+    pub fn new(status: u16, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+            rpc: None,
+            www_authenticate: None,
+            retry_after: None,
+        }
+    }
+
+    /// The JSON-RPC error the body carried.
+    #[must_use]
+    pub fn with_rpc(mut self, rpc: turbomcp_core::JsonRpcError) -> Self {
+        self.rpc = Some(rpc);
+        self
+    }
+
+    /// The `WWW-Authenticate` header the server sent.
+    #[must_use]
+    pub fn with_www_authenticate(mut self, value: impl Into<String>) -> Self {
+        self.www_authenticate = Some(value.into());
+        self
+    }
+
+    /// The `Retry-After` header the server sent, verbatim.
+    #[must_use]
+    pub fn with_retry_after(mut self, value: impl Into<String>) -> Self {
+        self.retry_after = Some(value.into());
+        self
+    }
 }
