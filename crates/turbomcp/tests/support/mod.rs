@@ -41,16 +41,18 @@ pub fn example_bin(name: &str) -> std::path::PathBuf {
 /// The target dir this test binary was built in, and the profile directory
 /// under it (`debug`, `release`).
 ///
-/// The target dir is the nearest ancestor cargo marked with `CACHEDIR.TAG`.
-/// Counting levels up from the binary stopped working in Rust 1.100, which
-/// moved test binaries from `<target>/<profile>/deps/` to
-/// `<target>/<profile>/build/<package>/<hash>/out/`; examples are still copied
-/// to `<target>/<profile>/examples/`.
+/// The target dir is the nearest ancestor holding cargo's `.rustc_info.json`
+/// or its `CACHEDIR.TAG`. Cargo writes the tag only when it creates the
+/// directory itself, so a target dir that already existed (made by `mkdir`,
+/// or restored from a CI cache) has none. Counting levels up from
+/// the binary stopped working in Rust 1.100, which moved test binaries from
+/// `<target>/<profile>/deps/` to `<target>/<profile>/build/<package>/<hash>/out/`;
+/// examples are still copied to `<target>/<profile>/examples/`.
 fn target_dir_and_profile() -> (std::path::PathBuf, String) {
     let exe = std::env::current_exe().expect("test binary path");
     let target_dir = exe
         .ancestors()
-        .find(|dir| dir.join("CACHEDIR.TAG").is_file())
+        .find(|dir| dir.join(".rustc_info.json").is_file() || dir.join("CACHEDIR.TAG").is_file())
         .expect("the test binary is inside a cargo target dir");
     let profile = exe
         .strip_prefix(target_dir)

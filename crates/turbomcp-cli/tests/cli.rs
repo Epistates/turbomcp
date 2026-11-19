@@ -8,8 +8,9 @@ use serde_json::Value;
 
 /// The `hello_world` example, built if this run didn't build it.
 ///
-/// The target dir is the nearest ancestor of this test binary that cargo
-/// marked with `CACHEDIR.TAG`. Counting levels up from the binary stopped
+/// The target dir is the nearest ancestor of this test binary holding cargo's
+/// `.rustc_info.json` or its `CACHEDIR.TAG` (cargo writes the tag only when it
+/// creates the directory itself). Counting levels up from the binary stopped
 /// working in Rust 1.100, which moved test binaries from
 /// `<target>/<profile>/deps/` to `<target>/<profile>/build/<package>/<hash>/out/`;
 /// examples are still copied to `<target>/<profile>/examples/`.
@@ -17,7 +18,7 @@ fn hello_world() -> PathBuf {
     let exe = std::env::current_exe().expect("test binary path");
     let target = exe
         .ancestors()
-        .find(|dir| dir.join("CACHEDIR.TAG").is_file())
+        .find(|dir| dir.join(".rustc_info.json").is_file() || dir.join("CACHEDIR.TAG").is_file())
         .expect("the test binary is inside a cargo target dir");
     let profile = exe
         .strip_prefix(target)
