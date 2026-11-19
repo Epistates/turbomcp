@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 # typify pulls its own schemars 0.8; we deserialize RootSchema with the matching
 # version. NOT `workspace = true` (the workspace pins schemars 1.x for runtime).
+# typify stays on 0.8 on purpose; .github/dependabot.yml says why.
 typify = "0.8"
 schemars = "0.8"
 # preserve_order keeps generated output stable/reviewable across runs.

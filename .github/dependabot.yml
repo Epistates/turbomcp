@@ -42,6 +42,12 @@ updates:
       # The workspace's schemars is 1.x and still takes minor updates.
       - dependency-name: schemars
         update-types: ["version-update:semver-major"]
+      # turbomcp-codegen only. typify 0.10 rebuilt its settings on the new
+      # `typespace` crate and needs Rust 1.97; taking it means re-tuning the
+      # post-processing in turbomcp-codegen and reviewing the regenerated wire
+      # types, which are public API.
+      - dependency-name: typify
+        versions: [">= 0.9"]
 
   # turbomcp-conformance and turbomcp-interop are excluded from the workspace and
   # carry their own lockfiles, so nothing above reaches them. Only `rmcp` is
