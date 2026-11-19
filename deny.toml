@@ -63,8 +63,18 @@ feature-depth = 1
 #db-path = "$CARGO_HOME/advisory-dbs"
 # The url(s) of the advisory databases to use
 #db-urls = ["https://github.com/rustsec/advisory-db"]
-# No advisory ignores are currently required.
-ignore = []
+# Each ignore names the only path the crate takes into a build. Lift it when
+# that path closes.
+ignore = [
+    # chrono is unmaintained (informational; no fixed release). Its `DateTime`
+    # is in public 3.x types (turbomcp-core, turbomcp-protocol), so replacing
+    # it is a breaking change; v4 dropped it.
+    { id = "RUSTSEC-2026-0543", reason = "chrono's DateTime is in public 3.x types; no maintained release to move to" },
+    # crypto-bigint 0.5 timing variability. 0.5 arrives only through yubihsm
+    # 0.42 (p256 0.13), behind turbomcp-dpop's `hsm-yubico` feature; yubihsm
+    # has not released since 2023-08. Our own p256 0.14 path uses the fixed 0.7.
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5, via yubihsm 0.42 (hsm-yubico only); no yubihsm release on p256 0.14" },
+]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
 # Setting this to true can be helpful if you have special authentication requirements that cargo-deny does not support.
@@ -105,6 +115,9 @@ exceptions = [
     # Each entry is the crate and version constraint, and its specific allow
     # list
     #{ allow = ["Zlib"], crate = "adler32" },
+    # Public-domain dedication. Arrives through config -> rust-ini ->
+    # ordered-multimap -> dlv-list -> const-random (turbomcp-cli only).
+    { allow = ["CC0-1.0"], crate = "tiny-keccak" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
