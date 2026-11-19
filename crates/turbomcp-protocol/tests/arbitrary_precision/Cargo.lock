@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-core"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "bytes",
  "hashbrown",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-protocol"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "serde",
  "serde_json",

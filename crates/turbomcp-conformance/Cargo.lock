@@ -2834,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "schemars",
  "serde",
@@ -2855,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-auth"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "futures",
  "ipnet",
@@ -2877,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-client"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-conformance"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "base64 0.23.1",
  "reqwest",
@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-core"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "bytes",
  "hashbrown 0.17.1",
@@ -2923,7 +2923,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-macros"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2934,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-protocol"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2943,7 +2943,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-proxy"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -2967,7 +2967,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-server"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2998,7 +2998,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-service"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "base64 0.23.1",
  "futures",
@@ -3016,7 +3016,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-telemetry"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "getrandom 0.4.3",
  "hmac",
@@ -3038,7 +3038,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-http"
-version = "4.0.0-alpha.6"
+version = "4.0.0-beta.1"
 dependencies = [
  "async-trait",
  "axum",

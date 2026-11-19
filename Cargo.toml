@@ -179,18 +179,18 @@ insta = { version = "1.49", features = ["json", "redactions"] }
 # no_std/WASM foundation portable (their `default = ["std"]` is opt-in per
 # crate), which also keeps core's sonic-rs `simd` codec out of the SDK's default
 # build; the facade's `simd` feature is the opt-in.
-turbomcp-core = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-core", default-features = false }
-turbomcp-protocol = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-protocol", default-features = false }
-turbomcp-service = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-service" }
-turbomcp-server = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-server" }
-turbomcp-client = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-client" }
-turbomcp-transport-http = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-transport-http", default-features = false }
-turbomcp-macros = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-macros" }
-turbomcp-auth = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-auth", default-features = false }
-turbomcp-telemetry = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-telemetry" }
-turbomcp-ext-tasks = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-ext-tasks" }
-turbomcp-proxy = { version = "=4.0.0-alpha.6", path = "crates/turbomcp-proxy", default-features = false }
-turbomcp = { version = "=4.0.0-alpha.6", path = "crates/turbomcp", default-features = false }
+turbomcp-core = { version = "=4.0.0-beta.1", path = "crates/turbomcp-core", default-features = false }
+turbomcp-protocol = { version = "=4.0.0-beta.1", path = "crates/turbomcp-protocol", default-features = false }
+turbomcp-service = { version = "=4.0.0-beta.1", path = "crates/turbomcp-service" }
+turbomcp-server = { version = "=4.0.0-beta.1", path = "crates/turbomcp-server" }
+turbomcp-client = { version = "=4.0.0-beta.1", path = "crates/turbomcp-client" }
+turbomcp-transport-http = { version = "=4.0.0-beta.1", path = "crates/turbomcp-transport-http", default-features = false }
+turbomcp-macros = { version = "=4.0.0-beta.1", path = "crates/turbomcp-macros" }
+turbomcp-auth = { version = "=4.0.0-beta.1", path = "crates/turbomcp-auth", default-features = false }
+turbomcp-telemetry = { version = "=4.0.0-beta.1", path = "crates/turbomcp-telemetry" }
+turbomcp-ext-tasks = { version = "=4.0.0-beta.1", path = "crates/turbomcp-ext-tasks" }
+turbomcp-proxy = { version = "=4.0.0-beta.1", path = "crates/turbomcp-proxy", default-features = false }
+turbomcp = { version = "=4.0.0-beta.1", path = "crates/turbomcp", default-features = false }
 
 [profile.dev]
 opt-level = 1
