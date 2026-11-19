@@ -15,9 +15,10 @@ mod target;
 use target::Target;
 
 /// What ended a command, for its exit status: `1` a tool that reported an
-/// error (or anything unclassified), `2` a usage error, `3` a server that
-/// couldn't be reached or started, `4` a server that answered with an
-/// error. Attached as context, so the message keeps its detail.
+/// error, `2` a usage error, `3` a server that couldn't be reached or
+/// started, `4` a server that answered with an error, and
+/// [`UNCLASSIFIED`] anything else. Attached as context, so the message keeps
+/// its detail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
     /// The arguments or the configuration don't describe a usable command.
@@ -29,6 +30,11 @@ pub enum Failure {
     /// The tool ran and reported an error.
     Tool,
 }
+
+/// The exit status of a failure none of [`Failure`] names: `EX_SOFTWARE`
+/// from `sysexits.h`, kept apart from a tool's own error (`1`) so a script
+/// can tell "the tool said no" from "this command broke".
+const UNCLASSIFIED: u8 = 70;
 
 impl Failure {
     fn code(self) -> u8 {
@@ -99,7 +105,7 @@ enum Command {
         #[arg(short = 'a', long = "arg", value_name = "KEY=VALUE")]
         args: Vec<String>,
         /// All the arguments, as a JSON object (`--arg` adds to it).
-        #[arg(long = "args", value_name = "JSON")]
+        #[arg(long = "args-json", value_name = "JSON")]
         json_args: Option<String>,
         /// Print the protocol's JSON.
         #[arg(long)]
@@ -199,7 +205,10 @@ async fn main() -> ExitCode {
             // must not reach the terminal as one.
             eprintln!("error: {}", ops::shown(&format!("{e:#}")));
             // anyhow finds a context value through every layer above it.
-            ExitCode::from(e.downcast_ref::<Failure>().map_or(1, |f| f.code()))
+            ExitCode::from(
+                e.downcast_ref::<Failure>()
+                    .map_or(UNCLASSIFIED, |f| f.code()),
+            )
         }
     }
 }

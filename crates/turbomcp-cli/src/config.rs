@@ -15,10 +15,13 @@
 //! `sse` transport, a typo) is skipped with its reason rather than failing
 //! the file, unless it was asked for by name.
 //!
-//! Beyond what hosts write, an entry may say how the gateway treats it:
+//! Beyond what hosts write, an entry may say how the gateway treats it, in
+//! a `turbomcp` object of its own, so the keys can't collide with those
+//! other hosts give the same names (Gemini CLI's `timeout` is in
+//! milliseconds):
 //!
 //! ```json
-//! {
+//! "turbomcp": {
 //!   "inherit": "safe",            // what a command inherits: safe | all | none
 //!   "timeout": 120,               // seconds an upstream may go silent on a call
 //!   "key": "principal",           // connection per: global | principal | session
@@ -28,6 +31,9 @@
 //!   "auth": { "bearer": "${TOKEN}" }
 //! }
 //! ```
+//!
+//! An unknown key inside `turbomcp` is an error for that entry, since it is
+//! this command's own namespace and an unknown key there is a typo.
 //!
 //! `auth` is one of `{"bearer": token}`, `{"clientCredentials": account}` or
 //! `{"tokenExchange": account}`, an account being `{"issuer", "clientId",
@@ -68,6 +74,14 @@ struct Entry {
     url: Option<String>,
     #[serde(default)]
     headers: BTreeMap<String, String>,
+    #[serde(default)]
+    turbomcp: Gateway,
+}
+
+/// An entry's `turbomcp` object: how the gateway treats the server.
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Gateway {
     inherit: Option<String>,
     timeout: Option<u64>,
     key: Option<String>,
@@ -187,7 +201,7 @@ fn into_server(name: &str, value: Value) -> Result<Server> {
 
 impl Entry {
     fn settings(&self) -> Result<Settings> {
-        let key = match self.key.as_deref() {
+        let key = match self.turbomcp.key.as_deref() {
             None => None,
             Some("global") => Some(UpstreamKey::Global),
             Some("principal") => Some(UpstreamKey::Principal),
@@ -205,7 +219,7 @@ impl Entry {
             }
             Ok(account)
         };
-        let auth = match &self.auth {
+        let auth = match &self.turbomcp.auth {
             None => OutboundAuth::None,
             Some(Auth::Bearer(token)) => OutboundAuth::bearer(interpolate(token)?),
             Some(Auth::ClientCredentials(a)) => OutboundAuth::ClientCredentials(account(a)?),
@@ -213,11 +227,11 @@ impl Entry {
         };
         Ok(Settings {
             auth,
-            timeout: self.timeout.map(Duration::from_secs),
+            timeout: self.turbomcp.timeout.map(Duration::from_secs),
             key,
-            forward_sampling: self.forward_sampling,
-            forward_roots: self.forward_roots,
-            tags: self.tags.clone(),
+            forward_sampling: self.turbomcp.forward_sampling,
+            forward_roots: self.turbomcp.forward_roots,
+            tags: self.turbomcp.tags.clone(),
         })
     }
 
@@ -241,7 +255,7 @@ impl Entry {
                     .iter()
                     .map(|a| interpolate(a))
                     .collect::<Result<Vec<_>>>()?;
-                let inherit = match self.inherit.as_deref() {
+                let inherit = match self.turbomcp.inherit.as_deref() {
                     None | Some("safe") => Inherit::Safe,
                     Some("all") => Inherit::All,
                     Some("none") => Inherit::Nothing,
@@ -258,7 +272,7 @@ impl Entry {
                 Ok(upstream)
             }
             (None, Some(url)) => {
-                if !self.env.is_empty() || self.inherit.is_some() {
+                if !self.env.is_empty() || self.turbomcp.inherit.is_some() {
                     bail!("has `env` or `inherit`, which only a command server takes");
                 }
                 let url = interpolate(&url)?;
@@ -417,12 +431,16 @@ mod tests {
             r#"{"mcpServers": {
                 "a": {
                     "url": "https://example.com/mcp",
-                    "timeout": 120, "key": "session", "forwardSampling": true,
-                    "tags": ["internal"], "auth": {"bearer": "t"}
+                    "timeout": 5000,
+                    "turbomcp": {
+                        "timeout": 120, "key": "session", "forwardSampling": true,
+                        "tags": ["internal"], "auth": {"bearer": "t"}
+                    }
                 },
-                "b": {"command": "x", "inherit": "none"},
-                "c": {"command": "x", "auth": {"bearer": "t"}},
-                "d": {"url": "https://example.com/mcp", "key": "everyone"}
+                "b": {"command": "x", "turbomcp": {"inherit": "none"}},
+                "c": {"command": "x", "turbomcp": {"auth": {"bearer": "t"}}},
+                "d": {"url": "https://example.com/mcp", "turbomcp": {"key": "everyone"}},
+                "e": {"url": "https://example.com/mcp", "turbomcp": {"timout": 120}}
             }}"#,
             &[],
         )
@@ -441,7 +459,10 @@ mod tests {
             }
         ));
         let skipped: Vec<&str> = loaded.skipped.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(skipped, ["c", "d"]);
+        // `e` misspells a key in the gateway's own namespace. The top-level
+        // `timeout` on `a` is another host's (Gemini CLI's, in milliseconds)
+        // and is not read.
+        assert_eq!(skipped, ["c", "d", "e"]);
     }
 
     #[test]

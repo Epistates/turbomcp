@@ -59,7 +59,7 @@ servers whose entry allows them.
   Code. An unset variable with no fallback is an error, not an empty string.
 - A command server inherits only what a program needs of the gateway's
   environment (`HOME`, `PATH`, `USER`, …, the official SDKs' list); give it
-  more under `env`, or set `"inherit": "all"`.
+  more under `env`, or set `"turbomcp": {"inherit": "all"}`.
 - Each entry is read on its own: one the gateway can't use (`type: "sse"`,
   the 2024-11-05 transport the current revisions replaced with Streamable
   HTTP; a typo) is skipped with its reason, and `--only a,b` never reads the
@@ -82,25 +82,32 @@ servers whose entry allows them.
   `--drain` seconds, and every command server gets the stdio shutdown
   sequence.
 
-An entry can also say how the gateway treats its server:
+An entry can also say how the gateway treats its server, in a `turbomcp`
+object of its own, so these keys don't collide with ones other hosts give
+the same names (Gemini CLI's `timeout` is in milliseconds):
 
 ```json
 {
   "url": "https://mcp.example.com/mcp",
-  "timeout": 120,
-  "key": "principal",
-  "forwardSampling": true,
-  "forwardRoots": false,
-  "tags": ["internal"],
-  "auth": {
-    "clientCredentials": {
-      "issuer": "https://auth.example.com",
-      "clientId": "gateway",
-      "clientSecret": "${GATEWAY_SECRET}"
+  "turbomcp": {
+    "timeout": 120,
+    "key": "principal",
+    "forwardSampling": true,
+    "forwardRoots": false,
+    "tags": ["internal"],
+    "auth": {
+      "clientCredentials": {
+        "issuer": "https://auth.example.com",
+        "clientId": "gateway",
+        "clientSecret": "${GATEWAY_SECRET}"
+      }
     }
   }
 }
 ```
+
+An unknown key inside `turbomcp` skips the entry with its reason, since it
+is a typo rather than another host's setting.
 
 `timeout` is how long the server may go silent on a call (progress restarts
 the clock). `key` is `global` (one connection for every caller),
@@ -145,7 +152,8 @@ characters escaped.
 
 The exit status tells failures apart: `1` a tool that reported an error,
 `2` a usage or configuration error, `3` a server that couldn't be reached
-or started, `4` a server that answered with an error.
+or started, `4` a server that answered with an error, and `70` anything
+else.
 
 Logs go to stderr (`RUST_LOG` sets the level, default `warn`): under
 `proxy` over stdio, stdout is the protocol.

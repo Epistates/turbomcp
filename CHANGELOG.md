@@ -141,6 +141,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `&CancelledContext` first. Request ids are only unique within a
   session, so without it an HTTP server couldn't tell whose call ended.
 
+- **Breaking:** the `turbomcp` command's gateway settings in an
+  mcpServers file (`inherit`, `timeout`, `key`, `forwardSampling`,
+  `forwardRoots`, `tags`, `auth`) move into a `"turbomcp": {…}` object on
+  the entry. At the top level they collided with other hosts' keys of the
+  same name: Gemini CLI's `timeout` is in milliseconds, and this one is in
+  seconds. Top-level copies are now ignored, and an unknown key inside
+  `turbomcp` skips the entry as a typo.
+- **Breaking:** the command's flags: `--mode` takes `stateless` / `stateful`
+  where it took `modern` / `legacy`, and `call --args` is `--args-json`,
+  one letter from `--arg` no longer. An unclassified failure exits `70`,
+  apart from a tool's own error, which stays `1`.
+
 ### Removed
 
 - **Breaking:** `turbomcp_transport_http::serve_http` and `HttpError`.

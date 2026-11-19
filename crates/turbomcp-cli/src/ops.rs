@@ -183,9 +183,9 @@ pub async fn prompts(target: &Target, json: bool) -> Result<()> {
 /// number, `true`, an object) is that, anything else is a string.
 pub fn arguments(json_args: Option<&str>, pairs: &[String]) -> Result<Map<String, Value>> {
     let mut args = match json_args {
-        Some(text) => match serde_json::from_str(text).context("--args is not JSON")? {
+        Some(text) => match serde_json::from_str(text).context("--args-json is not JSON")? {
             Value::Object(map) => map,
-            _ => bail!("--args must be a JSON object"),
+            _ => bail!("--args-json must be a JSON object"),
         },
         None => Map::new(),
     };
