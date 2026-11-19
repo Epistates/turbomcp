@@ -28,7 +28,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! turbomcp-transport-streamable = { version = "3.6.0", default-features = false, features = ["alloc"] }
+//! turbomcp-transport-streamable = { version = "3.7.0", default-features = false, features = ["alloc"] }
 //! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]

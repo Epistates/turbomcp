@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-11-19
+
+Every dependency moves to its latest release that builds on Rust 1.89, the
+minimum supported version. Two changes reach users. `tokio` 1.54 is now the
+minimum, so a lockfile can no longer resolve a release affected by
+RUSTSEC-2026-0386. And `jsonwebtoken` 12 is a breaking change for anyone who
+also depends on `jsonwebtoken`, because its types appear in public signatures.
+
+### Changed
+
+- **`jsonwebtoken` 11 → 12 in public signatures.**
+  `JwtValidationResult::algorithm` and `JwtValidator::with_algorithms`
+  (`turbomcp-auth`), the `helpers` module of `turbomcp-dpop`
+  (`algorithm_to_jwt`, `jwt_to_algorithm`, `private_key_to_encoding_key`,
+  `public_key_to_jwk`, `jwk_to_decoding_key`), and
+  `ProxyAuthConfig::with_algorithm` (`turbomcp-proxy`) take or return
+  `jsonwebtoken` types. *Breaking if your crate also depends on
+  `jsonwebtoken`*: bump it to `12`, otherwise the two `Algorithm`s are
+  different types and won't unify. `cargo semver-checks` doesn't flag a
+  public dependency's major version, so it passes this release.
+- **Token validation is stricter**, from `jsonwebtoken` 12. A token whose
+  `crit` header names an extension it doesn't understand is refused, the
+  remaining type confusion in `sub`, `iss` and `aud` is closed, and an empty
+  HMAC key is refused.
+- **`turbomcp-proxy serve` refuses an empty `--jwt-secret` at startup.** With
+  `jsonwebtoken` 11 an empty key verified tokens that anyone could mint; with
+  12 the proxy would have started and then rejected every token.
+  `JwtSigner` with an empty secret now fails to sign, with an error.
+
+### Security
+
+- **`tokio` 1.54 or later is required** (was 1.53). RUSTSEC-2026-0386:
+  `AsyncFd::new` and related constructors violate I/O safety, fixed in
+  1.53.3. The old floor let a downstream lockfile resolve 1.53.0 to 1.53.2,
+  and this repository's own lockfile held 1.53.1.
+- **The lockfile moves past five more advisories:** `rustls` 0.23.46
+  (RUSTSEC-2026-0346, -0347 and -0348), `crypto-bigint` 0.7.11
+  (RUSTSEC-2026-0387), `ctutils` 0.4.8 (RUSTSEC-2026-0385), and
+  `pulldown-cmark` 0.13.6 (RUSTSEC-2026-0414 and -0433, build time only,
+  through `prost-build`). They're transitive, so the lockfile fixes this
+  repository's builds and the `--locked` installs of `turbomcp-cli` and
+  `turbomcp-proxy`. A downstream build picks them up with `cargo update`.
+- **Two advisories remain, recorded in `deny.toml`.** `crypto-bigint` 0.5.5
+  (RUSTSEC-2026-0387) still arrives through `yubihsm` 0.42, behind
+  `turbomcp-dpop`'s `hsm-yubico` feature, and `yubihsm` hasn't released since
+  2023-08. `chrono` is flagged unmaintained (RUSTSEC-2026-0543), and its
+  `DateTime` is in public 3.x types, so replacing it would break them.
+
+### Dependencies
+
+- Compatible updates, with each manifest's floor raised to the version the
+  lockfile tests: `tokio` 1.54, `tokio-util` 0.7.20, `serde_json` 1.0.154,
+  `sonic-rs` 0.5.12, `schemars` 1.2.3, `thiserror` 2.0.21, `clap` 4.6.8,
+  `uuid` 1.29, `bytes` 1.12.2, `serde_with` 3.24, `redis` 1.8.2, `asn1`
+  0.24.2, `memmap2` 0.9.12, `brotli` 9.1.3, `wasm-bindgen` 0.2.130, and
+  `js-sys` and `web-sys` 0.3.107.
+- `nix` 0.31 → 0.32, for `turbomcp-transport`'s child-process shutdown. It
+  isn't in any public signature.
+- `turbomcp-transport`'s `metrics` and `test-utils` features no longer pull
+  in the `metrics` and `wiremock` crates, which no library code used. Both
+  features stay; `test-utils` still gates the `wiremock`-backed HTTP client
+  tests, which now take it as a dev-dependency.
+- Held back by the Rust 1.89 minimum: `parking_lot` 0.13 needs Rust 1.95
+  (and `governor`, `moka` and `crossterm` still use 0.12), and `worker`
+  stays on 0.8.6 because 0.8.7 and 0.9 need Rust 1.91. The lockfile also
+  keeps `scheduled-thread-pool` (through `r2d2`, for `turbomcp-dpop`'s
+  `hsm-pkcs11` feature) at 0.2.7, since 0.2.8 needs `parking_lot` 0.13.
+
+### Internal
+
+- CI actions are on their latest majors and pinned to commits:
+  `actions/checkout` 7.0.1, `actions/cache` 6.1.0, `actions/upload-artifact`
+  7.0.2, `codecov/codecov-action` 7.1.1, `taiki-e/install-action` 2.90.3, and
+  `dtolnay/rust-toolchain`.
+- Tests use `serial_test` 4 and `proptest` 1.12. `serial_test` 4 needs Rust
+  1.93, so running the test suite does too; building the crates still needs
+  only 1.89. The fuzz crate's lockfile is refreshed.
+- `[workspace.dependencies]` drops eight entries no crate used (`turbomcp`,
+  `turbomcp-cli`, `turbomcp-grpc`, `turbomcp-macros`, `turbomcp-openapi`,
+  `turbomcp-proxy`, `turbomcp-telemetry` and `turbomcp-wasm`), which Rust
+  1.100's cargo now warns about.
+- `deny.toml` allows `tiny-keccak`'s CC0-1.0 license. It arrives through
+  `config`, in `turbomcp-cli`.
+- The workspace uses `resolver = "3"`, which prefers dependency versions
+  that build on the workspace's Rust 1.89, so `cargo update` no longer pulls
+  in releases the MSRV job rejects. It doesn't change feature resolution, and
+  it applies only to this repository's lockfile.
+
 ## [3.6.0] - 2026-09-30
 
 `Client::connect_tcp` failed against every server in 3.5.0: the TCP client

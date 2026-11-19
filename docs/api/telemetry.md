@@ -16,7 +16,7 @@ Telemetry features include:
 
 ```toml
 [dependencies]
-turbomcp-telemetry = { version = "3.6.0", features = ["full"] }
+turbomcp-telemetry = { version = "3.7.0", features = ["full"] }
 ```
 
 Through the `turbomcp` crate, the `telemetry` feature enables this crate with

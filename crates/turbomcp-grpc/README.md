@@ -30,7 +30,7 @@ Buffers compiler on `PATH` (or named by the `PROTOC` environment variable):
 
 ```toml
 [dependencies]
-turbomcp-grpc = "3.6.0"
+turbomcp-grpc = "3.7.0"
 ```
 
 ## Quick Start
