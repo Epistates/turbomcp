@@ -73,8 +73,15 @@ struct Accept;
 
 #[async_trait]
 impl ElicitationHandler for Accept {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp_client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            Map::new(),
+        ))
     }
 }
 
@@ -86,6 +93,7 @@ struct CountingSampler(Arc<AtomicUsize>);
 impl SamplingHandler for CountingSampler {
     async fn create_message(
         &self,
+        _ctx: &turbomcp_client::HandlerContext,
         _request: neutral::CreateMessageParams,
     ) -> turbomcp_client::ClientResult<neutral::CreateMessageResult> {
         self.0.fetch_add(1, SeqCst);

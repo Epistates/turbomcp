@@ -61,8 +61,15 @@ struct Agree;
 
 #[async_trait]
 impl ElicitationHandler for Agree {
-    async fn elicit(&self, _req: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        _req: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            Map::new(),
+        ))
     }
 }
 

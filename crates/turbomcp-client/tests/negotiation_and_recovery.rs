@@ -70,8 +70,15 @@ struct AcceptAll;
 
 #[async_trait]
 impl ElicitationHandler for AcceptAll {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp_client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            Map::new(),
+        ))
     }
 }
 
@@ -482,14 +489,22 @@ async fn packaged_sampling_and_roots_reach_the_handler_and_return() {
     struct Sampler;
     #[async_trait]
     impl ElicitationHandler for Sampler {
-        async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-            neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+        async fn elicit(
+            &self,
+            _ctx: &turbomcp_client::HandlerContext,
+            _request: neutral::ElicitParams,
+        ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
+            Ok(neutral::ElicitOutcome::new(
+                neutral::ElicitAction::Accept,
+                Map::new(),
+            ))
         }
     }
     #[async_trait]
     impl SamplingHandler for Sampler {
         async fn create_message(
             &self,
+            _ctx: &turbomcp_client::HandlerContext,
             _params: neutral::CreateMessageParams,
         ) -> Result<neutral::CreateMessageResult, ClientError> {
             Ok(neutral::CreateMessageResult::text("test-model", "sampled"))
@@ -497,7 +512,10 @@ async fn packaged_sampling_and_roots_reach_the_handler_and_return() {
     }
     #[async_trait]
     impl RootsHandler for Sampler {
-        async fn list_roots(&self) -> Result<neutral::ListRootsResult, ClientError> {
+        async fn list_roots(
+            &self,
+            _ctx: &turbomcp_client::HandlerContext,
+        ) -> Result<neutral::ListRootsResult, ClientError> {
             Ok(neutral::ListRootsResult::default())
         }
     }
@@ -643,14 +661,28 @@ struct CompletionSpy {
 
 #[async_trait]
 impl ElicitationHandler for CompletionSpy {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp_client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Decline,
+            Map::new(),
+        ))
     }
     fn supports_url_mode(&self) -> bool {
         true
     }
-    async fn elicit_url(&self, _request: neutral::ElicitUrlParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+    async fn elicit_url(
+        &self,
+        _ctx: &turbomcp_client::HandlerContext,
+        _request: neutral::ElicitUrlParams,
+    ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            Map::new(),
+        ))
     }
     async fn on_elicitation_complete(&self, elicitation_id: String) {
         self.ids.lock().unwrap().push(elicitation_id);
@@ -766,7 +798,10 @@ async fn a_roots_client_declares_and_emits_list_changed() {
     struct Watched;
     #[async_trait]
     impl RootsHandler for Watched {
-        async fn list_roots(&self) -> Result<neutral::ListRootsResult, ClientError> {
+        async fn list_roots(
+            &self,
+            _ctx: &turbomcp_client::HandlerContext,
+        ) -> Result<neutral::ListRootsResult, ClientError> {
             Ok(vec![
                 neutral::Root::new("file:///work")
                     .expect("a file URI")
@@ -923,11 +958,18 @@ struct Hangs {
 
 #[async_trait]
 impl ElicitationHandler for Hangs {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp_client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
         self.started.fetch_add(1, SeqCst);
         tokio::time::sleep(Duration::from_secs(30)).await;
         self.finished.fetch_add(1, SeqCst);
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Decline,
+            Map::new(),
+        ))
     }
 }
 
@@ -993,10 +1035,17 @@ struct Answerer(&'static str);
 
 #[async_trait]
 impl ElicitationHandler for Answerer {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp_client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
         let mut content = Map::new();
         content.insert("who".into(), json!(self.0));
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            content,
+        ))
     }
 }
 

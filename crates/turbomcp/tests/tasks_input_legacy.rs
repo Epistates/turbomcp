@@ -52,12 +52,19 @@ struct Confirm(Arc<AtomicUsize>);
 
 #[async_trait]
 impl ElicitationHandler for Confirm {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
         assert_eq!(request.message, "Sign lease.pdf?");
         self.0.fetch_add(1, Ordering::SeqCst);
         let mut content = Map::new();
         content.insert("ok".into(), Value::Bool(true));
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            content,
+        ))
     }
 }
 

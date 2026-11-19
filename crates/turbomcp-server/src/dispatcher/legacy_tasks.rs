@@ -23,9 +23,7 @@ use crate::mrtr::ClientHandle;
 use crate::router::MethodRouter;
 use crate::subscriptions::Route;
 use crate::task_handle::{TaskHandle, TaskLink, TaskSlot};
-use crate::tasks::{
-    NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus,
-};
+use crate::tasks::{NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot};
 use crate::traits::McpServerCore;
 
 use super::task_input::TaskInputRelay;
@@ -326,7 +324,7 @@ pub(super) async fn handle_tasks_method(
                         last_updated_at: s.last_updated_at.clone(),
                         meta: Map::new(),
                         poll_interval: s.poll_interval_ms,
-                        status: to_wire_status(s.status),
+                        status: legacy::TaskStatus::from(s.status),
                         status_message: s.status_message.clone(),
                         task_id: s.task_id.clone(),
                         ttl: s.ttl_ms,
@@ -346,7 +344,7 @@ pub(super) async fn handle_tasks_method(
                         last_updated_at: s.last_updated_at.clone(),
                         meta: Map::new(),
                         poll_interval: s.poll_interval_ms,
-                        status: to_wire_status(s.status),
+                        status: legacy::TaskStatus::from(s.status),
                         status_message: s.status_message.clone(),
                         task_id: s.task_id.clone(),
                         ttl: s.ttl_ms,
@@ -425,16 +423,6 @@ pub(super) fn with_related_task(mut value: Value, task_id: &str) -> Value {
     value
 }
 
-fn to_wire_status(s: TaskStatus) -> legacy::TaskStatus {
-    match s {
-        TaskStatus::Working => legacy::TaskStatus::Working,
-        TaskStatus::InputRequired => legacy::TaskStatus::InputRequired,
-        TaskStatus::Completed => legacy::TaskStatus::Completed,
-        TaskStatus::Failed => legacy::TaskStatus::Failed,
-        TaskStatus::Cancelled => legacy::TaskStatus::Cancelled,
-    }
-}
-
 /// Sends `notifications/tasks/status` for one task to its requestor
 /// ("receivers MAY send" it whenever the status changes; the requestor
 /// "MUST NOT rely on" it, so it is offered, never awaited). It carries no
@@ -472,7 +460,7 @@ fn to_wire_task(s: &TaskSnapshot) -> legacy::Task {
         created_at: s.created_at.clone(),
         last_updated_at: s.last_updated_at.clone(),
         poll_interval: s.poll_interval_ms,
-        status: to_wire_status(s.status),
+        status: legacy::TaskStatus::from(s.status),
         status_message: s.status_message.clone(),
         task_id: s.task_id.clone(),
         ttl: s.ttl_ms,

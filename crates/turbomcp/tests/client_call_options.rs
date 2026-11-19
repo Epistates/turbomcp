@@ -86,9 +86,16 @@ struct SlowUser;
 
 #[async_trait]
 impl ElicitationHandler for SlowUser {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
         tokio::time::sleep(Duration::from_millis(400)).await;
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, args(json!({ "ok": true })))
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            args(json!({ "ok": true })),
+        ))
     }
 }
 

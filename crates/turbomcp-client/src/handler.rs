@@ -41,8 +41,7 @@ use turbomcp_protocol::neutral;
 use crate::error::{ClientError, ClientResult};
 
 /// What a handler knows about the server request it is answering, beyond the
-/// request's own params: passed to the `*_with` handler methods, whose
-/// defaults ignore it and call the plain ones.
+/// request's own params: passed to every handler method.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct HandlerContext {
@@ -98,24 +97,17 @@ impl HandlerContext {
 pub trait ElicitationHandler: Send + Sync + 'static {
     /// Present `request.message` + `request.requested_schema` to the user and
     /// return their [`ElicitOutcome`](neutral::ElicitOutcome). Declining is
-    /// always valid.
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome;
-
-    /// [`elicit`](Self::elicit), with what is known about the request. The
-    /// one the client calls; the default calls `elicit`.
+    /// always valid. `ctx` is what is known about the request.
     ///
     /// An `Err` answers the server with that JSON-RPC error rather than a
     /// user's decision: for a client that can't put the question to anyone
     /// right now (a gateway whose caller can't elicit), which is not the
     /// same as the user cancelling.
-    async fn elicit_with(
+    async fn elicit(
         &self,
         ctx: &HandlerContext,
         request: neutral::ElicitParams,
-    ) -> ClientResult<neutral::ElicitOutcome> {
-        let _ = ctx;
-        Ok(self.elicit(request).await)
-    }
+    ) -> ClientResult<neutral::ElicitOutcome>;
 
     /// Whether this client can also send the user out of band to a URL
     /// (`mode: "url"`), which declares `elicitation.url`.
@@ -131,20 +123,16 @@ pub trait ElicitationHandler: Send + Sync + 'static {
     /// Present a URL-mode elicitation. Only called when
     /// [`supports_url_mode`](Self::supports_url_mode) is `true`; the default
     /// declines, which is the honest answer for a client that cannot navigate.
-    async fn elicit_url(&self, request: neutral::ElicitUrlParams) -> neutral::ElicitOutcome {
-        let _ = request;
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
-    }
-
-    /// [`elicit_url`](Self::elicit_url), with what is known about the
-    /// request. The default calls `elicit_url`.
-    async fn elicit_url_with(
+    async fn elicit_url(
         &self,
         ctx: &HandlerContext,
         request: neutral::ElicitUrlParams,
     ) -> ClientResult<neutral::ElicitOutcome> {
-        let _ = ctx;
-        Ok(self.elicit_url(request).await)
+        let _ = (ctx, request);
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Decline,
+            Map::new(),
+        ))
     }
 
     /// An out-of-band interaction started by a URL-mode `elicitation/create`
@@ -164,24 +152,15 @@ pub trait ElicitationHandler: Send + Sync + 'static {
 #[async_trait]
 pub trait SamplingHandler: Send + Sync + 'static {
     /// Run an LLM turn over `params.messages` and return the model's reply.
+    /// `ctx` is what is known about the request.
     ///
     /// Returning [`ClientError::Rpc`] lets the handler pick the JSON-RPC code
     /// the server sees; anything else becomes `-32603`.
     async fn create_message(
         &self,
-        params: neutral::CreateMessageParams,
-    ) -> ClientResult<neutral::CreateMessageResult>;
-
-    /// [`create_message`](Self::create_message), with what is known about
-    /// the request. The default calls `create_message`.
-    async fn create_message_with(
-        &self,
         ctx: &HandlerContext,
         params: neutral::CreateMessageParams,
-    ) -> ClientResult<neutral::CreateMessageResult> {
-        let _ = ctx;
-        self.create_message(params).await
-    }
+    ) -> ClientResult<neutral::CreateMessageResult>;
 
     /// Which sampling features this client honours, declared as
     /// `sampling.context` / `sampling.tools`.
@@ -204,17 +183,8 @@ pub trait RootsHandler: Send + Sync + 'static {
     /// is the one shape rule the roots spec states — a root is a permission
     /// statement, and a server acting on `https://…` would be acting on a
     /// boundary this client never drew. A `Vec<Root>` converts with `.into()`.
-    async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult>;
-
-    /// [`list_roots`](Self::list_roots), with what is known about the
-    /// request. The default calls `list_roots`.
-    async fn list_roots_with(
-        &self,
-        ctx: &HandlerContext,
-    ) -> ClientResult<neutral::ListRootsResult> {
-        let _ = ctx;
-        self.list_roots().await
-    }
+    /// `ctx` is what is known about the request.
+    async fn list_roots(&self, ctx: &HandlerContext) -> ClientResult<neutral::ListRootsResult>;
 
     /// Whether this client emits `notifications/roots/list_changed` when its
     /// roots change, declared as `roots.listChanged`.
@@ -530,10 +500,7 @@ pub(crate) async fn dispatch_server_request(
                 None | Some(Some("form")) => {
                     let request = parse_elicit_params(params)?;
                     let schema = request.requested_schema.clone();
-                    let outcome = handler
-                        .elicit_with(ctx, request)
-                        .await
-                        .map_err(handler_error)?;
+                    let outcome = handler.elicit(ctx, request).await.map_err(handler_error)?;
                     check_form_answer(&schema, &outcome)?;
                     Ok(outcome.to_wire(version))
                 }
@@ -544,7 +511,7 @@ pub(crate) async fn dispatch_server_request(
                         ));
                     }
                     let outcome = handler
-                        .elicit_url_with(ctx, parse_elicit_url_params(params)?)
+                        .elicit_url(ctx, parse_elicit_url_params(params)?)
                         .await
                         .map_err(handler_error)?;
                     // A URL-mode answer carries no content: the form, if any,
@@ -588,7 +555,7 @@ pub(crate) async fn dispatch_server_request(
                 .validate()
                 .map_err(|e| invalid_params(&e.to_string()))?;
             let result = handler
-                .create_message_with(ctx, params)
+                .create_message(ctx, params)
                 .await
                 .map_err(handler_error)?;
             result
@@ -599,7 +566,7 @@ pub(crate) async fn dispatch_server_request(
             .roots
             .as_ref()
             .ok_or_else(|| not_supported(method))?
-            .list_roots_with(ctx)
+            .list_roots(ctx)
             .await
             .map(|roots| roots.to_wire(version))
             .map_err(handler_error),
@@ -742,16 +709,30 @@ mod tests {
     struct FormOnly;
     #[async_trait]
     impl ElicitationHandler for FormOnly {
-        async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
-            neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+        async fn elicit(
+            &self,
+            _ctx: &HandlerContext,
+            _r: neutral::ElicitParams,
+        ) -> ClientResult<neutral::ElicitOutcome> {
+            Ok(neutral::ElicitOutcome::new(
+                neutral::ElicitAction::Decline,
+                Map::new(),
+            ))
         }
     }
 
     struct Agentic;
     #[async_trait]
     impl ElicitationHandler for Agentic {
-        async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
-            neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+        async fn elicit(
+            &self,
+            _ctx: &HandlerContext,
+            _r: neutral::ElicitParams,
+        ) -> ClientResult<neutral::ElicitOutcome> {
+            Ok(neutral::ElicitOutcome::new(
+                neutral::ElicitAction::Decline,
+                Map::new(),
+            ))
         }
         fn supports_url_mode(&self) -> bool {
             true
@@ -761,6 +742,7 @@ mod tests {
     impl SamplingHandler for Agentic {
         async fn create_message(
             &self,
+            _ctx: &HandlerContext,
             _p: neutral::CreateMessageParams,
         ) -> ClientResult<neutral::CreateMessageResult> {
             Ok(neutral::CreateMessageResult::text("test-model", "ok"))
@@ -771,7 +753,10 @@ mod tests {
     }
     #[async_trait]
     impl RootsHandler for Agentic {
-        async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
+        async fn list_roots(
+            &self,
+            _ctx: &HandlerContext,
+        ) -> ClientResult<neutral::ListRootsResult> {
             Ok(neutral::ListRootsResult::default())
         }
         fn list_changed(&self) -> bool {
@@ -848,8 +833,15 @@ mod must_tests {
     struct FormClient;
     #[async_trait]
     impl ElicitationHandler for FormClient {
-        async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
-            neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+        async fn elicit(
+            &self,
+            _ctx: &HandlerContext,
+            _r: neutral::ElicitParams,
+        ) -> ClientResult<neutral::ElicitOutcome> {
+            Ok(neutral::ElicitOutcome::new(
+                neutral::ElicitAction::Accept,
+                Map::new(),
+            ))
         }
     }
 
@@ -858,6 +850,7 @@ mod must_tests {
     impl SamplingHandler for PlainSampler {
         async fn create_message(
             &self,
+            _ctx: &HandlerContext,
             _p: neutral::CreateMessageParams,
         ) -> ClientResult<neutral::CreateMessageResult> {
             Ok(neutral::CreateMessageResult::text("m", "hello"))
@@ -869,6 +862,7 @@ mod must_tests {
     impl SamplingHandler for PickySampler {
         async fn create_message(
             &self,
+            _ctx: &HandlerContext,
             _p: neutral::CreateMessageParams,
         ) -> ClientResult<neutral::CreateMessageResult> {
             Err(ClientError::Rpc(JsonRpcError {
@@ -1013,8 +1007,15 @@ mod must_tests {
         struct UrlClient;
         #[async_trait]
         impl ElicitationHandler for UrlClient {
-            async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
-                neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+            async fn elicit(
+                &self,
+                _ctx: &HandlerContext,
+                _r: neutral::ElicitParams,
+            ) -> ClientResult<neutral::ElicitOutcome> {
+                Ok(neutral::ElicitOutcome::new(
+                    neutral::ElicitAction::Decline,
+                    Map::new(),
+                ))
             }
             fn supports_url_mode(&self) -> bool {
                 true
@@ -1083,7 +1084,10 @@ mod must_tests {
         struct Mixed;
         #[async_trait]
         impl RootsHandler for Mixed {
-            async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
+            async fn list_roots(
+                &self,
+                _ctx: &HandlerContext,
+            ) -> ClientResult<neutral::ListRootsResult> {
                 Ok(vec![
                     neutral::Root::new("file:///workspace").expect("a file URI"),
                     neutral::Root::new("file:///tmp/scratch")
@@ -1141,14 +1145,28 @@ mod must_tests {
         struct Navigator;
         #[async_trait]
         impl ElicitationHandler for Navigator {
-            async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
-                neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+            async fn elicit(
+                &self,
+                _ctx: &HandlerContext,
+                _r: neutral::ElicitParams,
+            ) -> ClientResult<neutral::ElicitOutcome> {
+                Ok(neutral::ElicitOutcome::new(
+                    neutral::ElicitAction::Decline,
+                    Map::new(),
+                ))
             }
             fn supports_url_mode(&self) -> bool {
                 true
             }
-            async fn elicit_url(&self, _r: neutral::ElicitUrlParams) -> neutral::ElicitOutcome {
-                neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, Map::new())
+            async fn elicit_url(
+                &self,
+                _ctx: &HandlerContext,
+                _r: neutral::ElicitUrlParams,
+            ) -> ClientResult<neutral::ElicitOutcome> {
+                Ok(neutral::ElicitOutcome::new(
+                    neutral::ElicitAction::Accept,
+                    Map::new(),
+                ))
             }
         }
         let handlers = ClientHandlers {
@@ -1193,10 +1211,17 @@ mod must_tests {
         struct Sloppy;
         #[async_trait]
         impl ElicitationHandler for Sloppy {
-            async fn elicit(&self, _r: neutral::ElicitParams) -> neutral::ElicitOutcome {
+            async fn elicit(
+                &self,
+                _ctx: &HandlerContext,
+                _r: neutral::ElicitParams,
+            ) -> ClientResult<neutral::ElicitOutcome> {
                 let mut content = Map::new();
                 content.insert("age".into(), json!("old"));
-                neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
+                Ok(neutral::ElicitOutcome::new(
+                    neutral::ElicitAction::Accept,
+                    content,
+                ))
             }
         }
         let handlers = ClientHandlers {

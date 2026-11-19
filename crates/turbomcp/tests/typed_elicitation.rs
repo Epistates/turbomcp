@@ -61,13 +61,17 @@ struct Guest(Arc<Mutex<Option<Value>>>);
 
 #[async_trait]
 impl ElicitationHandler for Guest {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
         *self.0.lock().unwrap() = Some(request.requested_schema.clone());
         let content = json!({ "date": "2026-11-02", "nights": 3, "room": "double" });
-        neutral::ElicitOutcome::new(
+        Ok(neutral::ElicitOutcome::new(
             neutral::ElicitAction::Accept,
             content.as_object().unwrap().clone(),
-        )
+        ))
     }
 }
 

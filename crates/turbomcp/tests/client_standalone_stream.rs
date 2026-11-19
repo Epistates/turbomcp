@@ -36,11 +36,18 @@ struct Confirming;
 
 #[async_trait]
 impl ElicitationHandler for Confirming {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
         assert_eq!(request.message, "confirm?");
         let mut content = Map::new();
         content.insert("ok".into(), Value::Bool(true));
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            content,
+        ))
     }
 }
 

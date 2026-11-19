@@ -254,46 +254,8 @@ impl Repository {
     }
 }
 
-/// An icon.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct Icon {
-    /// HTTP(S) URL or `data:` URI.
-    pub src: String,
-    /// MIME type, when the source's is missing or generic.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    /// `WxH` sizes, or `"any"`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sizes: Vec<String>,
-    /// The background it is drawn for.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub theme: Option<Theme>,
-}
-
-impl Icon {
-    /// An icon at `src`.
-    pub fn new(src: impl Into<String>) -> Self {
-        Self {
-            src: src.into(),
-            mime_type: None,
-            sizes: Vec::new(),
-            theme: None,
-        }
-    }
-}
-
-/// The background an icon is designed for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-#[non_exhaustive]
-pub enum Theme {
-    /// A light background.
-    Light,
-    /// A dark background.
-    Dark,
-}
+/// The icon type every MCP surface shares; a card's icons are the same shape.
+pub use turbomcp_core::{Icon, IconTheme};
 
 /// An HTTP endpoint to connect to.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -17,41 +17,7 @@ use turbomcp_protocol::neutral;
 
 use crate::{Client, ClientError, ClientResult};
 
-/// A task's lifecycle status. Terminal statuses (`Completed`, `Failed`,
-/// `Cancelled`) never change again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum TaskStatus {
-    /// The request is being processed.
-    Working,
-    /// The server needs input from the client before it can go on.
-    InputRequired,
-    /// The request finished.
-    Completed,
-    /// The request failed.
-    Failed,
-    /// The task was cancelled before it finished.
-    Cancelled,
-}
-
-impl TaskStatus {
-    /// Whether this status never changes again.
-    #[must_use]
-    pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
-    }
-
-    fn parse(status: &str) -> Option<Self> {
-        Some(match status {
-            "working" => Self::Working,
-            "input_required" => Self::InputRequired,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            "cancelled" => Self::Cancelled,
-            _ => return None,
-        })
-    }
-}
+pub use turbomcp_protocol::neutral::TaskStatus;
 
 /// One task as the server last described it, on either revision.
 #[derive(Clone, Debug, PartialEq)]
@@ -101,7 +67,7 @@ impl TaskInfo {
         let status = required("status")?;
         Ok(Self {
             task_id: required("taskId")?,
-            status: TaskStatus::parse(&status)
+            status: TaskStatus::from_wire(&status)
                 .ok_or_else(|| ClientError::Decode(format!("unknown task status `{status}`")))?,
             status_message: text("statusMessage"),
             created_at: required("createdAt")?,

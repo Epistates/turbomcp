@@ -287,7 +287,7 @@ impl HttpConfig {
     /// the listener stops accepting until one closes, so connections that
     /// never send a request can't exhaust file descriptors and memory: the
     /// request limits only see a connection once it has sent one. Applies to
-    /// the listener [`Http`](crate::Http) and `serve_http` run, not to a
+    /// the listener [`Http`](crate::Http) runs, not to a
     /// [`router`](crate::router) you serve yourself.
     #[must_use]
     pub fn max_connections(mut self, limit: usize) -> Self {
@@ -299,7 +299,7 @@ impl HttpConfig {
     /// from when it is ready for one, so it also bounds an idle keep-alive
     /// connection (default 30 s). A peer sending a byte every few seconds is
     /// closed instead of holding a connection open indefinitely. Applies to
-    /// the listener [`Http`](crate::Http) and `serve_http` run.
+    /// the listener [`Http`](crate::Http) runs.
     #[must_use]
     pub fn header_read_timeout(mut self, timeout: Duration) -> Self {
         self.header_read_timeout = timeout;

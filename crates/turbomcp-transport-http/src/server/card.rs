@@ -14,7 +14,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use turbomcp_core::{Implementation, ProtocolVersion};
-use turbomcp_protocol::server_card::{self, Icon, ServerCard, ServerCardError};
+use turbomcp_protocol::server_card::{self, ServerCard, ServerCardError};
 
 const CACHE_CONTROL: &str = "public, max-age=3600";
 
@@ -85,14 +85,10 @@ pub(super) fn derive(
             c.website_url = Some(url.clone())
         });
     }
-    // The card's icon has the same wire shape as the server's.
-    if card.icons.is_empty()
-        && !info.icons.is_empty()
-        && let Some(icons) = serde_json::to_value(&info.icons)
-            .ok()
-            .and_then(|i| serde_json::from_value::<Vec<Icon>>(i).ok())
-    {
-        fill(&mut card, "icons[].src", |c| c.icons = icons);
+    if card.icons.is_empty() && !info.icons.is_empty() {
+        fill(&mut card, "icons[].src", |c| {
+            c.icons.clone_from(&info.icons)
+        });
     }
     card
 }

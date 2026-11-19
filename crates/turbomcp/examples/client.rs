@@ -18,7 +18,10 @@ use std::path::PathBuf;
 
 use serde_json::{Map, json};
 use tokio::process::Command;
-use turbomcp::client::{ClientBuilder, ElicitationHandler, NotificationHandler, connect_child};
+use turbomcp::client::{
+    ClientBuilder, ClientResult, ElicitationHandler, HandlerContext, NotificationHandler,
+    connect_child,
+};
 use turbomcp::neutral;
 
 /// How this client answers server→client requests.
@@ -35,12 +38,19 @@ struct Cli;
 
 #[turbomcp::client::async_trait]
 impl ElicitationHandler for Cli {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> ClientResult<neutral::ElicitOutcome> {
         // A real client would render `request.message` and
         // `request.requested_schema` and collect the user's answer. Declining
         // is always a valid response — servers must handle it.
         eprintln!("server asked: {}", request.message);
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Decline,
+            Map::new(),
+        ))
     }
 }
 

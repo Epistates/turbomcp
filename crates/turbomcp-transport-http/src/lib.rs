@@ -3,7 +3,7 @@
 //! The Streamable HTTP transport, both halves of it:
 //!
 //! - **`server`** (default): a single MCP endpoint served by **axum 0.8**
-//!   ([`router`], [`serve_http`], [`HttpConfig`]).
+//!   ([`Http`], [`HttpConfig`], and [`router`] to mount it in an app).
 //! - **`client`**: [`HttpClientTransport`], a
 //!   [`Transport`](turbomcp_service::Transport) for `turbomcp-client`'s
 //!   `Client`, and [`connect_http`]. **`oauth`** adds the challenge-driven
@@ -120,8 +120,8 @@ pub use server::WebSocketConfig;
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
 pub use server::{
-    EventFuture, EventStore, EventStoreError, Http, HttpConfig, HttpError, InMemoryEventStore,
-    SsePolling, StoredEvent, router, serve_http,
+    EventFuture, EventStore, EventStoreError, Http, HttpConfig, InMemoryEventStore, SsePolling,
+    StoredEvent, router,
 };
 
 #[cfg(feature = "client")]

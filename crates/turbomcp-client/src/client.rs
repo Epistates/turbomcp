@@ -440,7 +440,7 @@ impl ClientBuilder {
         );
         request_meta.insert(
             keys::CLIENT_CAPABILITIES.into(),
-            self.capabilities().to_wire(outcome.version.clone()),
+            self.capabilities().to_wire(&outcome.version),
         );
         if let Some(level) = self.log_level
             && outcome.version.is_stateless()
@@ -577,7 +577,7 @@ impl ClientBuilder {
         );
         meta.insert(
             keys::CLIENT_CAPABILITIES.into(),
-            self.capabilities().to_wire(version.clone()),
+            self.capabilities().to_wire(&version),
         );
         let params = json!({ "_meta": Value::Object(meta) });
 
@@ -612,7 +612,7 @@ impl ClientBuilder {
         let requested = ProtocolVersion::V2025_11_25;
         let params = json!({
             "protocolVersion": requested.as_str(),
-            "capabilities": self.capabilities().to_wire(requested.clone()),
+            "capabilities": self.capabilities().to_wire(&requested),
             "clientInfo": serde_json::to_value(&self.client_info).unwrap_or(Value::Null),
         });
         let result = conn.request(request::INITIALIZE, Some(params)).await?;

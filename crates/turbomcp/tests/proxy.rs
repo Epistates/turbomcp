@@ -490,13 +490,17 @@ struct Caller(&'static str);
 
 #[async_trait]
 impl ElicitationHandler for Caller {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
         let mut outcome = neutral::ElicitOutcome::new(
             neutral::ElicitAction::Accept,
             args(json!({ "who": self.0 })),
         );
         outcome.extra.insert("x-vendor".into(), json!("e"));
-        outcome
+        Ok(outcome)
     }
 }
 
@@ -504,6 +508,7 @@ impl ElicitationHandler for Caller {
 impl SamplingHandler for Caller {
     async fn create_message(
         &self,
+        _ctx: &turbomcp::client::HandlerContext,
         _params: neutral::CreateMessageParams,
     ) -> ClientResult<neutral::CreateMessageResult> {
         let mut result = neutral::CreateMessageResult::text("model", format!("by {}", self.0));
@@ -514,7 +519,10 @@ impl SamplingHandler for Caller {
 
 #[async_trait]
 impl RootsHandler for Caller {
-    async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
+    async fn list_roots(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+    ) -> ClientResult<neutral::ListRootsResult> {
         let mut root = neutral::Root::new(format!("file:///{}", self.0)).unwrap();
         root.extra.insert("x-vendor".into(), json!("o"));
         let mut listed = neutral::ListRootsResult::new(vec![root]);
@@ -825,9 +833,16 @@ struct Asked(Arc<Mutex<Vec<String>>>);
 
 #[async_trait]
 impl ElicitationHandler for Asked {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
         self.0.lock().unwrap().push(request.message);
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, args(json!({ "who": "ada" })))
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            args(json!({ "who": "ada" })),
+        ))
     }
 }
 

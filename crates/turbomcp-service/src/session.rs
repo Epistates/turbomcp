@@ -10,7 +10,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use turbomcp_core::ProtocolVersion;
+use turbomcp_core::{ProtocolVersion, SessionId};
 
 use crate::ProtocolError;
 
@@ -32,11 +32,16 @@ pub trait SessionTerminator: Send + Sync {
     /// Terminate the session `session_id`. Returns whether it existed (the
     /// transport answers `204` vs `404` accordingly). Async because the
     /// session state may live in an external backend.
-    fn terminate<'a>(&'a self, session_id: &'a str, owner: Option<&'a str>) -> TerminateFuture<'a>;
+    fn terminate<'a>(
+        &'a self,
+        session_id: &'a SessionId,
+        owner: Option<&'a str>,
+    ) -> TerminateFuture<'a>;
 
     /// Check session ownership without changing it. Implementations must match
     /// anonymous sessions only to anonymous callers.
-    fn owns<'a>(&'a self, session_id: &'a str, owner: Option<&'a str>) -> TerminateFuture<'a>;
+    fn owns<'a>(&'a self, session_id: &'a SessionId, owner: Option<&'a str>)
+    -> TerminateFuture<'a>;
 
     /// The revision this session negotiated at `initialize`, if it is known.
     ///
@@ -47,7 +52,7 @@ pub trait SessionTerminator: Send + Sync {
     /// handshake is what the two ends agreed on.
     ///
     /// Defaults to `None`, which leaves the header as the only signal.
-    fn negotiated_version<'a>(&'a self, session_id: &'a str) -> SessionVersionFuture<'a> {
+    fn negotiated_version<'a>(&'a self, session_id: &'a SessionId) -> SessionVersionFuture<'a> {
         let _ = session_id;
         Box::pin(async { None })
     }

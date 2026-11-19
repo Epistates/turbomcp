@@ -58,8 +58,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (still re-exported from `neutral`) so that `Implementation` can carry
   them, and `Implementation::with_icon` is new.
 
+- **Breaking:** one `TaskStatus`, `turbomcp_protocol::neutral::TaskStatus`
+  (serde, `is_terminal`, `as_str`, `from_wire`), where `turbomcp-server`,
+  `turbomcp-client` and `turbomcp-ext-tasks` each had their own; each crate
+  re-exports it at the old path.
+- **Breaking:** Server Cards use the shared `Icon` and `IconTheme`;
+  `server_card::Theme` is `IconTheme`.
+- **Breaking:** the session seams take a `&SessionId` where they took a
+  `&str`: `SessionBackend`, `SessionStore`, `TaskBackend::end_session` and
+  `SessionTerminator`. `SessionBackend::set_log_level` is
+  `update(id, change)`, which applies a closure to the stored state, so the
+  next session field doesn't need its own trait method.
+- **Breaking:** each client handler has one method, and it takes the
+  `HandlerContext`: `ElicitationHandler::elicit` / `elicit_url`,
+  `SamplingHandler::create_message` and `RootsHandler::list_roots`. The
+  `*_with` variants are gone, and `elicit` / `elicit_url` return a
+  `ClientResult`, so a handler can answer with an error.
+- **Breaking:** `ClientCapabilities::to_wire` takes `&ProtocolVersion` like
+  every other `to_wire`, and `ElicitOutcome::from_wire`,
+  `ElicitParams::validate` and `validate_for` return an invalid-params
+  `McpError` where they returned a `String`.
+- **Breaking:** `neutral::Cacheable` and `turbomcp::testing::TestServer` are
+  sealed.
+
 ### Removed
 
+- **Breaking:** `turbomcp_transport_http::serve_http` and `HttpError`.
+  `serve(Http::bind(addr).config(config))` does the same and returns the
+  `ProtocolError` every transport returns. The facade root no longer
+  exports `serve_stdio` / `serve_stdio_with`, the raw driver that answers
+  only stateless clients; `serve(stdio())` is the way to serve stdio.
 - **Breaking:** `Identity::Dpop`. Nothing produced it, and the MCP spec
   hasn't defined DPoP; `Identity` is non-exhaustive, so a variant can come
   back when it does.

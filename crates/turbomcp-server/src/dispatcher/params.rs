@@ -17,7 +17,7 @@ use turbomcp_service::ProtocolError;
 
 use crate::session::SessionBackend;
 
-use super::session_id;
+use turbomcp_core::SessionId;
 
 /// Resolve the session for a legacy request and build its [`RequestContext`]
 /// (negotiated version + client info/capabilities from `initialize`, plus this
@@ -35,7 +35,7 @@ pub(super) async fn legacy_context(
     req: &JsonRpcRequest,
     ext: &Extensions,
 ) -> Result<Result<RequestContext, JsonRpcMessage>, ProtocolError> {
-    let Some(sid) = session_id(ext) else {
+    let Some(session) = ext.get::<SessionId>() else {
         let err = JsonRpcError {
             code: turbomcp_core::codes::NO_ACTIVE_SESSION,
             message: "server not initialized: send `initialize` first".to_owned(),
@@ -43,7 +43,8 @@ pub(super) async fn legacy_context(
         };
         return Ok(Err(JsonRpcResponse::error(req.id.clone(), err).into()));
     };
-    let Some(state) = sessions.get(sid).await? else {
+    let sid = session.as_str();
+    let Some(state) = sessions.get(session).await? else {
         return Err(ProtocolError::UnknownSession(sid.to_owned()));
     };
     let identity = ext.get::<Identity>().cloned().unwrap_or_default();

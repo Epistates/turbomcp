@@ -33,8 +33,15 @@ struct Silent;
 
 #[async_trait]
 impl ElicitationHandler for Silent {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, serde_json::Map::new())
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Decline,
+            serde_json::Map::new(),
+        ))
     }
 }
 

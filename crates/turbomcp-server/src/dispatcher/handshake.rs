@@ -23,7 +23,9 @@ use crate::router::MethodRouter;
 use crate::session::SessionState;
 use crate::traits::McpServerCore;
 
-use super::{error_response, session_id};
+use turbomcp_core::SessionId;
+
+use super::error_response;
 
 /// Upper bound on the serialized client capabilities a session keeps.
 /// Real ones are well under a kilobyte; the bound leaves room for extensions.
@@ -105,7 +107,8 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         return Ok(error_response(id, &refused));
     }
 
-    if let Some(sid) = session_id(ext) {
+    if let Some(session) = ext.get::<SessionId>() {
+        let sid = session.as_str();
         let state = SessionState::new(negotiated.clone(), client_info, client_capabilities)
             .with_owner(ext.get::<Identity>().and_then(Identity::principal_key))
             .with_peer_address(
@@ -115,7 +118,7 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         // A store that can't take the session (down, or full) fails the
         // handshake with `503`: answering success would hand the client a
         // session id that every later request finds unknown.
-        shared.sessions.insert(sid, state.clone()).await?;
+        shared.sessions.insert(session, state.clone()).await?;
         shared.session_started(sid, &state);
     }
 

@@ -34,8 +34,12 @@ struct Silent;
 
 #[async_trait]
 impl ElicitationHandler for Silent {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        std::future::pending().await
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
+        Ok(std::future::pending().await)
     }
 }
 

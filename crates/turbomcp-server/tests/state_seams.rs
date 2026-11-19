@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use tower::{Service, ServiceExt};
 use turbomcp_core::{
-    CancellationToken, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcRequest, LogLevel,
-    McpRequest, McpResult, SessionId,
+    CancellationToken, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcRequest, McpRequest,
+    McpResult, SessionId,
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
@@ -46,37 +46,42 @@ impl ByteSessions {
 
 #[async_trait]
 impl SessionBackend for ByteSessions {
-    async fn insert(&self, id: &str, state: SessionState) -> Result<(), SessionError> {
+    async fn insert(&self, id: &SessionId, state: SessionState) -> Result<(), SessionError> {
         self.up()?;
         self.inserts.fetch_add(1, Ordering::SeqCst);
         let bytes = serde_json::to_vec(&state).expect("session state serializes");
-        self.rows.lock().unwrap().insert(id.to_owned(), bytes);
+        self.rows.lock().unwrap().insert(id.to_string(), bytes);
         Ok(())
     }
 
-    async fn get(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
+    async fn get(&self, id: &SessionId) -> Result<Option<Arc<SessionState>>, SessionError> {
         self.up()?;
         self.gets.fetch_add(1, Ordering::SeqCst);
-        Ok(self.rows.lock().unwrap().get(id).map(|bytes| {
+        Ok(self.rows.lock().unwrap().get(id.as_str()).map(|bytes| {
             Arc::new(serde_json::from_slice(bytes).expect("session state deserializes"))
         }))
     }
 
-    async fn set_log_level(&self, id: &str, level: LogLevel) -> Result<bool, SessionError> {
+    async fn update(
+        &self,
+        id: &SessionId,
+        change: &(dyn for<'s> Fn(&'s mut SessionState) + Send + Sync),
+    ) -> Result<bool, SessionError> {
         self.up()?;
         let mut rows = self.rows.lock().unwrap();
-        let Some(bytes) = rows.get_mut(id) else {
+        let Some(bytes) = rows.get_mut(id.as_str()) else {
             return Ok(false);
         };
-        let state: SessionState = serde_json::from_slice(bytes).unwrap();
-        *bytes = serde_json::to_vec(&state.with_log_level(Some(level))).unwrap();
+        let mut state: SessionState = serde_json::from_slice(bytes).unwrap();
+        change(&mut state);
+        *bytes = serde_json::to_vec(&state).unwrap();
         Ok(true)
     }
 
-    async fn remove(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
+    async fn remove(&self, id: &SessionId) -> Result<Option<Arc<SessionState>>, SessionError> {
         self.up()?;
         self.removes.fetch_add(1, Ordering::SeqCst);
-        Ok(self.rows.lock().unwrap().remove(id).map(|bytes| {
+        Ok(self.rows.lock().unwrap().remove(id.as_str()).map(|bytes| {
             Arc::new(serde_json::from_slice(&bytes).expect("session state deserializes"))
         }))
     }
@@ -175,7 +180,7 @@ impl TaskBackend for CountingTasks {
         self.inner.fail_input(owner, task_id, key, error).await
     }
 
-    async fn end_session(&self, session_id: &str) {
+    async fn end_session(&self, session_id: &SessionId) {
         self.inner.end_session(session_id).await;
     }
 }
@@ -324,7 +329,12 @@ async fn session_termination_goes_through_the_custom_backend() {
     // The adapter minted one session; terminate it through the seam the HTTP
     // DELETE handler uses.
     use turbomcp_service::SessionTerminator;
-    assert!(!terminator.terminate("no-such-session", None).await.unwrap());
+    assert!(
+        !terminator
+            .terminate(&"no-such-session".into(), None)
+            .await
+            .unwrap()
+    );
     assert_eq!(
         sessions.removes.load(Ordering::SeqCst),
         0,
@@ -368,14 +378,44 @@ async fn sessions_bind_issuer_and_subject_and_keep_anonymous_separate() {
     }
     let owner = alice.principal_key().unwrap();
     let other = identity("issuer-b").principal_key().unwrap();
-    assert!(terminator.owns("owned", Some(&owner)).await.unwrap());
-    assert!(!terminator.owns("owned", Some(&other)).await.unwrap());
-    assert!(!terminator.owns("owned", None).await.unwrap());
-    assert!(!terminator.owns("anonymous", Some(&owner)).await.unwrap());
-    assert!(terminator.owns("anonymous", None).await.unwrap());
-    assert!(!terminator.terminate("owned", Some(&other)).await.unwrap());
-    assert!(terminator.owns("owned", Some(&owner)).await.unwrap());
-    assert!(terminator.terminate("owned", Some(&owner)).await.unwrap());
+    assert!(
+        terminator
+            .owns(&"owned".into(), Some(&owner))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !terminator
+            .owns(&"owned".into(), Some(&other))
+            .await
+            .unwrap()
+    );
+    assert!(!terminator.owns(&"owned".into(), None).await.unwrap());
+    assert!(
+        !terminator
+            .owns(&"anonymous".into(), Some(&owner))
+            .await
+            .unwrap()
+    );
+    assert!(terminator.owns(&"anonymous".into(), None).await.unwrap());
+    assert!(
+        !terminator
+            .terminate(&"owned".into(), Some(&other))
+            .await
+            .unwrap()
+    );
+    assert!(
+        terminator
+            .owns(&"owned".into(), Some(&owner))
+            .await
+            .unwrap()
+    );
+    assert!(
+        terminator
+            .terminate(&"owned".into(), Some(&owner))
+            .await
+            .unwrap()
+    );
 }
 
 /// A store outage is the store failing, not the session being gone: the

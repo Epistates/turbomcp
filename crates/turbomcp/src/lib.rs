@@ -284,10 +284,8 @@ pub use schemars;
 /// ```
 ///
 /// Wrap it in a [`Pipe`] to set a [`ServeConfig`] (shutdown token, drain and
-/// write timeouts, concurrency). [`serve_stdio`] is the raw driver: it serves
-/// a service exactly as given, so a bare dispatcher there answers only
-/// stateless `2026-07-28` clients.
-pub use turbomcp_service::io::{LineTransport, serve_stdio, serve_stdio_with, stdio};
+/// write timeouts, concurrency).
+pub use turbomcp_service::io::{LineTransport, stdio};
 
 /// An in-memory connection: the two ends of one transport in one process,
 /// each frame encoded and decoded as on a real wire.
@@ -330,12 +328,18 @@ pub mod testing {
 
     /// A server [`connect`] can run: a [`ServerBuilder`](crate::ServerBuilder)
     /// (`MyServer.into_server()`), or a [`Server`](crate::Server) with its
-    /// middleware (`….layer(…)`).
-    pub trait TestServer {
+    /// middleware (`….layer(…)`). Sealed: those two are the servers there are.
+    pub trait TestServer: sealed::Sealed {
         /// What the transport serves.
         type Handle: ServerHandle;
         /// Finish building it.
         fn into_handle(self) -> Self::Handle;
+    }
+
+    mod sealed {
+        pub trait Sealed {}
+        impl<S> Sealed for crate::ServerBuilder<S> {}
+        impl<S, L> Sealed for crate::Server<S, L> {}
     }
 
     impl<S> TestServer for crate::ServerBuilder<S>
@@ -434,8 +438,8 @@ pub mod testing {
 pub mod http {
     pub use turbomcp_service::SessionTerminator;
     pub use turbomcp_transport_http::{
-        EventFuture, EventStore, EventStoreError, Http, HttpConfig, HttpError, InMemoryEventStore,
-        SsePolling, StoredEvent, router, serve_http,
+        EventFuture, EventStore, EventStoreError, Http, HttpConfig, InMemoryEventStore, SsePolling,
+        StoredEvent, router,
     };
 
     #[cfg(feature = "websocket")]

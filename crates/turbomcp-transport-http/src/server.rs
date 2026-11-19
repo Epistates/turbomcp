@@ -63,24 +63,10 @@ use validate::{
     declared_version, message_has_version, request_id, validate_request_headers, version_header,
 };
 
-/// Errors from running the HTTP transport.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum HttpError {
-    /// Binding the listener or running the server failed.
-    #[error("http server i/o error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-/// Erase into the service-layer boundary error so a binary that serves over
-/// more than one transport can `?` every entry point against a single
-/// `Result<(), ProtocolError>` — the type `serve_stdio` already returns.
-impl From<HttpError> for ProtocolError {
-    fn from(err: HttpError) -> Self {
-        match err {
-            HttpError::Io(e) => ProtocolError::Transport(format!("http: {e}")),
-        }
-    }
+/// The listener failed to bind or to accept: the boundary error every
+/// transport's `serve` returns.
+fn io_error(e: std::io::Error) -> ProtocolError {
+    ProtocolError::Transport(format!("http: {e}"))
 }
 
 /// Per-request shared state: the service to dispatch into, the codec, the
@@ -169,7 +155,7 @@ impl<S> HttpState<S> {
 /// handler. A bare service works too and brings neither.
 ///
 /// Closing `subscriptions/listen` streams at shutdown is the listener's job,
-/// not the router's: [`serve_http`] and [`Http`] do it. When you serve this
+/// not the router's: [`Http`] does it. When you serve this
 /// router yourself, call `ServerHandle::close_subscriptions` before firing
 /// the configured shutdown token.
 pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
@@ -376,27 +362,11 @@ impl Serve for Http {
         let listener = match self.listen {
             Listen::Addr(addr) => tokio::net::TcpListener::bind(addr)
                 .await
-                .map_err(HttpError::Io)?,
+                .map_err(io_error)?,
             Listen::Listener(listener) => listener,
         };
-        serve_listener(listener, server, self.config).await?;
-        Ok(())
+        serve_listener(listener, server, self.config).await
     }
-}
-
-/// Serve `server` over Streamable HTTP on `addr` until the configured shutdown
-/// token fires (or forever, with the default token). The same as
-/// `server.serve(Http::bind(addr).config(config))`.
-///
-/// # Errors
-/// Returns [`HttpError::Io`] if the listener cannot bind or the server loop fails.
-pub async fn serve_http<H: ServerHandle>(
-    addr: SocketAddr,
-    server: H,
-    config: HttpConfig,
-) -> Result<(), HttpError> {
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    serve_listener(listener, server, config).await
 }
 
 /// When the shutdown token fires, live `subscriptions/listen` requests get
@@ -406,7 +376,7 @@ async fn serve_listener<H: ServerHandle>(
     listener: tokio::net::TcpListener,
     server: H,
     mut config: HttpConfig,
-) -> Result<(), HttpError> {
+) -> Result<(), ProtocolError> {
     let shutdown_timeout = config.shutdown_timeout;
     let (shutdown, closing) =
         close_then_shut_down(&server, config.shutdown.clone(), shutdown_timeout);
@@ -426,7 +396,7 @@ async fn serve_listener<H: ServerHandle>(
     tokio::pin!(accepting);
     tokio::pin!(closing);
     tokio::select! {
-        result = &mut accepting => result?,
+        result = &mut accepting => result.map_err(io_error)?,
         () = &mut closing => unreachable!("the close task never completes"),
     }
     // A call whose client went away (a session's call outlives its
@@ -769,8 +739,9 @@ where
         ext.insert(SessionId::new(sid.as_str()));
         minted_session = Some(sid);
     } else if let Some(sid) = session_header {
+        let session = SessionId::new(sid);
         if let Some(terminator) = &state.session_terminator {
-            match terminator.owns(&sid, subject.as_deref()).await {
+            match terminator.owns(&session, subject.as_deref()).await {
                 Ok(true) => {}
                 Ok(false) => return session_not_found(request_id(&msg).as_ref()),
                 Err(e) => return protocol_error_response(&e, request_id(&msg)),
@@ -793,7 +764,7 @@ where
             // 3. `2025-11-25`, which keeps tolerant clients (rmcp, Codex)
             //    working when neither is available.
             let stored = match &state.session_terminator {
-                Some(t) => t.negotiated_version(&sid).await,
+                Some(t) => t.negotiated_version(&session).await,
                 None => None,
             };
             let session_version = stored
@@ -806,7 +777,7 @@ where
                 json!(session_version.as_str()),
             );
         }
-        ext.insert(SessionId::new(sid));
+        ext.insert(session);
     } else if !modern_wire && msg.method() != Some("server/discover") {
         // Neither a session nor the stateless envelope: the session path
         // requires a session (spec §Session Management), and 2026-07-28 "MUST
@@ -1302,7 +1273,10 @@ where
         return sessions_need_an_owner();
     }
     if let Some(terminator) = &state.session_terminator {
-        match terminator.owns(sid, subject.as_deref()).await {
+        match terminator
+            .owns(&SessionId::new(sid), subject.as_deref())
+            .await
+        {
             Ok(true) => {}
             Ok(false) => return session_not_found(None),
             Err(e) => return protocol_error_response(&e, None),
@@ -1485,7 +1459,10 @@ where
     else {
         return session_required_rejection(None);
     };
-    match terminator.terminate(sid, subject.as_deref()).await {
+    match terminator
+        .terminate(&SessionId::new(sid), subject.as_deref())
+        .await
+    {
         Ok(true) => {
             state.streams.close(sid);
             if let Some(store) = &state.event_store
@@ -1549,20 +1526,6 @@ fn encode_json_response(codec: &DefaultCodec, msg: &JsonRpcMessage) -> Response 
                 _ => None,
             };
             protocol_error_response(&ProtocolError::from(e), id)
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn http_error_bridges_into_protocol_error() {
-        let err = HttpError::Io(std::io::Error::other("bind failed"));
-        match ProtocolError::from(err) {
-            ProtocolError::Transport(msg) => assert!(msg.contains("bind failed")),
-            other => panic!("expected Transport, got {other:?}"),
         }
     }
 }

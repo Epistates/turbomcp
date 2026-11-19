@@ -33,7 +33,6 @@ fn public_error_types_satisfy_the_error_bound() {
         assert_error::<turbomcp::client::HttpClientError>();
     }
     #[cfg(feature = "http")]
-    assert_error::<turbomcp::http::HttpError>();
     #[cfg(all(feature = "client", feature = "websocket"))]
     assert_error::<turbomcp::client::WsError>();
     #[cfg(feature = "auth")]

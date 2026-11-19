@@ -11,7 +11,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tower::{Layer, Service};
 use turbomcp_core::{
-    Implementation, JsonRpcMessage, JsonRpcRequest, LogLevel, McpRequest, McpResult, SessionId,
+    Implementation, JsonRpcMessage, JsonRpcRequest, McpRequest, McpResult, SessionId,
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
@@ -184,17 +184,21 @@ async fn a_connections_session_ends_with_the_connection() {
 
     #[async_trait]
     impl SessionBackend for Counting {
-        async fn insert(&self, id: &str, state: SessionState) -> Result<(), SessionError> {
+        async fn insert(&self, id: &SessionId, state: SessionState) -> Result<(), SessionError> {
             self.inserts.fetch_add(1, Ordering::SeqCst);
             SessionBackend::insert(&self.inner, id, state).await
         }
-        async fn get(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
+        async fn get(&self, id: &SessionId) -> Result<Option<Arc<SessionState>>, SessionError> {
             SessionBackend::get(&self.inner, id).await
         }
-        async fn set_log_level(&self, id: &str, level: LogLevel) -> Result<bool, SessionError> {
-            SessionBackend::set_log_level(&self.inner, id, level).await
+        async fn update(
+            &self,
+            id: &SessionId,
+            change: &(dyn for<'s> Fn(&'s mut SessionState) + Send + Sync),
+        ) -> Result<bool, SessionError> {
+            SessionBackend::update(&self.inner, id, change).await
         }
-        async fn remove(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
+        async fn remove(&self, id: &SessionId) -> Result<Option<Arc<SessionState>>, SessionError> {
             self.removes.fetch_add(1, Ordering::SeqCst);
             SessionBackend::remove(&self.inner, id).await
         }

@@ -39,32 +39,9 @@ use serde_json::{Map, Value};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::sync::{oneshot, watch};
-use turbomcp_core::{CancellationToken, JsonRpcError};
+use turbomcp_core::{CancellationToken, JsonRpcError, SessionId};
 
-/// A task's lifecycle status (rendered to the wire by each front-end).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum TaskStatus {
-    /// Created and not yet terminal; the underlying request is executing.
-    Working,
-    /// The underlying request is waiting on input from the client.
-    InputRequired,
-    /// The underlying request produced a result.
-    Completed,
-    /// The underlying request produced an error (or a failing result).
-    Failed,
-    /// `tasks/cancel` ended it before it finished. (A task that runs out its
-    /// TTL is `Failed`.)
-    Cancelled,
-}
-
-impl TaskStatus {
-    /// Whether this status never transitions again.
-    #[must_use]
-    pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
-    }
-}
+pub use turbomcp_protocol::neutral::TaskStatus;
 
 /// Whose a task is. Only its owner can read, list, cancel or answer it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -389,7 +366,7 @@ pub trait TaskBackend: Send + Sync {
     /// A `2025-11-25` session ended: cancel its running tasks and forget all
     /// of them. The default does nothing, which suits a backend whose tasks
     /// outlive sessions by design.
-    async fn end_session(&self, _session_id: &str) {}
+    async fn end_session(&self, _session_id: &SessionId) {}
 }
 
 /// A task's in-execution input state: what its work is waiting on.
@@ -930,10 +907,10 @@ impl TaskBackend for TaskStore {
         Ok(entry.resume_if_answered())
     }
 
-    async fn end_session(&self, session_id: &str) {
+    async fn end_session(&self, session_id: &SessionId) {
         let mut map = self.lock();
         map.retain(|_, e| {
-            if !matches!(&e.owner, TaskOwner::Session(s) if s == session_id) {
+            if !matches!(&e.owner, TaskOwner::Session(s) if s == session_id.as_str()) {
                 return true;
             }
             if !e.status.is_terminal() {
@@ -1279,7 +1256,7 @@ mod tests {
             .unwrap();
         let kept = create(&s, &session("kept"), None).await;
         let principal = create(&s, &TaskOwner::Principal("gone".into()), None).await;
-        s.end_session("gone").await;
+        s.end_session(&"gone".into()).await;
         assert!(token.is_cancelled());
         assert_eq!(
             s.get(&session("gone"), &snap.task_id).await,

@@ -32,7 +32,7 @@ use async_trait::async_trait;
 use moka::notification::RemovalCause;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use turbomcp_core::{Implementation, LogLevel, ProtocolVersion};
+use turbomcp_core::{Implementation, LogLevel, ProtocolVersion, SessionId};
 use turbomcp_service::ProtocolError;
 
 /// What `initialize` negotiated for one session.
@@ -301,8 +301,8 @@ impl SessionStore {
     /// [`SessionError::AtCapacity`] when the table is full and `id` is new;
     /// [`SessionError::QuotaExceeded`] when `state`'s owner already holds its
     /// quota.
-    pub fn insert(&self, id: impl Into<String>, state: SessionState) -> Result<(), SessionError> {
-        let id = id.into();
+    pub fn insert(&self, id: &SessionId, state: SessionState) -> Result<(), SessionError> {
+        let id = id.as_str().to_owned();
         if !self.cache.contains_key(&id) {
             // The count is maintained lazily; settle it before reading it. A
             // new session is minted once per `initialize`, so this is not on
@@ -329,8 +329,8 @@ impl SessionStore {
     /// Look up a session, refreshing its idle clock. `None` means expired,
     /// deleted, or never created; the caller answers "unknown session".
     #[must_use]
-    pub fn get(&self, id: &str) -> Option<Arc<SessionState>> {
-        self.cache.get(id)
+    pub fn get(&self, id: &SessionId) -> Option<Arc<SessionState>> {
+        self.cache.get(id.as_str())
     }
 
     /// Every session that has expired since the last call. The dispatcher
@@ -346,25 +346,26 @@ impl SessionStore {
 
     /// Whether `id` is a live session (does not refresh it).
     #[must_use]
-    pub fn contains(&self, id: &str) -> bool {
-        self.cache.contains_key(id)
+    pub fn contains(&self, id: &SessionId) -> bool {
+        self.cache.contains_key(id.as_str())
     }
 
-    /// Record the session's `logging/setLevel` choice. Returns whether the
-    /// session exists.
-    pub fn set_log_level(&self, id: &str, level: LogLevel) -> bool {
-        let Some(state) = self.cache.get(id) else {
+    /// Apply `change` to a session's state. Returns whether the session
+    /// exists. `change` must not change [`owner`](SessionState::owner): the
+    /// per-owner quota is counted by it.
+    pub fn update(&self, id: &SessionId, change: impl Fn(&mut SessionState)) -> bool {
+        let Some(state) = self.cache.get(id.as_str()) else {
             return false;
         };
         let mut state = SessionState::clone(&state);
-        state.log_level = Some(level);
-        self.cache.insert(id.to_owned(), Arc::new(state));
+        change(&mut state);
+        self.cache.insert(id.as_str().to_owned(), Arc::new(state));
         true
     }
 
     /// Terminate a session, returning it if it existed.
-    pub fn remove(&self, id: &str) -> Option<Arc<SessionState>> {
-        self.cache.remove(id)
+    pub fn remove(&self, id: &SessionId) -> Option<Arc<SessionState>> {
+        self.cache.remove(id.as_str())
     }
 
     /// Number of live sessions (settles pending maintenance first).
@@ -420,19 +421,25 @@ impl Default for SessionStore {
 pub trait SessionBackend: Send + Sync {
     /// Store (or replace) `state` under `id`. Refusing a new session (at
     /// capacity) is an `Err`, which answers that `initialize` with `503`.
-    async fn insert(&self, id: &str, state: SessionState) -> Result<(), SessionError>;
+    async fn insert(&self, id: &SessionId, state: SessionState) -> Result<(), SessionError>;
 
     /// Look up a session, refreshing its idle clock.
-    async fn get(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError>;
+    async fn get(&self, id: &SessionId) -> Result<Option<Arc<SessionState>>, SessionError>;
 
-    /// Record the session's `logging/setLevel` choice. Returns whether the
-    /// session exists.
-    async fn set_log_level(&self, id: &str, level: LogLevel) -> Result<bool, SessionError>;
+    /// Change a stored session: apply `change` to its current state and store
+    /// the result. Returns whether the session exists. The dispatcher records
+    /// a client's `logging/setLevel` choice this way; it never changes
+    /// [`owner`](SessionState::owner), which a backend may index by.
+    async fn update(
+        &self,
+        id: &SessionId,
+        change: &(dyn for<'s> Fn(&'s mut SessionState) + Send + Sync),
+    ) -> Result<bool, SessionError>;
 
     /// Terminate a session, returning its state if it existed (`Some` of a
     /// backend that can't read it back on removal is fine too, as long as it
     /// says the session existed).
-    async fn remove(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError>;
+    async fn remove(&self, id: &SessionId) -> Result<Option<Arc<SessionState>>, SessionError>;
 
     /// Reclaim expired sessions (the dispatcher tears down each one's routes
     /// and reports how long it lived, when the state comes back with it).
@@ -448,19 +455,23 @@ pub trait SessionBackend: Send + Sync {
 
 #[async_trait]
 impl SessionBackend for SessionStore {
-    async fn insert(&self, id: &str, state: SessionState) -> Result<(), SessionError> {
+    async fn insert(&self, id: &SessionId, state: SessionState) -> Result<(), SessionError> {
         SessionStore::insert(self, id, state)
     }
 
-    async fn get(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
+    async fn get(&self, id: &SessionId) -> Result<Option<Arc<SessionState>>, SessionError> {
         Ok(SessionStore::get(self, id))
     }
 
-    async fn set_log_level(&self, id: &str, level: LogLevel) -> Result<bool, SessionError> {
-        Ok(SessionStore::set_log_level(self, id, level))
+    async fn update(
+        &self,
+        id: &SessionId,
+        change: &(dyn for<'s> Fn(&'s mut SessionState) + Send + Sync),
+    ) -> Result<bool, SessionError> {
+        Ok(SessionStore::update(self, id, change))
     }
 
-    async fn remove(&self, id: &str) -> Result<Option<Arc<SessionState>>, SessionError> {
+    async fn remove(&self, id: &SessionId) -> Result<Option<Arc<SessionState>>, SessionError> {
         Ok(SessionStore::remove(self, id))
     }
 
@@ -488,12 +499,15 @@ mod tests {
     #[test]
     fn insert_get_remove_round_trip() {
         let store = SessionStore::default();
-        store.insert("a", state()).unwrap();
-        assert!(store.contains("a"));
-        assert_eq!(store.get("a").unwrap().client_info.name, "test-client");
-        assert!(store.remove("a").is_some());
-        assert!(store.get("a").is_none());
-        assert!(store.remove("a").is_none());
+        store.insert(&"a".into(), state()).unwrap();
+        assert!(store.contains(&"a".into()));
+        assert_eq!(
+            store.get(&"a".into()).unwrap().client_info.name,
+            "test-client"
+        );
+        assert!(store.remove(&"a".into()).is_some());
+        assert!(store.get(&"a".into()).is_none());
+        assert!(store.remove(&"a".into()).is_none());
     }
 
     /// A full table refuses a newcomer rather than evicting a live session:
@@ -502,15 +516,18 @@ mod tests {
     #[test]
     fn a_full_store_refuses_rather_than_evicts() {
         let store = SessionStore::with_capacity(2);
-        store.insert("a", state()).unwrap();
-        store.insert("b", state()).unwrap();
-        assert_eq!(store.insert("c", state()), Err(SessionError::AtCapacity(2)));
-        assert!(store.contains("a") && store.contains("b"));
+        store.insert(&"a".into(), state()).unwrap();
+        store.insert(&"b".into(), state()).unwrap();
+        assert_eq!(
+            store.insert(&"c".into(), state()),
+            Err(SessionError::AtCapacity(2))
+        );
+        assert!(store.contains(&"a".into()) && store.contains(&"b".into()));
         // Replacing an existing one is fine at capacity.
-        store.insert("a", state()).unwrap();
+        store.insert(&"a".into(), state()).unwrap();
         // And a deletion makes room.
-        assert!(store.remove("b").is_some());
-        store.insert("c", state()).unwrap();
+        assert!(store.remove(&"b".into()).is_some());
+        store.insert(&"c".into(), state()).unwrap();
     }
 
     fn from(address: &str) -> SessionState {
@@ -522,37 +539,37 @@ mod tests {
     #[test]
     fn one_caller_holds_at_most_its_quota() {
         let store = SessionStore::with_capacity(16).with_owner_quota(Some(2));
-        store.insert("a", from("203.0.113.7")).unwrap();
-        store.insert("b", from("203.0.113.7")).unwrap();
+        store.insert(&"a".into(), from("203.0.113.7")).unwrap();
+        store.insert(&"b".into(), from("203.0.113.7")).unwrap();
         assert_eq!(
-            store.insert("c", from("203.0.113.7")),
+            store.insert(&"c".into(), from("203.0.113.7")),
             Err(SessionError::QuotaExceeded(2))
         );
         // Someone else is unaffected, and so is a pipe (no address).
-        store.insert("d", from("198.51.100.1")).unwrap();
-        store.insert("e", state()).unwrap();
-        store.insert("f", state()).unwrap();
-        store.insert("g", state()).unwrap();
+        store.insert(&"d".into(), from("198.51.100.1")).unwrap();
+        store.insert(&"e".into(), state()).unwrap();
+        store.insert(&"f".into(), state()).unwrap();
+        store.insert(&"g".into(), state()).unwrap();
         // Replacing one of its own sessions takes no new slot.
-        store.insert("a", from("203.0.113.7")).unwrap();
+        store.insert(&"a".into(), from("203.0.113.7")).unwrap();
         // Ending one gives the slot back.
-        assert!(store.remove("b").is_some());
-        store.insert("c", from("203.0.113.7")).unwrap();
+        assert!(store.remove(&"b".into()).is_some());
+        store.insert(&"c".into(), from("203.0.113.7")).unwrap();
         // The quota survives a later builder step.
         let store = store.with_idle_timeout(None);
-        store.insert("a", from("203.0.113.7")).unwrap();
-        store.insert("b", from("203.0.113.7")).unwrap();
-        assert!(store.insert("c", from("203.0.113.7")).is_err());
+        store.insert(&"a".into(), from("203.0.113.7")).unwrap();
+        store.insert(&"b".into(), from("203.0.113.7")).unwrap();
+        assert!(store.insert(&"c".into(), from("203.0.113.7")).is_err());
     }
 
     #[test]
     fn a_principal_is_one_owner_wherever_it_connects_from() {
         let store = SessionStore::with_capacity(16).with_owner_quota(Some(1));
         let alice = |address: &str| from(address).with_owner(Some("iss|alice".into()));
-        store.insert("a", alice("203.0.113.7")).unwrap();
-        assert!(store.insert("b", alice("198.51.100.1")).is_err());
+        store.insert(&"a".into(), alice("203.0.113.7")).unwrap();
+        assert!(store.insert(&"b".into(), alice("198.51.100.1")).is_err());
         // An anonymous caller on Alice's address is someone else.
-        store.insert("c", from("203.0.113.7")).unwrap();
+        store.insert(&"c".into(), from("203.0.113.7")).unwrap();
     }
 
     #[test]
@@ -591,11 +608,14 @@ mod tests {
         // not expire before it is checked, the old ones must.
         let store =
             SessionStore::with_capacity(8).with_idle_timeout(Some(Duration::from_millis(500)));
-        store.insert("a", state()).unwrap();
-        store.insert("b", state()).unwrap();
+        store.insert(&"a".into(), state()).unwrap();
+        store.insert(&"b".into(), state()).unwrap();
         std::thread::sleep(Duration::from_millis(800));
-        store.insert("c", state()).unwrap();
-        assert!(store.get("a").is_none(), "idle past the timeout → gone");
+        store.insert(&"c".into(), state()).unwrap();
+        assert!(
+            store.get(&"a".into()).is_none(),
+            "idle past the timeout → gone"
+        );
         let mut swept: Vec<String> = store
             .sweep_expired()
             .into_iter()
@@ -606,7 +626,7 @@ mod tests {
             .collect();
         swept.sort();
         assert_eq!(swept, vec!["a".to_owned(), "b".to_owned()]);
-        assert!(store.contains("c"));
+        assert!(store.contains(&"c".into()));
         assert!(store.sweep_expired().is_empty(), "reported once");
     }
 
@@ -615,29 +635,33 @@ mod tests {
         // Each gap is well inside the timeout, and together they are well
         // past it: only the reads can have kept it alive.
         let store = SessionStore::with_capacity(8).with_idle_timeout(Some(Duration::from_secs(1)));
-        store.insert("a", state()).unwrap();
+        store.insert(&"a".into(), state()).unwrap();
         for _ in 0..5 {
             std::thread::sleep(Duration::from_millis(300));
-            assert!(store.get("a").is_some());
+            assert!(store.get(&"a".into()).is_some());
         }
     }
 
     #[test]
     fn no_idle_timeout_keeps_sessions() {
         let store = SessionStore::with_capacity(8).with_idle_timeout(None);
-        store.insert("a", state()).unwrap();
+        store.insert(&"a".into(), state()).unwrap();
         std::thread::sleep(Duration::from_millis(5));
         assert!(store.sweep_expired().is_empty());
-        assert!(store.contains("a"));
+        assert!(store.contains(&"a".into()));
     }
 
     #[test]
-    fn set_log_level_updates_the_stored_state() {
+    fn update_changes_the_stored_state() {
         let store = SessionStore::default();
-        store.insert("a", state()).unwrap();
-        assert!(store.set_log_level("a", LogLevel::Warning));
-        assert_eq!(store.get("a").unwrap().log_level, Some(LogLevel::Warning));
-        assert!(!store.set_log_level("missing", LogLevel::Warning));
+        store.insert(&"a".into(), state()).unwrap();
+        let warn = |state: &mut SessionState| state.log_level = Some(LogLevel::Warning);
+        assert!(store.update(&"a".into(), warn));
+        assert_eq!(
+            store.get(&"a".into()).unwrap().log_level,
+            Some(LogLevel::Warning)
+        );
+        assert!(!store.update(&"missing".into(), warn));
     }
 
     /// An external backend stores the state as bytes and builds it back.

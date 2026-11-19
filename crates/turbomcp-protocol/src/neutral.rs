@@ -218,7 +218,6 @@ impl Content {
     }
 }
 
-/// A tool descriptor.
 /// Whether a tool supports being run as an asynchronous task (`2025-11-25` core
 /// Tasks). Mirrors the wire `execution.taskSupport`; the draft models Tasks as a
 /// server-directed extension instead, so this rides only the legacy wire, and
@@ -231,6 +230,82 @@ pub enum TaskSupport {
     Optional,
     /// The tool is always run as a task.
     Required,
+}
+
+/// Where a task is in its life. `2025-11-25` core Tasks and the `2026-07-28`
+/// Tasks extension share these states and their wire strings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TaskStatus {
+    /// Running.
+    Working,
+    /// Waiting on input from the requestor.
+    InputRequired,
+    /// Finished successfully.
+    Completed,
+    /// Finished with a failure.
+    Failed,
+    /// Cancelled before it finished.
+    Cancelled,
+}
+
+impl TaskStatus {
+    /// Whether the task has finished (completed, failed or cancelled) and
+    /// will not change again.
+    #[must_use]
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+
+    /// The wire string.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Working => "working",
+            Self::InputRequired => "input_required",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parse a wire string; unknown values are `None`.
+    #[must_use]
+    pub fn from_wire(s: &str) -> Option<Self> {
+        Some(match s {
+            "working" => Self::Working,
+            "input_required" => Self::InputRequired,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            _ => return None,
+        })
+    }
+}
+
+impl From<TaskStatus> for legacy::TaskStatus {
+    fn from(s: TaskStatus) -> Self {
+        match s {
+            TaskStatus::Working => Self::Working,
+            TaskStatus::InputRequired => Self::InputRequired,
+            TaskStatus::Completed => Self::Completed,
+            TaskStatus::Failed => Self::Failed,
+            TaskStatus::Cancelled => Self::Cancelled,
+        }
+    }
+}
+
+impl From<legacy::TaskStatus> for TaskStatus {
+    fn from(s: legacy::TaskStatus) -> Self {
+        match s {
+            legacy::TaskStatus::Working => Self::Working,
+            legacy::TaskStatus::InputRequired => Self::InputRequired,
+            legacy::TaskStatus::Completed => Self::Completed,
+            legacy::TaskStatus::Failed => Self::Failed,
+            legacy::TaskStatus::Cancelled => Self::Cancelled,
+        }
+    }
 }
 
 /// A tool the server offers, as `tools/list` reports it.
@@ -859,9 +934,20 @@ impl CachePolicy {
 /// `CacheableResult` surface: the four `*/list` results plus
 /// `resources/read`). The dispatcher uses this to fill the server's configured
 /// default when a handler didn't set one.
-pub trait Cacheable {
+///
+/// Sealed: the cacheable results are the spec's, so the set is closed.
+pub trait Cacheable: sealed::Sealed {
     /// The result's cache policy slot (`None` = use the server default).
     fn cache_policy_mut(&mut self) -> &mut Option<CachePolicy>;
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::ListToolsResult {}
+    impl Sealed for super::ListResourcesResult {}
+    impl Sealed for super::ReadResourceResult {}
+    impl Sealed for super::ListResourceTemplatesResult {}
+    impl Sealed for super::ListPromptsResult {}
 }
 
 // ---- resources ----------------------------------------------------------------
@@ -1710,9 +1796,9 @@ impl ElicitParams {
     /// between a two-minute fix and an afternoon.
     ///
     /// # Errors
-    /// A description of the first property outside the subset.
-    pub fn validate(&self) -> Result<(), String> {
-        validate_requested_schema(&self.requested_schema, false)
+    /// Invalid params naming the first property outside the subset.
+    pub fn validate(&self) -> Result<(), McpError> {
+        validate_requested_schema(&self.requested_schema, false).map_err(McpError::invalid_params)
     }
 
     /// [`validate`](Self::validate) for the revision the request will go out
@@ -1720,12 +1806,13 @@ impl ElicitParams {
     /// no titled options, only the plain primitives and a string `enum`.
     ///
     /// # Errors
-    /// A description of the first property that revision cannot render.
-    pub fn validate_for(&self, version: &ProtocolVersion) -> Result<(), String> {
+    /// Invalid params naming the first property that revision cannot render.
+    pub fn validate_for(&self, version: &ProtocolVersion) -> Result<(), McpError> {
         validate_requested_schema(
             &self.requested_schema,
             matches!(version, ProtocolVersion::V2025_06_18),
         )
+        .map_err(McpError::invalid_params)
     }
 }
 
@@ -1921,22 +2008,29 @@ impl ElicitOutcome {
     /// Parse a client's answer. Submitted content counts only on `Accept`.
     ///
     /// # Errors
-    /// A missing or unknown `action`, or a `content` that isn't an object.
-    pub fn from_wire(value: &Value) -> Result<Self, String> {
+    /// Invalid params: a missing or unknown `action`, or a `content` that
+    /// isn't an object.
+    pub fn from_wire(value: &Value) -> Result<Self, McpError> {
+        let invalid =
+            |why: &str| McpError::invalid_params(alloc::format!("invalid elicit response: {why}"));
         let obj = value
             .as_object()
-            .ok_or_else(|| "an elicitation result must be an object".to_string())?;
+            .ok_or_else(|| invalid("an elicitation result must be an object"))?;
         let action = match obj.get("action").and_then(Value::as_str) {
             Some("accept") => ElicitAction::Accept,
             Some("decline") => ElicitAction::Decline,
             Some("cancel") => ElicitAction::Cancel,
-            Some(other) => return Err(alloc::format!("unknown elicitation action `{other}`")),
-            None => return Err("an elicitation result needs `action`".to_string()),
+            Some(other) => {
+                return Err(invalid(&alloc::format!(
+                    "unknown elicitation action `{other}`"
+                )));
+            }
+            None => return Err(invalid("an elicitation result needs `action`")),
         };
         let content = match obj.get("content") {
             None | Some(Value::Null) => Map::new(),
             Some(Value::Object(content)) => content.clone(),
-            Some(_) => return Err("elicitation `content` must be an object".to_string()),
+            Some(_) => return Err(invalid("elicitation `content` must be an object")),
         };
         Ok(Self {
             action,
@@ -3559,7 +3653,7 @@ impl ClientCapabilities {
     /// Always an object, never `null`: "I support nothing" is `{}`, which is a
     /// statement, where a missing `capabilities` is a malformed handshake.
     #[must_use]
-    pub fn to_wire(&self, version: ProtocolVersion) -> Value {
+    pub fn to_wire(&self, version: &ProtocolVersion) -> Value {
         // `2025-06-18` has the three capabilities but none of their
         // sub-objects; declaring a sub-object there would assert something its
         // schema cannot express.
@@ -5293,7 +5387,7 @@ mod tests {
             extensions: None,
         };
         assert_eq!(
-            caps.to_wire(ProtocolVersion::V2025_11_25),
+            caps.to_wire(&ProtocolVersion::V2025_11_25),
             json!({
                 "elicitation": { "form": {}, "url": {} },
                 "sampling": { "context": {}, "tools": {} },
@@ -5301,7 +5395,7 @@ mod tests {
             })
         );
         assert_eq!(
-            caps.to_wire(ProtocolVersion::V2025_06_18),
+            caps.to_wire(&ProtocolVersion::V2025_06_18),
             json!({
                 "elicitation": {},
                 "sampling": {},
@@ -5309,7 +5403,7 @@ mod tests {
             })
         );
         assert_eq!(
-            caps.to_wire(ProtocolVersion::V2026_07_28),
+            caps.to_wire(&ProtocolVersion::V2026_07_28),
             json!({
                 "elicitation": { "form": {}, "url": {} },
                 "sampling": { "context": {}, "tools": {} },
@@ -5324,7 +5418,7 @@ mod tests {
     #[test]
     fn an_empty_declaration_is_still_an_object() {
         assert_eq!(
-            ClientCapabilities::new().to_wire(ProtocolVersion::V2025_11_25),
+            ClientCapabilities::new().to_wire(&ProtocolVersion::V2025_11_25),
             json!({})
         );
         let form_only = ClientCapabilities {
@@ -5335,7 +5429,7 @@ mod tests {
             ..ClientCapabilities::new()
         };
         assert_eq!(
-            form_only.to_wire(ProtocolVersion::V2025_11_25),
+            form_only.to_wire(&ProtocolVersion::V2025_11_25),
             json!({ "elicitation": { "form": {} } }),
             "a form-only client must not read as url-capable"
         );

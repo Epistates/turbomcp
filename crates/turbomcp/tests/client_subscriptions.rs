@@ -46,8 +46,15 @@ struct Spy {
 
 #[turbomcp::client::async_trait]
 impl ElicitationHandler for Spy {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Decline,
+            Map::new(),
+        ))
     }
 }
 
@@ -63,8 +70,12 @@ struct Shared(Arc<Spy>);
 
 #[turbomcp::client::async_trait]
 impl ElicitationHandler for Shared {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        self.0.elicit(request).await
+    async fn elicit(
+        &self,
+        ctx: &turbomcp::client::HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
+        self.0.elicit(ctx, request).await
     }
 }
 

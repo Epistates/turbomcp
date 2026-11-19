@@ -85,8 +85,15 @@ struct Basic;
 
 #[turbomcp::client::async_trait]
 impl ElicitationHandler for Basic {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Decline,
+            Map::new(),
+        ))
     }
 }
 
@@ -94,6 +101,7 @@ impl ElicitationHandler for Basic {
 impl SamplingHandler for Basic {
     async fn create_message(
         &self,
+        _ctx: &turbomcp::client::HandlerContext,
         _params: neutral::CreateMessageParams,
     ) -> turbomcp::client::ClientResult<neutral::CreateMessageResult> {
         Ok(sample_message())
@@ -102,7 +110,10 @@ impl SamplingHandler for Basic {
 
 #[turbomcp::client::async_trait]
 impl RootsHandler for Basic {
-    async fn list_roots(&self) -> turbomcp::client::ClientResult<neutral::ListRootsResult> {
+    async fn list_roots(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+    ) -> turbomcp::client::ClientResult<neutral::ListRootsResult> {
         Ok(neutral::ListRootsResult::default())
     }
 }
@@ -120,7 +131,11 @@ struct AutoAnswer;
 
 #[turbomcp::client::async_trait]
 impl ElicitationHandler for AutoAnswer {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
         let mut content = Map::new();
         if let Some(properties) = request
             .requested_schema
@@ -131,7 +146,10 @@ impl ElicitationHandler for AutoAnswer {
                 content.insert(name.clone(), sample_value(property));
             }
         }
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            content,
+        ))
     }
 }
 
@@ -139,6 +157,7 @@ impl ElicitationHandler for AutoAnswer {
 impl SamplingHandler for AutoAnswer {
     async fn create_message(
         &self,
+        _ctx: &turbomcp::client::HandlerContext,
         _params: neutral::CreateMessageParams,
     ) -> turbomcp::client::ClientResult<neutral::CreateMessageResult> {
         Ok(sample_message())
@@ -147,7 +166,10 @@ impl SamplingHandler for AutoAnswer {
 
 #[turbomcp::client::async_trait]
 impl RootsHandler for AutoAnswer {
-    async fn list_roots(&self) -> turbomcp::client::ClientResult<neutral::ListRootsResult> {
+    async fn list_roots(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+    ) -> turbomcp::client::ClientResult<neutral::ListRootsResult> {
         Ok(neutral::ListRootsResult::default())
     }
 }

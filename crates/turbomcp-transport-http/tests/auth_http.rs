@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 use tower::ServiceExt;
 use turbomcp_auth::{JwtValidator, ResourceMetadata, ResourceServer, StaticJwks};
-use turbomcp_core::{Implementation, McpResult};
+use turbomcp_core::{Implementation, McpResult, SessionId};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
@@ -184,13 +184,13 @@ async fn get_stream_requires_auth() {
 struct CountingTerminator(AtomicUsize);
 
 impl SessionTerminator for CountingTerminator {
-    fn owns<'a>(&'a self, _sid: &'a str, _owner: Option<&'a str>) -> TerminateFuture<'a> {
+    fn owns<'a>(&'a self, _sid: &'a SessionId, _owner: Option<&'a str>) -> TerminateFuture<'a> {
         Box::pin(async { Ok(true) })
     }
 
     fn terminate<'a>(
         &'a self,
-        _session_id: &'a str,
+        _session_id: &'a SessionId,
         _owner: Option<&'a str>,
     ) -> TerminateFuture<'a> {
         self.0.fetch_add(1, SeqCst);

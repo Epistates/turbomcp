@@ -84,10 +84,17 @@ struct Named(&'static str);
 
 #[async_trait]
 impl ElicitationHandler for Named {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp::client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp::client::ClientResult<neutral::ElicitOutcome> {
         let mut content = Map::new();
         content.insert("who".into(), json!(self.0));
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Accept, content)
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Accept,
+            content,
+        ))
     }
 }
 

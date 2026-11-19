@@ -289,7 +289,7 @@ impl Shared {
             self.inflight.cancel_scope(id);
             self.subs.legacy_remove(id);
             if let Some(tasks) = &self.tasks {
-                tasks.end_session(id).await;
+                tasks.end_session(&SessionId::new(id)).await;
             }
             if let Some(state) = &expired.state {
                 self.session_ended(id, state, turbomcp_service::SessionEndReason::Expired);
@@ -329,10 +329,11 @@ impl Shared {
     /// in place, since the session may well still exist.
     async fn terminate_session(
         &self,
-        id: &str,
+        session: &SessionId,
         reason: turbomcp_service::SessionEndReason,
     ) -> Result<bool, SessionError> {
-        let ended = self.sessions.remove(id).await?;
+        let ended = self.sessions.remove(session).await?;
+        let id = session.as_str();
         if let Some(state) = &ended {
             self.session_ended(id, state, reason);
         }
@@ -342,7 +343,7 @@ impl Shared {
         // Nothing can ask about the session's tasks any more, so they are
         // cancelled and released rather than holding capacity until their TTL.
         if let Some(tasks) = &self.tasks {
-            tasks.end_session(id).await;
+            tasks.end_session(session).await;
         }
         Ok(existed)
     }
@@ -366,7 +367,7 @@ impl core::fmt::Debug for DispatcherSessionTerminator {
 impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
     fn owns<'a>(
         &'a self,
-        session_id: &'a str,
+        session_id: &'a SessionId,
         owner: Option<&'a str>,
     ) -> turbomcp_service::TerminateFuture<'a> {
         Box::pin(async move {
@@ -380,7 +381,7 @@ impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
     }
     fn terminate<'a>(
         &'a self,
-        session_id: &'a str,
+        session_id: &'a SessionId,
         owner: Option<&'a str>,
     ) -> turbomcp_service::TerminateFuture<'a> {
         Box::pin(async move {
@@ -395,7 +396,7 @@ impl turbomcp_service::SessionTerminator for DispatcherSessionTerminator {
     }
     fn negotiated_version<'a>(
         &'a self,
-        session_id: &'a str,
+        session_id: &'a SessionId,
     ) -> turbomcp_service::SessionVersionFuture<'a> {
         // Best effort: a store that can't answer leaves the header as the
         // signal, and the request's own session lookup reports the outage.
@@ -429,7 +430,10 @@ impl SessionEnd {
             runtime.spawn(async move {
                 if let Err(e) = self
                     .shared
-                    .terminate_session(&id, turbomcp_service::SessionEndReason::Closed)
+                    .terminate_session(
+                        &SessionId::new(id),
+                        turbomcp_service::SessionEndReason::Closed,
+                    )
                     .await
                 {
                     tracing::warn!(error = %e, "could not end a closed connection's session");
@@ -1312,8 +1316,11 @@ async fn handle_request<S: McpServerCore>(
                         Err(e) => return Ok(error_response(id, &e)),
                     };
                     // `legacy_context` proved the session id is present.
-                    let sid = session_id(ext).unwrap_or_default();
-                    sessions.set_log_level(sid, level).await?;
+                    if let Some(sid) = ext.get::<SessionId>() {
+                        sessions
+                            .update(sid, &|state| state.log_level = Some(level))
+                            .await?;
+                    }
                     Ok(JsonRpcResponse::success(id, serde_json::json!({})).into())
                 }
                 VersionRoute::Modern => Ok(error_response(id, &McpError::method_not_found(method))),

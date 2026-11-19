@@ -1,4 +1,4 @@
-//! Real-socket smoke test for [`serve_http`]: bind an ephemeral port, drive a
+//! Real-socket smoke test for [`Http`]: bind an ephemeral port, drive a
 //! `tools/call` round-trip with a real HTTP client, then verify graceful
 //! shutdown via the cancellation token. The `oneshot` tests cover the handler
 //! stack; this covers the bind + accept loop + shutdown glue, and the limits the
@@ -14,7 +14,8 @@ use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
 use turbomcp_service::CancellationToken;
-use turbomcp_transport_http::{HttpConfig, serve_http};
+use turbomcp_service::Serve;
+use turbomcp_transport_http::{Http, HttpConfig};
 
 #[derive(Clone)]
 struct Echo;
@@ -57,15 +58,11 @@ async fn round_trip_and_graceful_shutdown_over_a_real_socket() {
         .await
         .unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
-    drop(listener); // free the port for serve_http to re-bind
 
     let shutdown = CancellationToken::new();
     let dispatcher = VersionDispatcher::new(Echo, MethodRouter::new().with_tools());
     let config = HttpConfig::new().with_shutdown(shutdown.clone());
-    let server = tokio::spawn(serve_http(addr, dispatcher, config));
-
-    // Give the listener a moment to bind.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let server = tokio::spawn(Http::listener(listener).config(config).serve(dispatcher));
 
     let url = format!("http://{addr}/mcp");
     let client = reqwest::Client::new();
@@ -102,7 +99,7 @@ async fn round_trip_and_graceful_shutdown_over_a_real_socket() {
         .await
         .expect("server should shut down promptly")
         .unwrap();
-    result.expect("serve_http exits Ok on graceful shutdown");
+    result.expect("the server exits Ok on graceful shutdown");
 }
 
 /// Serve `Echo` on an ephemeral port with `config`; the address and the

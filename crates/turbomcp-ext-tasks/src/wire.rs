@@ -16,34 +16,7 @@ pub const RESULT_TYPE_TASK: &str = "task";
 /// `tasks/update`, and `tasks/cancel`.
 pub const RESULT_TYPE_COMPLETE: &str = "complete";
 
-/// A task's lifecycle status (SEP-2663 §Task Status). Terminal statuses
-/// (`completed`/`failed`/`cancelled`) never transition again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum TaskStatus {
-    /// The request is being processed.
-    Working,
-    /// The server needs client input before it can proceed; outstanding
-    /// requests are surfaced via `inputRequests` and fulfilled via
-    /// `tasks/update`.
-    InputRequired,
-    /// The request completed; its result is inlined in `result`.
-    Completed,
-    /// The request failed with a JSON-RPC error during execution (inlined in
-    /// `error`). Not used for tool-level `isError: true` — that is `completed`.
-    Failed,
-    /// The request was cancelled before completion.
-    Cancelled,
-}
-
-impl TaskStatus {
-    /// Whether this is a terminal status.
-    #[must_use]
-    pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
-    }
-}
+pub use turbomcp_protocol::neutral::TaskStatus;
 
 /// Operational metadata about ongoing work (SEP-2663 §Tasks). The base shape
 /// shared by [`CreateTaskResult`] and [`DetailedTask`].

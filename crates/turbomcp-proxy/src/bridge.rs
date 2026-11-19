@@ -28,7 +28,8 @@ use parking_lot::Mutex;
 
 use tokio::sync::Notify;
 use turbomcp_client::{
-    ClientError, ClientResult, ElicitationHandler, RootsHandler, SamplingHandler, async_trait,
+    ClientError, ClientResult, ElicitationHandler, HandlerContext, RootsHandler, SamplingHandler,
+    async_trait,
 };
 use turbomcp_core::{JsonRpcError, McpError, ProtocolVersion};
 use turbomcp_protocol::neutral;
@@ -151,13 +152,9 @@ impl Bridge {
 /// a JSON-RPC error, which the upstream can tell from a user who cancelled.
 #[async_trait]
 impl ElicitationHandler for Bridge {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        self.ask_form(request).await.unwrap_or_else(|_| cancelled())
-    }
-
-    async fn elicit_with(
+    async fn elicit(
         &self,
-        _ctx: &turbomcp_client::HandlerContext,
+        _ctx: &HandlerContext,
         request: neutral::ElicitParams,
     ) -> ClientResult<neutral::ElicitOutcome> {
         self.ask_form(request).await
@@ -167,13 +164,9 @@ impl ElicitationHandler for Bridge {
         true
     }
 
-    async fn elicit_url(&self, request: neutral::ElicitUrlParams) -> neutral::ElicitOutcome {
-        self.ask_url(request).await.unwrap_or_else(|_| cancelled())
-    }
-
-    async fn elicit_url_with(
+    async fn elicit_url(
         &self,
-        _ctx: &turbomcp_client::HandlerContext,
+        _ctx: &HandlerContext,
         request: neutral::ElicitUrlParams,
     ) -> ClientResult<neutral::ElicitOutcome> {
         self.ask_url(request).await
@@ -210,16 +203,11 @@ impl Bridge {
     }
 }
 
-/// A cancel, for the plain handler methods nothing here calls (the client
-/// calls the `*_with` ones, which report errors as errors).
-fn cancelled() -> neutral::ElicitOutcome {
-    neutral::ElicitOutcome::new(neutral::ElicitAction::Cancel, Default::default())
-}
-
 #[async_trait]
 impl SamplingHandler for Bridge {
     async fn create_message(
         &self,
+        _ctx: &HandlerContext,
         params: neutral::CreateMessageParams,
     ) -> ClientResult<neutral::CreateMessageResult> {
         let key = self.key("sample", &params)?;
@@ -234,7 +222,7 @@ impl SamplingHandler for Bridge {
 
 #[async_trait]
 impl RootsHandler for Bridge {
-    async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
+    async fn list_roots(&self, _ctx: &HandlerContext) -> ClientResult<neutral::ListRootsResult> {
         let key = self.key("roots", &"roots/list")?;
         let asked = self.inner.handle.list_roots(&key).await;
         self.settle(asked).await.map_err(|e| self.client_error(&e))
@@ -280,14 +268,10 @@ fn unattributed() -> JsonRpcError {
 
 #[async_trait]
 impl ElicitationHandler for UpstreamHandlers {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Cancel, Default::default())
-    }
-
     /// No caller claims it: refused as such, not answered as a user's cancel.
-    async fn elicit_with(
+    async fn elicit(
         &self,
-        _ctx: &turbomcp_client::HandlerContext,
+        _ctx: &HandlerContext,
         _request: neutral::ElicitParams,
     ) -> ClientResult<neutral::ElicitOutcome> {
         tracing::warn!("refusing an upstream elicitation no caller claims");
@@ -298,13 +282,9 @@ impl ElicitationHandler for UpstreamHandlers {
         true
     }
 
-    async fn elicit_url(&self, _request: neutral::ElicitUrlParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Cancel, Default::default())
-    }
-
-    async fn elicit_url_with(
+    async fn elicit_url(
         &self,
-        _ctx: &turbomcp_client::HandlerContext,
+        _ctx: &HandlerContext,
         _request: neutral::ElicitUrlParams,
     ) -> ClientResult<neutral::ElicitOutcome> {
         tracing::warn!("refusing an upstream URL elicitation no caller claims");
@@ -322,6 +302,7 @@ impl ElicitationHandler for UpstreamHandlers {
 impl SamplingHandler for UpstreamHandlers {
     async fn create_message(
         &self,
+        _ctx: &HandlerContext,
         _params: neutral::CreateMessageParams,
     ) -> ClientResult<neutral::CreateMessageResult> {
         Err(ClientError::Rpc(unattributed()))
@@ -334,7 +315,7 @@ impl SamplingHandler for UpstreamHandlers {
 
 #[async_trait]
 impl RootsHandler for UpstreamHandlers {
-    async fn list_roots(&self) -> ClientResult<neutral::ListRootsResult> {
+    async fn list_roots(&self, _ctx: &HandlerContext) -> ClientResult<neutral::ListRootsResult> {
         Err(ClientError::Rpc(unattributed()))
     }
 }

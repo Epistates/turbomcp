@@ -63,8 +63,15 @@ struct Spy {
 
 #[async_trait]
 impl ElicitationHandler for Spy {
-    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+    async fn elicit(
+        &self,
+        _ctx: &turbomcp_client::HandlerContext,
+        _request: neutral::ElicitParams,
+    ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
+        Ok(neutral::ElicitOutcome::new(
+            neutral::ElicitAction::Decline,
+            Map::new(),
+        ))
     }
 }
 
@@ -163,8 +170,12 @@ struct HandlerArc(Arc<Spy>);
 
 #[async_trait]
 impl ElicitationHandler for HandlerArc {
-    async fn elicit(&self, request: neutral::ElicitParams) -> neutral::ElicitOutcome {
-        self.0.elicit(request).await
+    async fn elicit(
+        &self,
+        ctx: &turbomcp_client::HandlerContext,
+        request: neutral::ElicitParams,
+    ) -> turbomcp_client::ClientResult<neutral::ElicitOutcome> {
+        self.0.elicit(ctx, request).await
     }
 }
 

@@ -4,25 +4,12 @@
 
 use turbomcp_server::{TaskSnapshot, TaskStatus};
 
-use crate::wire::{self, DetailedTask, Task};
-
-pub(crate) fn status(status: TaskStatus) -> wire::TaskStatus {
-    match status {
-        TaskStatus::Working => wire::TaskStatus::Working,
-        TaskStatus::InputRequired => wire::TaskStatus::InputRequired,
-        TaskStatus::Completed => wire::TaskStatus::Completed,
-        TaskStatus::Failed => wire::TaskStatus::Failed,
-        TaskStatus::Cancelled => wire::TaskStatus::Cancelled,
-        // A status a later backend adds that this wire doesn't name is still
-        // running as far as this wire can say.
-        _ => wire::TaskStatus::Working,
-    }
-}
+use crate::wire::{DetailedTask, Task};
 
 pub(crate) fn task(snapshot: &TaskSnapshot) -> Task {
     Task {
         task_id: snapshot.task_id.clone(),
-        status: status(snapshot.status),
+        status: snapshot.status,
         status_message: snapshot.status_message.clone(),
         created_at: snapshot.created_at.clone(),
         last_updated_at: snapshot.last_updated_at.clone(),

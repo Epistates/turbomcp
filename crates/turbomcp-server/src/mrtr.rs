@@ -1024,9 +1024,7 @@ impl ClientHandle {
     /// What every form elicitation checks before it goes out: the schema is in
     /// the form subset this session's revision can render.
     fn prepare_elicit(&self, params: &neutral::ElicitParams) -> McpResult<()> {
-        params
-            .validate_for(&self.inner.version)
-            .map_err(McpError::invalid_params)
+        params.validate_for(&self.inner.version)
     }
 
     /// Whether the client declared `capability`, which may be a dotted path
@@ -1330,7 +1328,6 @@ fn checked_outcome(
 
 fn parse_elicit_outcome(raw: &Value) -> McpResult<neutral::ElicitOutcome> {
     neutral::ElicitOutcome::from_wire(raw)
-        .map_err(|e| McpError::invalid_params(format!("invalid elicit response: {e}")))
 }
 
 #[cfg(test)]
@@ -1365,7 +1362,7 @@ mod tests {
         );
         let nested = neutral::ElicitParams::new("q", crate::mrtr::form_schema::<Nested>());
         let refused = nested.validate().unwrap_err();
-        assert!(refused.contains("address"), "{refused}");
+        assert!(refused.to_string().contains("address"), "{refused}");
     }
 
     use super::*;
