@@ -294,12 +294,12 @@ async fn attributes_carry_icons_meta_and_schemas() {
     .await
     .unwrap();
     let info = client.server_info().unwrap();
-    assert_eq!(info.extra["description"], "Decorated on every surface");
-    assert_eq!(info.extra["websiteUrl"], "https://example.com");
     assert_eq!(
-        info.extra["icons"][0]["src"],
-        "https://example.com/server.png"
+        info.description.as_deref(),
+        Some("Decorated on every surface")
     );
+    assert_eq!(info.website_url.as_deref(), Some("https://example.com"));
+    assert_eq!(info.icons[0].src, "https://example.com/server.png");
 
     let tool = client.list_all_tools().await.unwrap().remove(0);
     let icon = &tool.icons[0];

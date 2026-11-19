@@ -9,9 +9,10 @@
 //! `turbomcp-protocol` (a version-specific `ClientCapabilities` type here
 //! would invert the layering).
 
-use crate::{CancellationToken, Identity, ProtocolVersion};
+use crate::{CancellationToken, Icon, Identity, ProtocolVersion};
 use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::any::{Any, TypeId};
 use core::fmt;
 use hashbrown::HashMap;
@@ -31,6 +32,19 @@ pub struct Implementation {
     pub title: Option<String>,
     /// Version string.
     pub version: String,
+    /// What it does (`2025-11-25` onwards).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Its homepage (`websiteUrl`, `2025-11-25` onwards).
+    #[serde(
+        rename = "websiteUrl",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub website_url: Option<String>,
+    /// Icons a client can show for it (`2025-11-25` onwards).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub icons: Vec<Icon>,
     /// Any additional fields present on the wire (forward compatibility).
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -43,6 +57,9 @@ impl Implementation {
             name: name.into(),
             title: None,
             version: version.into(),
+            description: None,
+            website_url: None,
+            icons: Vec::new(),
             extra: Map::new(),
         }
     }
@@ -57,16 +74,21 @@ impl Implementation {
     /// Set the `description` (`2025-11-25` onwards; builder style).
     #[must_use]
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.extra
-            .insert("description".into(), Value::String(description.into()));
+        self.description = Some(description.into());
         self
     }
 
     /// Set the `websiteUrl` (`2025-11-25` onwards; builder style).
     #[must_use]
     pub fn with_website_url(mut self, url: impl Into<String>) -> Self {
-        self.extra
-            .insert("websiteUrl".into(), Value::String(url.into()));
+        self.website_url = Some(url.into());
+        self
+    }
+
+    /// Add an icon (`2025-11-25` onwards; builder style).
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icons.push(icon);
         self
     }
 }
@@ -391,11 +413,21 @@ mod tests {
     }
 
     #[test]
-    fn implementation_preserves_unknown_fields() {
-        let json = json!({"name":"s","version":"1.0","websiteUrl":"https://x"});
-        let imp: Implementation = serde_json::from_value(json).unwrap();
+    fn implementation_reads_spec_fields_and_keeps_unknown_ones() {
+        let json = json!({
+            "name": "s",
+            "version": "1.0",
+            "websiteUrl": "https://x",
+            "icons": [{"src": "https://x/i.png", "theme": "dark"}],
+            "com.example/flavor": "mint",
+        });
+        let imp: Implementation = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(imp.name, "s");
-        assert_eq!(imp.extra.get("websiteUrl").unwrap(), &json!("https://x"));
+        assert_eq!(imp.website_url.as_deref(), Some("https://x"));
+        assert_eq!(imp.icons[0].theme, Some(crate::IconTheme::Dark));
+        assert_eq!(imp.extra.get("com.example/flavor").unwrap(), &json!("mint"));
+        assert!(!imp.extra.contains_key("websiteUrl"));
+        assert_eq!(serde_json::to_value(&imp).unwrap(), json);
     }
 
     #[test]

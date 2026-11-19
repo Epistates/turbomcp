@@ -339,67 +339,7 @@ impl ToolAnnotations {
     }
 }
 
-/// A sized icon resource (`ui` display hint on tools, resources, prompts).
-/// `src` is an HTTP(S) URL or a base64 `data:` URI.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct Icon {
-    /// URI of the icon resource (HTTP/HTTPS or `data:`).
-    pub src: String,
-    /// MIME type override when the source's is missing or generic.
-    pub mime_type: Option<String>,
-    /// `"WxH"` strings (e.g. `"48x48"`) or `"any"`; empty = any size.
-    pub sizes: Vec<String>,
-    /// The color scheme this icon is designed for; `None` = suits both.
-    pub theme: Option<IconTheme>,
-}
-
-impl Icon {
-    /// An icon with the given source URI (any size, MIME inferred).
-    pub fn new(src: impl Into<String>) -> Self {
-        Self {
-            src: src.into(),
-            mime_type: None,
-            sizes: Vec::new(),
-            theme: None,
-        }
-    }
-
-    /// Declare the image's MIME type.
-    #[must_use]
-    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
-        self.mime_type = Some(mime_type.into());
-        self
-    }
-
-    /// Declare the sizes it's drawn for (`"48x48"`, `"any"` for scalable).
-    #[must_use]
-    pub fn with_sizes<I, S>(mut self, sizes: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.sizes = sizes.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Declare the color scheme it's designed for.
-    #[must_use]
-    pub fn with_theme(mut self, theme: IconTheme) -> Self {
-        self.theme = Some(theme);
-        self
-    }
-}
-
-/// The color scheme an [`Icon`] is designed for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum IconTheme {
-    /// For light backgrounds.
-    Light,
-    /// For dark backgrounds.
-    Dark,
-}
+pub use turbomcp_core::{Icon, IconTheme};
 
 impl Tool {
     /// A tool with the given name and argument schema; no title/description.
@@ -3786,9 +3726,11 @@ impl From<Icon> for v0728::Icon {
             mime_type: i.mime_type,
             sizes: i.sizes,
             src: i.src,
-            theme: i.theme.map(|t| match t {
-                IconTheme::Light => v0728::IconTheme::Light,
-                IconTheme::Dark => v0728::IconTheme::Dark,
+            // A theme this wire can't name suits neither, so it says nothing.
+            theme: i.theme.and_then(|t| match t {
+                IconTheme::Light => Some(v0728::IconTheme::Light),
+                IconTheme::Dark => Some(v0728::IconTheme::Dark),
+                _ => None,
             }),
         }
     }
@@ -4335,9 +4277,11 @@ impl From<Icon> for legacy::Icon {
             mime_type: i.mime_type,
             sizes: i.sizes,
             src: i.src,
-            theme: i.theme.map(|t| match t {
-                IconTheme::Light => legacy::IconTheme::Light,
-                IconTheme::Dark => legacy::IconTheme::Dark,
+            // A theme this wire can't name suits neither, so it says nothing.
+            theme: i.theme.and_then(|t| match t {
+                IconTheme::Light => Some(legacy::IconTheme::Light),
+                IconTheme::Dark => Some(legacy::IconTheme::Dark),
+                _ => None,
             }),
         }
     }
@@ -4675,15 +4619,13 @@ impl From<v0728::ToolAnnotations> for ToolAnnotations {
 
 impl From<v0728::Icon> for Icon {
     fn from(i: v0728::Icon) -> Self {
-        Icon {
-            src: i.src,
-            mime_type: i.mime_type,
-            sizes: i.sizes,
-            theme: i.theme.map(|t| match t {
-                v0728::IconTheme::Light => IconTheme::Light,
-                v0728::IconTheme::Dark => IconTheme::Dark,
-            }),
-        }
+        let mut icon = Icon::new(i.src).with_sizes(i.sizes);
+        icon.mime_type = i.mime_type;
+        icon.theme = i.theme.map(|t| match t {
+            v0728::IconTheme::Light => IconTheme::Light,
+            v0728::IconTheme::Dark => IconTheme::Dark,
+        });
+        icon
     }
 }
 
@@ -5024,15 +4966,13 @@ impl From<legacy::ToolAnnotations> for ToolAnnotations {
 
 impl From<legacy::Icon> for Icon {
     fn from(i: legacy::Icon) -> Self {
-        Icon {
-            src: i.src,
-            mime_type: i.mime_type,
-            sizes: i.sizes,
-            theme: i.theme.map(|t| match t {
-                legacy::IconTheme::Light => IconTheme::Light,
-                legacy::IconTheme::Dark => IconTheme::Dark,
-            }),
-        }
+        let mut icon = Icon::new(i.src).with_sizes(i.sizes);
+        icon.mime_type = i.mime_type;
+        icon.theme = i.theme.map(|t| match t {
+            legacy::IconTheme::Light => IconTheme::Light,
+            legacy::IconTheme::Dark => IconTheme::Dark,
+        });
+        icon
     }
 }
 

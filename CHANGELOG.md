@@ -51,6 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_theme` and `ToolAnnotations::with_title`. `ToolChoice` is no longer
   `Copy`, so a mode that names a tool can be added.
 
+- **Breaking:** `Implementation` has typed `description`, `website_url`
+  and `icons` fields. They are spec fields since `2025-11-25`, and until now
+  they arrived in `Implementation::extra`, where code reading them there
+  will no longer find them. `Icon` and `IconTheme` move to `turbomcp-core`
+  (still re-exported from `neutral`) so that `Implementation` can carry
+  them, and `Implementation::with_icon` is new.
+
 ### Removed
 
 - **Breaking:** `Identity::Dpop`. Nothing produced it, and the MCP spec

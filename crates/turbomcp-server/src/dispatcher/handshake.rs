@@ -226,8 +226,8 @@ fn build_legacy_capabilities<S: McpServerCore>(
 }
 
 /// `i` on a wire: every field the wire models (`description`, `icons`,
-/// `websiteUrl` ride in [`Implementation::extra`]) is carried, which was not
-/// the case when only name, title and version were copied across.
+/// `websiteUrl`, and anything in [`Implementation::extra`]) is carried, which
+/// was not the case when only name, title and version were copied across.
 fn impl_to_wire<W: serde::de::DeserializeOwned>(
     i: Implementation,
     minimal: impl FnOnce(Implementation) -> W,
@@ -252,8 +252,8 @@ fn to_legacy_impl(i: Implementation) -> legacy::Implementation {
     })
 }
 
-/// A peer's `Implementation`, keeping what it said beyond name, title and
-/// version (in [`Implementation::extra`]).
+/// A peer's `Implementation`, keeping everything it said (what the neutral
+/// type doesn't name lands in [`Implementation::extra`]).
 fn from_legacy_impl(i: legacy::Implementation) -> Implementation {
     serde_json::to_value(&i)
         .and_then(serde_json::from_value)

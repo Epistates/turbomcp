@@ -33,6 +33,7 @@ pub mod codec;
 mod context;
 pub mod envelope;
 mod error;
+mod icon;
 mod identity;
 mod jsonrpc;
 pub mod meta;
@@ -43,6 +44,7 @@ pub use cancellation::CancellationToken;
 pub use context::{Extensions, Implementation, LogLevel, RequestContext, TraceContext};
 pub use envelope::{ConnectionClosed, ConnectionId, McpRequest, ObservedHeaders, SessionId};
 pub use error::{McpError, McpResult, codes};
+pub use icon::{Icon, IconTheme};
 pub use identity::{Claims, Identity, IdentityClaims};
 pub use jsonrpc::{
     InvalidFrame, JsonRpcError, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,

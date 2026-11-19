@@ -177,14 +177,7 @@ pub mod __macro_support {
         mut info: turbomcp_core::Implementation,
         icons: Vec<turbomcp_protocol::neutral::Icon>,
     ) -> turbomcp_core::Implementation {
-        let wire: Vec<Value> = icons
-            .into_iter()
-            .map(|icon| {
-                serde_json::to_value(turbomcp_protocol::v2026_07_28::types::Icon::from(icon))
-                    .unwrap_or_default()
-            })
-            .collect();
-        info.extra.insert("icons".into(), Value::Array(wire));
+        info.icons = icons;
         info
     }
 
@@ -691,12 +684,9 @@ mod tests {
         struct Described;
         impl McpServerCore for Described {
             fn server_info(&self) -> Implementation {
-                let mut info = Implementation::new("described", "1.0.0");
-                info.extra
-                    .insert("description".into(), json!("A server with a story"));
-                info.extra
-                    .insert("websiteUrl".into(), json!("https://example.com"));
-                info
+                Implementation::new("described", "1.0.0")
+                    .with_description("A server with a story")
+                    .with_website_url("https://example.com")
             }
         }
         let mut svc = VersionDispatcher::new(Described, MethodRouter::new());

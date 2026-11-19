@@ -61,17 +61,16 @@ pub(super) fn derive(
     let Some(info) = info else {
         return card;
     };
-    let text = |key: &str| info.extra.get(key).and_then(serde_json::Value::as_str);
     if card.version.is_empty() {
         fill(&mut card, "version", |c| {
             c.version.clone_from(&info.version)
         });
     }
     if card.description.is_empty()
-        && let Some(description) = text("description")
+        && let Some(description) = &info.description
     {
         fill(&mut card, "description", |c| {
-            c.description = description.to_owned()
+            c.description.clone_from(description);
         });
     }
     if card.title.is_none()
@@ -80,17 +79,18 @@ pub(super) fn derive(
         fill(&mut card, "title", |c| c.title = Some(title.clone()));
     }
     if card.website_url.is_none()
-        && let Some(url) = text("websiteUrl")
+        && let Some(url) = &info.website_url
     {
         fill(&mut card, "websiteUrl", |c| {
-            c.website_url = Some(url.to_owned())
+            c.website_url = Some(url.clone())
         });
     }
+    // The card's icon has the same wire shape as the server's.
     if card.icons.is_empty()
-        && let Some(icons) = info
-            .extra
-            .get("icons")
-            .and_then(|i| serde_json::from_value::<Vec<Icon>>(i.clone()).ok())
+        && !info.icons.is_empty()
+        && let Some(icons) = serde_json::to_value(&info.icons)
+            .ok()
+            .and_then(|i| serde_json::from_value::<Vec<Icon>>(i).ok())
     {
         fill(&mut card, "icons[].src", |c| c.icons = icons);
     }

@@ -100,7 +100,7 @@ pub(super) fn build_context(req: &JsonRpcRequest, ext: &Extensions) -> RequestCo
         ctx.trace_context = turbomcp_core::meta::extract_trace_context(meta);
         let (consumed, propagated) = turbomcp_core::meta::partition(meta.clone());
         // Everything the client said about itself, `description`, `icons`
-        // and `websiteUrl` included (in `Implementation::extra`).
+        // and `websiteUrl` included.
         if let Some(info) = consumed
             .get(meta::keys::CLIENT_INFO)
             .and_then(|v| serde_json::from_value::<Implementation>(v.clone()).ok())
