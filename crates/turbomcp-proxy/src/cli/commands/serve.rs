@@ -449,6 +449,12 @@ impl ServeCommand {
         }
 
         if let Some(secret) = &self.jwt_secret {
+            // An empty HMAC key lets anyone mint a token that verifies, so
+            // jsonwebtoken refuses it; say so at startup rather than reject
+            // every token at runtime.
+            if secret.is_empty() {
+                return Err(ProxyError::configuration("--jwt-secret cannot be empty"));
+            }
             let algorithm = parse_jwt_algorithm(&self.jwt_algorithm)?;
             if !is_symmetric_algorithm(algorithm) {
                 return Err(ProxyError::configuration(format!(
@@ -914,6 +920,20 @@ mod tests {
 
         cmd.jwt_audience = vec!["https://proxy.example.com/mcp".to_string()];
         assert!(cmd.build_frontend_auth().unwrap().is_some());
+    }
+
+    /// With an empty HMAC key anyone can mint a token that verifies.
+    #[test]
+    fn jwt_secret_cannot_be_empty() {
+        let mut cmd = base_command();
+        cmd.jwt_secret = Some(String::new());
+        cmd.jwt_audience = vec!["https://proxy.example.com/mcp".to_string()];
+
+        let err = cmd.build_frontend_auth().unwrap_err();
+        assert!(
+            err.to_string().contains("--jwt-secret cannot be empty"),
+            "{err}"
+        );
     }
 
     /// PX-V12: a 401 names the protected-resource metadata (RFC 9728 §5.1)
