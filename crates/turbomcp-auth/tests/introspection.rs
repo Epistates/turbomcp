@@ -123,7 +123,7 @@ fn validator(url: &str) -> IntrospectionValidator {
 async fn an_active_token_for_this_resource_is_accepted_and_cached() {
     let (url, endpoint) = serve().await;
     endpoint.answer("opaque-1", active(json!({})));
-    let v = validator(&url).require_issuer(ISSUER);
+    let v = validator(&url).with_required_issuer(ISSUER);
 
     let principal = v.validate("opaque-1").await.expect("accepted");
     assert_eq!(principal.subject, "alice");
@@ -177,7 +177,7 @@ async fn what_is_refused() {
         ("no-issuer", active(json!({ "iss": null }))),
         ("nobody", active(json!({ "sub": null }))),
     ];
-    let v = validator(&url).require_issuer(ISSUER);
+    let v = validator(&url).with_required_issuer(ISSUER);
     for (token, answer) in cases {
         endpoint.answer(token, answer);
         match v.validate(token).await {
@@ -273,7 +273,7 @@ async fn an_unreachable_or_failing_endpoint_closes() {
 async fn without_a_cache_every_request_asks() {
     let (url, endpoint) = serve().await;
     endpoint.answer("opaque", active(json!({})));
-    let v = validator(&url).cache_ttl(Duration::ZERO);
+    let v = validator(&url).with_cache_ttl(Duration::ZERO);
     v.validate("opaque").await.unwrap();
     v.validate("opaque").await.unwrap();
     assert_eq!(endpoint.calls(), 2);
@@ -289,8 +289,8 @@ async fn a_cached_answer_ends_with_the_token() {
     // sometimes landed after it. Three leave room for a slow runner.
     endpoint.answer("short", active(json!({ "exp": now() + 3 })));
     let v = validator(&url)
-        .leeway(0)
-        .cache_ttl(Duration::from_secs(600));
+        .with_leeway(0)
+        .with_cache_ttl(Duration::from_secs(600));
     v.validate("short").await.expect("valid for a few seconds");
     tokio::time::sleep(Duration::from_millis(4100)).await;
     // Expired now: the cache doesn't answer, and the endpoint's (stale)

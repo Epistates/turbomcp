@@ -134,7 +134,7 @@ async fn ends(mut body: turbomcp_transport_http::HttpBody) {
 /// `max_concurrent_requests` of them refused every request from everyone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn open_streams_do_not_hold_request_slots() {
-    let app = service(dispatcher(), HttpConfig::new().max_concurrent_requests(2));
+    let app = service(dispatcher(), HttpConfig::new().with_max_in_flight(2));
     let mut streams = Vec::new();
     for id in 0..3 {
         let resp = app.clone().oneshot(listen(id)).await.unwrap();
@@ -151,7 +151,10 @@ async fn open_streams_do_not_hold_request_slots() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_client_is_held_to_its_share_of_streams() {
-    let app = service(dispatcher(), HttpConfig::new().max_streams_per_client(2));
+    let app = service(
+        dispatcher(),
+        HttpConfig::new().with_max_streams_per_client(2),
+    );
     let mut streams = Vec::new();
     for id in 0..2 {
         let resp = app
@@ -190,7 +193,7 @@ async fn a_client_is_held_to_its_share_of_streams() {
 /// own quota.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_full_endpoint_refuses_streams_with_503() {
-    let app = service(dispatcher(), HttpConfig::new().max_streams(1));
+    let app = service(dispatcher(), HttpConfig::new().with_max_streams(1));
     let open = app.clone().oneshot(listen(1)).await.unwrap();
     assert_eq!(open.status(), StatusCode::OK);
     let refused = app.clone().oneshot(listen(2)).await.unwrap();

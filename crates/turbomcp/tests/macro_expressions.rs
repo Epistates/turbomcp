@@ -289,7 +289,7 @@ impl Decorated {
 async fn attributes_carry_icons_meta_and_schemas() {
     let client = turbomcp::testing::connect(
         Decorated.into_server(),
-        ClientBuilder::new("t", "1").with_connect_mode(turbomcp::client::ConnectMode::Legacy),
+        ClientBuilder::new("t", "1").with_connect_mode(turbomcp::client::ConnectMode::Stateful),
     )
     .await
     .unwrap();

@@ -22,7 +22,7 @@ fn maximal_tool() -> neutral::Tool {
         .with_title("Search")
         .with_description("Find things")
         .with_task_support(neutral::TaskSupport::Optional)
-        .with_annotations(neutral::ToolAnnotations::new().read_only())
+        .with_annotations(neutral::ToolAnnotations::new().with_read_only(true))
         .with_icon(neutral::Icon::new("https://example.com/i.png"))
         .with_meta_entry("io.example/tag", json!("catalog"))
 }

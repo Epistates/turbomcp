@@ -135,7 +135,7 @@ fn text(result: &neutral::CallToolResult) -> &str {
 /// Each call's progress goes to that call, in the order it was sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn progress_goes_to_the_call_that_asked_in_order() {
-    let client = connect(ConnectMode::Modern, Duration::from_secs(10)).await;
+    let client = connect(ConnectMode::Stateless, Duration::from_secs(10)).await;
     let seen_a = Arc::new(Mutex::new(Vec::new()));
     let seen_b = Arc::new(Mutex::new(Vec::new()));
     let options = |seen: &Arc<Mutex<Vec<f64>>>| {
@@ -164,12 +164,12 @@ async fn progress_goes_to_the_call_that_asked_in_order() {
 
 #[tokio::test]
 async fn a_per_call_timeout_overrides_the_clients() {
-    let client = connect(ConnectMode::Modern, Duration::from_secs(10)).await;
+    let client = connect(ConnectMode::Stateless, Duration::from_secs(10)).await;
     let err = client
         .call_tool_with(
             "slow",
             args(json!({ "ms": 2000 })),
-            &CallOptions::new().timeout(Duration::from_millis(100)),
+            &CallOptions::new().with_timeout(Duration::from_millis(100)),
         )
         .await
         .unwrap_err();
@@ -180,9 +180,9 @@ async fn a_per_call_timeout_overrides_the_clients() {
 /// to, but not the overall ceiling.
 #[tokio::test]
 async fn progress_restarts_the_timeout_up_to_the_ceiling() {
-    let client = connect(ConnectMode::Modern, Duration::from_secs(10)).await;
+    let client = connect(ConnectMode::Stateless, Duration::from_secs(10)).await;
     let long = || args(json!({ "steps": 8, "every_ms": 100 }));
-    let short = CallOptions::new().timeout(Duration::from_millis(250));
+    let short = CallOptions::new().with_timeout(Duration::from_millis(250));
 
     let err = client
         .call_tool_with("steps", long(), &short)
@@ -190,14 +190,14 @@ async fn progress_restarts_the_timeout_up_to_the_ceiling() {
         .unwrap_err();
     assert!(matches!(err, ClientError::Timeout), "without resets: {err}");
 
-    let resetting = short.clone().reset_timeout_on_progress(true);
+    let resetting = short.clone().with_reset_timeout_on_progress(true);
     let ok = client
         .call_tool_with("steps", long(), &resetting)
         .await
         .unwrap();
     assert_eq!(text(&ok), "done");
 
-    let capped = resetting.max_total_timeout(Duration::from_millis(400));
+    let capped = resetting.with_max_total_timeout(Duration::from_millis(400));
     let err = client
         .call_tool_with("steps", long(), &capped)
         .await
@@ -210,7 +210,7 @@ async fn progress_restarts_the_timeout_up_to_the_ceiling() {
 
 #[tokio::test]
 async fn cancellation_ends_the_call_and_tells_the_server() {
-    let client = connect(ConnectMode::Modern, Duration::from_secs(10)).await;
+    let client = connect(ConnectMode::Stateless, Duration::from_secs(10)).await;
     let token = CancellationToken::new();
     let trigger = token.clone();
     tokio::spawn(async move {
@@ -221,7 +221,7 @@ async fn cancellation_ends_the_call_and_tells_the_server() {
         .call_tool_with(
             "slow",
             args(json!({ "ms": 5000 })),
-            &CallOptions::new().cancel_on(token),
+            &CallOptions::new().with_cancellation(token),
         )
         .await
         .unwrap_err();
@@ -237,20 +237,21 @@ async fn cancellation_ends_the_call_and_tells_the_server() {
 
 #[tokio::test]
 async fn meta_reaches_the_server_and_reserved_keys_are_refused() {
-    let client = connect(ConnectMode::Modern, Duration::from_secs(10)).await;
+    let client = connect(ConnectMode::Stateless, Duration::from_secs(10)).await;
     let options = CallOptions::new()
-        .meta(
+        .with_meta(
             "traceparent",
             json!("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"),
         )
-        .meta("app/tenant", json!("acme"));
+        .with_meta("app/tenant", json!("acme"));
     let result = client
         .call_tool_with("meta", Map::new(), &options)
         .await
         .unwrap();
     assert_eq!(text(&result), "trace=true app=\"acme\"");
 
-    let forged = CallOptions::new().meta("io.modelcontextprotocol/protocolVersion", json!("x"));
+    let forged =
+        CallOptions::new().with_meta("io.modelcontextprotocol/protocolVersion", json!("x"));
     let err = client
         .call_tool_with("meta", Map::new(), &forged)
         .await
@@ -261,8 +262,8 @@ async fn meta_reaches_the_server_and_reserved_keys_are_refused() {
 /// A stateful session sets its log level for the whole session.
 #[tokio::test]
 async fn a_per_call_log_level_is_refused_on_a_stateful_session() {
-    let client = connect(ConnectMode::Legacy, Duration::from_secs(10)).await;
-    let options = CallOptions::new().log_level(LogLevel::Debug);
+    let client = connect(ConnectMode::Stateful, Duration::from_secs(10)).await;
+    let options = CallOptions::new().with_log_level(LogLevel::Debug);
     let err = client
         .call_tool_with("meta", Map::new(), &options)
         .await
@@ -275,7 +276,7 @@ async fn a_per_call_log_level_is_refused_on_a_stateful_session() {
 /// timeout lost their answer and the call.
 #[tokio::test]
 async fn the_timeout_waits_while_the_user_answers() {
-    let client = connect(ConnectMode::Legacy, Duration::from_millis(200)).await;
+    let client = connect(ConnectMode::Stateful, Duration::from_millis(200)).await;
     let result = client.call_tool("confirm", Map::new()).await.unwrap();
     assert_eq!(text(&result), "Accept");
 }

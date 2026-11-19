@@ -135,3 +135,11 @@ plain_context!(
     InitializeContext,
     "initialize"
 );
+plain_context!(
+    /// Seen by [`McpServerCore::on_cancelled`](crate::McpServerCore::on_cancelled):
+    /// whose request ended. Request ids are only unique within a session, so
+    /// `base.identity` and the session in `base.extensions` are what tell
+    /// one caller's cancel from another's.
+    CancelledContext,
+    "notifications/cancelled"
+);

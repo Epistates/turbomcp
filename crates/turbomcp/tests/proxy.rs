@@ -218,8 +218,8 @@ fn args(value: Value) -> Map<String, Value> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_remote_server_bridges_every_pair_of_revisions() {
-    for upstream in [ConnectMode::Modern, ConnectMode::Legacy] {
-        for downstream in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for upstream in [ConnectMode::Stateless, ConnectMode::Stateful] {
+        for downstream in [ConnectMode::Stateless, ConnectMode::Stateful] {
             let remote = remote(Upstairs.into_server(), upstream).await;
             let client = turbomcp::testing::connect(
                 remote.clone().into_server(),
@@ -258,7 +258,7 @@ async fn a_remote_server_bridges_every_pair_of_revisions() {
 
 #[tokio::test]
 async fn capabilities_follow_the_upstream() {
-    let remote = remote(ToolsOnly.into_server(), ConnectMode::Modern).await;
+    let remote = remote(ToolsOnly.into_server(), ConnectMode::Stateless).await;
     assert!(remote.capabilities().prompts.is_none());
     let client = turbomcp::testing::connect(remote.into_server(), ClientBuilder::new("a", "1"))
         .await
@@ -321,13 +321,17 @@ async fn upstream_tags_count_only_when_the_gateway_trusts_them() {
         untrusted.contains(&"up__reindex".to_owned()),
         "{untrusted:?}"
     );
-    let tagged = names(remote_with(Upstairs.into_server(), |b| b.tags(["internal"])).await).await;
+    let tagged =
+        names(remote_with(Upstairs.into_server(), |b| b.with_tags(["internal"])).await).await;
     assert!(tagged.is_empty(), "the gateway tagged them all: {tagged:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_composite_mounts_a_remote_beside_local_tools_under_its_visibility() {
-    let remote = remote_with(Upstairs.into_server(), |b| b.trust_upstream_tags(true)).await;
+    let remote = remote_with(Upstairs.into_server(), |b| {
+        b.with_trusted_upstream_tags(true)
+    })
+    .await;
     let gateway = Composite::new(Implementation::new("gateway", "1.0.0"))
         .mount("up", remote.into_server())
         .unwrap()
@@ -375,7 +379,7 @@ async fn a_composite_mounts_a_remote_beside_local_tools_under_its_visibility() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn progress_crosses_the_hop() {
-    let remote = remote(Upstairs.into_server(), ConnectMode::Modern).await;
+    let remote = remote(Upstairs.into_server(), ConnectMode::Stateless).await;
     let client = turbomcp::testing::connect(remote.into_server(), ClientBuilder::new("a", "1"))
         .await
         .unwrap();
@@ -400,14 +404,14 @@ async fn progress_crosses_the_hop() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancellation_crosses_the_hop() {
-    let remote = remote(Upstairs.into_server(), ConnectMode::Legacy).await;
+    let remote = remote(Upstairs.into_server(), ConnectMode::Stateful).await;
     let client = turbomcp::testing::connect(
         remote.into_server(),
-        ClientBuilder::new("a", "1").with_connect_mode(ConnectMode::Legacy),
+        ClientBuilder::new("a", "1").with_connect_mode(ConnectMode::Stateful),
     )
     .await
     .unwrap();
-    let options = CallOptions::new().timeout(Duration::from_millis(200));
+    let options = CallOptions::new().with_timeout(Duration::from_millis(200));
     assert!(
         client
             .call_tool_with("wait", Map::new(), &options)
@@ -441,7 +445,7 @@ async fn upstream_changes_reach_downstream_clients() {
         .into_server()
         .layer(tower::layer::util::Identity::new());
     let upstream_notifier = upstream.notifier();
-    let remote = remote(upstream, ConnectMode::Legacy).await;
+    let remote = remote(upstream, ConnectMode::Stateful).await;
 
     let downstream = remote
         .clone()
@@ -452,7 +456,7 @@ async fn upstream_changes_reach_downstream_clients() {
     let client = turbomcp::testing::connect(
         downstream,
         ClientBuilder::new("a", "1")
-            .with_connect_mode(ConnectMode::Legacy)
+            .with_connect_mode(ConnectMode::Stateful)
             .with_notifications(heard.clone()),
     )
     .await
@@ -541,13 +545,13 @@ fn caller(name: &'static str, mode: ConnectMode) -> ClientBuilder {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upstream_questions_reach_the_caller_on_every_pair_of_revisions() {
-    for upstream in [ConnectMode::Modern, ConnectMode::Legacy] {
-        for downstream in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for upstream in [ConnectMode::Stateless, ConnectMode::Stateful] {
+        for downstream in [ConnectMode::Stateless, ConnectMode::Stateful] {
             let remote = remote_with(Upstairs.into_server(), |b| {
                 b.client(move |c| c.with_connect_mode(upstream))
-                    .key(turbomcp::proxy::UpstreamKey::Global)
-                    .forward_sampling(true)
-                    .forward_roots(true)
+                    .with_key(turbomcp::proxy::UpstreamKey::Global)
+                    .with_forward_sampling(true)
+                    .with_forward_roots(true)
             })
             .await;
             let client =
@@ -595,8 +599,8 @@ async fn ada_and_bob(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_callers_each_get_their_own_questions() {
     // A `2026-07-28` upstream returns each call's questions in its own result.
-    for downstream in [ConnectMode::Modern, ConnectMode::Legacy] {
-        let remote = remote(Pair::new(false).into_server(), ConnectMode::Modern).await;
+    for downstream in [ConnectMode::Stateless, ConnectMode::Stateful] {
+        let remote = remote(Pair::new(false).into_server(), ConnectMode::Stateless).await;
         let (a, b) = ada_and_bob(&remote, downstream).await;
         assert_eq!(
             (a.as_deref(), b.as_deref()),
@@ -611,8 +615,8 @@ async fn an_unattributable_question_is_refused_not_guessed() {
     // A `2025-11-25` upstream on a pipe says nothing about whose call an
     // `elicitation/create` is. With two in flight, neither caller is asked,
     // and the upstream hears an error, not a user who declined.
-    let remote = remote(Pair::new(true).into_server(), ConnectMode::Legacy).await;
-    let (a, b) = ada_and_bob(&remote, ConnectMode::Legacy).await;
+    let remote = remote(Pair::new(true).into_server(), ConnectMode::Stateful).await;
+    let (a, b) = ada_and_bob(&remote, ConnectMode::Stateful).await;
     for answer in [a, b] {
         let refusal = answer.expect_err("nobody was asked, so nobody answered");
         assert!(refusal.contains("cannot tell which caller"), "{refusal}");
@@ -647,7 +651,7 @@ async fn upstream_scopes_reach_the_gateway_only_when_it_enforces_them() {
             let end = once.lock().unwrap().take();
             async move { end.ok_or_else(|| std::io::Error::other("used")) }
         })
-        .enforce_upstream_scopes(enforce)
+        .with_upstream_scope_enforcement(enforce)
         .connect()
         .await
         .unwrap();
@@ -670,7 +674,7 @@ async fn upstream_scopes_reach_the_gateway_only_when_it_enforces_them() {
 /// nothing upstream, so no update ever arrived.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_subscription_through_the_gateway_reaches_the_upstream() {
-    for mode in [ConnectMode::Legacy, ConnectMode::Modern] {
+    for mode in [ConnectMode::Stateful, ConnectMode::Stateless] {
         let upstream = Upstairs
             .into_server()
             .layer(tower::layer::util::Identity::new());
@@ -685,7 +689,7 @@ async fn a_subscription_through_the_gateway_reaches_the_upstream() {
         let client = turbomcp::testing::connect(
             downstream,
             ClientBuilder::new("a", "1")
-                .with_connect_mode(ConnectMode::Legacy)
+                .with_connect_mode(ConnectMode::Stateful)
                 .with_notifications(heard.clone()),
         )
         .await
@@ -772,7 +776,7 @@ async fn a_changed_upstream_after_a_reconnect_is_announced() {
     let client = turbomcp::testing::connect(
         downstream,
         ClientBuilder::new("a", "1")
-            .with_connect_mode(ConnectMode::Legacy)
+            .with_connect_mode(ConnectMode::Stateful)
             .with_notifications(heard.clone()),
     )
     .await
@@ -851,7 +855,10 @@ impl ElicitationHandler for Asked {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_forwarded_question_names_its_upstream() {
     for attribute in [true, false] {
-        let remote = remote_with(Asker.into_server(), |b| b.attribute_questions(attribute)).await;
+        let remote = remote_with(Asker.into_server(), |b| {
+            b.with_question_attribution(attribute)
+        })
+        .await;
         let asked = Asked::default();
         let client = turbomcp::testing::connect(
             remote.into_server(),
@@ -893,7 +900,7 @@ async fn an_upstream_cannot_announce_another_servers_resource() {
         .into_server()
         .layer(tower::layer::util::Identity::new());
     let upstream_notifier = upstream.notifier();
-    let remote = remote(upstream, ConnectMode::Legacy).await;
+    let remote = remote(upstream, ConnectMode::Stateful).await;
     let downstream = remote
         .clone()
         .into_server()
@@ -903,7 +910,7 @@ async fn an_upstream_cannot_announce_another_servers_resource() {
     let client = turbomcp::testing::connect(
         downstream,
         ClientBuilder::new("a", "1")
-            .with_connect_mode(ConnectMode::Legacy)
+            .with_connect_mode(ConnectMode::Stateful)
             .with_notifications(updated.clone()),
     )
     .await
@@ -946,9 +953,9 @@ async fn an_upstream_cannot_announce_another_servers_resource() {
 /// so. Elicitation, which a person answers, is.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sampling_and_roots_reach_the_caller_only_when_allowed() {
-    let remote = remote(Upstairs.into_server(), ConnectMode::Legacy).await;
+    let remote = remote(Upstairs.into_server(), ConnectMode::Stateful).await;
     let client =
-        turbomcp::testing::connect(remote.into_server(), caller("ada", ConnectMode::Legacy))
+        turbomcp::testing::connect(remote.into_server(), caller("ada", ConnectMode::Stateful))
             .await
             .unwrap();
     let refused = match client.call_tool("interview", Map::new()).await {
@@ -983,8 +990,8 @@ impl Vendor {
 /// pair of revisions, instead of being dropped by the typed hop.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_vendor_key_on_a_result_crosses_the_gateway() {
-    for upstream in [ConnectMode::Modern, ConnectMode::Legacy] {
-        for downstream in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for upstream in [ConnectMode::Stateless, ConnectMode::Stateful] {
+        for downstream in [ConnectMode::Stateless, ConnectMode::Stateful] {
             let remote = remote(Vendor.into_server(), upstream).await;
             let client = turbomcp::testing::connect(
                 remote.into_server(),

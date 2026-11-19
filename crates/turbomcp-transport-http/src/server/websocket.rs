@@ -81,7 +81,7 @@ impl WebSocketConfig {
     /// and proxy timers don't cut it silently (`None` never pings, and so
     /// never notices a peer that went away without closing).
     #[must_use]
-    pub fn ping_interval(mut self, interval: Option<Duration>) -> Self {
+    pub fn with_ping_interval(mut self, interval: Option<Duration>) -> Self {
         self.ping_interval = interval;
         self
     }
@@ -89,14 +89,14 @@ impl WebSocketConfig {
     /// Close a connection after `max` consecutive unanswered pings (`None`
     /// keeps pinging a silent peer forever).
     #[must_use]
-    pub fn max_idle_pings(mut self, max: Option<u32>) -> Self {
+    pub fn with_max_idle_pings(mut self, max: Option<u32>) -> Self {
         self.max_idle_pings = max;
         self
     }
 
     /// Hold at most `max` connections; an upgrade past it answers `503`.
     #[must_use]
-    pub fn max_connections(mut self, max: u32) -> Self {
+    pub fn with_max_connections(mut self, max: u32) -> Self {
         self.max_connections = max.max(1);
         self.slots = Arc::new(Semaphore::new(self.max_connections as usize));
         self

@@ -68,8 +68,9 @@ pub use bus::{BusError, Change, LocalBus, NotificationBus};
 pub use composite::{Composite, CompositeServer};
 pub use config::ServerConfig;
 pub use context::{
-    CallToolContext, CompleteContext, GetPromptContext, InitializeContext, ListPromptsContext,
-    ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, ReadResourceContext,
+    CallToolContext, CancelledContext, CompleteContext, GetPromptContext, InitializeContext,
+    ListPromptsContext, ListResourceTemplatesContext, ListResourcesContext, ListToolsContext,
+    ReadResourceContext,
 };
 pub use dispatcher::{
     CachePolicies, Cancellation, DispatcherSessionTerminator, RootsChangedHandler,
@@ -157,7 +158,7 @@ pub mod __macro_support {
                     .iter()
                     .map(|(name, prop)| {
                         let mut arg = turbomcp_protocol::neutral::PromptArgument::new(name.clone())
-                            .required(required.contains(&name.as_str()));
+                            .with_required(required.contains(&name.as_str()));
                         if let Some(desc) = prop.get("description").and_then(Value::as_str) {
                             arg = arg.with_description(desc);
                         }
@@ -991,7 +992,7 @@ mod tests {
         ) -> McpResult<neutral::ListPromptsResult> {
             Ok(neutral::ListPromptsResult::new(vec![
                 neutral::Prompt::new("greet")
-                    .with_argument(neutral::PromptArgument::new("name").required(true)),
+                    .with_argument(neutral::PromptArgument::new("name").with_required(true)),
             ]))
         }
 

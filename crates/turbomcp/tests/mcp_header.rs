@@ -59,7 +59,7 @@ async fn spawn_server() -> (String, CancellationToken) {
     let config = HttpConfig::new().with_shutdown(shutdown.clone());
     tokio::spawn(
         Geo.into_server()
-            .serve(Http::listener(listener).config(config)),
+            .serve(Http::listener(listener).with_config(config)),
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
     (format!("http://{addr}/mcp"), shutdown)
@@ -123,7 +123,7 @@ async fn server_validates_mirror_headers_against_the_body() {
 async fn typed_client_mirrors_marked_param_to_header() {
     let (url, shutdown) = spawn_server().await;
     let client = connect_http(
-        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Modern),
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Stateless),
         &url,
     )
     .await
@@ -153,7 +153,7 @@ async fn typed_client_mirrors_marked_param_to_header() {
 async fn an_optional_header_param_is_listed_and_mirrored() {
     let (url, shutdown) = spawn_server().await;
     let client = connect_http(
-        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Modern),
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Stateless),
         &url,
     )
     .await
@@ -184,7 +184,7 @@ async fn an_optional_header_param_is_listed_and_mirrored() {
 async fn a_64_bit_header_param_round_trips_within_the_safe_range() {
     let (url, shutdown) = spawn_server().await;
     let client = connect_http(
-        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Modern),
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Stateless),
         &url,
     )
     .await

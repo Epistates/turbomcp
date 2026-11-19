@@ -80,8 +80,8 @@ fn authed_app(limiter: GovernorRateLimiter) -> turbomcp_transport_http::HttpServ
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator =
-        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER)
+        .with_algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let metadata = ResourceMetadata::new(RESOURCE, [ISSUER]);
     let rs = ResourceServer::new(validator, metadata, METADATA_URL);
     service(
@@ -199,8 +199,8 @@ async fn the_ip_gate_throttles_bad_tokens_before_they_are_verified() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator =
-        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER)
+        .with_algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let rs = ResourceServer::new(
         validator,
         ResourceMetadata::new(RESOURCE, [ISSUER]),

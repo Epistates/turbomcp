@@ -120,7 +120,7 @@ Serve the same server over Streamable HTTP instead (feature `http`):
 use turbomcp::http::{Http, HttpConfig};
 
 Hello.into_server()
-    .serve(Http::bind("127.0.0.1:8080".parse()?).config(HttpConfig::new()))
+    .serve(Http::bind("127.0.0.1:8080".parse()?).with_config(HttpConfig::new()))
     .await?;
 ```
 

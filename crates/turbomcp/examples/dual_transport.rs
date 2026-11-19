@@ -42,7 +42,7 @@ async fn main() -> Result<(), turbomcp::ProtocolError> {
                 .expect("invalid listen address");
             eprintln!("serving calc over HTTP on http://{addr}/mcp");
             Calc.into_server()
-                .serve(Http::bind(addr).config(HttpConfig::new()))
+                .serve(Http::bind(addr).with_config(HttpConfig::new()))
                 .await?;
         }
         _ => {

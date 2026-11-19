@@ -82,10 +82,15 @@ fn a_built_card_conforms_to_the_schema() {
         .with_icon(Icon::new("https://example.com/icon.png"))
         .with_remote(
             Remote::streamable_http("https://{region}.example.com/mcp")
-                .with_variable("region", Input::new("Region").required().with_default("us"))
+                .with_variable(
+                    "region",
+                    Input::new("Region").with_required(true).with_default("us"),
+                )
                 .with_header(KeyValueInput::new(
                     "Authorization",
-                    Input::new("Bearer token").required().secret(),
+                    Input::new("Bearer token")
+                        .with_required(true)
+                        .with_secret(true),
                 ))
                 .with_supported_protocol_versions(["2025-11-25", "2026-07-28"]),
         )

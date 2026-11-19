@@ -18,7 +18,7 @@
 //!     .with_visibility(Arc::new(
 //!         Visibility::new()
 //!             .hiding_tagged(["internal", "experimental"])
-//!             .requiring_declared_scopes(),
+//!             .with_declared_scopes_required(),
 //!     ))
 //!     .build();
 //! ```
@@ -51,7 +51,7 @@
 //!
 //! # Visibility is not authorization
 //!
-//! [`Visibility::requiring_declared_scopes`] hides what the caller could not
+//! [`Visibility::with_declared_scopes_required`] hides what the caller could not
 //! call anyway — it is the missing *list* half of `#[tool(scopes(…))]`, which
 //! has always refused the call. Enforcement remains the scope check on the call
 //! path; this makes the catalog agree with it.
@@ -186,7 +186,7 @@ impl Visibility {
     /// caller does not hold — the list half of a check the call path has always
     /// made.
     #[must_use]
-    pub fn requiring_declared_scopes(mut self) -> Self {
+    pub fn with_declared_scopes_required(mut self) -> Self {
         self.declared_scopes = true;
         self
     }
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn declared_scopes_are_matched_against_the_caller() {
-        let policy = Visibility::new().requiring_declared_scopes();
+        let policy = Visibility::new().with_declared_scopes_required();
         let admin = tool(json!({ "io.turbomcp/scopes": ["admin"] }));
 
         assert!(!visible(&policy, &admin, &caller("read")));
@@ -349,7 +349,7 @@ mod tests {
     fn every_enabled_check_must_pass() {
         let policy = Visibility::new()
             .hiding_tagged(["internal"])
-            .requiring_declared_scopes();
+            .with_declared_scopes_required();
         let ctx = caller("admin");
         // Holds the scope, but the tag still hides it.
         assert!(!visible(

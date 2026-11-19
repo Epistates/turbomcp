@@ -39,7 +39,7 @@ async fn main() -> Result<(), turbomcp::ProtocolError> {
     Clock
         .into_server()
         .serve(
-            Pipe::new(stdio()).config(
+            Pipe::new(stdio()).with_config(
                 ServeConfig::new()
                     .with_shutdown(shutdown)
                     .with_drain_timeout(Duration::from_secs(5)),

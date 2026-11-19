@@ -68,7 +68,7 @@ fn preflight(origin: &str) -> Request<Body> {
 /// at all. An allowed origin's preflight now names what it asked for.
 #[tokio::test]
 async fn an_allowed_origin_preflights_with_authorization() {
-    let resp = app(HttpConfig::new().allow_origin(APP))
+    let resp = app(HttpConfig::new().with_allowed_origin(APP))
         .oneshot(preflight(APP))
         .await
         .unwrap();
@@ -88,7 +88,7 @@ async fn an_allowed_origin_preflights_with_authorization() {
 
 #[tokio::test]
 async fn another_origin_gets_no_cors_headers() {
-    let resp = app(HttpConfig::new().allow_origin(APP))
+    let resp = app(HttpConfig::new().with_allowed_origin(APP))
         .oneshot(preflight("https://evil.example"))
         .await
         .unwrap();
@@ -119,7 +119,7 @@ async fn a_response_exposes_the_session_header() {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(init.to_string()))
         .unwrap();
-    let resp = app(HttpConfig::new().allow_origin(APP))
+    let resp = app(HttpConfig::new().with_allowed_origin(APP))
         .oneshot(req)
         .await
         .unwrap();

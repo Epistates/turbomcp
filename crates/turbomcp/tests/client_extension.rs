@@ -119,7 +119,7 @@ async fn a_claimed_result_type_settles_and_its_notification_arrives() {
         Slow.into_server()
             .with_extension(Arc::new(Deferring::default())),
         ClientBuilder::new("t", "1.0.0")
-            .with_connect_mode(ConnectMode::Modern)
+            .with_connect_mode(ConnectMode::Stateless)
             .with_client_extension(Arc::clone(&fetching) as Arc<dyn ClientExtension>),
     )
     .await
@@ -145,7 +145,7 @@ async fn an_unclaimed_result_type_is_refused() {
         Slow.into_server()
             .with_extension(Arc::new(Deferring::default())),
         ClientBuilder::new("t", "1.0.0")
-            .with_connect_mode(ConnectMode::Modern)
+            .with_connect_mode(ConnectMode::Stateless)
             .with_extension(ID, json!({})),
     )
     .await

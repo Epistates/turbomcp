@@ -74,7 +74,7 @@ async fn spawn_server() -> (String, CancellationToken) {
     tokio::spawn(
         FileManager
             .into_server()
-            .serve(Http::listener(listener).config(config)),
+            .serve(Http::listener(listener).with_config(config)),
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
     (format!("http://{addr}/mcp"), shutdown)
@@ -104,7 +104,7 @@ async fn call_delete(client: &Client) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn modern_mrtr_over_http() {
     let (url, shutdown) = spawn_server().await;
-    let client = connect(&url, ConnectMode::Modern, true).await;
+    let client = connect(&url, ConnectMode::Stateless, true).await;
     assert_eq!(call_delete(&client).await, "deleted /tmp/x");
     shutdown.cancel();
 }
@@ -112,7 +112,7 @@ async fn modern_mrtr_over_http() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_inline_bidi_over_http() {
     let (url, shutdown) = spawn_server().await;
-    let client = connect(&url, ConnectMode::Legacy, true).await;
+    let client = connect(&url, ConnectMode::Stateful, true).await;
     assert_eq!(call_delete(&client).await, "deleted /tmp/x");
     shutdown.cancel();
 }

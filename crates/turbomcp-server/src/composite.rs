@@ -91,7 +91,7 @@
 //! Handlers are version-neutral, so a sub-server pinned to one revision is not
 //! protected by that pin once it is mounted — the composite's dispatcher owns
 //! wire rendering. Mounting a narrower server is an error naming the fix: pin
-//! the composite with [`protocols`](Composite::protocols).
+//! the composite with [`protocols`](Composite::with_protocols).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -440,7 +440,7 @@ impl Composite {
     /// server as a whole. A mount's own instructions are not merged — they
     /// describe a server the client is not talking to.
     #[must_use]
-    pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
+    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
         self.instructions = Some(instructions.into());
         self
     }
@@ -449,7 +449,7 @@ impl Composite {
     /// `#[server(protocols(…))]` does for a single server. Mounting a server
     /// that accepts fewer revisions than this set is an error.
     #[must_use]
-    pub fn protocols(mut self, versions: &'static [ProtocolVersion]) -> Self {
+    pub fn with_protocols(mut self, versions: &'static [ProtocolVersion]) -> Self {
         self.versions = versions;
         self
     }
@@ -467,7 +467,7 @@ impl Composite {
     /// - `prefix` is already mounted.
     /// - `server` accepts fewer protocol revisions than this composite —
     ///   handlers are version-neutral, so a sub-server's pin cannot be honored
-    ///   once mounted; narrow the composite with [`protocols`](Self::protocols).
+    ///   once mounted; narrow the composite with [`with_protocols`](Self::with_protocols).
     /// - `server`'s builder carries dispatcher-level configuration, which
     ///   belongs on the composite's own builder.
     pub fn mount<S>(self, prefix: impl AsRef<str>, server: ServerBuilder<S>) -> McpResult<Self>
@@ -516,7 +516,7 @@ impl Composite {
     /// # Errors
     /// - `server` accepts fewer protocol revisions than this composite —
     ///   handlers are version-neutral, so a sub-server's pin cannot be honored
-    ///   once mounted; narrow the composite with [`protocols`](Self::protocols).
+    ///   once mounted; narrow the composite with [`with_protocols`](Self::with_protocols).
     /// - `server`'s builder carries dispatcher-level configuration, which
     ///   belongs on the composite's own builder.
     pub fn mount_flat<S>(self, server: ServerBuilder<S>) -> McpResult<Self>
@@ -1579,7 +1579,7 @@ mod tests {
 
         // …and narrowing the composite to match is the fix the message names.
         composite()
-            .protocols(&[ProtocolVersion::V2025_11_25])
+            .with_protocols(&[ProtocolVersion::V2025_11_25])
             .mount("pinned", Pinned.into_server())
             .expect("a matching composite should accept it");
     }

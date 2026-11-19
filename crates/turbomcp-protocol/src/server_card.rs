@@ -380,15 +380,15 @@ impl Input {
 
     /// Mark it required.
     #[must_use]
-    pub fn required(mut self) -> Self {
-        self.is_required = Some(true);
+    pub fn with_required(mut self, required: bool) -> Self {
+        self.is_required = Some(required);
         self
     }
 
     /// Mark it secret.
     #[must_use]
-    pub fn secret(mut self) -> Self {
-        self.is_secret = Some(true);
+    pub fn with_secret(mut self, secret: bool) -> Self {
+        self.is_secret = Some(secret);
         self
     }
 
@@ -594,16 +594,16 @@ mod tests {
         card()
             .with_remote(
                 Remote::streamable_http("{tenant}.example.com/mcp")
-                    .with_variable("tenant", Input::new("Tenant").required())
+                    .with_variable("tenant", Input::new("Tenant").with_required(true))
                     .with_header(
                         KeyValueInput::new(
                             "Authorization",
                             Input::new("Bearer token")
-                                .required()
-                                .secret()
+                                .with_required(true)
+                                .with_secret(true)
                                 .with_value("Bearer {token}"),
                         )
-                        .with_variable("token", Input::new("API token").secret()),
+                        .with_variable("token", Input::new("API token").with_secret(true)),
                     ),
             )
             .validate()

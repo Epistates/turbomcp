@@ -117,7 +117,7 @@ async fn every_request_kind_carries_the_bearer_token() {
         .with_bearer("token-abc");
     let client = ClientBuilder::new("bearer-test", "1.0.0")
         .with_elicitation(Silent)
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(transport)
         .await
         .expect("handshake");
@@ -174,7 +174,7 @@ async fn a_refreshed_token_applies_without_reconnecting() {
         .with_bearer_source(Arc::clone(&rotating) as Arc<dyn BearerSource>);
     let client = ClientBuilder::new("refresh-test", "1.0.0")
         .with_elicitation(Silent)
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(transport)
         .await
         .expect("handshake");

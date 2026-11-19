@@ -80,8 +80,9 @@ fn dispatcher(gate: &Arc<Semaphore>) -> VersionDispatcher<Reporter> {
             gate: Arc::clone(gate),
         },
         MethodRouter::new().with_tools(),
-        turbomcp_server::ServerConfig::new()
-            .with_extension(Arc::new(TasksExtension::new().poll_interval_ms(Some(10)))),
+        turbomcp_server::ServerConfig::new().with_extension(Arc::new(
+            TasksExtension::new().with_poll_interval_ms(Some(10)),
+        )),
     )
 }
 

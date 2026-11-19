@@ -146,7 +146,8 @@ mod http {
         let (uri, ep) = spawn(vec![jwk("old")]).await;
         // Zero cooldown: this test is about the rotation path, not the rate
         // limit on it — those are exercised separately below.
-        let source = HttpJwks::new(uri, Duration::from_secs(3600)).refresh_cooldown(Duration::ZERO);
+        let source =
+            HttpJwks::new(uri, Duration::from_secs(3600)).with_refresh_cooldown(Duration::ZERO);
 
         assert!(source.verifying_key(Some("old")).await.is_ok());
         assert_eq!(ep.hits.load(Ordering::SeqCst), 1);
@@ -194,7 +195,7 @@ mod http {
     async fn the_cooldown_expires_so_rotation_still_converges() {
         let (uri, ep) = spawn(vec![jwk("old")]).await;
         let source = HttpJwks::new(uri, Duration::from_secs(3600))
-            .refresh_cooldown(Duration::from_millis(50));
+            .with_refresh_cooldown(Duration::from_millis(50));
 
         assert!(source.verifying_key(Some("old")).await.is_ok());
         *ep.keys.lock().unwrap() = vec![jwk("new")];

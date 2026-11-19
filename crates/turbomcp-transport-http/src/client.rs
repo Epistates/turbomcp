@@ -77,7 +77,7 @@ pub enum HttpClientError {
     #[error("`{0}` is a protocol header; the transport sets it")]
     ReservedHeader(String),
     /// A bearer token would go over cleartext `http://` to a host other than
-    /// this machine. See [`HttpClientTransport::allow_cleartext_bearer`].
+    /// this machine. See [`HttpClientTransport::with_cleartext_bearer_allowed`].
     #[error(
         "refusing to send a bearer token over cleartext http to {0}: use https, \
          or allow_cleartext_bearer() for a network you trust"
@@ -750,7 +750,7 @@ impl HttpClientTransport {
     /// # Panics
     /// If another transport clone is mid-request. Call this before connecting.
     #[must_use]
-    pub fn allow_cleartext_bearer(mut self) -> Self {
+    pub fn with_cleartext_bearer_allowed(mut self) -> Self {
         Arc::get_mut(&mut self.shared)
             .expect("allow_cleartext_bearer must be called before the transport is connected")
             .cleartext_bearer = true;
@@ -813,9 +813,9 @@ impl Transport for HttpClientTransport {
     /// tokens, so the client then keeps only results the server marked
     /// `cacheScope: "public"`.
     fn capabilities(&self) -> turbomcp_service::TransportCapabilities {
-        let mut caps = turbomcp_service::TransportCapabilities::new().streamable_http();
+        let mut caps = turbomcp_service::TransportCapabilities::new().with_streamable_http();
         if self.shared.bearer.is_some() {
-            caps = caps.shared_principal();
+            caps = caps.with_shared_principal();
         }
         if let Ok(url) = reqwest::Url::parse(&self.shared.url) {
             let facts = turbomcp_service::NetworkFacts::http(None);

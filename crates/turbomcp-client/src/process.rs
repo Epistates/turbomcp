@@ -46,7 +46,7 @@ impl ServerProcess {
     /// Wait `grace` for the server to exit after its input closes, and again
     /// after `SIGTERM`, before escalating.
     #[must_use]
-    pub fn grace(mut self, grace: Duration) -> Self {
+    pub fn with_grace(mut self, grace: Duration) -> Self {
         self.grace = grace;
         self
     }
@@ -59,7 +59,7 @@ impl ServerProcess {
     /// 4 KiB and with control characters escaped, since the server's output
     /// is not this process's to trust.
     #[must_use]
-    pub fn log_stderr(mut self, label: impl Into<String>) -> Self {
+    pub fn with_stderr_log(mut self, label: impl Into<String>) -> Self {
         if let Some(stderr) = self.child.stderr.take() {
             let label = label.into();
             tokio::spawn(async move {
@@ -85,7 +85,7 @@ impl ServerProcess {
 
     /// Shut the server down: wait for it to exit (its input is closed when
     /// the [`Client`](crate::Client) closes or drops), then `SIGTERM`, then
-    /// `SIGKILL`, each after the [`grace`](Self::grace). Close the client
+    /// `SIGKILL`, each after the [`with_grace`](Self::with_grace). Close the client
     /// first; this waits for the exit either way.
     pub async fn shutdown(mut self) {
         if tokio::time::timeout(self.grace, self.child.wait())
@@ -209,7 +209,7 @@ mod tests {
         let grandchild = grandchild.expect("the grandchild started");
         let started = std::time::Instant::now();
         ServerProcess::new(child)
-            .grace(Duration::from_millis(100))
+            .with_grace(Duration::from_millis(100))
             .shutdown()
             .await;
         assert!(started.elapsed() < Duration::from_secs(5));

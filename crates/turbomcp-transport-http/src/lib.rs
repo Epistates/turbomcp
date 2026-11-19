@@ -32,7 +32,7 @@
 //!   request yields either `200 application/json` with the response, or — if
 //!   the handler emits server→client messages mid-flight (inline bidi
 //!   requests on the legacy path, progress, log messages), or is still
-//!   running after [`HttpConfig::sse_upgrade_after`] — a
+//!   running after [`HttpConfig::with_sse_upgrade_after`] — a
 //!   `200 text/event-stream` *scoped to that request*: the request-related
 //!   messages as events, then the final response, which terminates the stream
 //!   (transports spec §Sending Messages). Events carry no `id`, which is a
@@ -88,15 +88,15 @@
 //! - **Origin / DNS-rebinding guard:** a request carrying an `Origin` header that
 //!   isn't on the allowlist is rejected with `403`. The default allowlist is
 //!   empty, so only `Origin`-less (non-browser) clients pass — the secure default
-//!   for a local server. Use [`HttpConfig::allow_origin`] /
-//!   [`HttpConfig::allow_any_origin`] to widen it. For defense in depth against
+//!   for a local server. Use [`HttpConfig::with_allowed_origin`] /
+//!   [`HttpConfig::with_any_origin_allowed`] to widen it. For defense in depth against
 //!   non-browser clients (which can spoof `Host` and send no `Origin`),
-//!   [`HttpConfig::allow_host`] pins the server's expected `Host`(s) and rejects
+//!   [`HttpConfig::with_allowed_host`] pins the server's expected `Host`(s) and rejects
 //!   others with `403`.
-//! - **Body limit:** `POST` bodies above [`HttpConfig::max_body_bytes`] (default
+//! - **Body limit:** `POST` bodies above [`HttpConfig::with_max_body_bytes`] (default
 //!   1 MiB) are rejected with `413`.
 //! - **CORS:** follows the Origin policy. Each allowed origin (or any, under
-//!   [`HttpConfig::allow_any_origin`]) gets CORS headers that work with
+//!   [`HttpConfig::with_any_origin_allowed`]) gets CORS headers that work with
 //!   bearer auth: `Authorization` and the request's own headers allowed by
 //!   name, `Mcp-Session-Id`/`WWW-Authenticate`/`Retry-After` exposed. With no
 //!   origin allowed (the default), there are none.

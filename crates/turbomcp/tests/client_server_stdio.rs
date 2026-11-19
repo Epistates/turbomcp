@@ -143,14 +143,14 @@ async fn exercise_named(client: &Client, server_name: &str) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn modern_mode_negotiates_draft() {
-    let client = connect(ConnectMode::Modern).await;
+    let client = connect(ConnectMode::Stateless).await;
     assert_eq!(client.protocol_version(), &ProtocolVersion::V2026_07_28);
     exercise(&client).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_mode_negotiates_2025() {
-    let client = connect(ConnectMode::Legacy).await;
+    let client = connect(ConnectMode::Stateful).await;
     assert_eq!(client.protocol_version(), &ProtocolVersion::V2025_11_25);
     exercise(&client).await;
 }
@@ -169,7 +169,7 @@ async fn auto_mode_resolves_to_modern_on_dual_stack() {
 /// against a server like this meant sending shapes the server has never seen.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_client_adopts_a_negotiated_down_version() {
-    let client = connect_to(Previous.into_server().build(), ConnectMode::Legacy).await;
+    let client = connect_to(Previous.into_server().build(), ConnectMode::Stateful).await;
     assert_eq!(
         client.protocol_version(),
         &ProtocolVersion::V2025_06_18,

@@ -387,28 +387,28 @@ impl ToolAnnotations {
 
     /// Mark the tool read-only (does not modify its environment).
     #[must_use]
-    pub fn read_only(mut self) -> Self {
-        self.read_only_hint = Some(true);
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only_hint = Some(read_only);
         self
     }
 
     /// Set the destructive hint.
     #[must_use]
-    pub fn destructive(mut self, destructive: bool) -> Self {
+    pub fn with_destructive(mut self, destructive: bool) -> Self {
         self.destructive_hint = Some(destructive);
         self
     }
 
     /// Set the idempotent hint.
     #[must_use]
-    pub fn idempotent(mut self, idempotent: bool) -> Self {
+    pub fn with_idempotent(mut self, idempotent: bool) -> Self {
         self.idempotent_hint = Some(idempotent);
         self
     }
 
     /// Set the open-world hint.
     #[must_use]
-    pub fn open_world(mut self, open_world: bool) -> Self {
+    pub fn with_open_world(mut self, open_world: bool) -> Self {
         self.open_world_hint = Some(open_world);
         self
     }
@@ -1070,21 +1070,21 @@ impl Annotations {
 
     /// Add an intended audience role.
     #[must_use]
-    pub fn for_audience(mut self, role: Role) -> Self {
+    pub fn with_audience(mut self, role: Role) -> Self {
         self.audience.push(role);
         self
     }
 
     /// Set the priority (`0.0` ..= `1.0`).
     #[must_use]
-    pub fn priority(mut self, priority: f64) -> Self {
+    pub fn with_priority(mut self, priority: f64) -> Self {
         self.priority = Some(priority);
         self
     }
 
     /// Set the last-modified timestamp (ISO 8601).
     #[must_use]
-    pub fn last_modified(mut self, when: impl Into<String>) -> Self {
+    pub fn with_last_modified(mut self, when: impl Into<String>) -> Self {
         self.last_modified = Some(when.into());
         self
     }
@@ -1513,7 +1513,7 @@ impl PromptArgument {
 
     /// Mark the argument required (builder style).
     #[must_use]
-    pub fn required(mut self, required: bool) -> Self {
+    pub fn with_required(mut self, required: bool) -> Self {
         self.required = required;
         self
     }
@@ -5604,7 +5604,7 @@ mod tests {
         let wire: v0728::ListPromptsResult = ListPromptsResult::new(alloc::vec![
             Prompt::new("summarize")
                 .with_description("Summarize text")
-                .with_argument(PromptArgument::new("text").required(true)),
+                .with_argument(PromptArgument::new("text").with_required(true)),
         ])
         .into();
         let v = serde_json::to_value(&wire).unwrap();
@@ -5695,7 +5695,7 @@ mod tests {
     #[test]
     fn legacy_prompts_and_completion_round_trip() {
         let wire: legacy::ListPromptsResult = ListPromptsResult::new(alloc::vec![
-            Prompt::new("summarize").with_argument(PromptArgument::new("text").required(true)),
+            Prompt::new("summarize").with_argument(PromptArgument::new("text").with_required(true)),
         ])
         .into();
         let v = serde_json::to_value(&wire).unwrap();
@@ -5753,10 +5753,10 @@ mod tests {
             .with_title("Audit")
             .with_annotations(
                 ToolAnnotations::new()
-                    .read_only()
-                    .destructive(false)
-                    .idempotent(true)
-                    .open_world(false),
+                    .with_read_only(true)
+                    .with_destructive(false)
+                    .with_idempotent(true)
+                    .with_open_world(false),
             )
             .with_icon(
                 Icon::new("https://example.com/audit.png")
@@ -5823,9 +5823,9 @@ mod tests {
         Resource::new("mem://doc", "doc")
             .with_annotations(
                 Annotations::new()
-                    .for_audience(Role::User)
-                    .priority(0.75)
-                    .last_modified("2026-07-20T00:00:00Z"),
+                    .with_audience(Role::User)
+                    .with_priority(0.75)
+                    .with_last_modified("2026-07-20T00:00:00Z"),
             )
             .with_icon(Icon::new("https://example.com/doc.png"))
             .with_meta_entry("com.example/tags", json!(["docs"]))
@@ -5859,7 +5859,7 @@ mod tests {
     #[test]
     fn resource_template_and_prompt_metadata_round_trip_both_wires() {
         let template = ResourceTemplate::new("file://{path}", "files")
-            .with_annotations(Annotations::new().for_audience(Role::Assistant))
+            .with_annotations(Annotations::new().with_audience(Role::Assistant))
             .with_meta_entry("com.example/kind", json!("fs"));
         let draft_wire: v0728::ResourceTemplate = template.clone().into();
         let back: ResourceTemplate = draft_wire.into();
@@ -5905,9 +5905,9 @@ mod tests {
     #[test]
     fn content_block_annotations_and_meta_round_trip_both_wires() {
         let annotations = Annotations::new()
-            .for_audience(Role::User)
-            .priority(0.5)
-            .last_modified("2026-07-21T00:00:00Z");
+            .with_audience(Role::User)
+            .with_priority(0.5)
+            .with_last_modified("2026-07-21T00:00:00Z");
         for content in [
             Content::text("hi"),
             Content::image("aGk=", "image/png"),
@@ -5944,7 +5944,7 @@ mod tests {
             .with_mime_type("text/html;profile=mcp-app")
             .with_meta_entry("io.modelcontextprotocol/ui", json!({"prefersBorder": true}));
         let content = Content::resource(contents)
-            .with_annotations(Annotations::new().for_audience(Role::User))
+            .with_annotations(Annotations::new().with_audience(Role::User))
             .with_meta_entry("com.example/origin", json!("embedded"));
 
         let wire: v0728::ContentBlock = content.clone().into();
@@ -6062,7 +6062,7 @@ mod tests {
         let prompts = ListPromptsResult::new(alloc::vec![
             Prompt::new("summarize")
                 .with_description("Summarize text")
-                .with_argument(PromptArgument::new("text").required(true)),
+                .with_argument(PromptArgument::new("text").with_required(true)),
         ]);
         let wire: v0728::ListPromptsResult = prompts.into();
         let back: ListPromptsResult = wire.into();
@@ -6285,8 +6285,8 @@ mod tests {
 
         let content = Content::text("hi").with_annotations(
             Annotations::new()
-                .for_audience(Role::User)
-                .last_modified("2026-07-21T00:00:00Z"),
+                .with_audience(Role::User)
+                .with_last_modified("2026-07-21T00:00:00Z"),
         );
         let wire: legacy::ContentBlock = content.into();
         let v = serde_json::to_value(&wire).unwrap();

@@ -51,7 +51,7 @@ async fn the_inline_request_timeout_is_configurable() {
     let client = turbomcp::testing::connect(
         Asker.into_server().with_config(config),
         ClientBuilder::new("t", "1")
-            .with_connect_mode(ConnectMode::Legacy)
+            .with_connect_mode(ConnectMode::Stateful)
             .with_elicitation(Silent),
     )
     .await
@@ -110,7 +110,7 @@ async fn a_runtime_announces_changes_and_a_config_is_shared() {
     let _client = turbomcp::testing::connect(
         runtime,
         ClientBuilder::new("t", "1")
-            .with_connect_mode(ConnectMode::Legacy)
+            .with_connect_mode(ConnectMode::Stateful)
             .with_notifications(heard.clone()),
     )
     .await

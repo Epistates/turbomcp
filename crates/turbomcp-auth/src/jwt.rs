@@ -47,14 +47,14 @@ impl<S: JwkSource> JwtValidator<S> {
     /// default, since many authorization servers don't type their access
     /// tokens; turn it on where yours does.
     #[must_use]
-    pub fn require_access_token_type(mut self) -> Self {
+    pub fn with_access_token_type_required(mut self) -> Self {
         self.access_token_typ = true;
         self
     }
 
     /// Accept additional audiences (e.g. a legacy URI alongside the canonical).
     #[must_use]
-    pub fn add_audience(mut self, audience: impl Into<String>) -> Self {
+    pub fn with_audience(mut self, audience: impl Into<String>) -> Self {
         self.audiences.push(audience.into());
         self
     }
@@ -63,21 +63,21 @@ impl<S: JwkSource> JwtValidator<S> {
     /// Every key in this validator is trusted to speak for every listed issuer.
     /// Use [`IssuerValidators`] for independent authorization servers.
     #[must_use]
-    pub fn add_issuer(mut self, issuer: impl Into<String>) -> Self {
+    pub fn with_issuer(mut self, issuer: impl Into<String>) -> Self {
         self.issuers.push(issuer.into());
         self
     }
 
     /// Set the accepted signature algorithms (default `[RS256]`).
     #[must_use]
-    pub fn algorithms(mut self, algorithms: Vec<Algorithm>) -> Self {
+    pub fn with_algorithms(mut self, algorithms: Vec<Algorithm>) -> Self {
         self.algorithms = algorithms;
         self
     }
 
     /// Set the clock-skew leeway in seconds (default 60).
     #[must_use]
-    pub fn leeway(mut self, seconds: u64) -> Self {
+    pub fn with_leeway(mut self, seconds: u64) -> Self {
         self.leeway = seconds;
         self
     }

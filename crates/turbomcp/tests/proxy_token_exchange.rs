@@ -130,10 +130,10 @@ where
         ResourceMetadata::new(resource.clone(), [authority.to_owned()]),
         format!("http://{addr}/.well-known/oauth-protected-resource/mcp"),
     )
-    .retain_token(retain);
+    .with_token_retention(retain);
     tokio::spawn(
         server.serve(
-            Http::listener(listener).config(
+            Http::listener(listener).with_config(
                 HttpConfig::new()
                     .with_authenticator(Arc::new(authenticator))
                     .with_shutdown(shutdown.clone()),
@@ -180,12 +180,12 @@ async fn gateway(
     )
     .await;
     let remote = RemoteServer::builder(Upstream::http(upstream))
-        .auth(OutboundAuth::TokenExchange(ServiceAccount::new(
+        .with_auth(OutboundAuth::TokenExchange(ServiceAccount::new(
             authority.clone(),
             "gateway",
             "s3cret",
         )))
-        .network_policy(NetworkPolicy::default())
+        .with_network_policy(NetworkPolicy::default())
         .connect()
         .await
         .expect("the gateway learned what the upstream serves");

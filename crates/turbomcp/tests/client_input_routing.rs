@@ -141,7 +141,7 @@ async fn both(client: &Client, tool: &str, a: CallOptions, b: CallOptions) -> (S
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_call_with_its_own_handler_gets_its_questions_on_every_revision() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = over_stdio(Desk::new(1), mode).await;
         let own = client
             .call_tool_with("ask", Map::new(), &answered_by("call"))
@@ -155,7 +155,7 @@ async fn a_call_with_its_own_handler_gets_its_questions_on_every_revision() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mrtr_attributes_concurrent_calls_structurally() {
-    let client = over_stdio(Desk::new(2), ConnectMode::Modern).await;
+    let client = over_stdio(Desk::new(2), ConnectMode::Stateless).await;
     let (a, b) = both(&client, "ask_together", answered_by("a"), answered_by("b")).await;
     assert_eq!(a, "a");
     assert_eq!(b, "b");
@@ -165,7 +165,7 @@ async fn mrtr_attributes_concurrent_calls_structurally() {
 async fn concurrent_calls_on_a_transport_that_cannot_tell_get_the_clients_handler() {
     // Over stdio on `2025-11-25` an `elicitation/create` names no call. With
     // two in flight, handing it to either call's handler would be a guess.
-    let client = over_stdio(Desk::new(2), ConnectMode::Legacy).await;
+    let client = over_stdio(Desk::new(2), ConnectMode::Stateful).await;
     let (a, b) = both(&client, "ask_together", answered_by("a"), answered_by("b")).await;
     assert_eq!(a, "global");
     assert_eq!(b, "global");
@@ -173,12 +173,12 @@ async fn concurrent_calls_on_a_transport_that_cannot_tell_get_the_clients_handle
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_task_routes_its_questions_by_related_task() {
-    let client = over_stdio(Desk::new(2), ConnectMode::Legacy).await;
+    let client = over_stdio(Desk::new(2), ConnectMode::Stateful).await;
     let (a, b) = both(
         &client,
         "ask_as_task",
-        answered_by("a").task(Some(60_000)),
-        answered_by("b").task(Some(60_000)),
+        answered_by("a").with_task(Some(60_000)),
+        answered_by("b").with_task(Some(60_000)),
     )
     .await;
     assert_eq!(a, "a");
@@ -197,13 +197,15 @@ async fn streamable_http_attributes_concurrent_calls_by_their_stream() {
     tokio::spawn(
         Desk::new(2)
             .into_server()
-            .serve(Http::listener(listener).config(HttpConfig::new())),
+            .serve(Http::listener(listener).with_config(HttpConfig::new())),
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let client =
-        turbomcp::client::connect_http(builder(ConnectMode::Legacy), format!("http://{addr}/mcp"))
-            .await
-            .expect("handshake");
+    let client = turbomcp::client::connect_http(
+        builder(ConnectMode::Stateful),
+        format!("http://{addr}/mcp"),
+    )
+    .await
+    .expect("handshake");
     let (a, b) = both(&client, "ask_together", answered_by("a"), answered_by("b")).await;
     assert_eq!(a, "a");
     assert_eq!(b, "b");

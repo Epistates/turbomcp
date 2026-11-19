@@ -44,7 +44,7 @@ async fn serve() -> (String, Arc<Mutex<Vec<NetworkFacts>>>, CancellationToken) {
         Echo.into_server()
             .layer(tower::util::MapRequestLayer::new(record))
             .serve(
-                Http::listener(listener).config(
+                Http::listener(listener).with_config(
                     HttpConfig::new()
                         .with_websocket(WebSocketConfig::new("/ws"))
                         .with_shutdown(shutdown.clone()),
@@ -58,7 +58,7 @@ async fn serve() -> (String, Arc<Mutex<Vec<NetworkFacts>>>, CancellationToken) {
 async fn http_requests_carry_the_client_and_the_http_version() {
     let (addr, seen, shutdown) = serve().await;
     let client = connect_http(
-        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Legacy),
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Stateful),
         &format!("http://{addr}/mcp"),
     )
     .await
@@ -81,7 +81,7 @@ async fn websocket_requests_carry_the_client() {
         .await
         .expect("upgrade");
     let client = ClientBuilder::new("c", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(transport)
         .await
         .expect("connect");

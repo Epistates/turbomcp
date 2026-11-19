@@ -26,13 +26,15 @@ fn config_defaults_to_the_collectors_own_default_endpoint() {
          default, rather than this crate hard-coding one"
     );
     assert_eq!(
-        OtlpConfig::new("svc").endpoint("http://otel:4317").endpoint,
+        OtlpConfig::new("svc")
+            .with_endpoint("http://otel:4317")
+            .endpoint,
         Some("http://otel:4317".to_string())
     );
     assert_eq!(config.protocol, None, "unset defers to the environment");
     assert_eq!(
         OtlpConfig::new("svc")
-            .protocol(turbomcp_telemetry::OtlpProtocol::HttpProtobuf)
+            .with_protocol(turbomcp_telemetry::OtlpProtocol::HttpProtobuf)
             .protocol,
         Some(turbomcp_telemetry::OtlpProtocol::HttpProtobuf)
     );
@@ -47,7 +49,7 @@ fn config_defaults_to_the_collectors_own_default_endpoint() {
 /// `TelemetryError::Subscriber`, not a panic.
 #[tokio::test]
 async fn init_installs_once_and_reports_a_second_attempt() {
-    let guard = init_otlp(OtlpConfig::new("turbomcp-test").endpoint("http://127.0.0.1:4317"))
+    let guard = init_otlp(OtlpConfig::new("turbomcp-test").with_endpoint("http://127.0.0.1:4317"))
         .expect("the OTLP pipeline builds without a live collector");
 
     match init_otlp(OtlpConfig::new("turbomcp-test-again")) {

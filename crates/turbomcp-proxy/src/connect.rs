@@ -144,7 +144,7 @@ impl turbomcp_transport_http::oauth::SubjectSource for SlotSource {
 pub(crate) fn check_auth(upstream: &Upstream, auth: &OutboundAuth) -> Result<(), ProxyError> {
     if matches!(upstream, Upstream::Stdio { .. }) && !matches!(auth, OutboundAuth::None) {
         return Err(ProxyError::Config(
-            "a stdio upstream gets credentials from its environment (`Upstream::env`), \
+            "a stdio upstream gets credentials from its environment (`Upstream::with_env`), \
              not `OutboundAuth`"
                 .into(),
         ));
@@ -262,8 +262,8 @@ pub(crate) async fn upstream(
                 });
             };
             let process = ServerProcess::new(child)
-                .grace(grace)
-                .log_stderr(label.clone());
+                .with_grace(grace)
+                .with_stderr_log(label.clone());
             let transport =
                 LineTransport::new(BufReader::new(stdout), stdin, DefaultCodec::default());
             // On failure `process` drops, which kills the group.

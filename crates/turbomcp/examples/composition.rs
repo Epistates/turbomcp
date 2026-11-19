@@ -90,7 +90,7 @@ impl Health {
 async fn main() -> McpResult<()> {
     // Logs MUST go to stderr — stdout carries the MCP protocol framing.
     let gateway = Composite::new(Implementation::new("gateway", "1.0.0"))
-        .instructions("Weather lives under `weather__*`, headlines under `news__*`.")
+        .with_instructions("Weather lives under `weather__*`, headlines under `news__*`.")
         .mount("weather", Weather.into_server())?
         .mount("news", News.into_server())?
         // The core keeps its own names: this one serves `ping`, not `health.ping`.

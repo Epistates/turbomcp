@@ -120,7 +120,10 @@ fn a_failed_call_fails_the_command_and_says_why() {
 fn the_exit_status_tells_failures_apart() {
     let code = |args: &[&str]| turbomcp(args).status.code();
     assert_eq!(code(&["tools", "/nonexistent/mcp-server"]), Some(3));
-    assert_eq!(code(&["call", "hello", "--args", "[1]", &hello()]), Some(2));
+    assert_eq!(
+        code(&["call", "hello", "--args", "[1]", &hello()]),
+        Some(2)
+    );
     let nope = code(&["call", "nope", &hello()]);
     assert!(matches!(nope, Some(1 | 4)), "{nope:?}");
 }

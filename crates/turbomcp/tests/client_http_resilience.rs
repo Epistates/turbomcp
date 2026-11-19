@@ -154,7 +154,7 @@ async fn a_session_the_stream_finds_expired_is_re_established() {
     });
     let url = serve(Arc::clone(&mock)).await;
     let client = ClientBuilder::new("idle", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(HttpClientTransport::new(&url).unwrap())
         .await
         .expect("handshake");
@@ -225,7 +225,7 @@ async fn the_closing_delete_carries_the_protocol_version() {
     });
     let url = serve(Arc::clone(&mock)).await;
     let client = ClientBuilder::new("closer", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(HttpClientTransport::new(&url).unwrap())
         .await
         .unwrap();
@@ -274,7 +274,7 @@ async fn a_lost_response_stream_fails_fast_and_reads_are_re_issued() {
     };
     let url = serve(Arc::clone(&mock)).await;
     let client = ClientBuilder::new("lossy", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_timeout(Duration::from_secs(20))
         .connect(HttpClientTransport::new(&url).unwrap())
         .await
@@ -332,7 +332,7 @@ async fn running_out_of_post_slots_fails_one_call_not_the_client() {
     limits.max_posts = 1;
     let transport = HttpClientTransport::new(&url).unwrap().with_limits(limits);
     let client = ClientBuilder::new("tight", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport)
         .await
         .unwrap();
@@ -377,7 +377,7 @@ async fn sequential_calls_never_find_their_own_slot_taken() {
     let mut limits = HttpClientLimits::default();
     limits.max_posts = 1;
     let client = ClientBuilder::new("sequential", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(HttpClientTransport::new(&url).unwrap().with_limits(limits))
         .await
         .unwrap();
@@ -422,7 +422,7 @@ async fn calls_racing_a_session_recovery_never_go_out_sessionless() {
     });
     let url = serve(Arc::clone(&mock)).await;
     let client = ClientBuilder::new("racer", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(HttpClientTransport::new(&url).unwrap())
         .await
         .expect("handshake");
@@ -473,7 +473,7 @@ async fn a_json_answer_that_is_not_the_response_fails_the_call() {
     });
     let url = serve(Arc::clone(&mock)).await;
     let client = ClientBuilder::new("strict", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(HttpClientTransport::new(&url).unwrap())
         .await
         .expect("handshake");
@@ -500,7 +500,7 @@ async fn a_200_that_is_not_a_stream_is_backed_off() {
     });
     let url = serve(Arc::clone(&mock)).await;
     let _client = ClientBuilder::new("patient", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(HttpClientTransport::new(&url).unwrap())
         .await
         .expect("handshake");
@@ -545,7 +545,7 @@ async fn a_recovered_session_gets_its_subscriptions_and_log_level_back() {
     });
     let url = serve(Arc::clone(&mock)).await;
     let client = ClientBuilder::new("keeper", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(HttpClientTransport::new(&url).unwrap())
         .await
         .expect("handshake");
@@ -586,7 +586,7 @@ async fn a_replacement_session_on_another_revision_is_refused() {
     });
     let url = serve(Arc::clone(&mock)).await;
     let client = ClientBuilder::new("strict", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(HttpClientTransport::new(&url).unwrap())
         .await
         .expect("handshake");
@@ -646,7 +646,7 @@ async fn the_standalone_stream_answers_an_auth_challenge() {
         token: Mutex::new("stale".into()),
     });
     let _client = ClientBuilder::new("rotating", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(
             HttpClientTransport::new(&url)
                 .unwrap()

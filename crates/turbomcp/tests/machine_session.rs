@@ -116,12 +116,12 @@ async fn spawn_ops(authority: &str, shutdown: &CancellationToken) -> String {
     let authenticator = ResourceServer::new(
         Tokens,
         ResourceMetadata::new(resource.clone(), [authority.to_owned()])
-            .scopes_supported(["ops:read"]),
+            .with_scopes_supported(["ops:read"]),
         format!("http://{addr}/.well-known/oauth-protected-resource/mcp"),
     );
     tokio::spawn(
         Ops.into_server().serve(
-            Http::listener(listener).config(
+            Http::listener(listener).with_config(
                 HttpConfig::new()
                     .with_authenticator(Arc::new(authenticator))
                     .with_shutdown(shutdown.clone()),
@@ -191,12 +191,12 @@ async fn a_gateway_authorizes_itself_at_its_upstream() {
     let resource = spawn_ops(&authority, &shutdown).await;
 
     let remote = RemoteServer::builder(Upstream::http(resource))
-        .auth(OutboundAuth::ClientCredentials(ServiceAccount::new(
+        .with_auth(OutboundAuth::ClientCredentials(ServiceAccount::new(
             authority.clone(),
             "gateway",
             "s3cret",
         )))
-        .network_policy(NetworkPolicy::default())
+        .with_network_policy(NetworkPolicy::default())
         .connect()
         .await
         .expect("the gateway authorized itself");

@@ -50,7 +50,10 @@ impl ResourceMetadata {
     /// `scopes_supported`", since a client requesting every listed scope
     /// would then ask every user for long-lived access.
     #[must_use]
-    pub fn scopes_supported(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn with_scopes_supported(
+        mut self,
+        scopes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         self.scopes_supported = Some(
             scopes
                 .into_iter()

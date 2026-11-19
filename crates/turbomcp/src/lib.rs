@@ -246,14 +246,15 @@ pub use turbomcp_server::{
 };
 
 pub use turbomcp_server::{
-    Audio, CachePolicies, CallToolContext, Cancellation, ClientHandle, CompleteContext, Elicited,
-    ExpiredSession, GetPromptContext, Image, InitializeContext, InputWaiter, IntoCallToolResult,
-    IntoGetPromptResult, IntoReadResourceResult, IntoServerBuilder, Json, LegacySessionAdapter,
-    ListPromptsContext, ListResourceTemplatesContext, ListResourcesContext, ListToolsContext,
-    LocalBus, LogSender, McpServerCore, MethodRouter, NewTask, NotificationBus, Params,
-    ProgressReporter, ReadResourceContext, Server, ServerBuilder, ServerConfig, ServerNotifier,
-    SessionBackend, SessionError, SessionState, SessionStore, TaskBackend, TaskError, TaskHandle,
-    TaskLink, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate,
+    Audio, CachePolicies, CallToolContext, Cancellation, CancelledContext, ClientHandle,
+    CompleteContext, Elicited, ExpiredSession, GetPromptContext, Image, InitializeContext,
+    InputWaiter, IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult,
+    IntoServerBuilder, Json, LegacySessionAdapter, ListPromptsContext,
+    ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, LocalBus, LogSender,
+    McpServerCore, MethodRouter, NewTask, NotificationBus, Params, ProgressReporter,
+    ReadResourceContext, Server, ServerBuilder, ServerConfig, ServerNotifier, SessionBackend,
+    SessionError, SessionState, SessionStore, TaskBackend, TaskError, TaskHandle, TaskLink,
+    TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus, TaskStore, TaskUpdate, UriTemplate,
     UriTemplateError, VersionDispatcher, WithCompletions, WithPrompts, WithResources, WithTools,
 };
 
@@ -417,7 +418,7 @@ pub mod testing {
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let addr = "127.0.0.1:8080".parse()?;
-/// MyServer.into_server().serve(Http::bind(addr).config(HttpConfig::new())).await?;
+/// MyServer.into_server().serve(Http::bind(addr).with_config(HttpConfig::new())).await?;
 ///
 /// // With RPC middleware (e.g. the telemetry `TraceContextLayer`):
 /// MyServer.into_server().layer(turbomcp::TracingLayer).serve(Http::bind(addr)).await?;
@@ -554,8 +555,8 @@ pub mod prelude {
         Implementation, LogLevel, McpError, McpResult, RequestContext, RequestId,
     };
     pub use turbomcp_server::{
-        Audio, CallToolContext, CompleteContext, Elicited, GetPromptContext, Image,
-        InitializeContext, IntoServerBuilder, Json, ListPromptsContext,
+        Audio, CallToolContext, CancelledContext, CompleteContext, Elicited, GetPromptContext,
+        Image, InitializeContext, IntoServerBuilder, Json, ListPromptsContext,
         ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, McpServerCore,
         Params, ReadResourceContext, ServerBuilder, WithCompletions, WithPrompts, WithResources,
         WithTools,

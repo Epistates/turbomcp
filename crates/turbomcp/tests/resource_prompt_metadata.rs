@@ -125,7 +125,7 @@ async fn assert_metadata_survives(mode: ConnectMode) {
 /// get two different answers: the declared type, then nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_declared_mime_type_reaches_the_read_contents() {
-    let client = connect(ConnectMode::Modern).await;
+    let client = connect(ConnectMode::Stateless).await;
 
     for (uri, expected) in [
         ("config://app", Some("application/json")),
@@ -146,10 +146,10 @@ async fn a_declared_mime_type_reaches_the_read_contents() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metadata_survives_the_draft_wire() {
-    assert_metadata_survives(ConnectMode::Modern).await;
+    assert_metadata_survives(ConnectMode::Stateless).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metadata_survives_the_legacy_wire() {
-    assert_metadata_survives(ConnectMode::Legacy).await;
+    assert_metadata_survives(ConnectMode::Stateful).await;
 }

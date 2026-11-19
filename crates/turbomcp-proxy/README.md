@@ -22,7 +22,7 @@ use turbomcp::proxy::{OutboundAuth, RemoteServer, Upstream};
 use turbomcp::http::{Http, HttpConfig};
 
 let github = RemoteServer::builder(Upstream::http("https://api.githubcopilot.com/mcp/"))
-    .auth(OutboundAuth::bearer(std::env::var("GITHUB_TOKEN")?))
+    .with_auth(OutboundAuth::bearer(std::env::var("GITHUB_TOKEN")?))
     .connect()
     .await?;
 let files = RemoteServer::connect(Upstream::stdio(
@@ -37,7 +37,7 @@ let gateway = Composite::new(Implementation::new("gateway", "1.0.0"))
     .layer(tower::layer::util::Identity::new());
 github.forward_changes_to(gateway.notifier());
 files.forward_changes_to(gateway.notifier());
-gateway.serve(Http::bind(addr).config(HttpConfig::new())).await?;
+gateway.serve(Http::bind(addr).with_config(HttpConfig::new())).await?;
 ```
 
 What a remote advertises is what its upstream advertised in the handshake.
@@ -78,8 +78,8 @@ caller's connection closed.
 
 ```rust,ignore
 let remote = RemoteServer::builder(Upstream::stdio("my-server", ["--stdio"]))
-    .key(UpstreamKey::Session)
-    .idle_timeout(Duration::from_secs(300))
+    .with_key(UpstreamKey::Session)
+    .with_idle_timeout(Duration::from_secs(300))
     .connect()
     .await?;
 // Close each session's upstream when the session ends.

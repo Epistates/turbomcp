@@ -142,7 +142,7 @@ async fn caller(remote: &RemoteServer, name: &'static str, authenticated: bool) 
     turbomcp::testing::connect(
         server,
         ClientBuilder::new(name, "1.0.0")
-            .with_connect_mode(ConnectMode::Legacy)
+            .with_connect_mode(ConnectMode::Stateful)
             .with_elicitation(Caller(name)),
     )
     .await
@@ -161,9 +161,9 @@ async fn call(client: &Client, tool: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_default_key_follows_the_upstream() {
     let farm = Farm::new();
-    let legacy = farm.remote(ConnectMode::Legacy).connect().await.unwrap();
+    let legacy = farm.remote(ConnectMode::Stateful).connect().await.unwrap();
     assert_eq!(legacy.key(), UpstreamKey::Principal);
-    let modern = farm.remote(ConnectMode::Modern).connect().await.unwrap();
+    let modern = farm.remote(ConnectMode::Stateless).connect().await.unwrap();
     assert_eq!(modern.key(), UpstreamKey::Global);
 }
 
@@ -171,8 +171,8 @@ async fn the_default_key_follows_the_upstream() {
 async fn principal_keying_gives_each_caller_its_own_upstream() {
     let farm = Farm::new();
     let remote = farm
-        .remote(ConnectMode::Legacy)
-        .key(UpstreamKey::Principal)
+        .remote(ConnectMode::Stateful)
+        .with_key(UpstreamKey::Principal)
         .connect()
         .await
         .unwrap();
@@ -191,8 +191,8 @@ async fn principal_keying_gives_each_caller_its_own_upstream() {
 async fn global_keying_shares_one_upstream() {
     let farm = Farm::new();
     let remote = farm
-        .remote(ConnectMode::Legacy)
-        .key(UpstreamKey::Global)
+        .remote(ConnectMode::Stateful)
+        .with_key(UpstreamKey::Global)
         .connect()
         .await
         .unwrap();
@@ -207,8 +207,8 @@ async fn global_keying_shares_one_upstream() {
 async fn session_keying_closes_the_upstream_with_its_session() {
     let farm = Farm::new();
     let remote = farm
-        .remote(ConnectMode::Legacy)
-        .key(UpstreamKey::Session)
+        .remote(ConnectMode::Stateful)
+        .with_key(UpstreamKey::Session)
         .connect()
         .await
         .unwrap();
@@ -219,7 +219,7 @@ async fn session_keying_closes_the_upstream_with_its_session() {
             .with_session_observer(Arc::new(remote.clone()));
         turbomcp::testing::connect(
             server,
-            ClientBuilder::new(name, "1.0.0").with_connect_mode(ConnectMode::Legacy),
+            ClientBuilder::new(name, "1.0.0").with_connect_mode(ConnectMode::Stateful),
         )
     };
     let first = session("first").await.unwrap();
@@ -245,7 +245,7 @@ async fn per_caller_upstreams_attribute_what_a_shared_one_cannot() {
     // `2025-11-25` upstreams on pipes: shared, two concurrent questions
     // would be refused; one connection each, each is its caller's.
     let farm = Farm::new();
-    let remote = farm.remote(ConnectMode::Legacy).connect().await.unwrap();
+    let remote = farm.remote(ConnectMode::Stateful).connect().await.unwrap();
     let ada = caller(&remote, "ada", true).await;
     let bob = caller(&remote, "bob", true).await;
     let (a, b) = tokio::join!(call(&ada, "who_together"), call(&bob, "who_together"));
@@ -256,9 +256,9 @@ async fn per_caller_upstreams_attribute_what_a_shared_one_cannot() {
 async fn serialized_calls_attribute_on_a_shared_upstream() {
     let farm = Farm::new();
     let remote = farm
-        .remote(ConnectMode::Legacy)
-        .key(UpstreamKey::Global)
-        .serialize_input(true)
+        .remote(ConnectMode::Stateful)
+        .with_key(UpstreamKey::Global)
+        .with_serialized_input(true)
         .connect()
         .await
         .unwrap();
@@ -273,8 +273,8 @@ async fn serialized_calls_attribute_on_a_shared_upstream() {
 async fn a_dead_upstream_is_replaced() {
     let farm = Farm::new();
     let remote = farm
-        .remote(ConnectMode::Legacy)
-        .key(UpstreamKey::Global)
+        .remote(ConnectMode::Stateful)
+        .with_key(UpstreamKey::Global)
         .connect()
         .await
         .unwrap();

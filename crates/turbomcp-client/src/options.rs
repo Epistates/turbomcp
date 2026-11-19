@@ -20,9 +20,9 @@ use crate::progress::ProgressCallback;
 /// # use turbomcp_client::{CallOptions, Client};
 /// # async fn run(client: &Client) -> turbomcp_client::ClientResult<()> {
 /// let options = CallOptions::new()
-///     .timeout(Duration::from_secs(10))
-///     .reset_timeout_on_progress(true)
-///     .max_total_timeout(Duration::from_secs(300))
+///     .with_timeout(Duration::from_secs(10))
+///     .with_reset_timeout_on_progress(true)
+///     .with_max_total_timeout(Duration::from_secs(300))
 ///     .on_progress(|p| eprintln!("{:.0}%", p.fraction().unwrap_or(0.0) * 100.0));
 /// let result = client
 ///     .call_tool_with("upload", serde_json::Map::new(), &options)
@@ -80,24 +80,24 @@ impl CallOptions {
     /// timeout. (A `2026-07-28` call that asks the user something is several
     /// requests.)
     #[must_use]
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
 
     /// Restart the timeout whenever the server reports progress, so a long
     /// operation that keeps reporting isn't cut off. Pair with
-    /// [`max_total_timeout`](Self::max_total_timeout): the spec asks for a
+    /// [`with_max_total_timeout`](Self::with_max_total_timeout): the spec asks for a
     /// ceiling either way.
     #[must_use]
-    pub fn reset_timeout_on_progress(mut self, reset: bool) -> Self {
+    pub fn with_reset_timeout_on_progress(mut self, reset: bool) -> Self {
         self.reset_timeout_on_progress = reset;
         self
     }
 
     /// Give up on the whole call after this long, whatever progress arrives.
     #[must_use]
-    pub fn max_total_timeout(mut self, max: Duration) -> Self {
+    pub fn with_max_total_timeout(mut self, max: Duration) -> Self {
         self.max_total_timeout = Some(max);
         self
     }
@@ -123,7 +123,7 @@ impl CallOptions {
     /// capabilities, progress token, log level) are refused when the call is
     /// made; use the matching option instead.
     #[must_use]
-    pub fn meta(mut self, key: impl Into<String>, value: Value) -> Self {
+    pub fn with_meta(mut self, key: impl Into<String>, value: Value) -> Self {
         self.meta.insert(key.into(), value);
         self
     }
@@ -133,7 +133,7 @@ impl CallOptions {
     /// `ClientBuilder::with_log_level`. A stateful session sets its level for
     /// the whole session with `Client::set_level`, so this is refused there.
     #[must_use]
-    pub fn log_level(mut self, level: LogLevel) -> Self {
+    pub fn with_log_level(mut self, level: LogLevel) -> Self {
         self.log_level = Some(level);
         self
     }
@@ -141,7 +141,7 @@ impl CallOptions {
     /// Abandon the call when `token` fires: the call returns
     /// [`ClientError::Cancelled`] and the server is told to stop.
     #[must_use]
-    pub fn cancel_on(mut self, token: CancellationToken) -> Self {
+    pub fn with_cancellation(mut self, token: CancellationToken) -> Self {
         self.cancel = Some(token);
         self
     }
@@ -150,7 +150,7 @@ impl CallOptions {
     /// (`tools/call` only). See
     /// [`Client::call_tool_task`](crate::Client::call_tool_task).
     #[must_use]
-    pub fn task(mut self, ttl_ms: Option<i64>) -> Self {
+    pub fn with_task(mut self, ttl_ms: Option<i64>) -> Self {
         self.task = Some(ttl_ms);
         self
     }

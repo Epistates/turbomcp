@@ -120,7 +120,7 @@ async fn turbomcp_client_drives_rmcp_server() {
     let (c_rd, c_wr) = split(client_io);
     let transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
     let client = ClientBuilder::new("turbomcp-client", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(transport)
         .await
         .expect("turbomcp handshakes with rmcp server");
@@ -173,7 +173,7 @@ async fn rmcp_client_drives_turbomcp_server() {
 //
 // Not a copy of the pair above with a constant changed: the revisions differ in
 // lifecycle, so each side has to be driven a different way. turbomcp selects it
-// with `ConnectMode::Modern`, rmcp with `ClientLifecycleMode::Discover`, and
+// with `ConnectMode::Stateless`, rmcp with `ClientLifecycleMode::Discover`, and
 // both replace the stateful handshake with a single `server/discover`.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -192,7 +192,7 @@ async fn turbomcp_client_drives_rmcp_server_on_2026_07_28() {
     let (c_rd, c_wr) = split(client_io);
     let transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
     let client = ClientBuilder::new("turbomcp-client", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport)
         .await
         .expect("turbomcp discovers an rmcp server on 2026-07-28");

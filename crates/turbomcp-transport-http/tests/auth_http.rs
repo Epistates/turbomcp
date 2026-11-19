@@ -82,8 +82,8 @@ fn app() -> turbomcp_transport_http::HttpService {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator =
-        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER)
+        .with_algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let metadata = ResourceMetadata::new(RESOURCE, [ISSUER]);
     let rs = ResourceServer::new(validator, metadata, METADATA_URL);
     let dispatcher = VersionDispatcher::new(Whoami, MethodRouter::new().with_tools());
@@ -209,8 +209,8 @@ async fn delete_requires_auth_before_terminating() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator =
-        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER)
+        .with_algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let rs = ResourceServer::new(
         validator,
         ResourceMetadata::new(RESOURCE, [ISSUER]),
@@ -260,14 +260,14 @@ async fn insufficient_scope_is_403_over_the_wire() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator =
-        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER)
+        .with_algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let rs = ResourceServer::new(
         validator,
-        ResourceMetadata::new(RESOURCE, [ISSUER]).scopes_supported(["mcp:use"]),
+        ResourceMetadata::new(RESOURCE, [ISSUER]).with_scopes_supported(["mcp:use"]),
         METADATA_URL,
     )
-    .required_scopes(["mcp:use"]);
+    .with_required_scopes(["mcp:use"]);
     let dispatcher = VersionDispatcher::new(Whoami, MethodRouter::new().with_tools());
     let app = service(
         dispatcher,
@@ -438,8 +438,8 @@ async fn a_get_stream_ends_when_its_token_expires() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator =
-        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER)
+        .with_algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let rs = ResourceServer::new(
         validator,
         ResourceMetadata::new(RESOURCE, [ISSUER]),

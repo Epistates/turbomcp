@@ -187,7 +187,7 @@ struct HeaderParam {
 /// ```ignore
 /// builder.with_cache_policy(CachePolicy::public(Duration::from_secs(60)));
 /// builder.with_cache_policy(
-///     CachePolicies::default().tools_list(CachePolicy::private(Duration::from_secs(30))),
+///     CachePolicies::default().with_tools_list(CachePolicy::private(Duration::from_secs(30))),
 /// );
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,42 +216,42 @@ impl CachePolicies {
 
     /// Set the `tools/list` policy.
     #[must_use]
-    pub fn tools_list(mut self, policy: CachePolicy) -> Self {
+    pub fn with_tools_list(mut self, policy: CachePolicy) -> Self {
         self.tools_list = policy;
         self
     }
 
     /// Set the `resources/list` policy.
     #[must_use]
-    pub fn resources_list(mut self, policy: CachePolicy) -> Self {
+    pub fn with_resources_list(mut self, policy: CachePolicy) -> Self {
         self.resources_list = policy;
         self
     }
 
     /// Set the `resources/templates/list` policy.
     #[must_use]
-    pub fn resource_templates_list(mut self, policy: CachePolicy) -> Self {
+    pub fn with_resource_templates_list(mut self, policy: CachePolicy) -> Self {
         self.resource_templates_list = policy;
         self
     }
 
     /// Set the `resources/read` policy.
     #[must_use]
-    pub fn resources_read(mut self, policy: CachePolicy) -> Self {
+    pub fn with_resources_read(mut self, policy: CachePolicy) -> Self {
         self.resources_read = policy;
         self
     }
 
     /// Set the `prompts/list` policy.
     #[must_use]
-    pub fn prompts_list(mut self, policy: CachePolicy) -> Self {
+    pub fn with_prompts_list(mut self, policy: CachePolicy) -> Self {
         self.prompts_list = policy;
         self
     }
 
     /// Set the `server/discover` policy.
     #[must_use]
-    pub fn discover(mut self, policy: CachePolicy) -> Self {
+    pub fn with_discover(mut self, policy: CachePolicy) -> Self {
         self.discover = policy;
         self
     }
@@ -919,7 +919,11 @@ fn handle_notification<S: McpServerCore>(
             // stdio client closes its stream).
             let fired = inflight.cancel(scope, &parsed.request_id);
             if fired {
-                server.on_cancelled(&parsed.request_id, parsed.reason.as_deref());
+                server.on_cancelled(
+                    &crate::CancelledContext::new(notification_context(n, ext)),
+                    &parsed.request_id,
+                    parsed.reason.as_deref(),
+                );
             }
             // Subscriptions stay connection-scoped: a `subscriptions/listen`
             // stream belongs to the connection it was opened on, and the draft

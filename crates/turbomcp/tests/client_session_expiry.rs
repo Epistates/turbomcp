@@ -111,7 +111,7 @@ async fn an_expired_session_is_re_established_rather_than_failing_the_call() {
 
     let transport = HttpClientTransport::new(&url).expect("transport");
     let client = ClientBuilder::new("expiring", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(transport)
         .await
         .expect("handshake");

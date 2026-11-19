@@ -101,17 +101,19 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectMode {
-    /// Probe the modern (`server/discover`) path first, and fall back to the
-    /// legacy `initialize` handshake when the server turns out to be legacy:
+    /// Probe the stateless (`server/discover`) path first, and fall back to
+    /// the stateful `initialize` handshake when the server doesn't speak it:
     /// any error that is not a recognized modern one, or no answer within a
     /// few seconds (2026-07-28 stdio/HTTP §Backward Compatibility). The
     /// default.
     #[default]
     Auto,
-    /// Force the modern, stateless `2026-07-28` path (`server/discover`).
-    Modern,
-    /// Force the legacy `2025-11-25` path (`initialize` + `notifications/initialized`).
-    Legacy,
+    /// Force the stateless path: `server/discover`, then per-request
+    /// versions (`2026-07-28`).
+    Stateless,
+    /// Force the stateful handshake: `initialize` + `notifications/initialized`
+    /// (`2025-11-25`, or `2025-06-18` when that is all the server speaks).
+    Stateful,
 }
 
 /// Builds a [`Client`]: identity, advertised capabilities, connect mode, and
@@ -414,8 +416,8 @@ impl ClientBuilder {
         cache: Option<Arc<ResponseCache>>,
     ) -> ClientResult<Client> {
         let outcome = match self.connect_mode {
-            ConnectMode::Modern => self.modern_handshake(&conn).await?,
-            ConnectMode::Legacy => self.legacy_handshake(&conn).await?,
+            ConnectMode::Stateless => self.modern_handshake(&conn).await?,
+            ConnectMode::Stateful => self.legacy_handshake(&conn).await?,
             ConnectMode::Auto => match self.probe(&conn).await? {
                 Some(modern) => modern,
                 None => self.legacy_handshake(&conn).await?,
@@ -1207,7 +1209,7 @@ impl Client {
     /// Call a tool requesting task-augmented execution (core Tasks,
     /// `2025-11-25` spec §Creating Tasks). The same as
     /// [`call_tool_with`](Self::call_tool_with) with
-    /// [`CallOptions::task`](CallOptions::task).
+    /// [`CallOptions::with_task`](CallOptions::with_task).
     ///
     /// On `2025-11-25` the request carries the spec's `task` field when the
     /// spec allows it: the server declared `tasks.requests.tools.call` and the
@@ -1246,7 +1248,7 @@ impl Client {
         arguments: Map<String, Value>,
         ttl_ms: Option<i64>,
     ) -> ClientResult<neutral::CallToolResult> {
-        self.call_tool_with(name, arguments, &CallOptions::new().task(ttl_ms))
+        self.call_tool_with(name, arguments, &CallOptions::new().with_task(ttl_ms))
             .await
     }
 
@@ -1258,7 +1260,7 @@ impl Client {
     ///
     /// On `2025-11-25` the call asks to run as a task wherever the tool
     /// allows it (with `options`' TTL, if it sets one through
-    /// [`CallOptions::task`]); on `2026-07-28` the server decides.
+    /// [`CallOptions::with_task`]); on `2026-07-28` the server decides.
     ///
     /// # Errors
     /// As [`call_tool_with`](Self::call_tool_with).

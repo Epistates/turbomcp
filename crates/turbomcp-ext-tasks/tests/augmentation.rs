@@ -85,7 +85,7 @@ fn dispatcher() -> VersionDispatcher<Tools> {
         turbomcp_server::ServerConfig::new().with_extension(Arc::new(
             TasksExtension::new()
                 .task_tools(["echo", "slow", "boom", "held"])
-                .poll_interval_ms(Some(10)),
+                .with_poll_interval_ms(Some(10)),
         )),
     )
 }
@@ -300,8 +300,8 @@ async fn at_capacity_the_augmented_call_runs_synchronously() {
         turbomcp_server::ServerConfig::new().with_extension(Arc::new(
             TasksExtension::new()
                 .task_tools(["echo", "slow"])
-                .capacity(1)
-                .poll_interval_ms(Some(10)),
+                .with_capacity(1)
+                .with_poll_interval_ms(Some(10)),
         )),
     );
 
@@ -397,7 +397,7 @@ async fn a_supplied_backend_holds_the_tasks() {
         turbomcp_server::ServerConfig::new().with_extension(Arc::new(
             TasksExtension::new()
                 .task_tools(["echo"])
-                .backend(Arc::clone(&store) as Arc<dyn TaskBackend>),
+                .with_backend(Arc::clone(&store) as Arc<dyn TaskBackend>),
         )),
     );
     let created = call_tool(&mut svc, 1, "echo").await;

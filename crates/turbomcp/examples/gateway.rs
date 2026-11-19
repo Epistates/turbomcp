@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "127.0.0.1:8080".parse()?;
     eprintln!("gateway on http://{addr}/mcp (ctrl-c to stop)");
     server
-        .serve(Http::bind(addr).config(HttpConfig::new().with_shutdown(shutdown)))
+        .serve(Http::bind(addr).with_config(HttpConfig::new().with_shutdown(shutdown)))
         .await?;
     remote.shutdown().await;
     Ok(())

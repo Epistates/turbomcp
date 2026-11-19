@@ -73,7 +73,7 @@ impl Health {
 
 fn gateway() -> Composite {
     Composite::new(Implementation::new("gateway", "1.0.0"))
-        .instructions("Ask weather.* for forecasts and news.* for headlines.")
+        .with_instructions("Ask weather.* for forecasts and news.* for headlines.")
         .mount("weather", Weather.into_server())
         .expect("mount weather")
         .mount("news", News.into_server())
@@ -426,7 +426,7 @@ async fn two_mounts_claiming_one_uri_is_reported() {
 #[tokio::test]
 async fn the_composite_owns_protocol_negotiation() {
     let pinned = Composite::new(Implementation::new("gateway", "1.0.0"))
-        .protocols(&[ProtocolVersion::V2025_11_25])
+        .with_protocols(&[ProtocolVersion::V2025_11_25])
         .mount("health", Health.into_server())
         .expect("mount health");
     let mut svc = LegacySessionAdapter::new(pinned.into_server().build());

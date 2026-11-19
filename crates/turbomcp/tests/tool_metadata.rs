@@ -84,10 +84,10 @@ async fn assert_metadata_survives(mode: ConnectMode) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tool_hints_survive_the_draft_wire() {
-    assert_metadata_survives(ConnectMode::Modern).await;
+    assert_metadata_survives(ConnectMode::Stateless).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tool_hints_survive_the_legacy_wire() {
-    assert_metadata_survives(ConnectMode::Legacy).await;
+    assert_metadata_survives(ConnectMode::Stateful).await;
 }

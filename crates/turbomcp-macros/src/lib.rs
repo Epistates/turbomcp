@@ -56,8 +56,9 @@
 //!
 //! `#[on_initialize]` marks `async fn(&self, ctx: &InitializeContext) ->
 //! McpResult<()>`, run when a stateful (`2025-*`) client starts a session; an
-//! error turns it away. `#[on_cancelled]` marks a plain `fn(&self, id:
-//! &RequestId, reason: Option<&str>)`, told of each cancelled request. Session
+//! error turns it away. `#[on_cancelled]` marks a plain `fn(&self, ctx:
+//! &CancelledContext, id: &RequestId, reason: Option<&str>)`, told of each
+//! cancelled request. Session
 //! start and end reach a `SessionObserver` (`ServerBuilder::with_session_observer`).
 //!
 //! # Metadata
@@ -239,8 +240,8 @@ pub fn on_initialize(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Marker: the server's `McpServerCore::on_cancelled` hook, told when a
-/// client cancels a request. A plain `fn(&self, id: &RequestId, reason:
-/// Option<&str>)`. Consumed by [`macro@server`].
+/// client cancels a request. A plain `fn(&self, ctx: &CancelledContext, id:
+/// &RequestId, reason: Option<&str>)`. Consumed by [`macro@server`].
 #[proc_macro_attribute]
 pub fn on_cancelled(_attr: TokenStream, item: TokenStream) -> TokenStream {
     unconsumed("on_cancelled", item)

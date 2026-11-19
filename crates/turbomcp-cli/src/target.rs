@@ -20,7 +20,7 @@ pub struct Target {
     #[arg(long, value_name = "FILE", env = "TURBOMCP_CONFIG")]
     pub config: Option<PathBuf>,
 
-    /// The protocol revision to negotiate.
+    /// How to connect: `auto`, `stateless` or `stateful`.
     #[arg(long, value_enum, default_value_t = Mode::Auto)]
     pub mode: Mode,
 
@@ -53,23 +53,23 @@ pub struct Target {
     pub words: Vec<String>,
 }
 
-/// The protocol revision to negotiate.
+/// How to connect: which protocol model to speak.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// `2026-07-28` where the server serves it, else the newest it does.
+    /// Stateless where the server serves it, else the stateful handshake.
     Auto,
-    /// `2026-07-28` only.
-    Modern,
-    /// `2025-11-25` (or `2025-06-18`).
-    Legacy,
+    /// The stateless model only (`2026-07-28`).
+    Stateless,
+    /// The stateful `initialize` handshake (`2025-11-25`, or `2025-06-18`).
+    Stateful,
 }
 
 impl From<Mode> for ConnectMode {
     fn from(mode: Mode) -> Self {
         match mode {
             Mode::Auto => Self::Auto,
-            Mode::Modern => Self::Modern,
-            Mode::Legacy => Self::Legacy,
+            Mode::Stateless => Self::Stateless,
+            Mode::Stateful => Self::Stateful,
         }
     }
 }
@@ -107,7 +107,7 @@ impl Connected {
     pub async fn close(self) {
         self.client.close().await;
         if let Some(child) = self.child {
-            child.grace(Duration::from_secs(2)).shutdown().await;
+            child.with_grace(Duration::from_secs(2)).shutdown().await;
         }
     }
 }
@@ -137,7 +137,7 @@ impl Target {
             }
             (None, [command, args @ ..]) => (
                 Upstream::stdio(command.clone(), args.iter().cloned())
-                    .inherit_env(self.inherit_env.into()),
+                    .with_inherited_env(self.inherit_env.into()),
                 OutboundAuth::None,
             ),
         };
@@ -152,7 +152,7 @@ impl Target {
             let (name, value) = header
                 .split_once(':')
                 .with_context(|| format!("header `{header}` is not `Name: value`"))?;
-            upstream = upstream.header(name.trim(), value.trim());
+            upstream = upstream.with_header(name.trim(), value.trim());
         }
         if let Some(token) = &self.bearer {
             auth = OutboundAuth::bearer(token.clone());

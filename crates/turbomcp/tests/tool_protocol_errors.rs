@@ -37,7 +37,7 @@ impl Gate {
 async fn an_explicit_rpc_error_is_a_protocol_error() {
     let client = turbomcp::testing::connect(
         Gate.into_server(),
-        ClientBuilder::new("t", "1.0.0").with_connect_mode(ConnectMode::Legacy),
+        ClientBuilder::new("t", "1.0.0").with_connect_mode(ConnectMode::Stateful),
     )
     .await
     .expect("connect");

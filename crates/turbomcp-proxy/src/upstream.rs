@@ -124,7 +124,7 @@ impl Upstream {
     #[must_use]
     // Irrefutable when only stdio upstreams are compiled in.
     #[allow(irrefutable_let_patterns)]
-    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         if let Self::Stdio { env, .. } = &mut self {
             env.insert(key.into(), value.into());
         }
@@ -135,7 +135,7 @@ impl Upstream {
     /// with a WebSocket upstream's upgrade (ignored for stdio). For a bearer
     /// token, prefer [`OutboundAuth`], which also handles refresh.
     #[must_use]
-    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         let _ = (&name, &value);
         match &mut self {
             Self::Stdio { .. } => {}
@@ -155,7 +155,7 @@ impl Upstream {
     /// (default [`Inherit::Safe`]; ignored otherwise).
     #[must_use]
     #[allow(irrefutable_let_patterns)]
-    pub fn inherit_env(mut self, what: Inherit) -> Self {
+    pub fn with_inherited_env(mut self, what: Inherit) -> Self {
         if let Self::Stdio { inherit, .. } = &mut self {
             *inherit = what;
         }
@@ -165,7 +165,7 @@ impl Upstream {
     /// Run a stdio upstream in `dir` (ignored otherwise).
     #[must_use]
     #[allow(irrefutable_let_patterns)]
-    pub fn cwd(mut self, dir: impl Into<PathBuf>) -> Self {
+    pub fn with_cwd(mut self, dir: impl Into<PathBuf>) -> Self {
         if let Self::Stdio { cwd, .. } = &mut self {
             *cwd = Some(dir.into());
         }
@@ -223,7 +223,7 @@ fn redacted_url(url: &str) -> String {
 /// API keys, registry tokens), and an upstream is often a third-party package
 /// fetched at launch, so by default it gets only what a program needs to run:
 /// the variables the official MCP SDKs pass on, and nothing else. Give it
-/// more by name with [`Upstream::env`].
+/// more by name with [`Upstream::with_env`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Inherit {
@@ -236,7 +236,7 @@ pub enum Inherit {
     Safe,
     /// Everything (the operator vouches for the upstream).
     All,
-    /// Nothing but what [`Upstream::env`] sets.
+    /// Nothing but what [`Upstream::with_env`] sets.
     Nothing,
 }
 
@@ -286,7 +286,7 @@ pub enum OutboundAuth {
     ClientCredentials(ServiceAccount),
     /// OAuth token exchange (RFC 8693) at the upstream's authorization
     /// server: each caller's token, as the gateway's authenticator retained
-    /// it (`ResourceServer::retain_token`), is exchanged for one issued for
+    /// it (`ResourceServer::with_token_retention`), is exchanged for one issued for
     /// the upstream, so the upstream sees who is calling without the
     /// caller's token ever reaching it. Each caller gets its own connection
     /// ([`UpstreamKey::Principal`](crate::UpstreamKey::Principal) by
@@ -348,7 +348,7 @@ impl ServiceAccount {
     /// Ask for `scopes` (default: what the upstream's challenge names, else
     /// what its metadata advertises).
     #[must_use]
-    pub fn scopes(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn with_scopes(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.scopes = Some(scopes.into_iter().map(Into::into).collect());
         self
     }

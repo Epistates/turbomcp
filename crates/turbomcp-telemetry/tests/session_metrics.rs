@@ -99,7 +99,7 @@ async fn both_ends_measure_a_session() {
     );
     let (c_rd, c_wr) = split(client_io);
     let client = ClientBuilder::new("agent", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .with_observer(Arc::new(ClientTelemetry::new()))
         .connect(LineTransport::new(
             BufReader::new(c_rd),

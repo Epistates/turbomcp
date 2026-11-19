@@ -58,7 +58,7 @@ fn dispatcher(extension: TasksExtension) -> VersionDispatcher<Tools> {
         Tools,
         MethodRouter::new().with_tools(),
         turbomcp_server::ServerConfig::new()
-            .with_extension(Arc::new(extension.poll_interval_ms(Some(10)))),
+            .with_extension(Arc::new(extension.with_poll_interval_ms(Some(10)))),
     )
 }
 
@@ -139,7 +139,7 @@ async fn a_required_tool_refuses_a_client_without_the_extension() {
 
 #[tokio::test]
 async fn a_required_tool_the_registry_cannot_take_is_an_error_not_an_inline_run() {
-    let mut svc = dispatcher(TasksExtension::new().capacity(1));
+    let mut svc = dispatcher(TasksExtension::new().with_capacity(1));
     // Hold the one slot with a task that keeps running.
     let held = call_tool(&mut svc, "slow", true).await;
     assert_eq!(held["result"]["resultType"], "task", "{held}");

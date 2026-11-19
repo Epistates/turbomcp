@@ -108,6 +108,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `turbomcp-transport-http` and `turbomcp::client`. `HttpClientError::Build`
     holds a boxed error.
 
+- **Breaking:** every builder setter is `with_*`, as alpha.6 made the
+  server's: about a hundred bare setters across `HttpConfig`,
+  `InMemoryEventStore`, `WebSocketConfig`, `RemoteServerBuilder`,
+  `Upstream`, `CallOptions`, `TasksExtension`, the auth validators,
+  `ResourceServer`, `OtlpConfig`, `ServerProcess`, `Composite`,
+  `CachePolicies`, `Pipe` and `Http` (`config` is `with_config`), and the
+  neutral `ToolAnnotations`, `Annotations` and `PromptArgument`. A setter
+  with two names gets one: `HttpConfig`'s `max_concurrent_requests` and
+  `shutdown_timeout` are `with_max_in_flight` and `with_drain_timeout`, as
+  on `ServeConfig`. Where the name changes more than its prefix:
+  `add_audience` / `add_issuer` are `with_audience` / `with_issuer`,
+  `require_access_token_type` is `with_access_token_type_required`,
+  `CallOptions::cancel_on` is `with_cancellation`, `retain_token` is
+  `with_token_retention`, `allow_origin` / `allow_any_origin` /
+  `allow_host` are `with_allowed_origin` / `with_any_origin_allowed` /
+  `with_allowed_host`, `allow_cleartext_bearer` is
+  `with_cleartext_bearer_allowed`, `Visibility::requiring_declared_scopes`
+  is `with_declared_scopes_required`, `attribute_questions` is
+  `with_question_attribution`, `enforce_upstream_scopes` is
+  `with_upstream_scope_enforcement`, `trust_upstream_tags` is
+  `with_trusted_upstream_tags`, `serialize_input` is
+  `with_serialized_input`, `Upstream::inherit_env` is `with_inherited_env`
+  and `ServerProcess::log_stderr` is `with_stderr_log`.
+  `ToolAnnotations::read_only()` and the Server Card `Input`'s
+  `required()` / `secret()` take a `bool` like their siblings.
+  `without_event_store` and `without_keepalive` keep their names.
+- **Breaking:** `ConnectMode::Modern` / `Legacy` are `Stateless` /
+  `Stateful`: they name the mechanism, which the next protocol revision
+  won't make wrong.
+- **Breaking:** `McpServerCore::on_cancelled` (and `#[on_cancelled]`) takes
+  a `&CancelledContext` first. Request ids are only unique within a
+  session, so without it an HTTP server couldn't tell whose call ended.
+
 ### Removed
 
 - **Breaking:** `turbomcp_transport_http::serve_http` and `HttpError`.

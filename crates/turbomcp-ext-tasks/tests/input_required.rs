@@ -130,7 +130,7 @@ async fn poll_until(svc: &mut VersionDispatcher<Guarded>, task_id: &str, status:
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mid_task_elicitation_round_trips_via_tasks_update() {
-    let mut svc = dispatcher(TasksExtension::new().poll_interval_ms(Some(10)));
+    let mut svc = dispatcher(TasksExtension::new().with_poll_interval_ms(Some(10)));
 
     // 1. The call is taskified immediately (input comes later, mid-task).
     let created = call(
@@ -178,7 +178,7 @@ async fn mid_task_elicitation_round_trips_via_tasks_update() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancel_while_awaiting_input_unwinds_the_handler() {
-    let mut svc = dispatcher(TasksExtension::new().poll_interval_ms(Some(10)));
+    let mut svc = dispatcher(TasksExtension::new().with_poll_interval_ms(Some(10)));
 
     let created = call(
         &mut svc,
@@ -211,7 +211,7 @@ async fn cancel_while_awaiting_input_unwinds_the_handler() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undeclared_elicitation_capability_fails_the_task() {
-    let mut svc = dispatcher(TasksExtension::new().poll_interval_ms(Some(10)));
+    let mut svc = dispatcher(TasksExtension::new().with_poll_interval_ms(Some(10)));
 
     // The client declared the tasks extension but NOT elicitation — the
     // capability gate (SEP-2322 MUST NOT) rejects the handler's elicit, which

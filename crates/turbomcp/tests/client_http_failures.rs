@@ -130,7 +130,7 @@ async fn connect(behavior: OnList) -> (Client, Arc<Endpoint>) {
     let (url, ep) = spawn(behavior).await;
     let client = connect_http(
         ClientBuilder::new("http-failures", "1.0.0")
-            .with_connect_mode(ConnectMode::Modern)
+            .with_connect_mode(ConnectMode::Stateless)
             .with_timeout(Duration::from_secs(30)),
         url,
     )
@@ -183,7 +183,7 @@ async fn an_unreachable_endpoint_fails_the_handshake() {
         Duration::from_secs(5),
         connect_http(
             ClientBuilder::new("http-failures", "1.0.0")
-                .with_connect_mode(ConnectMode::Modern)
+                .with_connect_mode(ConnectMode::Stateless)
                 .with_timeout(Duration::from_secs(2)),
             "http://127.0.0.1:1/mcp",
         ),

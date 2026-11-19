@@ -131,7 +131,7 @@ impl IdentityProvider {
     /// rather than an `Authorization: Basic` header, for an IdP that accepts
     /// only that.
     #[must_use]
-    pub fn secret_in_body(mut self) -> Self {
+    pub fn with_secret_in_body(mut self) -> Self {
         self.auth = ClientAuth::Post;
         self
     }

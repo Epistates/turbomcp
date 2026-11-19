@@ -164,7 +164,7 @@ async fn connect_real(tasks: Option<Arc<FastPoll>>) -> Client {
         DefaultCodec::default(),
     ));
     ClientBuilder::new("tasks-legacy", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(transport)
         .await
         .expect("legacy handshake succeeds")
@@ -331,7 +331,7 @@ where
         DefaultCodec::default(),
     ));
     ClientBuilder::new("tasks-scripted", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .connect(transport)
         .await
         .expect("scripted handshake succeeds")

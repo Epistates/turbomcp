@@ -47,9 +47,9 @@ async fn environment_seen_with(inherit: Option<turbomcp::proxy::Inherit>) -> Str
             bin.to_string_lossy().into_owned(),
         ],
     )
-    .env("OUT", out.to_string_lossy());
+    .with_env("OUT", out.to_string_lossy());
     if let Some(inherit) = inherit {
-        upstream = upstream.inherit_env(inherit);
+        upstream = upstream.with_inherited_env(inherit);
     }
     let remote = RemoteServer::connect(upstream).await.expect("spawn");
     let seen = std::fs::read_to_string(&out).expect("the child recorded its environment");
@@ -101,7 +101,7 @@ async fn served() -> std::net::SocketAddr {
     tokio::spawn(
         Hello
             .into_server()
-            .serve(Http::listener(listener).config(config)),
+            .serve(Http::listener(listener).with_config(config)),
     );
     addr
 }
@@ -132,7 +132,7 @@ async fn http_and_websocket_upstreams_connect_under_a_policy_that_allows_them() 
         Upstream::websocket(format!("ws://{addr}/ws")),
     ] {
         let remote = RemoteServer::builder(upstream.clone())
-            .network_policy(NetworkPolicy::default())
+            .with_network_policy(NetworkPolicy::default())
             .connect()
             .await
             .unwrap_or_else(|e| panic!("{upstream:?}: {e}"));
@@ -153,7 +153,7 @@ async fn a_public_only_policy_refuses_an_internal_upstream() {
         Upstream::websocket(format!("wss://localhost:{}/ws", addr.port())),
     ] {
         let err = RemoteServer::builder(upstream.clone())
-            .network_policy(NetworkPolicy::public_only())
+            .with_network_policy(NetworkPolicy::public_only())
             .connect()
             .await
             .unwrap_err();
@@ -216,7 +216,7 @@ async fn configured_headers_reach_http_and_websocket_upstreams() {
     tokio::spawn(
         Hello
             .into_server()
-            .serve(Http::listener(listener).config(config)),
+            .serve(Http::listener(listener).with_config(config)),
     );
 
     for upstream in [
@@ -225,10 +225,13 @@ async fn configured_headers_reach_http_and_websocket_upstreams() {
     ] {
         let refused = RemoteServer::connect(upstream.clone()).await;
         assert!(refused.is_err(), "{upstream:?} let in without the header");
-        let remote =
-            RemoteServer::connect(upstream.clone().header("Authorization", "Bearer let-me-in"))
-                .await
-                .unwrap_or_else(|e| panic!("{upstream:?}: {e}"));
+        let remote = RemoteServer::connect(
+            upstream
+                .clone()
+                .with_header("Authorization", "Bearer let-me-in"),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{upstream:?}: {e}"));
         assert_eq!(hello_through(remote).await, "Hello, Ada!", "{upstream:?}");
     }
 }

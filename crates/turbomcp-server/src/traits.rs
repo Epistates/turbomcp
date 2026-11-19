@@ -61,12 +61,18 @@ pub trait McpServerCore: Clone + Send + Sync + 'static {
     }
 
     /// A client cancelled request `request_id` (`notifications/cancelled`),
-    /// with its stated `reason`. The request's handler has already been told
-    /// (its `ctx.base.cancellation` fired); this is for the server as a
+    /// with its stated `reason`; `ctx` says which client (an id is only
+    /// unique within its session). The request's handler has already been
+    /// told (its `ctx.base.cancellation` fired); this is for the server as a
     /// whole: auditing, metrics. The default does nothing. Keep it quick: it
     /// runs as the notification is read.
-    fn on_cancelled(&self, request_id: &turbomcp_core::RequestId, reason: Option<&str>) {
-        let _ = (request_id, reason);
+    fn on_cancelled(
+        &self,
+        ctx: &crate::CancelledContext,
+        request_id: &turbomcp_core::RequestId,
+        reason: Option<&str>,
+    ) {
+        let _ = (ctx, request_id, reason);
     }
 
     /// Register the capabilities this server implements. Every

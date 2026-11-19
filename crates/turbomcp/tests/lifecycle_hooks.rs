@@ -27,7 +27,7 @@ impl Gatekeeper {
     }
 
     #[on_cancelled]
-    fn note(&self, id: &RequestId, _reason: Option<&str>) {
+    fn note(&self, _ctx: &CancelledContext, id: &RequestId, _reason: Option<&str>) {
         self.cancelled.lock().unwrap().push(format!("{id:?}"));
     }
 
@@ -71,7 +71,7 @@ async fn a_server_admits_watches_and_hears_cancellations() {
 
     let refused = turbomcp::testing::connect(
         build(),
-        ClientBuilder::new("blocked", "1").with_connect_mode(ConnectMode::Legacy),
+        ClientBuilder::new("blocked", "1").with_connect_mode(ConnectMode::Stateful),
     )
     .await
     .unwrap_err();
@@ -80,7 +80,7 @@ async fn a_server_admits_watches_and_hears_cancellations() {
     let client = turbomcp::testing::connect(
         build(),
         ClientBuilder::new("welcome", "1")
-            .with_connect_mode(ConnectMode::Legacy)
+            .with_connect_mode(ConnectMode::Stateful)
             .with_timeout(Duration::from_millis(300)),
     )
     .await

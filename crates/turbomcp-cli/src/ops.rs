@@ -296,8 +296,8 @@ pub async fn prompt(
 pub async fn probe(target: &Target, json: bool) -> Result<()> {
     let mut revisions = Vec::new();
     for (label, mode) in [
-        ("2026-07-28", ConnectMode::Modern),
-        ("2025-*", ConnectMode::Legacy),
+        ("2026-07-28", ConnectMode::Stateless),
+        ("2025-*", ConnectMode::Stateful),
     ] {
         let outcome = match target.connect_as(mode).await {
             Ok(connected) => {

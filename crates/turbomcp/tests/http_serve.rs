@@ -52,7 +52,7 @@ async fn delete_is_honored(serve: impl FnOnce(Http) -> Serving) {
 
     let shutdown = CancellationToken::new();
     let config = HttpConfig::new().with_shutdown(shutdown.clone());
-    let server = serve(Http::listener(listener).config(config));
+    let server = serve(Http::listener(listener).with_config(config));
 
     let url = format!("http://{addr}/mcp");
     let client = reqwest::Client::new();

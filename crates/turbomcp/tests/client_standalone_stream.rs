@@ -155,7 +155,7 @@ async fn a_server_request_on_the_standalone_stream_is_answered() {
     let client = connect_http(
         ClientBuilder::new("standalone-stream-test", "1.0.0")
             .with_elicitation(Confirming)
-            .with_connect_mode(ConnectMode::Legacy),
+            .with_connect_mode(ConnectMode::Stateful),
         format!("http://{addr}/mcp"),
     )
     .await
@@ -233,7 +233,7 @@ async fn the_standalone_stream_is_open_before_connect_returns() {
     let client = connect_http(
         ClientBuilder::new("standalone-stream-test", "1.0.0")
             .with_elicitation(Confirming)
-            .with_connect_mode(ConnectMode::Legacy),
+            .with_connect_mode(ConnectMode::Stateful),
         format!("http://{addr}/mcp"),
     )
     .await
@@ -319,7 +319,7 @@ async fn a_404_to_a_resuming_get_drops_the_cursor_not_the_session() {
     });
 
     let client = connect_http(
-        ClientBuilder::new("forgetful-test", "1.0.0").with_connect_mode(ConnectMode::Legacy),
+        ClientBuilder::new("forgetful-test", "1.0.0").with_connect_mode(ConnectMode::Stateful),
         format!("http://{addr}/mcp"),
     )
     .await
@@ -389,7 +389,7 @@ async fn a_405_on_the_standalone_stream_is_not_retried_forever() {
     let client = connect_http(
         ClientBuilder::new("no-stream-test", "1.0.0")
             .with_elicitation(Confirming)
-            .with_connect_mode(ConnectMode::Legacy),
+            .with_connect_mode(ConnectMode::Stateful),
         format!("http://{addr}/mcp"),
     )
     .await

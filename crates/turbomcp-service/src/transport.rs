@@ -226,7 +226,7 @@ impl TransportCapabilities {
 
     /// It is Streamable HTTP.
     #[must_use]
-    pub fn streamable_http(mut self) -> Self {
+    pub fn with_streamable_http(mut self) -> Self {
         self.streamable_http = true;
         self
     }
@@ -234,7 +234,7 @@ impl TransportCapabilities {
     /// It may carry more than one principal (a bearer source handing out
     /// different callers' tokens).
     #[must_use]
-    pub fn shared_principal(mut self) -> Self {
+    pub fn with_shared_principal(mut self) -> Self {
         self.single_principal = false;
         self
     }

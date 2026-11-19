@@ -166,10 +166,10 @@ fn authenticator(
         metadata_url,
     );
     if !args.auth_scopes.is_empty() {
-        server = server.required_scopes(args.auth_scopes.clone());
+        server = server.with_required_scopes(args.auth_scopes.clone());
     }
     // Token exchange needs the caller's token after authentication.
-    server = server.retain_token(retain_tokens);
+    server = server.with_token_retention(retain_tokens);
     Ok(Some(std::sync::Arc::new(server)))
 }
 
@@ -200,18 +200,18 @@ async fn connect(
     loop {
         let settings = &server.settings;
         let mut remote = RemoteServer::builder(server.upstream.clone())
-            .auth(settings.auth.clone())
-            .forward_sampling(settings.forward_sampling)
-            .forward_roots(settings.forward_roots)
-            .tags(settings.tags.clone())
-            .max_connections(args.max_connections)
-            .max_connections_per_caller(args.max_connections_per_caller)
-            .idle_timeout(Duration::from_secs(args.idle_timeout));
+            .with_auth(settings.auth.clone())
+            .with_forward_sampling(settings.forward_sampling)
+            .with_forward_roots(settings.forward_roots)
+            .with_tags(settings.tags.clone())
+            .with_max_connections(args.max_connections)
+            .with_max_connections_per_caller(args.max_connections_per_caller)
+            .with_idle_timeout(Duration::from_secs(args.idle_timeout));
         if let Some(timeout) = settings.timeout.or(args.timeout.map(Duration::from_secs)) {
-            remote = remote.timeout(timeout);
+            remote = remote.with_timeout(timeout);
         }
         if let Some(key) = settings.key {
-            remote = remote.key(key);
+            remote = remote.with_key(key);
         }
         let outcome = remote.connect().await;
         let retryable = matches!(
@@ -347,7 +347,7 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
         })
         .collect();
     if !instructions.is_empty() {
-        gateway = gateway.instructions(instructions.join("\n\n"));
+        gateway = gateway.with_instructions(instructions.join("\n\n"));
     }
     for (name, remote) in &remotes {
         gateway = gateway
@@ -370,19 +370,19 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
                     tracing::warn!(%addr, "serving beyond loopback with no authentication (--insecure)");
                 }
                 let mut config = turbomcp::http::HttpConfig::new()
-                    .path(args.path.clone())
+                    .with_path(args.path.clone())
                     .with_shutdown(shutdown.clone());
                 if let Some(authenticator) = authenticator {
                     config = config.with_authenticator(authenticator);
                 }
                 for origin in &args.allow_origins {
-                    config = config.allow_origin(origin.clone());
+                    config = config.with_allowed_origin(origin.clone());
                 }
                 for host in &args.allow_hosts {
-                    config = config.allow_host(host.clone());
+                    config = config.with_allowed_host(host.clone());
                 }
                 server
-                    .serve(turbomcp::http::Http::bind(addr).config(config))
+                    .serve(turbomcp::http::Http::bind(addr).with_config(config))
                     .await
                     .context("serving")
             }

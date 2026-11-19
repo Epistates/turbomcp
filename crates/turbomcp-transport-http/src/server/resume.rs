@@ -181,28 +181,28 @@ impl InMemoryEventStore {
 
     /// Keep at most `n` events per stream.
     #[must_use]
-    pub fn events_per_stream(mut self, n: usize) -> Self {
+    pub fn with_events_per_stream(mut self, n: usize) -> Self {
         self.events_per_stream = n.max(1);
         self
     }
 
     /// Keep at most `n` streams.
     #[must_use]
-    pub fn max_streams(mut self, n: usize) -> Self {
+    pub fn with_max_streams(mut self, n: usize) -> Self {
         self.max_streams = n.max(1);
         self
     }
 
     /// Keep at most `bytes` of serialized messages across every stream.
     #[must_use]
-    pub fn max_bytes(mut self, bytes: usize) -> Self {
+    pub fn with_max_bytes(mut self, bytes: usize) -> Self {
         self.max_bytes = bytes;
         self
     }
 
     /// Keep a finished stream for `retention`.
     #[must_use]
-    pub fn retention(mut self, retention: Duration) -> Self {
+    pub fn with_retention(mut self, retention: Duration) -> Self {
         self.retention = retention;
         self
     }
@@ -682,7 +682,7 @@ mod tests {
     /// then the oldest events of the largest live one.
     #[tokio::test]
     async fn the_store_keeps_to_its_byte_budget() {
-        let store = InMemoryEventStore::new().max_bytes(10_000);
+        let store = InMemoryEventStore::new().with_max_bytes(10_000);
         for seq in 1..=4 {
             store.append("s", "done", seq, &sized(2_000)).await.unwrap();
         }
@@ -743,7 +743,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_store_replays_a_range_and_refuses_a_gap() {
-        let store = InMemoryEventStore::new().events_per_stream(3);
+        let store = InMemoryEventStore::new().with_events_per_stream(3);
         for seq in 1..=5 {
             store.append("s", "a", seq, &note(seq)).await.unwrap();
         }
@@ -766,8 +766,8 @@ mod tests {
     #[tokio::test]
     async fn a_finished_stream_expires_and_sessions_are_forgotten() {
         let store = InMemoryEventStore::new()
-            .retention(Duration::ZERO)
-            .max_streams(10);
+            .with_retention(Duration::ZERO)
+            .with_max_streams(10);
         store.append("s", "a", 1, &note(1)).await.unwrap();
         store.complete("s", "a").await.unwrap();
         store.append("s", "b", 1, &note(1)).await.unwrap();

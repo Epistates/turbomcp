@@ -104,10 +104,10 @@ async fn connect() -> Client {
         Workshop.into_server().with_extension(Arc::new(
             TasksExtension::new()
                 .task_tools(["generate_report", "guarded_report"])
-                .poll_interval_ms(Some(10)),
+                .with_poll_interval_ms(Some(10)),
         )),
         ClientBuilder::new("workshop-client", "1.0.0")
-            .with_connect_mode(ConnectMode::Modern)
+            .with_connect_mode(ConnectMode::Stateless)
             .with_tasks()
             .with_elicitation(Confirm),
     )

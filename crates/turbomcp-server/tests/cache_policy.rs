@@ -260,7 +260,8 @@ async fn legacy_wire_carries_no_cache_fields() {
 /// Per-capability granularity: only the configured surface changes.
 #[tokio::test]
 async fn per_capability_policies_apply_independently() {
-    let cache = CachePolicies::default().tools_list(CachePolicy::public(Duration::from_secs(30)));
+    let cache =
+        CachePolicies::default().with_tools_list(CachePolicy::public(Duration::from_secs(30)));
     let frames = run(
         Catalog {
             override_cache: false,
@@ -293,11 +294,11 @@ async fn per_capability_policies_apply_independently() {
 async fn each_capability_setter_targets_its_own_method() {
     let secs = |n| CachePolicy::public(Duration::from_secs(n));
     let cache = CachePolicies::default()
-        .tools_list(secs(1))
-        .resources_list(secs(2))
-        .resource_templates_list(secs(3))
-        .resources_read(secs(4))
-        .prompts_list(secs(5));
+        .with_tools_list(secs(1))
+        .with_resources_list(secs(2))
+        .with_resource_templates_list(secs(3))
+        .with_resources_read(secs(4))
+        .with_prompts_list(secs(5));
     let frames = run(
         Catalog {
             override_cache: false,

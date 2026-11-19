@@ -36,7 +36,7 @@ async fn a_polled_call_completes() {
     let shutdown = turbomcp::CancellationToken::new();
     tokio::spawn(
         Slow.into_server().serve(
-            Http::listener(listener).config(
+            Http::listener(listener).with_config(
                 HttpConfig::new()
                     .with_event_store(Arc::new(InMemoryEventStore::new()))
                     .with_sse_polling(SsePolling::new(
@@ -44,14 +44,14 @@ async fn a_polled_call_completes() {
                         Duration::from_millis(20),
                     ))
                     // Upgrade to a stream at once, so polling has one to cut.
-                    .sse_upgrade_after(Duration::from_millis(10))
+                    .with_sse_upgrade_after(Duration::from_millis(10))
                     .with_shutdown(shutdown.clone()),
             ),
         ),
     );
 
     let client = connect_http(
-        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Legacy),
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Stateful),
         &url,
     )
     .await

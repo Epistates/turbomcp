@@ -186,20 +186,20 @@ impl RemoteServerBuilder {
     /// when upstream URLs come from someone else.
     #[cfg(feature = "http")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-    pub fn network_policy(mut self, policy: turbomcp_auth::NetworkPolicy) -> Self {
+    pub fn with_network_policy(mut self, policy: turbomcp_auth::NetworkPolicy) -> Self {
         self.network = Some(policy);
         self
     }
 
     /// Authenticate upstream with `auth`.
-    pub fn auth(mut self, auth: OutboundAuth) -> Self {
+    pub fn with_auth(mut self, auth: OutboundAuth) -> Self {
         self.auth = auth;
         self
     }
 
     /// Negotiate the upstream revision with `mode` (default
     /// [`ConnectMode::Auto`]: `2026-07-28` where the upstream serves it).
-    pub fn connect_mode(mut self, mode: ConnectMode) -> Self {
+    pub fn with_connect_mode(mut self, mode: ConnectMode) -> Self {
         self.client = self.client.with_connect_mode(mode);
         self
     }
@@ -207,16 +207,16 @@ impl RemoteServerBuilder {
     /// Fail an upstream request that goes `timeout` without an answer
     /// (default: the client's, 60 s). A forwarded call's clock restarts with
     /// every progress report the upstream sends, so a long operation that
-    /// keeps reporting isn't cut off; [`max_call_duration`](Self::max_call_duration)
+    /// keeps reporting isn't cut off; [`with_max_call_duration`](Self::with_max_call_duration)
     /// is the ceiling either way.
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.client = self.client.with_timeout(timeout);
         self
     }
 
     /// Give up on a forwarded call after `max`, whatever progress it reports
     /// (default one hour). The caller cancelling ends it sooner, as always.
-    pub fn max_call_duration(mut self, max: Duration) -> Self {
+    pub fn with_max_call_duration(mut self, max: Duration) -> Self {
         self.max_call = max;
         self
     }
@@ -232,7 +232,7 @@ impl RemoteServerBuilder {
     /// Trust a fetched catalogue (used to resolve calls) for `ttl` before
     /// fetching it again (default 30 s). A change notification from the
     /// upstream refreshes it at once either way.
-    pub fn catalog_ttl(mut self, ttl: Duration) -> Self {
+    pub fn with_catalog_ttl(mut self, ttl: Duration) -> Self {
         self.catalog_ttl = ttl;
         self
     }
@@ -241,11 +241,11 @@ impl RemoteServerBuilder {
     /// `true`): its `elicitation/create` reaches the caller whose call
     /// caused it, on whatever revision that caller speaks, as do its
     /// `sampling/createMessage` and `roots/list` where
-    /// [`forward_sampling`](Self::forward_sampling) and
-    /// [`forward_roots`](Self::forward_roots) allow them. Off, the proxy
+    /// [`with_forward_sampling`](Self::with_forward_sampling) and
+    /// [`with_forward_roots`](Self::with_forward_roots) allow them. Off, the proxy
     /// declares none of those capabilities upstream, so the upstream knows
     /// not to ask.
-    pub fn forward_input(mut self, forward: bool) -> Self {
+    pub fn with_forward_input(mut self, forward: bool) -> Self {
         self.forward_input = forward;
         self
     }
@@ -254,7 +254,7 @@ impl RemoteServerBuilder {
     /// (default `false`). Sampling runs the caller's model, at the caller's
     /// cost, on a prompt the upstream wrote: the spec's prompt-injection
     /// and cost warning. Turn it on for an upstream you trust with that.
-    pub fn forward_sampling(mut self, forward: bool) -> Self {
+    pub fn with_forward_sampling(mut self, forward: bool) -> Self {
         self.forward_sampling = forward;
         self
     }
@@ -262,7 +262,7 @@ impl RemoteServerBuilder {
     /// Whether the upstream's `roots/list` reaches the caller (default
     /// `false`): the caller's roots name its files and folders, which a
     /// third-party upstream has no claim to.
-    pub fn forward_roots(mut self, forward: bool) -> Self {
+    pub fn with_forward_roots(mut self, forward: bool) -> Self {
         self.forward_roots = forward;
         self
     }
@@ -272,7 +272,7 @@ impl RemoteServerBuilder {
     /// A user sent to a URL, or asked for something, by a gateway that
     /// serves several upstreams can then tell which one is asking. Sampling
     /// requests are never changed, since their text is the model's prompt.
-    pub fn attribute_questions(mut self, attribute: bool) -> Self {
+    pub fn with_question_attribution(mut self, attribute: bool) -> Self {
         self.attribute_questions = attribute;
         self
     }
@@ -287,7 +287,7 @@ impl RemoteServerBuilder {
     /// off, the scopes are dropped from what the gateway serves, the
     /// upstream enforces them on the proxy's token, and the gateway's own
     /// access policy is its visibility and its own tools' scopes.
-    pub fn enforce_upstream_scopes(mut self, enforce: bool) -> Self {
+    pub fn with_upstream_scope_enforcement(mut self, enforce: bool) -> Self {
         self.enforce_scopes = Some(enforce);
         self
     }
@@ -300,7 +300,7 @@ impl RemoteServerBuilder {
     /// upstream sends is dropped, since a policy that showed components the
     /// upstream tagged `public` (or didn't tag `admin`) would be deciding on
     /// what the upstream wrote.
-    pub fn tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn with_tags(mut self, tags: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.tags = tags.into_iter().map(Into::into).collect();
         self
     }
@@ -308,8 +308,8 @@ impl RemoteServerBuilder {
     /// Keep the tags the upstream gives its components (`io.turbomcp/tags`),
     /// beside the gateway's own: for an upstream you run, whose tags your
     /// policy may rely on. Off by default, for the reason
-    /// [`tags`](Self::tags) gives.
-    pub fn trust_upstream_tags(mut self, trust: bool) -> Self {
+    /// [`with_tags`](Self::with_tags) gives.
+    pub fn with_trusted_upstream_tags(mut self, trust: bool) -> Self {
         self.trust_tags = trust;
         self
     }
@@ -319,7 +319,7 @@ impl RemoteServerBuilder {
     /// for input itself (a `2026-07-28` upstream, or Streamable HTTP), and
     /// [`UpstreamKey::Principal`] otherwise (a `2025-*` stdio or WebSocket
     /// upstream, one connection per caller).
-    pub fn key(mut self, key: UpstreamKey) -> Self {
+    pub fn with_key(mut self, key: UpstreamKey) -> Self {
         self.key = Some(key);
         self
     }
@@ -329,14 +329,14 @@ impl RemoteServerBuilder {
     /// off), so a request for input always names its call, even on a
     /// `2025-*` stdio upstream shared by concurrent callers. Costs those
     /// calls their concurrency.
-    pub fn serialize_input(mut self, serialize: bool) -> Self {
+    pub fn with_serialized_input(mut self, serialize: bool) -> Self {
         self.serialize = serialize;
         self
     }
 
     /// Close a keyed upstream connection no call has used for `idle`
     /// (default ten minutes).
-    pub fn idle_timeout(mut self, idle: Duration) -> Self {
+    pub fn with_idle_timeout(mut self, idle: Duration) -> Self {
         self.idle = idle;
         self
     }
@@ -345,7 +345,7 @@ impl RemoteServerBuilder {
     /// that would need another is refused as a retryable transport error
     /// (HTTP `503`); no live connection is closed to make room, so a caller
     /// opening sessions fast can't churn everyone else's.
-    pub fn max_connections(mut self, max: u64) -> Self {
+    pub fn with_max_connections(mut self, max: u64) -> Self {
         self.max = max;
         self
     }
@@ -354,14 +354,14 @@ impl RemoteServerBuilder {
     /// hold at most `max` upstream connections (default 32): under
     /// [`UpstreamKey::Session`], a cap on the sessions, and for a stdio
     /// upstream the processes, any one caller can open.
-    pub fn max_connections_per_caller(mut self, max: u64) -> Self {
+    pub fn with_max_connections_per_caller(mut self, max: u64) -> Self {
         self.max_per_caller = max;
         self
     }
 
     /// How long a stdio upstream gets to exit after its stdin closes, and
     /// again after `SIGTERM`, before it is killed (default 2 s each).
-    pub fn shutdown_grace(mut self, grace: Duration) -> Self {
+    pub fn with_shutdown_grace(mut self, grace: Duration) -> Self {
         self.shutdown_grace = grace;
         self
     }
@@ -565,7 +565,7 @@ impl RemoteServer {
             }
         })
         .client(|_| client)
-        .key(UpstreamKey::Global)
+        .with_key(UpstreamKey::Global)
         .connect()
         .await
     }
@@ -800,9 +800,9 @@ impl RemoteServer {
         // tighter than the upstream's silence: progress restarts the clock,
         // up to the ceiling.
         let mut options = CallOptions::new()
-            .cancel_on(base.cancellation.clone())
-            .reset_timeout_on_progress(true)
-            .max_total_timeout(self.inner.max_call);
+            .with_cancellation(base.cancellation.clone())
+            .with_reset_timeout_on_progress(true)
+            .with_max_total_timeout(self.inner.max_call);
         let inputs = self.inner.inputs;
         let bridge = inputs.any().then(|| {
             Bridge::new(
@@ -1294,7 +1294,7 @@ impl RemoteServer {
     /// The `io.turbomcp/*` metadata the gateway's own policies read, as the
     /// gateway says, not the upstream: everything the upstream sent under the
     /// prefix is dropped (declared scopes survive only when the gateway
-    /// enforces them), then the gateway's [tags](RemoteServerBuilder::tags)
+    /// enforces them), then the gateway's [tags](RemoteServerBuilder::with_tags)
     /// are added.
     fn gateway_meta(&self, meta: &mut serde_json::Map<String, serde_json::Value>) {
         use turbomcp_core::meta::keys::{SCOPES, TAGS};

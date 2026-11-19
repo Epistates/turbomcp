@@ -73,7 +73,7 @@ async fn the_servers_span_is_a_child_of_the_clients() {
     ));
     let (c_rd, c_wr) = split(client_io);
     let client = ClientBuilder::new("agent", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_observer(Arc::new(ClientTelemetry::new()))
         .connect(LineTransport::new(
             BufReader::new(c_rd),

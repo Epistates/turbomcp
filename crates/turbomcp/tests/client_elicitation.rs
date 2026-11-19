@@ -97,25 +97,25 @@ async fn call_delete(client: &Client) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn modern_mrtr_elicitation_confirms() {
     // Draft path: input_required → handler answers ok=true → re-issue → deleted.
-    let client = connect(ConnectMode::Modern, true).await;
+    let client = connect(ConnectMode::Stateless, true).await;
     assert_eq!(call_delete(&client).await, "deleted /tmp/x");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn modern_mrtr_elicitation_declines() {
-    let client = connect(ConnectMode::Modern, false).await;
+    let client = connect(ConnectMode::Stateless, false).await;
     assert_eq!(call_delete(&client).await, "kept /tmp/x");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_inline_bidi_elicitation_confirms() {
     // Legacy path: the server elicits inline; the actor answers via the handler.
-    let client = connect(ConnectMode::Legacy, true).await;
+    let client = connect(ConnectMode::Stateful, true).await;
     assert_eq!(call_delete(&client).await, "deleted /tmp/x");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_inline_bidi_elicitation_declines() {
-    let client = connect(ConnectMode::Legacy, false).await;
+    let client = connect(ConnectMode::Stateful, false).await;
     assert_eq!(call_delete(&client).await, "kept /tmp/x");
 }

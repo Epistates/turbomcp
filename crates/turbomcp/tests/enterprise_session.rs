@@ -124,7 +124,7 @@ async fn the_idp_authorizes_the_client_without_a_browser() {
     let shutdown = CancellationToken::new();
     tokio::spawn(
         Docs.into_server().serve(
-            Http::listener(listener).config(
+            Http::listener(listener).with_config(
                 HttpConfig::new()
                     .with_authenticator(Arc::new(authenticator))
                     .with_shutdown(shutdown.clone()),
@@ -148,7 +148,7 @@ async fn the_idp_authorizes_the_client_without_a_browser() {
         .unwrap()
         .with_bearer_source(session as Arc<dyn BearerSource>);
     let client = ClientBuilder::new("corp-agent", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_extension(
             turbomcp::auth::client::enterprise::EXTENSION_ID,
             Value::Object(Map::new()),

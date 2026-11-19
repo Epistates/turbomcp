@@ -201,7 +201,7 @@ impl Entry {
                 interpolate(&a.client_secret)?,
             );
             if let Some(scopes) = &a.scopes {
-                account = account.scopes(scopes.clone());
+                account = account.with_scopes(scopes.clone());
             }
             Ok(account)
         };
@@ -248,12 +248,12 @@ impl Entry {
                     Some(other) => bail!("unknown `inherit` `{other}` (safe, all or none)"),
                 };
                 let mut upstream =
-                    Upstream::stdio(interpolate(&command)?, args).inherit_env(inherit);
+                    Upstream::stdio(interpolate(&command)?, args).with_inherited_env(inherit);
                 for (key, value) in &self.env {
-                    upstream = upstream.env(key, interpolate(value)?);
+                    upstream = upstream.with_env(key, interpolate(value)?);
                 }
                 if let Some(cwd) = &self.cwd {
-                    upstream = upstream.cwd(PathBuf::from(interpolate(cwd)?));
+                    upstream = upstream.with_cwd(PathBuf::from(interpolate(cwd)?));
                 }
                 Ok(upstream)
             }
@@ -277,7 +277,7 @@ impl Entry {
                     Some(other) => bail!("has an unknown type `{other}`"),
                 };
                 for (name, value) in &self.headers {
-                    upstream = upstream.header(name, interpolate(value)?);
+                    upstream = upstream.with_header(name, interpolate(value)?);
                 }
                 Ok(upstream)
             }

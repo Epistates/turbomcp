@@ -114,7 +114,7 @@ async fn connect(mode: ConnectMode) -> (Client, Arc<Spy>) {
 /// — it has no prompts, so `promptsListChanged` must not come back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn listen_negotiates_a_filter_with_the_real_server() {
-    let (client, spy) = connect(ConnectMode::Modern).await;
+    let (client, spy) = connect(ConnectMode::Stateless).await;
 
     let subscription = client
         .listen(neutral::SubscriptionFilter::all_list_changed().with_resource("demo://watched"))
@@ -156,7 +156,7 @@ async fn listen_negotiates_a_filter_with_the_real_server() {
 /// refuses it locally and points at `resources/subscribe` instead.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn listen_is_refused_on_the_legacy_wire() {
-    let (client, _spy) = connect(ConnectMode::Legacy).await;
+    let (client, _spy) = connect(ConnectMode::Stateful).await;
 
     let err = client
         .listen(neutral::SubscriptionFilter::all_list_changed())
@@ -193,11 +193,11 @@ async fn run_modern() -> Running {
         s_wr,
         SerdeJsonCodec,
     ))
-    .config(turbomcp::ServeConfig::new().with_shutdown(shutdown.clone()));
+    .with_config(turbomcp::ServeConfig::new().with_shutdown(shutdown.clone()));
     let server = tokio::spawn(server.serve(pipe));
     let (c_rd, c_wr) = split(client_io);
     let client = ClientBuilder::new("subscriber", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(LineTransport::new(
             BufReader::new(c_rd),
             c_wr,

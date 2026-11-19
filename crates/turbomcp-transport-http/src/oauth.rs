@@ -71,7 +71,7 @@ impl OAuthSession {
     /// that needed authorization fails, rather than waiting on a browser tab
     /// the user closed.
     #[must_use]
-    pub fn authorization_timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_authorization_timeout(mut self, timeout: Duration) -> Self {
         self.authorization_timeout = timeout;
         self
     }

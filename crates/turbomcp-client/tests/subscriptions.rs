@@ -134,7 +134,7 @@ where
         other => frames_for(other, frame),
     });
     finish(
-        builder.with_connect_mode(turbomcp_client::ConnectMode::Legacy),
+        builder.with_connect_mode(turbomcp_client::ConnectMode::Stateful),
         client_io,
         None,
     )

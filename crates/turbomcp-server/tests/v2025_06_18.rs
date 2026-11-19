@@ -44,7 +44,7 @@ impl WithTools for Rich {
                 .with_description("Find things")
                 .with_icon(icon())
                 .with_task_support(neutral::TaskSupport::Optional)
-                .with_annotations(neutral::ToolAnnotations::new().read_only()),
+                .with_annotations(neutral::ToolAnnotations::new().with_read_only(true)),
         ]))
     }
 

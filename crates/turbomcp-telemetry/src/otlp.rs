@@ -77,14 +77,14 @@ impl OtlpConfig {
     /// [`OtlpProtocol::HttpProtobuf`] this is the base URL; the exporter
     /// appends `/v1/traces` and `/v1/metrics`.
     #[must_use]
-    pub fn endpoint(mut self, endpoint: impl Into<String>) -> Self {
+    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint = Some(endpoint.into());
         self
     }
 
     /// Speak `protocol` to the collector.
     #[must_use]
-    pub fn protocol(mut self, protocol: OtlpProtocol) -> Self {
+    pub fn with_protocol(mut self, protocol: OtlpProtocol) -> Self {
         self.protocol = Some(protocol);
         self
     }
@@ -222,7 +222,9 @@ mod tests {
             (OtlpProtocol::Grpc, "http://127.0.0.1:4317"),
             (OtlpProtocol::HttpProtobuf, "http://127.0.0.1:4318/"),
         ] {
-            let config = OtlpConfig::new("svc").protocol(protocol).endpoint(endpoint);
+            let config = OtlpConfig::new("svc")
+                .with_protocol(protocol)
+                .with_endpoint(endpoint);
             assert_eq!(config.resolved_protocol(), protocol);
             exporters(&config).expect("exporters build");
         }

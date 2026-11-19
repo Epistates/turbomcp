@@ -30,8 +30,8 @@ fn args() -> Map<String, serde_json::Value> {
 #[tokio::test]
 async fn every_revision_connects_in_memory() {
     for (mode, version) in [
-        (ConnectMode::Modern, ProtocolVersion::V2026_07_28),
-        (ConnectMode::Legacy, ProtocolVersion::V2025_11_25),
+        (ConnectMode::Stateless, ProtocolVersion::V2026_07_28),
+        (ConnectMode::Stateful, ProtocolVersion::V2025_11_25),
     ] {
         let client = turbomcp::testing::connect(
             Adder.into_server(),

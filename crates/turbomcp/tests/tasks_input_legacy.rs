@@ -70,7 +70,7 @@ impl ElicitationHandler for Confirm {
 
 fn client(confirm: &Confirm) -> ClientBuilder {
     ClientBuilder::new("desk-client", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .with_elicitation(confirm.clone())
 }
 
@@ -145,11 +145,9 @@ async fn a_task_elicits_mid_execution_over_http() {
         .unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let shutdown = turbomcp::CancellationToken::new();
-    tokio::spawn(
-        Desk.into_server().with_tasks().serve(
-            Http::listener(listener).config(HttpConfig::new().with_shutdown(shutdown.clone())),
-        ),
-    );
+    tokio::spawn(Desk.into_server().with_tasks().serve(
+        Http::listener(listener).with_config(HttpConfig::new().with_shutdown(shutdown.clone())),
+    ));
 
     let confirm = Confirm::default();
     let client = connect_http(client(&confirm), &url).await.expect("connect");

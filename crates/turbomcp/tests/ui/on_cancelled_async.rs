@@ -8,8 +8,8 @@ struct S;
 #[server(name = "s", version = "1.0.0")]
 impl S {
     #[on_cancelled]
-    async fn note(&self, id: &RequestId, reason: Option<&str>) {
-        let _ = (id, reason);
+    async fn note(&self, ctx: &CancelledContext, id: &RequestId, reason: Option<&str>) {
+        let _ = (ctx, id, reason);
     }
 
     #[tool]

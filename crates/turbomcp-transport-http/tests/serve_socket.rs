@@ -62,7 +62,11 @@ async fn round_trip_and_graceful_shutdown_over_a_real_socket() {
     let shutdown = CancellationToken::new();
     let dispatcher = VersionDispatcher::new(Echo, MethodRouter::new().with_tools());
     let config = HttpConfig::new().with_shutdown(shutdown.clone());
-    let server = tokio::spawn(Http::listener(listener).config(config).serve(dispatcher));
+    let server = tokio::spawn(
+        Http::listener(listener)
+            .with_config(config)
+            .serve(dispatcher),
+    );
 
     let url = format!("http://{addr}/mcp");
     let client = reqwest::Client::new();
@@ -112,7 +116,7 @@ async fn serve(config: HttpConfig) -> (SocketAddr, CancellationToken) {
     let shutdown = CancellationToken::new();
     let dispatcher = VersionDispatcher::new(Echo, MethodRouter::new().with_tools());
     let http = turbomcp_transport_http::Http::listener(listener)
-        .config(config.with_shutdown(shutdown.clone()));
+        .with_config(config.with_shutdown(shutdown.clone()));
     tokio::spawn(async move {
         use turbomcp_service::Serve as _;
         let _ = http.serve(dispatcher).await;
@@ -140,7 +144,7 @@ async fn closed_within(stream: &mut tokio::net::TcpStream, within: Duration) -> 
 async fn a_connection_slow_to_send_headers_is_closed() {
     use tokio::io::AsyncWriteExt as _;
     let (addr, shutdown) =
-        serve(HttpConfig::new().header_read_timeout(Duration::from_millis(300))).await;
+        serve(HttpConfig::new().with_header_read_timeout(Duration::from_millis(300))).await;
 
     let mut idle = tokio::net::TcpStream::connect(addr).await.unwrap();
     let mut slow = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -162,7 +166,7 @@ async fn a_connection_slow_to_send_headers_is_closed() {
 /// not served until a connection closes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_connection_cap_holds_new_clients_until_one_closes() {
-    let (addr, shutdown) = serve(HttpConfig::new().max_connections(1)).await;
+    let (addr, shutdown) = serve(HttpConfig::new().with_max_connections(1)).await;
     let health = |addr: SocketAddr| async move {
         reqwest::Client::new()
             .post(format!("http://{addr}/mcp"))

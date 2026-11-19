@@ -207,7 +207,7 @@ async fn shutdown_closes_the_listen_stream_with_a_result_envelope() {
 /// keep the stream non-idle.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn idle_stream_emits_keepalive_comments() {
-    let (app, _notifier) = app(HttpConfig::new().sse_keepalive(Duration::from_millis(50)));
+    let (app, _notifier) = app(HttpConfig::new().with_sse_keepalive(Duration::from_millis(50)));
     let resp = app
         .oneshot(listen_request(1, json!({ "toolsListChanged": true })))
         .await

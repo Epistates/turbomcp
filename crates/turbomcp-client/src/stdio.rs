@@ -18,7 +18,7 @@ use crate::process::ServerProcess;
 /// sequence (wait, `SIGTERM`, `SIGKILL`). Dropping the process kills it. On
 /// Unix the server gets its own process group, so the sequence reaches
 /// whatever it starts. Its stderr is left as `command` configured it; pipe it
-/// and call [`ServerProcess::log_stderr`] to route it into `tracing`.
+/// and call [`ServerProcess::with_stderr_log`] to route it into `tracing`.
 ///
 /// # Errors
 /// [`ClientError::Protocol`] if the process can't be spawned or its stdio pipes

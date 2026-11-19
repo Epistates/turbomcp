@@ -71,12 +71,12 @@ async fn spawn_server() -> (String, CancellationToken, tokio::task::JoinHandle<(
     let authority = addr.to_string(); // 127.0.0.1:<port>
     let config = HttpConfig::new()
         .with_shutdown(shutdown.clone())
-        .allow_origin(format!("http://{authority}"))
-        .allow_host(authority);
+        .with_allowed_origin(format!("http://{authority}"))
+        .with_allowed_host(authority);
     let handle = tokio::spawn(async move {
         let server = turbomcp::Server::new(Everything.into_server().with_logging().build());
         let notifier = server.notifier();
-        let serving = server.serve(Http::listener(listener).config(config));
+        let serving = server.serve(Http::listener(listener).with_config(config));
         tokio::pin!(serving);
         // Exercise subscribed catalog-change delivery from the public notifier.
         let mut changes = tokio::time::interval(Duration::from_millis(200));

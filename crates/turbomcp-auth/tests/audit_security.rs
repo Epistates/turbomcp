@@ -18,7 +18,7 @@ async fn jwt_rejects_token_before_nbf() {
     let jwks = serde_json::json!({"keys":[{"kty":"oct","k":"YXVkaXQtc2VjcmV0LTMyLWJ5dGVzLWxvbmctMTIzNDU2Nw","kid":"test"}]}).to_string();
     let source = StaticJwks::from_json(&jwks).unwrap();
     let validator = JwtValidator::new(source, "mcp", "issuer")
-        .algorithms(vec![turbomcp_auth::Algorithm::HS256]);
+        .with_algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -140,7 +140,7 @@ async fn an_outage_serves_the_last_good_key_set() {
         format!("http://127.0.0.1:{}/jwks", 9),
         Duration::from_millis(50),
     )
-    .stale_if_error(Duration::ZERO);
+    .with_stale_if_error(Duration::ZERO);
     assert!(strict.verifying_key(Some("sig")).await.is_err());
     server.abort();
 }

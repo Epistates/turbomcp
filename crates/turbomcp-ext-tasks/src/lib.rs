@@ -25,7 +25,7 @@
 //! negotiated version calls for. Both keep tasks in a
 //! [`TaskBackend`], and can share one: pass the
 //! same backend to `ServerBuilder::with_task_backend` and
-//! [`TasksExtension::backend`].
+//! [`TasksExtension::with_backend`].
 //!
 //! ## Capability negotiation (SEP-2663)
 //!
@@ -192,7 +192,7 @@ impl TasksExtension {
     /// On a TTL that is not positive: only `None` means unlimited, and zero or
     /// less would fail every task the moment it started.
     #[must_use]
-    pub fn ttl_ms(mut self, ttl_ms: Option<i64>) -> Self {
+    pub fn with_ttl_ms(mut self, ttl_ms: Option<i64>) -> Self {
         assert!(
             ttl_ms.is_none_or(|ms| ms > 0),
             "task TTL must be positive, or None for unlimited"
@@ -204,7 +204,7 @@ impl TasksExtension {
     /// Override the suggested polling interval reported to clients, in
     /// milliseconds. Default: [`DEFAULT_POLL_INTERVAL_MS`].
     #[must_use]
-    pub fn poll_interval_ms(mut self, poll_interval_ms: Option<i64>) -> Self {
+    pub fn with_poll_interval_ms(mut self, poll_interval_ms: Option<i64>) -> Self {
         self.poll_interval_ms = poll_interval_ms;
         self
     }
@@ -213,9 +213,9 @@ impl TasksExtension {
     /// When it is full the oldest finished task makes room; when every task
     /// is still running, taskification degrades gracefully — the next
     /// eligible `tools/call` runs synchronously instead of failing. A
-    /// [`backend`](Self::backend), set before or after, keeps its own limits.
+    /// [`with_backend`](Self::with_backend), set before or after, keeps its own limits.
     #[must_use]
-    pub fn capacity(mut self, capacity: usize) -> Self {
+    pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity;
         if !self.custom_backend {
             self.store = Arc::new(self.bundled_store());
@@ -226,9 +226,9 @@ impl TasksExtension {
     /// Bound how many tasks one principal may have running at once in the
     /// bundled registry (default: 64), so a single caller cannot take every
     /// slot. Past it, that caller's eligible calls run synchronously. A
-    /// [`backend`](Self::backend), set before or after, keeps its own limits.
+    /// [`with_backend`](Self::with_backend), set before or after, keeps its own limits.
     #[must_use]
-    pub fn owner_limit(mut self, limit: usize) -> Self {
+    pub fn with_owner_limit(mut self, limit: usize) -> Self {
         self.owner_limit = limit;
         if !self.custom_backend {
             self.store = Arc::new(self.bundled_store());
@@ -242,7 +242,7 @@ impl TasksExtension {
     /// (`ServerBuilder::with_task_backend`), so one registry fronts both
     /// wires. A task's work still runs on the replica that created it.
     #[must_use]
-    pub fn backend(mut self, backend: Arc<dyn TaskBackend>) -> Self {
+    pub fn with_backend(mut self, backend: Arc<dyn TaskBackend>) -> Self {
         self.store = backend;
         self.custom_backend = true;
         self

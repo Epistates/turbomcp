@@ -286,7 +286,7 @@ async fn allowlisted_origin_passes() {
             r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#,
         ))
         .unwrap();
-    let config = HttpConfig::new().allow_origin("https://app.example.com");
+    let config = HttpConfig::new().with_allowed_origin("https://app.example.com");
     let resp = app(config).oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -305,7 +305,7 @@ async fn disallowed_host_is_rejected() {
             r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#,
         ))
         .unwrap();
-    let config = HttpConfig::new().allow_host("mcp.example.com");
+    let config = HttpConfig::new().with_allowed_host("mcp.example.com");
     let resp = app(config).oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
@@ -322,7 +322,7 @@ async fn allowlisted_host_passes() {
             r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#,
         ))
         .unwrap();
-    let config = HttpConfig::new().allow_host("mcp.example.com");
+    let config = HttpConfig::new().with_allowed_host("mcp.example.com");
     let resp = app(config).oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
@@ -333,7 +333,7 @@ async fn oversized_body_is_413() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{{"pad":"{big}"}}}}"#
     );
-    let config = HttpConfig::new().max_body_bytes(512);
+    let config = HttpConfig::new().with_max_body_bytes(512);
     let resp = app(config).oneshot(post(&body)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }

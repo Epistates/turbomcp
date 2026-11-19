@@ -98,7 +98,7 @@ fn stats_server(structured: Option<Value>, is_error: bool) -> impl FnMut(&str, &
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn structured_content_matching_the_output_schema_passes() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = connect(mode, stats_server(Some(json!({ "n": 3 })), false)).await;
         client.list_tools(None).await.expect("list");
         let result = client.call_tool("stats", Map::new()).await.expect("valid");
@@ -110,7 +110,7 @@ async fn structured_content_matching_the_output_schema_passes() {
 /// result that breaks it is refused instead of handed on as if it held.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn structured_content_violating_the_output_schema_is_refused() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = connect(mode, stats_server(Some(json!({ "n": "three" })), false)).await;
         client.list_tools(None).await.expect("list");
         let err = client
@@ -128,7 +128,7 @@ async fn structured_content_violating_the_output_schema_is_refused() {
 /// a successful result with none at all breaks the contract too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_missing_structured_result_is_refused() {
-    let client = connect(ConnectMode::Modern, stats_server(None, false)).await;
+    let client = connect(ConnectMode::Stateless, stats_server(None, false)).await;
     client.list_tools(None).await.expect("list");
     let err = client
         .call_tool("stats", Map::new())
@@ -141,7 +141,7 @@ async fn a_missing_structured_result_is_refused() {
 /// violation: the model reads the error text and self-corrects.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_tool_error_is_not_held_to_the_output_schema() {
-    let client = connect(ConnectMode::Modern, stats_server(None, true)).await;
+    let client = connect(ConnectMode::Stateless, stats_server(None, true)).await;
     client.list_tools(None).await.expect("list");
     let result = client
         .call_tool("stats", Map::new())
@@ -164,7 +164,7 @@ async fn header_annotations_are_ignored_off_http() {
             "properties": { "lat": { "type": "number", "x-mcp-header": "Lat" } }
         }
     });
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let listed = tool.clone();
         let client = connect(mode, move |method, _| match method {
             "tools/list" => tools_list(listed.clone()),

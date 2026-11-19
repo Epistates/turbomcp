@@ -513,9 +513,9 @@ async fn a_long_quiet_tool_outlives_the_request_deadline() {
     let app = service(
         VersionDispatcher::new(Sleepy(400), MethodRouter::new().with_tools()),
         HttpConfig::new()
-            .request_timeout(Duration::from_millis(200))
-            .sse_upgrade_after(Duration::from_millis(50))
-            .sse_keepalive(Duration::from_millis(50)),
+            .with_request_timeout(Duration::from_millis(200))
+            .with_sse_upgrade_after(Duration::from_millis(50))
+            .with_sse_keepalive(Duration::from_millis(50)),
     );
     let resp = app.oneshot(call_request(8)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -538,8 +538,8 @@ async fn a_passed_request_deadline_answers_a_json_rpc_error() {
     let app = service(
         VersionDispatcher::new(Sleepy(400), MethodRouter::new().with_tools()),
         HttpConfig::new()
-            .request_timeout(Duration::from_millis(50))
-            .sse_upgrade_after(Duration::from_secs(10)),
+            .with_request_timeout(Duration::from_millis(50))
+            .with_sse_upgrade_after(Duration::from_secs(10)),
     );
     let resp = app.oneshot(call_request(9)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::GATEWAY_TIMEOUT);
@@ -600,7 +600,7 @@ fn recorded_app(server: Recorded) -> turbomcp_transport_http::HttpService {
     service(
         dispatcher,
         HttpConfig::new()
-            .sse_upgrade_after(Duration::from_millis(20))
+            .with_sse_upgrade_after(Duration::from_millis(20))
             .with_session_terminator(Arc::new(terminator)),
     )
 }

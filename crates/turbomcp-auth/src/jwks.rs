@@ -215,7 +215,7 @@ mod http {
         /// is allowed. `Duration::ZERO` refreshes on every miss — only sane
         /// when the `jwks_uri` is local or the caller is already trusted.
         #[must_use]
-        pub fn refresh_cooldown(mut self, cooldown: Duration) -> Self {
+        pub fn with_refresh_cooldown(mut self, cooldown: Duration) -> Self {
             self.refresh_cooldown = cooldown;
             self
         }
@@ -227,7 +227,7 @@ mod http {
         /// right an hour ago is right for every token not signed with a
         /// key minted since. `Duration::ZERO` turns this off.
         #[must_use]
-        pub fn stale_if_error(mut self, grace: Duration) -> Self {
+        pub fn with_stale_if_error(mut self, grace: Duration) -> Self {
             self.stale_if_error = grace;
             self
         }

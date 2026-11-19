@@ -117,7 +117,7 @@ struct Cached {
 ///     "https://mcp.example.com",
 ///     ClientAuth::basic("mcp-server", "secret-from-your-vault"),
 /// )
-/// .require_issuer("https://auth.example.com");
+/// .with_required_issuer("https://auth.example.com");
 /// let resource_server = ResourceServer::new(
 ///     validator,
 ///     ResourceMetadata::new("https://mcp.example.com", ["https://auth.example.com"]),
@@ -203,7 +203,7 @@ impl IntrospectionValidator {
 
     /// Accept tokens issued for this audience too.
     #[must_use]
-    pub fn add_audience(mut self, audience: impl Into<String>) -> Self {
+    pub fn with_audience(mut self, audience: impl Into<String>) -> Self {
         self.audiences.push(audience.into());
         self
     }
@@ -212,14 +212,14 @@ impl IntrospectionValidator {
     /// Without any, `iss` isn't checked: RFC 7662 makes it optional, and the
     /// endpoint is the issuer's own.
     #[must_use]
-    pub fn require_issuer(mut self, issuer: impl Into<String>) -> Self {
+    pub fn with_required_issuer(mut self, issuer: impl Into<String>) -> Self {
         self.issuers.push(issuer.into());
         self
     }
 
     /// Clock-skew leeway for `exp` and `nbf`, in seconds (default 60).
     #[must_use]
-    pub fn leeway(mut self, seconds: u64) -> Self {
+    pub fn with_leeway(mut self, seconds: u64) -> Self {
         self.leeway = seconds;
         self
     }
@@ -228,7 +228,7 @@ impl IntrospectionValidator {
     /// `exp`; a refusal is reused for at most [`NEGATIVE_TTL`](Self::NEGATIVE_TTL).
     /// `Duration::ZERO` introspects every request.
     #[must_use]
-    pub fn cache_ttl(mut self, ttl: Duration) -> Self {
+    pub fn with_cache_ttl(mut self, ttl: Duration) -> Self {
         self.cache_ttl = ttl;
         self.cache = Self::build_cache(ttl);
         self.rejected = moka::sync::Cache::builder()

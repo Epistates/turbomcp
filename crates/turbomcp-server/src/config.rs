@@ -156,7 +156,7 @@ impl ServerConfig {
     /// Core Tasks backed by `backend` instead of the bundled in-memory store:
     /// the seam for external task storage. Implies
     /// [`with_tasks`](Self::with_tasks). The `2026-07-28` Tasks extension can
-    /// be given the same backend (`TasksExtension::backend`), so one registry
+    /// be given the same backend (`TasksExtension::with_backend`), so one registry
     /// fronts both wires.
     #[must_use]
     pub fn with_task_backend(mut self, backend: Arc<dyn TaskBackend>) -> Self {

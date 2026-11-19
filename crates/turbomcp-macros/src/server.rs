@@ -380,7 +380,8 @@ enum Hook {
     /// `McpServerCore::on_initialize`: `async fn(&self, &InitializeContext)
     /// -> McpResult<()>`.
     Initialize,
-    /// `McpServerCore::on_cancelled`: `fn(&self, &RequestId, Option<&str>)`.
+    /// `McpServerCore::on_cancelled`: `fn(&self, &CancelledContext,
+    /// &RequestId, Option<&str>)`.
     Cancelled,
 }
 
@@ -407,7 +408,7 @@ impl Hooks {
             let shape = if wants_async {
                 "`async fn(&self, ctx: &InitializeContext) -> McpResult<()>`"
             } else {
-                "a plain (not `async`) `fn(&self, id: &RequestId, reason: Option<&str>)`: \
+                "a plain (not `async`) `fn(&self, ctx: &CancelledContext, id: &RequestId, reason: Option<&str>)`: \
                  it runs as the notification is read"
             };
             return Err(syn::Error::new(f.sig.span(), format!("{name} is {shape}")));
@@ -1502,10 +1503,11 @@ fn gen_core_impl(
         quote! {
             fn on_cancelled(
                 &self,
+                ctx: &::turbomcp::CancelledContext,
                 request_id: &::turbomcp::RequestId,
                 reason: ::core::option::Option<&str>,
             ) {
-                self.#m(request_id, reason)
+                self.#m(ctx, request_id, reason)
             }
         }
     });
@@ -2105,7 +2107,7 @@ fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
     let title = p.title.as_ref().map(|t| quote!(.with_title(#t)));
     let args = p.args.iter().map(|a| {
         let arg_name = a.ident.unraw().to_string();
-        let req = (!a.is_option).then(|| quote!(.required(true)));
+        let req = (!a.is_option).then(|| quote!(.with_required(true)));
         let adesc = a
             .description
             .as_ref()

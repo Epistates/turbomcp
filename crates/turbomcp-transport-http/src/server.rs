@@ -323,7 +323,7 @@ async fn admit(
 }
 
 /// Streamable HTTP on a socket, as a target for `ServerBuilder::serve`:
-/// `server.serve(Http::bind(addr).config(HttpConfig::new()))`.
+/// `server.serve(Http::bind(addr).with_config(HttpConfig::new()))`.
 #[derive(Debug)]
 pub struct Http {
     listen: Listen,
@@ -358,7 +358,7 @@ impl Http {
 
     /// Serve by `config`.
     #[must_use]
-    pub fn config(mut self, config: HttpConfig) -> Self {
+    pub fn with_config(mut self, config: HttpConfig) -> Self {
         self.config = config;
         self
     }

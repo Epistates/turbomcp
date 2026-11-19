@@ -325,7 +325,7 @@ async fn a_post_that_is_not_json_is_415() {
 async fn an_oversized_body_is_413_with_a_json_rpc_body() {
     let mut body = modern_list(1);
     body["params"]["pad"] = json!("x".repeat(4096));
-    let resp = app(HttpConfig::new().max_body_bytes(1024))
+    let resp = app(HttpConfig::new().with_max_body_bytes(1024))
         .oneshot(post(body, &MODERN))
         .await
         .unwrap();

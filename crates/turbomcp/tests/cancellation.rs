@@ -166,7 +166,7 @@ const BOTH: [Cancellation; 2] = [Cancellation::Cooperative, Cancellation::Abort]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn client_timeout_stops_the_server_handler() {
     for cancellation in BOTH {
-        let (client, marks) = connect(ConnectMode::Modern, GIVE_UP_AFTER, cancellation).await;
+        let (client, marks) = connect(ConnectMode::Stateless, GIVE_UP_AFTER, cancellation).await;
         let result = client.call_tool("block", Map::new()).await;
         assert!(
             matches!(result, Err(ClientError::Timeout)),
@@ -181,8 +181,12 @@ async fn client_timeout_stops_the_server_handler() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropped_call_stops_the_server_handler() {
     for cancellation in BOTH {
-        let (client, marks) =
-            connect(ConnectMode::Modern, Duration::from_secs(60), cancellation).await;
+        let (client, marks) = connect(
+            ConnectMode::Stateless,
+            Duration::from_secs(60),
+            cancellation,
+        )
+        .await;
         let abandoned =
             tokio::time::timeout(GIVE_UP_AFTER, client.call_tool("block", Map::new())).await;
         assert!(
@@ -198,7 +202,7 @@ async fn dropped_call_stops_the_server_handler() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancellation_works_on_the_legacy_path_too() {
     for cancellation in BOTH {
-        let (client, marks) = connect(ConnectMode::Legacy, GIVE_UP_AFTER, cancellation).await;
+        let (client, marks) = connect(ConnectMode::Stateful, GIVE_UP_AFTER, cancellation).await;
         let result = client.call_tool("block", Map::new()).await;
         assert!(
             matches!(result, Err(ClientError::Timeout)),
@@ -213,8 +217,12 @@ async fn cancellation_works_on_the_legacy_path_too() {
 /// the abandoned one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_cancelled_request_is_never_answered() {
-    let (client, marks) =
-        connect(ConnectMode::Modern, GIVE_UP_AFTER, Cancellation::default()).await;
+    let (client, marks) = connect(
+        ConnectMode::Stateless,
+        GIVE_UP_AFTER,
+        Cancellation::default(),
+    )
+    .await;
     assert!(client.call_tool("block", Map::new()).await.is_err());
     assert_cancelled_server_side(&marks, Cancellation::default()).await;
 
@@ -255,11 +263,9 @@ async fn an_http_disconnect_cancels_the_request() {
     let server = Slow {
         marks: Arc::clone(&marks),
     };
-    tokio::spawn(
-        server.into_server().serve(
-            Http::listener(listener).config(HttpConfig::new().with_shutdown(shutdown.clone())),
-        ),
-    );
+    tokio::spawn(server.into_server().serve(
+        Http::listener(listener).with_config(HttpConfig::new().with_shutdown(shutdown.clone())),
+    ));
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let url = format!("http://{addr}/mcp");
@@ -336,16 +342,14 @@ async fn a_typed_http_client_timing_out_stops_the_server_handler() {
     let server = Slow {
         marks: Arc::clone(&marks),
     };
-    tokio::spawn(
-        server.into_server().serve(
-            Http::listener(listener).config(HttpConfig::new().with_shutdown(shutdown.clone())),
-        ),
-    );
+    tokio::spawn(server.into_server().serve(
+        Http::listener(listener).with_config(HttpConfig::new().with_shutdown(shutdown.clone())),
+    ));
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let client = connect_http(
         ClientBuilder::new("canceller", "1.0.0")
-            .with_connect_mode(ConnectMode::Modern)
+            .with_connect_mode(ConnectMode::Stateless)
             .with_timeout(GIVE_UP_AFTER),
         &format!("http://{addr}/mcp"),
     )

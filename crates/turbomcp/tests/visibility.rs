@@ -228,7 +228,7 @@ async fn a_hidden_tool_is_absent_and_unreachable() {
 /// still appeared in `tools/list` for a caller who could never use it.
 #[tokio::test]
 async fn declared_scopes_now_filter_the_list_too() {
-    let policy = Arc::new(Visibility::new().requiring_declared_scopes());
+    let policy = Arc::new(Visibility::new().with_declared_scopes_required());
     let mut svc = dispatcher(Some(policy));
 
     // Unauthorized: the scope-gated tool is gone from the catalog…

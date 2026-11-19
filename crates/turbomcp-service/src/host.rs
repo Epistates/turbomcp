@@ -130,7 +130,7 @@ impl<T: Transport> Pipe<T> {
 
     /// Drive the connection by `config`.
     #[must_use]
-    pub fn config(mut self, config: ServeConfig) -> Self {
+    pub fn with_config(mut self, config: ServeConfig) -> Self {
         self.config = config;
         self
     }

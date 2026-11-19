@@ -136,8 +136,8 @@ turbomcp probe ./my-server
 `probe` reports which revisions a server negotiates (`2026-07-28`, and the
 newest of `2025-*`), whether the session is stateful, who the server says it
 is, what it declares, and how much it offers. `--json` on any command prints
-the protocol's own shapes for scripts. `--mode modern|legacy` pins the
-revision; `--header 'Name: value'` and `--bearer` authenticate to an HTTP or
+the protocol's own shapes for scripts. `--mode stateless|stateful` pins the
+protocol model; `--header 'Name: value'` and `--bearer` authenticate to an HTTP or
 WebSocket server (refused for a command, which takes credentials from its
 environment); `--inherit-env safe|all|none` says what a command inherits;
 `--timeout` bounds each request. Text a server sent is printed with control

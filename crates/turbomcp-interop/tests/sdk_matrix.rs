@@ -214,11 +214,9 @@ async fn turbomcp_server() -> (String, turbomcp::CancellationToken) {
         .unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let shutdown = turbomcp::CancellationToken::new();
-    tokio::spawn(
-        Adder.into_server().serve(
-            Http::listener(listener).config(HttpConfig::new().with_shutdown(shutdown.clone())),
-        ),
-    );
+    tokio::spawn(Adder.into_server().serve(
+        Http::listener(listener).with_config(HttpConfig::new().with_shutdown(shutdown.clone())),
+    ));
     (url, shutdown)
 }
 
@@ -246,8 +244,8 @@ async fn turbomcp_drives_peer_server(sdk: Sdk) {
     }
     let (_child, url) = sdk.serve().await;
     for (mode, era) in [
-        (ConnectMode::Legacy, ProtocolVersion::V2025_11_25),
-        (ConnectMode::Modern, ProtocolVersion::V2026_07_28),
+        (ConnectMode::Stateful, ProtocolVersion::V2025_11_25),
+        (ConnectMode::Stateless, ProtocolVersion::V2026_07_28),
     ] {
         let client = connect_http(
             ClientBuilder::new("turbomcp-interop", "1.0.0").with_connect_mode(mode),

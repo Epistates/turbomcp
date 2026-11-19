@@ -77,7 +77,7 @@ impl ElicitationHandler for Guest {
 
 #[tokio::test]
 async fn a_typed_elicitation_round_trips() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let guest = Guest::default();
         let client = turbomcp::testing::connect(
             Hotel.into_server(),

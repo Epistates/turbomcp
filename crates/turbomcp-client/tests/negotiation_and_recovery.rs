@@ -225,7 +225,7 @@ async fn header_mismatch_retry_case(mismatch_code: i64) {
     }
 
     let client = ClientBuilder::new("hm", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -262,7 +262,7 @@ async fn mrtr_without_a_handler_is_a_protocol_error() {
         other => panic!("unexpected method from client: {other}"),
     });
     let client = ClientBuilder::new("no-handler", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -308,7 +308,7 @@ async fn each_mrtr_retry_carries_only_what_its_round_issued() {
         });
     }
     let client = ClientBuilder::new("mrtr", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_elicitation(AcceptAll)
         .connect(transport_for(client_io))
         .await
@@ -353,7 +353,7 @@ async fn a_state_only_round_needs_no_handler() {
         });
     }
     let client = ClientBuilder::new("bare", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -374,7 +374,7 @@ async fn an_unrecognized_result_type_is_invalid() {
         other => panic!("unexpected method from client: {other}"),
     });
     let client = ClientBuilder::new("strict", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -403,7 +403,7 @@ async fn an_implementation_defined_code_does_not_rerun_the_tool() {
         });
     }
     let client = ClientBuilder::new("once", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport_for(client_io))
         .await
         .unwrap();
@@ -436,7 +436,7 @@ async fn mrtr_gives_up_after_the_round_cap() {
         });
     }
     let client = ClientBuilder::new("looper", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_elicitation(AcceptAll)
         .connect(transport_for(client_io))
         .await
@@ -467,7 +467,7 @@ async fn packaged_sampling_is_refused_by_default() {
         other => panic!("unexpected method from client: {other}"),
     });
     let client = ClientBuilder::new("no-sampling", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_elicitation(AcceptAll) // elicit-only: sampling is never declared
         .connect(transport_for(client_io))
         .await
@@ -549,7 +549,7 @@ async fn packaged_sampling_and_roots_reach_the_handler_and_return() {
     }
 
     let client = ClientBuilder::new("sampler", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_elicitation(Sampler)
         .with_sampling(Sampler)
         .with_roots(Sampler)
@@ -589,7 +589,7 @@ async fn task_client(terminal: Value, ttl_ms: u64) -> Client {
     // A server may answer `resultType: "task"` only to a client that declared
     // the Tasks extension; to anyone else it is an unrecognized result type.
     ClientBuilder::new("tasks", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_tasks()
         .connect(transport_for(client_io))
         .await
@@ -759,7 +759,7 @@ async fn elicitation_complete_reaches_the_typed_hook() {
 
     let spy = CompletionSpy::default();
     let _client = ClientBuilder::new("ec", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .with_elicitation(spy.clone())
         .with_notifications(spy.clone())
         .connect(transport_for(client_io))
@@ -846,7 +846,7 @@ async fn a_roots_client_declares_and_emits_list_changed() {
     }
 
     let client = ClientBuilder::new("rooted", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .with_roots(Watched)
         .connect(transport_for(client_io))
         .await
@@ -933,7 +933,7 @@ async fn notifications_arrive_in_order_and_a_burst_does_not_disconnect() {
     });
     let spy = ProgressSpy::default();
     let client = ClientBuilder::new("bursty", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_notifications(spy.clone())
         .connect(transport_for(client_io))
         .await
@@ -1016,7 +1016,7 @@ async fn a_request_the_server_cancels_is_stopped_and_never_answered() {
     }
     let hangs = Hangs::default();
     let _client = ClientBuilder::new("cancellable", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .with_elicitation(hangs.clone())
         .connect(transport_for(client_io))
         .await
@@ -1124,7 +1124,7 @@ async fn a_task_question_ahead_of_its_task_reaches_the_calls_handler() {
     });
 
     let client = ClientBuilder::new("early", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .with_elicitation(Answerer("global"))
         .connect(transport_for(client_io))
         .await
@@ -1136,7 +1136,7 @@ async fn a_task_question_ahead_of_its_task_reaches_the_calls_handler() {
             Map::new(),
             &turbomcp_client::CallOptions::new()
                 .with_elicitation(Answerer("call"))
-                .task(Some(60_000)),
+                .with_task(Some(60_000)),
         ),
     )
     .await
@@ -1196,7 +1196,7 @@ async fn a_panicking_notification_handler_keeps_getting_notifications() {
     });
     let spy = Fragile::default();
     let _client = ClientBuilder::new("fragile", "1.0.0")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .with_notifications(spy.clone())
         .connect(transport_for(client_io))
         .await

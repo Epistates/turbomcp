@@ -55,7 +55,7 @@ pub use error::ProxyError;
 pub use pool::UpstreamKey;
 pub use remote::{RemoteServer, RemoteServerBuilder};
 /// Where an HTTP or WebSocket upstream may be: see
-/// [`RemoteServerBuilder::network_policy`].
+/// [`RemoteServerBuilder::with_network_policy`].
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub use turbomcp_auth::NetworkPolicy;

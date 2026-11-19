@@ -115,7 +115,7 @@ fn spawn_scripted_server(
 }
 
 async fn connect(behavior: OnList, request_timeout: Duration) -> Client {
-    connect_observed(behavior, ConnectMode::Modern, request_timeout)
+    connect_observed(behavior, ConnectMode::Stateless, request_timeout)
         .await
         .0
 }
@@ -224,8 +224,12 @@ async fn unknown_response_id_is_ignored_and_correlation_survives() {
 /// on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_garbage_line_is_skipped_and_the_connection_survives() {
-    let (client, mut seen) =
-        connect_observed(OnList::Garbage, ConnectMode::Modern, Duration::from_secs(5)).await;
+    let (client, mut seen) = connect_observed(
+        OnList::Garbage,
+        ConnectMode::Stateless,
+        Duration::from_secs(5),
+    )
+    .await;
     let tools = tokio::time::timeout(Duration::from_secs(2), client.list_tools(None))
         .await
         .expect("the answer behind the garbage arrives")
@@ -262,7 +266,7 @@ async fn a_broken_response_fails_its_request_promptly() {
 async fn timing_out_tells_the_server_to_stop() {
     let (client, mut seen) = connect_observed(
         OnList::StaySilent,
-        ConnectMode::Modern,
+        ConnectMode::Stateless,
         Duration::from_millis(150),
     )
     .await;
@@ -290,7 +294,7 @@ async fn timing_out_tells_the_server_to_stop() {
 async fn dropping_the_request_future_tells_the_server_to_stop() {
     let (client, mut seen) = connect_observed(
         OnList::StaySilent,
-        ConnectMode::Modern,
+        ConnectMode::Stateless,
         Duration::from_secs(60),
     )
     .await;
@@ -318,7 +322,7 @@ async fn dropping_the_request_future_tells_the_server_to_stop() {
 async fn an_inbound_ping_is_answered_without_a_handler() {
     let (client, mut seen) = connect_observed(
         OnList::PingFirst,
-        ConnectMode::Legacy,
+        ConnectMode::Stateful,
         Duration::from_secs(5),
     )
     .await;

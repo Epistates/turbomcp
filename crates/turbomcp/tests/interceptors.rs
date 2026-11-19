@@ -84,7 +84,7 @@ async fn text_of(client: &turbomcp::client::Client, tool: &str) -> String {
 
 #[tokio::test]
 async fn a_result_rule_holds_on_every_revision_and_through_mrtr() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = turbomcp::testing::connect(
             Vault.into_server().with_interceptor(redactor()),
             ClientBuilder::new("t", "1.0.0")
@@ -210,11 +210,11 @@ async fn a_task_result_is_intercepted_too() {
             .with_extension(Arc::new(
                 TasksExtension::new()
                     .task_tools(["reveal"])
-                    .poll_interval_ms(Some(5)),
+                    .with_poll_interval_ms(Some(5)),
             ))
             .with_interceptor(redactor()),
         ClientBuilder::new("t", "1.0.0")
-            .with_connect_mode(ConnectMode::Modern)
+            .with_connect_mode(ConnectMode::Stateless)
             .with_extension(EXTENSION_ID, json!({})),
     )
     .await

@@ -135,7 +135,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
         ///     .with_visibility(Arc::new(
         ///         Visibility::new()
         ///             .hiding_tagged(["internal"])
-        ///             .requiring_declared_scopes(),
+        ///             .with_declared_scopes_required(),
         ///     ))
         ///     .build();
         /// ```

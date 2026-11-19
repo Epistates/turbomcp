@@ -74,7 +74,7 @@ async fn spawn(config: HttpConfig) -> Running {
     let config = config.with_shutdown(shutdown.clone());
     let serving = tokio::spawn(
         Srv.into_server()
-            .serve(Http::listener(listener).config(config)),
+            .serve(Http::listener(listener).with_config(config)),
     );
     Running {
         url: format!("ws://{addr}/ws"),
@@ -114,7 +114,7 @@ async fn refused(request: impl IntoClientRequest + Unpin) -> u16 {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_typed_client_works_in_both_modes() {
     let server = spawn(with_ws()).await;
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = ClientBuilder::new("ws-typed", "1.0.0")
             .with_connect_mode(mode)
             .connect(connect_websocket(&server.url).await.unwrap())
@@ -303,7 +303,7 @@ where
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_message_over_the_body_limit_ends_the_connection() {
-    let server = spawn(with_ws().max_body_bytes(1024)).await;
+    let server = spawn(with_ws().with_max_body_bytes(1024)).await;
     let (mut socket, _) = tokio_tungstenite::connect_async(server.url.as_str())
         .await
         .unwrap();
@@ -356,9 +356,10 @@ async fn shutdown_drains_in_flight_calls() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn connections_past_the_cap_are_refused() {
-    let server =
-        spawn(HttpConfig::new().with_websocket(WebSocketConfig::new("/ws").max_connections(1)))
-            .await;
+    let server = spawn(
+        HttpConfig::new().with_websocket(WebSocketConfig::new("/ws").with_max_connections(1)),
+    )
+    .await;
     let (_first, _) = tokio_tungstenite::connect_async(server.url.as_str())
         .await
         .unwrap();

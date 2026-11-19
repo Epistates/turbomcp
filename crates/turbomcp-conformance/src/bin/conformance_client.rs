@@ -196,8 +196,8 @@ fn sample_message() -> neutral::CreateMessageResult {
 /// by a `server/discover` that happens to succeed.
 fn connect_mode() -> ConnectMode {
     match std::env::var("MCP_CONFORMANCE_PROTOCOL_VERSION").as_deref() {
-        Ok("2026-07-28") => ConnectMode::Modern,
-        Ok(_) => ConnectMode::Legacy,
+        Ok("2026-07-28") => ConnectMode::Stateless,
+        Ok(_) => ConnectMode::Stateful,
         // The harness only omits this for scenarios that predate the split.
         Err(_) => ConnectMode::Auto,
     }

@@ -57,7 +57,7 @@ async fn connect(policy: Option<CachePolicy>, mode: ConnectMode, cache_enabled: 
 async fn declared_ttl_serves_repeat_lists_from_cache() {
     let client = connect(
         Some(CachePolicy::public(Duration::from_secs(60))),
-        ConnectMode::Modern,
+        ConnectMode::Stateless,
         true,
     )
     .await;
@@ -88,7 +88,7 @@ async fn declared_ttl_serves_repeat_lists_from_cache() {
 #[tokio::test]
 async fn unconfigured_server_and_legacy_path_are_never_cached() {
     // Draft path, no policy: ttlMs 0 on the wire.
-    let client = connect(None, ConnectMode::Modern, true).await;
+    let client = connect(None, ConnectMode::Stateless, true).await;
     let raw = client.request("tools/list", Map::new()).await.unwrap();
     assert_eq!(raw.get("ttlMs"), Some(&json!(0)));
     let first = client.list_tools(None).await.unwrap();
@@ -97,7 +97,7 @@ async fn unconfigured_server_and_legacy_path_are_never_cached() {
     // Legacy path: no cache fields at all; the neutral result has no policy.
     let client = connect(
         Some(CachePolicy::public(Duration::from_secs(60))),
-        ConnectMode::Legacy,
+        ConnectMode::Stateful,
         true,
     )
     .await;
@@ -205,7 +205,7 @@ async fn cache_hits_skip_the_wire_and_list_changed_invalidates() {
     let (c_rd, c_wr) = split(client_io);
     let transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
     let client = ClientBuilder::new("scripted", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport)
         .await
         .expect("handshake");
@@ -249,7 +249,7 @@ async fn disabled_cache_always_hits_the_wire() {
     let (c_rd, c_wr) = split(client_io);
     let transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
     let client = ClientBuilder::new("scripted", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .with_response_cache(false)
         .connect(transport)
         .await
@@ -276,7 +276,7 @@ async fn read_cache_is_per_uri_and_resources_updated_invalidates_only_that_uri()
     let (c_rd, c_wr) = split(client_io);
     let transport = LineTransport::new(BufReader::new(c_rd), c_wr, SerdeJsonCodec);
     let client = ClientBuilder::new("scripted", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport)
         .await
         .expect("handshake");

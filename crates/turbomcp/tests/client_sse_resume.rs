@@ -116,7 +116,7 @@ async fn fixture_with_completion(retry_ms: u64, complete_in_post: bool) -> Fixtu
         .unwrap()
         .with_bearer("test-token");
     let client = ClientBuilder::new("resume-client", "1")
-        .with_connect_mode(ConnectMode::Legacy)
+        .with_connect_mode(ConnectMode::Stateful)
         .with_timeout(Duration::from_secs(3))
         .connect(transport)
         .await

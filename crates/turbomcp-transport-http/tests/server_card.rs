@@ -128,7 +128,7 @@ async fn a_matching_if_none_match_is_answered_not_modified() {
 #[tokio::test]
 async fn any_origin_may_read_the_card_whatever_the_endpoint_allows() {
     let app = app(HttpConfig::new()
-        .allow_origin("https://app.example.com")
+        .with_allowed_origin("https://app.example.com")
         .with_server_card(card())
         .unwrap());
     let resp = app

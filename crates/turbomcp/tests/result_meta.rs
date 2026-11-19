@@ -34,7 +34,7 @@ impl Traced {
 
 #[tokio::test]
 async fn a_result_keeps_its_meta_but_not_the_protocols_keys() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = turbomcp::testing::connect(
             Traced.into_server(),
             ClientBuilder::new("t", "1").with_connect_mode(mode),
@@ -46,7 +46,7 @@ async fn a_result_keeps_its_meta_but_not_the_protocols_keys() {
         match result.meta.get("io.modelcontextprotocol/serverInfo") {
             Some(info) => assert_eq!(info["name"], "traced", "{mode:?}: the framework's"),
             // `2026-07-28` stamps it on every result; `2025-*` never had it.
-            None => assert_eq!(mode, ConnectMode::Legacy, "{mode:?}: serverInfo missing"),
+            None => assert_eq!(mode, ConnectMode::Stateful, "{mode:?}: serverInfo missing"),
         }
         let prompt = client
             .get_prompt("hello", std::collections::BTreeMap::new())

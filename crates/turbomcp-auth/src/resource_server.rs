@@ -69,7 +69,7 @@ impl<V: BearerValidator> ResourceServer<V> {
     /// implies narrower ones" (`files` covering `files:read`, say, with
     /// [`PrefixHierarchy`](turbomcp_core::PrefixHierarchy), or a table with
     /// [`ImpliedScopes`](turbomcp_core::ImpliedScopes)). Applied to the
-    /// baseline [`required_scopes`](Self::required_scopes) here and, through
+    /// baseline [`with_required_scopes`](Self::with_required_scopes) here and, through
     /// the transport, to every per-tool and visibility check of the requests
     /// this authorizes. Default: scopes match exactly.
     #[must_use]
@@ -87,7 +87,7 @@ impl<V: BearerValidator> ResourceServer<V> {
     /// read it then: turn this on only for a server whose handlers are
     /// trusted with its callers' tokens.
     #[must_use]
-    pub fn retain_token(mut self, retain: bool) -> Self {
+    pub fn with_token_retention(mut self, retain: bool) -> Self {
         self.retain_token = retain;
         self
     }
@@ -97,7 +97,10 @@ impl<V: BearerValidator> ResourceServer<V> {
     /// scopes (`#[tool(scopes(…))]`) are checked when the tool is called, and
     /// answered with the same challenge naming the tool's scopes.
     #[must_use]
-    pub fn required_scopes(mut self, scopes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn with_required_scopes(
+        mut self,
+        scopes: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         self.required_scopes = scopes.into_iter().map(Into::into).collect();
         self
     }

@@ -159,7 +159,7 @@ async fn connect(mode: ConnectMode) -> Client {
 /// The full typed read surface decodes on both negotiated wires.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn typed_surface_round_trips_on_both_wires() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = connect(mode).await;
 
         let resources = client.list_resources(None).await.expect("list_resources");
@@ -195,7 +195,7 @@ async fn typed_surface_round_trips_on_both_wires() {
 /// `nextCursor` travels back, on both wires.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pagination_cursor_round_trips_through_the_typed_client() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = connect(mode).await;
         let first = client.list_tools(None).await.expect("first page");
         assert_eq!(first.tools[0].name, "page-first");
@@ -210,7 +210,7 @@ async fn pagination_cursor_round_trips_through_the_typed_client() {
 /// `ClientError::Rpc` with the mapped JSON-RPC code, on both wires.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handler_errors_surface_as_rpc_errors_through_typed_methods() {
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = connect(mode).await;
         let err = client
             .get_prompt("nope", Default::default())

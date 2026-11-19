@@ -57,7 +57,7 @@ async fn spawn_server_with(config: HttpConfig) -> (String, CancellationToken) {
     let config = config.with_shutdown(shutdown.clone());
     tokio::spawn(
         Demo.into_server()
-            .serve(Http::listener(listener).config(config)),
+            .serve(Http::listener(listener).with_config(config)),
     );
     // Give the listener a moment to bind.
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -95,7 +95,7 @@ async fn exercise(client: &Client) {
 async fn modern_over_http() {
     let (url, shutdown) = spawn_server().await;
     let client = connect_http(
-        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Modern),
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Stateless),
         &url,
     )
     .await
@@ -109,7 +109,7 @@ async fn modern_over_http() {
 async fn legacy_over_http() {
     let (url, shutdown) = spawn_server().await;
     let client = connect_http(
-        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Legacy),
+        ClientBuilder::new("c", "1.0.0").with_connect_mode(ConnectMode::Stateful),
         &url,
     )
     .await
@@ -137,7 +137,7 @@ async fn auto_over_http_resolves_to_modern() {
 async fn a_subscription_over_http_ends_gracefully_at_shutdown() {
     let (url, shutdown) = spawn_server().await;
     let client = ClientBuilder::new("http-listener", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(turbomcp::client::HttpClientTransport::new(&url).unwrap())
         .await
         .expect("connect");
@@ -160,11 +160,11 @@ async fn a_subscription_over_http_ends_gracefully_at_shutdown() {
 async fn a_tool_slower_than_the_request_deadline_answers() {
     let (url, shutdown) = spawn_server_with(
         HttpConfig::new()
-            .request_timeout(Duration::from_millis(300))
-            .sse_upgrade_after(Duration::from_millis(50)),
+            .with_request_timeout(Duration::from_millis(300))
+            .with_sse_upgrade_after(Duration::from_millis(50)),
     )
     .await;
-    for mode in [ConnectMode::Modern, ConnectMode::Legacy] {
+    for mode in [ConnectMode::Stateless, ConnectMode::Stateful] {
         let client = connect_http(
             ClientBuilder::new("c", "1.0.0").with_connect_mode(mode),
             &url,

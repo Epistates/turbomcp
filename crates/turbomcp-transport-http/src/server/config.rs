@@ -227,9 +227,9 @@ impl HttpConfig {
     ///
     /// Long-lived streams (a legacy `GET` stream, a `subscriptions/listen`
     /// stream) don't count here once open: they have
-    /// [their own budget](Self::max_streams).
+    /// [their own budget](Self::with_max_streams).
     #[must_use]
-    pub fn max_concurrent_requests(mut self, limit: usize) -> Self {
+    pub fn with_max_in_flight(mut self, limit: usize) -> Self {
         self.max_concurrent_requests = limit.max(1);
         self
     }
@@ -238,7 +238,7 @@ impl HttpConfig {
     /// together (default 1024). Over it, a new stream gets `503` +
     /// `Retry-After`.
     #[must_use]
-    pub fn max_streams(mut self, limit: usize) -> Self {
+    pub fn with_max_streams(mut self, limit: usize) -> Self {
         self.max_streams = limit.max(1);
         self
     }
@@ -248,31 +248,31 @@ impl HttpConfig {
     /// (see [`with_trusted_proxies`](Self::with_trusted_proxies)). Over it, a
     /// new stream gets `429`. Without this, one client could hold every
     /// stream the endpoint allows. A caller with neither an identity nor a
-    /// peer address is held to [`max_streams`](Self::max_streams) only.
+    /// peer address is held to [`with_max_streams`](Self::with_max_streams) only.
     ///
     /// Behind a reverse proxy, configure the proxy's addresses with
     /// `with_trusted_proxies`: otherwise every anonymous caller is the proxy's
     /// address and they share one budget. An IPv6 client counts by its `/64`.
     #[must_use]
-    pub fn max_streams_per_client(mut self, limit: usize) -> Self {
+    pub fn with_max_streams_per_client(mut self, limit: usize) -> Self {
         self.max_streams_per_client = limit.max(1);
         self
     }
     /// Deadline to be admitted, authenticate, read the request, and send
     /// response headers (default 60 s). It does not bound how long a request
     /// runs: a request still working after
-    /// [`sse_upgrade_after`](Self::sse_upgrade_after) has its headers sent
+    /// [`with_sse_upgrade_after`](Self::with_sse_upgrade_after) has its headers sent
     /// then, and keeps its connection open with keep-alives until it answers.
     /// When the deadline passes first, the client gets `504` with a JSON-RPC
     /// error body.
     #[must_use]
-    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
         self
     }
     /// Maximum drain time after shutdown is requested.
     #[must_use]
-    pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_drain_timeout(mut self, timeout: Duration) -> Self {
         self.shutdown_timeout = timeout;
         self
     }
@@ -290,7 +290,7 @@ impl HttpConfig {
     /// the listener [`Http`](crate::Http) runs, not to a
     /// [`service`](crate::service) you serve yourself.
     #[must_use]
-    pub fn max_connections(mut self, limit: usize) -> Self {
+    pub fn with_max_connections(mut self, limit: usize) -> Self {
         self.max_connections = limit.max(1);
         self
     }
@@ -301,21 +301,21 @@ impl HttpConfig {
     /// closed instead of holding a connection open indefinitely. Applies to
     /// the listener [`Http`](crate::Http) runs.
     #[must_use]
-    pub fn header_read_timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_header_read_timeout(mut self, timeout: Duration) -> Self {
         self.header_read_timeout = timeout;
         self
     }
 
     /// Set the endpoint path (default `/mcp`).
     #[must_use]
-    pub fn path(mut self, path: impl Into<String>) -> Self {
+    pub fn with_path(mut self, path: impl Into<String>) -> Self {
         self.path = path.into();
         self
     }
 
     /// Set the maximum accepted request-body size in bytes (default 1 MiB).
     #[must_use]
-    pub fn max_body_bytes(mut self, bytes: usize) -> Self {
+    pub fn with_max_body_bytes(mut self, bytes: usize) -> Self {
         self.max_body_bytes = bytes;
         self
     }
@@ -328,7 +328,7 @@ impl HttpConfig {
     /// If `origin` is not a `scheme://host[:port]` origin: an entry that can
     /// never match is a configuration mistake better found at startup.
     #[must_use]
-    pub fn allow_origin(mut self, origin: impl Into<String>) -> Self {
+    pub fn with_allowed_origin(mut self, origin: impl Into<String>) -> Self {
         let origin = origin.into();
         let normalized = super::guards::normalized_origin(&origin)
             .unwrap_or_else(|| panic!("allow_origin: `{origin}` is not an origin"));
@@ -342,7 +342,7 @@ impl HttpConfig {
     /// Accept requests from any `Origin` (development only), with CORS
     /// headers for all of them.
     #[must_use]
-    pub fn allow_any_origin(mut self) -> Self {
+    pub fn with_any_origin_allowed(mut self) -> Self {
         self.origins = OriginPolicy::Any;
         self
     }
@@ -351,12 +351,12 @@ impl HttpConfig {
     /// matches it on any port, or a host and port (`localhost:8080`), which
     /// matches only that port. By default any `Host` is accepted; once at least one
     /// host is allow-listed, a request whose `Host` isn't listed is rejected
-    /// with `403`. Combined with [`allow_origin`](Self::allow_origin) this
+    /// with `403`. Combined with [`with_allowed_origin`](Self::with_allowed_origin) this
     /// hardens the server against DNS-rebinding (a spoofed `Host`/`Origin` from
     /// a non-browser client is refused). Leave unset behind a trusted proxy that
     /// rewrites `Host`.
     #[must_use]
-    pub fn allow_host(mut self, host: impl Into<String>) -> Self {
+    pub fn with_allowed_host(mut self, host: impl Into<String>) -> Self {
         match &mut self.hosts {
             HostPolicy::Allowlist(list) => list.push(host.into()),
             HostPolicy::Any => self.hosts = HostPolicy::Allowlist(vec![host.into()]),
@@ -387,14 +387,14 @@ impl HttpConfig {
     /// proxy's idle timeout in front, typically 60 s) cut it off with a bare
     /// `504` and cancelled the work. Once the stream is open, keep-alive
     /// comments hold the connection until the result arrives. Keep this well
-    /// under [`request_timeout`](Self::request_timeout) and any proxy's idle
+    /// under [`with_request_timeout`](Self::with_request_timeout) and any proxy's idle
     /// timeout.
     ///
     /// On `2026-07-28`, errors that carry an HTTP status (`-32601` is `404`)
     /// only get it when they arrive before the upgrade; after it, the status
     /// line has been sent and the error travels in the stream.
     #[must_use]
-    pub fn sse_upgrade_after(mut self, after: Duration) -> Self {
+    pub fn with_sse_upgrade_after(mut self, after: Duration) -> Self {
         self.sse_upgrade_after = after;
         self
     }
@@ -402,7 +402,7 @@ impl HttpConfig {
     /// Set the SSE keep-alive comment interval (default 15s). Keep it shorter
     /// than the idle timeout of any proxy in front of the server.
     #[must_use]
-    pub fn sse_keepalive(mut self, interval: Duration) -> Self {
+    pub fn with_sse_keepalive(mut self, interval: Duration) -> Self {
         self.sse_keepalive = interval;
         self
     }
@@ -568,7 +568,7 @@ impl HttpConfig {
     /// [event store](Self::with_event_store)). Past it, the stream ends and
     /// what was recorded for it is dropped.
     #[must_use]
-    pub fn detached_stream_ttl(mut self, ttl: Duration) -> Self {
+    pub fn with_detached_stream_ttl(mut self, ttl: Duration) -> Self {
         self.detached_stream_ttl = ttl;
         self
     }

@@ -96,8 +96,8 @@ pub async fn turbomcp(era: Era) -> Client {
     let (c_rd, c_wr) = split(client_io);
     ClientBuilder::new("bench-client", "1.0.0")
         .with_connect_mode(match era {
-            Era::Legacy => ConnectMode::Legacy,
-            Era::Modern => ConnectMode::Modern,
+            Era::Legacy => ConnectMode::Stateful,
+            Era::Modern => ConnectMode::Stateless,
         })
         .connect(LineTransport::new(
             BufReader::new(c_rd),

@@ -48,7 +48,7 @@ pub enum ClientError {
     /// No response arrived within the configured request timeout.
     #[error("request timed out")]
     Timeout,
-    /// The caller cancelled the call (`CallOptions::cancel_on`). The server
+    /// The caller cancelled the call (`CallOptions::with_cancellation`). The server
     /// was told to stop.
     #[error("request cancelled")]
     Cancelled,

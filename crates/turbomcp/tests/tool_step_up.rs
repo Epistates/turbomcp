@@ -98,7 +98,7 @@ async fn a_scoped_tool_steps_the_client_up() {
     let shutdown = CancellationToken::new();
     tokio::spawn(
         Files.into_server().serve(
-            Http::listener(listener).config(
+            Http::listener(listener).with_config(
                 HttpConfig::new()
                     .with_authenticator(Arc::new(authenticator))
                     .with_shutdown(shutdown.clone()),
@@ -115,7 +115,7 @@ async fn a_scoped_tool_steps_the_client_up() {
         .unwrap()
         .with_bearer_source(Arc::clone(&credentials) as Arc<dyn BearerSource>);
     let client = ClientBuilder::new("stepper", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport)
         .await
         .expect("connect with the read-only token");
@@ -168,7 +168,7 @@ async fn call_with_the_broad_scope(hierarchy: bool) -> (bool, usize) {
     let shutdown = CancellationToken::new();
     tokio::spawn(
         Files.into_server().serve(
-            Http::listener(listener).config(
+            Http::listener(listener).with_config(
                 HttpConfig::new()
                     .with_authenticator(Arc::new(authenticator))
                     .with_shutdown(shutdown.clone()),
@@ -199,7 +199,7 @@ async fn call_with_the_broad_scope(hierarchy: bool) -> (bool, usize) {
         .unwrap()
         .with_bearer_source(Arc::clone(&credentials) as Arc<dyn BearerSource>);
     let client = ClientBuilder::new("broad", "1.0.0")
-        .with_connect_mode(ConnectMode::Modern)
+        .with_connect_mode(ConnectMode::Stateless)
         .connect(transport)
         .await
         .expect("connect");
