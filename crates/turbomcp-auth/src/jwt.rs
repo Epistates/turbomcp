@@ -4,7 +4,9 @@
 //! [`IssuerValidators`] routes among independent authorization servers.
 
 use futures::future::BoxFuture;
-use jsonwebtoken::{Algorithm, TokenData, Validation, decode, decode_header};
+use jsonwebtoken::{TokenData, Validation, decode, decode_header};
+
+use crate::keys::Algorithm;
 use serde_json::{Map, Value};
 
 use crate::error::AuthError;
@@ -86,12 +88,13 @@ impl<S: JwkSource> JwtValidator<S> {
         }
         let header = decode_header(token)
             .map_err(|e| AuthError::InvalidToken(format!("bad header: {e}")))?;
-        if !self.algorithms.contains(&header.alg) {
+        let Some(alg) = Algorithm::from_jwt(header.alg).filter(|a| self.algorithms.contains(a))
+        else {
             return Err(AuthError::InvalidToken(format!(
                 "algorithm {:?} not accepted",
                 header.alg
             )));
-        }
+        };
         if self.access_token_typ
             && !header.typ.as_deref().is_some_and(|typ| {
                 typ.eq_ignore_ascii_case("at+jwt") || typ.eq_ignore_ascii_case("application/at+jwt")
@@ -103,7 +106,7 @@ impl<S: JwkSource> JwtValidator<S> {
         }
         let key = self
             .source
-            .decoding_key_for(header.kid.as_deref(), header.alg)
+            .verifying_key_for(header.kid.as_deref(), alg)
             .await?;
 
         let mut validation = Validation::new(header.alg);
@@ -115,7 +118,7 @@ impl<S: JwkSource> JwtValidator<S> {
         // token without it is rejected rather than treated as non-expiring.
         validation.set_required_spec_claims(&["exp", "aud", "iss"]);
 
-        let data: TokenData<Map<String, Value>> = decode(token, &key, &validation)
+        let data: TokenData<Map<String, Value>> = decode(token, &key.0, &validation)
             .map_err(|e| AuthError::InvalidToken(format!("verification failed: {e}")))?;
         principal_from_claims(data.claims)
     }

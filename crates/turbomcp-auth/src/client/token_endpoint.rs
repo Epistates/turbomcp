@@ -37,18 +37,18 @@ pub(crate) enum ClientAuth<'a> {
 #[cfg(feature = "jwt")]
 #[derive(Clone)]
 pub struct ClientAssertion {
-    key: jsonwebtoken::EncodingKey,
-    algorithm: jsonwebtoken::Algorithm,
+    key: crate::SigningKey,
+    algorithm: crate::Algorithm,
     key_id: Option<String>,
 }
 
 #[cfg(feature = "jwt")]
 impl ClientAssertion {
     /// Sign with `key` using `algorithm` (e.g.
-    /// `EncodingKey::from_rsa_pem(…)` with `Algorithm::RS256`, or an EC key
+    /// `SigningKey::from_rsa_pem(…)` with `Algorithm::RS256`, or an EC key
     /// with `ES256`).
     #[must_use]
-    pub fn new(key: jsonwebtoken::EncodingKey, algorithm: jsonwebtoken::Algorithm) -> Self {
+    pub fn new(key: crate::SigningKey, algorithm: crate::Algorithm) -> Self {
         Self {
             key,
             algorithm,
@@ -71,7 +71,7 @@ impl ClientAssertion {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        let mut header = jsonwebtoken::Header::new(self.algorithm);
+        let mut header = jsonwebtoken::Header::new(self.algorithm.to_jwt());
         header.kid.clone_from(&self.key_id);
         let claims = serde_json::json!({
             "iss": client_id,
@@ -81,7 +81,7 @@ impl ClientAssertion {
             "exp": now + 60,
             "jti": oauth2::CsrfToken::new_random().secret(),
         });
-        jsonwebtoken::encode(&header, &claims, &self.key).map_err(|e| {
+        jsonwebtoken::encode(&header, &claims, &self.key.0).map_err(|e| {
             OAuthClientError::TokenExchange(format!("could not sign the client assertion: {e}"))
         })
     }

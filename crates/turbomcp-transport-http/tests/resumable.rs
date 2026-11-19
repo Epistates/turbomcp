@@ -16,7 +16,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, InMemoryEventStore, router};
+use turbomcp_transport_http::{HttpConfig, InMemoryEventStore, service};
 
 /// Reports progress twice, 150 ms apart, then answers.
 #[derive(Clone)]
@@ -53,10 +53,10 @@ impl WithTools for Stepped {
     }
 }
 
-fn app() -> axum::Router {
+fn app() -> turbomcp_transport_http::HttpService {
     let dispatcher = VersionDispatcher::new(Stepped, MethodRouter::new().with_tools());
     let terminator = dispatcher.session_terminator();
-    router(
+    service(
         dispatcher,
         HttpConfig::new()
             .with_session_terminator(Arc::new(terminator))
@@ -64,7 +64,7 @@ fn app() -> axum::Router {
     )
 }
 
-async fn open_session(app: &axum::Router) -> String {
+async fn open_session(app: &turbomcp_transport_http::HttpService) -> String {
     let init = json!({
         "jsonrpc": "2.0", "id": 0, "method": "initialize",
         "params": {
@@ -122,7 +122,10 @@ struct Sse {
     data: String,
 }
 
-async fn next_event(body: &mut Body, buffer: &mut String) -> Option<Sse> {
+async fn next_event(
+    body: &mut turbomcp_transport_http::HttpBody,
+    buffer: &mut String,
+) -> Option<Sse> {
     loop {
         while let Some(end) = buffer.find("\n\n") {
             let raw: String = buffer.drain(..end + 2).collect();
@@ -282,7 +285,7 @@ async fn a_stream_cannot_be_resumed_from_another_session() {
 async fn a_polled_stream_closes_its_connection_and_resumes() {
     let dispatcher = VersionDispatcher::new(Stepped, MethodRouter::new().with_tools());
     let terminator = dispatcher.session_terminator();
-    let app = router(
+    let app = service(
         dispatcher,
         HttpConfig::new()
             .with_session_terminator(Arc::new(terminator))
@@ -376,7 +379,7 @@ async fn the_get_stream_keeps_what_it_missed() {
     let dispatcher = VersionDispatcher::new(Stepped, MethodRouter::new().with_tools());
     let terminator = dispatcher.session_terminator();
     let notifier = dispatcher.notifier();
-    let app = router(
+    let app = service(
         dispatcher,
         HttpConfig::new()
             .with_session_terminator(Arc::new(terminator))

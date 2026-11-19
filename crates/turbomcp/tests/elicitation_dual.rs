@@ -13,7 +13,7 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt; // oneshot
-use turbomcp::http::{HttpConfig, router};
+use turbomcp::http::{HttpConfig, service};
 use turbomcp::prelude::*;
 use turbomcp::{LegacySessionAdapter, SerdeJsonCodec, serve};
 use turbomcp_service::io::LineTransport;
@@ -173,13 +173,13 @@ fn post(body: Value, headers: &[(&str, &str)]) -> Request<Body> {
     req.body(Body::from(body.to_string())).unwrap()
 }
 
-async fn body_json(resp: axum::response::Response) -> Value {
+async fn body_json(resp: axum::http::Response<turbomcp::http::HttpBody>) -> Value {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
 }
 
 /// One complete SSE event off a streaming body.
-async fn next_sse_event(body: &mut Body, buffer: &mut String) -> Value {
+async fn next_sse_event(body: &mut turbomcp::http::HttpBody, buffer: &mut String) -> Value {
     loop {
         if let Some(end) = buffer.find("\n\n") {
             let event: String = buffer.drain(..end + 2).collect();
@@ -205,7 +205,7 @@ async fn next_sse_event(body: &mut Body, buffer: &mut String) -> Value {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn elicitation_works_on_both_versions_over_http() {
-    let app = router(Deleter.into_server().build(), HttpConfig::new());
+    let app = service(Deleter.into_server().build(), HttpConfig::new());
 
     // Draft MRTR over plain POSTs.
     let resp = app

@@ -10,7 +10,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Plain;
@@ -41,8 +41,8 @@ impl WithTools for Plain {
 
 const APP: &str = "https://app.example.com";
 
-fn app(config: HttpConfig) -> axum::Router {
-    router(
+fn app(config: HttpConfig) -> turbomcp_transport_http::HttpService {
+    service(
         VersionDispatcher::new(Plain, MethodRouter::new().with_tools()),
         config,
     )

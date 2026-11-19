@@ -248,7 +248,7 @@ async fn a_grant_the_server_does_not_offer_is_refused_before_asking() {
 #[cfg(feature = "jwt")]
 #[tokio::test]
 async fn private_key_jwt_sends_a_signed_assertion_instead_of_a_secret() {
-    use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Validation};
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation};
     use turbomcp_auth::client::ClientAssertion;
 
     let mock: Shared = Arc::default();
@@ -261,8 +261,8 @@ async fn private_key_jwt_sends_a_signed_assertion_instead_of_a_secret() {
     )
     .with_private_key_jwt(
         ClientAssertion::new(
-            EncodingKey::from_secret(key).expect("a non-empty HMAC key"),
-            Algorithm::HS256,
+            turbomcp_auth::SigningKey::from_secret(key).expect("a non-empty HMAC key"),
+            turbomcp_auth::Algorithm::HS256,
         )
         .with_key_id("k1"),
     )

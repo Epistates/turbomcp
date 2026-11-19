@@ -10,27 +10,28 @@ use jsonwebtoken::DecodingKey;
 use jsonwebtoken::jwk::JwkSet;
 
 use crate::error::AuthError;
+use crate::keys::{Algorithm, VerifyingKey};
 
 /// Resolves a verification key for a token, by its header `kid`.
 pub trait JwkSource: Send + Sync {
-    /// The decoding key for `kid` (or the sole key when the source has exactly
-    /// one and `kid` is absent). Async so HTTP-backed sources can fetch.
-    fn decoding_key<'a>(
+    /// The key for `kid` (or the sole key when the source has exactly one
+    /// and `kid` is absent). Async so HTTP-backed sources can fetch.
+    fn verifying_key<'a>(
         &'a self,
         kid: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<DecodingKey, AuthError>>;
+    ) -> BoxFuture<'a, Result<VerifyingKey, AuthError>>;
 
-    /// The decoding key for `kid` to verify an `alg` signature: a key whose
-    /// JWK names another `alg` is not it (RFC 7517 §4.4). The bundled sources
-    /// check; the default, for a source of your own, is
-    /// [`decoding_key`](Self::decoding_key).
-    fn decoding_key_for<'a>(
+    /// The key for `kid` to verify an `alg` signature: a key whose JWK names
+    /// another `alg` is not it (RFC 7517 §4.4). The bundled sources check;
+    /// the default, for a source of your own, is
+    /// [`verifying_key`](Self::verifying_key).
+    fn verifying_key_for<'a>(
         &'a self,
         kid: Option<&'a str>,
-        alg: jsonwebtoken::Algorithm,
-    ) -> BoxFuture<'a, Result<DecodingKey, AuthError>> {
+        alg: Algorithm,
+    ) -> BoxFuture<'a, Result<VerifyingKey, AuthError>> {
         let _ = alg;
-        self.decoding_key(kid)
+        self.verifying_key(kid)
     }
 }
 
@@ -41,7 +42,7 @@ pub trait JwkSource: Send + Sync {
 fn select_key<'s>(
     set: &'s JwkSet,
     kid: Option<&str>,
-    alg: Option<jsonwebtoken::Algorithm>,
+    alg: Option<Algorithm>,
 ) -> Option<&'s jsonwebtoken::jwk::Jwk> {
     let usable = |jwk: &&jsonwebtoken::jwk::Jwk| {
         let signing = !matches!(
@@ -52,7 +53,7 @@ fn select_key<'s>(
             )
         );
         let same_alg = match (jwk.common.key_algorithm, alg) {
-            (Some(published), Some(alg)) => format!("{published:?}") == format!("{alg:?}"),
+            (Some(published), Some(alg)) => format!("{published:?}") == alg.as_str(),
             _ => true,
         };
         signing && same_alg
@@ -97,37 +98,29 @@ impl StaticJwks {
         Ok(Self { set })
     }
 
-    /// Wrap an already-parsed [`JwkSet`].
-    #[must_use]
-    pub fn new(set: JwkSet) -> Self {
-        Self { set }
-    }
-
     /// Resolve `kid` (or the sole key) against this set.
-    fn lookup(
-        &self,
-        kid: Option<&str>,
-        alg: Option<jsonwebtoken::Algorithm>,
-    ) -> Result<DecodingKey, AuthError> {
+    fn lookup(&self, kid: Option<&str>, alg: Option<Algorithm>) -> Result<VerifyingKey, AuthError> {
         let jwk = select_key(&self.set, kid, alg)
             .ok_or_else(|| AuthError::KeyUnavailable(format!("no JWK for kid {kid:?}")))?;
-        DecodingKey::from_jwk(jwk).map_err(|e| AuthError::KeyUnavailable(format!("bad JWK: {e}")))
+        DecodingKey::from_jwk(jwk)
+            .map(VerifyingKey)
+            .map_err(|e| AuthError::KeyUnavailable(format!("bad JWK: {e}")))
     }
 }
 
 impl JwkSource for StaticJwks {
-    fn decoding_key<'a>(
+    fn verifying_key<'a>(
         &'a self,
         kid: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<DecodingKey, AuthError>> {
+    ) -> BoxFuture<'a, Result<VerifyingKey, AuthError>> {
         Box::pin(async move { self.lookup(kid, None) })
     }
 
-    fn decoding_key_for<'a>(
+    fn verifying_key_for<'a>(
         &'a self,
         kid: Option<&'a str>,
-        alg: jsonwebtoken::Algorithm,
-    ) -> BoxFuture<'a, Result<DecodingKey, AuthError>> {
+        alg: Algorithm,
+    ) -> BoxFuture<'a, Result<VerifyingKey, AuthError>> {
         Box::pin(async move { self.lookup(kid, Some(alg)) })
     }
 }
@@ -149,6 +142,7 @@ mod http {
 
     use super::JwkSource;
     use crate::error::AuthError;
+    use crate::keys::{Algorithm, VerifyingKey};
 
     /// Fetches a JWKS document from an authorization server's `jwks_uri` and
     /// caches it for `ttl`. A `kid` miss forces one refresh (key rotation),
@@ -358,13 +352,14 @@ mod http {
         async fn key_for(
             &self,
             kid: Option<&str>,
-            alg: Option<jsonwebtoken::Algorithm>,
-        ) -> Result<DecodingKey, AuthError> {
+            alg: Option<Algorithm>,
+        ) -> Result<VerifyingKey, AuthError> {
             // Try the cache, then force one refresh on a miss (rotation).
             for force in [false, true] {
                 let set = self.key_set(force).await?;
                 if let Some(jwk) = super::select_key(&set, kid, alg) {
                     return DecodingKey::from_jwk(jwk)
+                        .map(VerifyingKey)
                         .map_err(|e| AuthError::KeyUnavailable(format!("bad JWK: {e}")));
                 }
             }
@@ -373,18 +368,18 @@ mod http {
     }
 
     impl JwkSource for HttpJwks {
-        fn decoding_key<'a>(
+        fn verifying_key<'a>(
             &'a self,
             kid: Option<&'a str>,
-        ) -> BoxFuture<'a, Result<DecodingKey, AuthError>> {
+        ) -> BoxFuture<'a, Result<VerifyingKey, AuthError>> {
             Box::pin(self.key_for(kid, None))
         }
 
-        fn decoding_key_for<'a>(
+        fn verifying_key_for<'a>(
             &'a self,
             kid: Option<&'a str>,
-            alg: jsonwebtoken::Algorithm,
-        ) -> BoxFuture<'a, Result<DecodingKey, AuthError>> {
+            alg: Algorithm,
+        ) -> BoxFuture<'a, Result<VerifyingKey, AuthError>> {
             Box::pin(self.key_for(kid, Some(alg)))
         }
     }

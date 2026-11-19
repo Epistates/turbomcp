@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt; // oneshot
 use turbomcp::LegacySessionAdapter;
-use turbomcp::http::{HttpConfig, router};
+use turbomcp::http::{HttpConfig, service};
 use turbomcp::prelude::*;
 use turbomcp::{SerdeJsonCodec, serve};
 use turbomcp_service::io::LineTransport;
@@ -127,7 +127,7 @@ async fn both_versions_over_stdio_framing() {
 
 #[tokio::test]
 async fn both_versions_over_http() {
-    let app = router(Demo.into_server().build(), HttpConfig::new());
+    let app = service(Demo.into_server().build(), HttpConfig::new());
     let post = |body: Value, headers: Vec<(&'static str, String)>| {
         let mut req = Request::builder()
             .method("POST")
@@ -201,7 +201,7 @@ async fn both_versions_over_http() {
 /// which is precisely the bug this test exists to catch.
 #[tokio::test]
 async fn http_routes_a_2025_06_18_session_as_itself() {
-    let app = router(Demo.into_server().build(), HttpConfig::new());
+    let app = service(Demo.into_server().build(), HttpConfig::new());
     let post = |body: Value, headers: Vec<(&'static str, String)>| {
         let mut req = Request::builder()
             .method("POST")
@@ -213,7 +213,7 @@ async fn http_routes_a_2025_06_18_session_as_itself() {
         }
         req.body(Body::from(body.to_string())).unwrap()
     };
-    let json_of = |resp: axum::response::Response| async move {
+    let json_of = |resp: axum::http::Response<turbomcp::http::HttpBody>| async move {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         serde_json::from_slice::<Value>(&bytes).unwrap()
     };

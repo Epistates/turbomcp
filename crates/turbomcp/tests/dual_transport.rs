@@ -9,7 +9,7 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt; // oneshot
-use turbomcp::http::{HttpConfig, router};
+use turbomcp::http::{HttpConfig, service};
 use turbomcp::prelude::*;
 use turbomcp::{SerdeJsonCodec, serve};
 use turbomcp_service::io::LineTransport;
@@ -36,7 +36,7 @@ fn call_frame(id: u64, word: &str) -> String {
 
 #[tokio::test]
 async fn macro_server_answers_tools_call_over_http() {
-    let app = router(Demo.into_server().build(), HttpConfig::new());
+    let app = service(Demo.into_server().build(), HttpConfig::new());
     let req = Request::builder()
         .method("POST")
         .header("accept", "application/json, text/event-stream")

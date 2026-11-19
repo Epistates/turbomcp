@@ -17,7 +17,8 @@ async fn jwt_rejects_token_before_nbf() {
     // URL-safe base64 encoding of the same ASCII secret.
     let jwks = serde_json::json!({"keys":[{"kty":"oct","k":"YXVkaXQtc2VjcmV0LTMyLWJ5dGVzLWxvbmctMTIzNDU2Nw","kid":"test"}]}).to_string();
     let source = StaticJwks::from_json(&jwks).unwrap();
-    let validator = JwtValidator::new(source, "mcp", "issuer").algorithms(vec![Algorithm::HS256]);
+    let validator = JwtValidator::new(source, "mcp", "issuer")
+        .algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -55,7 +56,7 @@ async fn concurrent_jwks_refresh_is_coalesced() {
         let barrier = barrier.clone();
         jobs.spawn(async move {
             barrier.wait().await;
-            let _ = source.decoding_key(Some("unknown")).await;
+            let _ = source.verifying_key(Some("unknown")).await;
         });
     }
     while let Some(j) = jobs.join_next().await {
@@ -87,7 +88,7 @@ async fn failed_jwks_refresh_establishes_backoff() {
     });
     let source = HttpJwks::new(url, Duration::from_secs(3600));
     for _ in 0..20 {
-        assert!(source.decoding_key(Some("unknown")).await.is_err());
+        assert!(source.verifying_key(Some("unknown")).await.is_err());
     }
     assert_eq!(count.load(Ordering::SeqCst), 1);
     server.abort();
@@ -122,16 +123,16 @@ async fn an_outage_serves_the_last_good_key_set() {
         axum::serve(listener, app).await.unwrap();
     });
     let source = HttpJwks::new(url, Duration::from_millis(50));
-    assert!(source.decoding_key(Some("sig")).await.is_ok());
+    assert!(source.verifying_key(Some("sig")).await.is_ok());
     assert!(
-        source.decoding_key(Some("enc")).await.is_err(),
+        source.verifying_key(Some("enc")).await.is_err(),
         "a key published for encryption verifies nothing"
     );
 
     up.store(false, Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(
-        source.decoding_key(Some("sig")).await.is_ok(),
+        source.verifying_key(Some("sig")).await.is_ok(),
         "past its TTL with the issuer down, the last good set still serves"
     );
 
@@ -140,6 +141,6 @@ async fn an_outage_serves_the_last_good_key_set() {
         Duration::from_millis(50),
     )
     .stale_if_error(Duration::ZERO);
-    assert!(strict.decoding_key(Some("sig")).await.is_err());
+    assert!(strict.verifying_key(Some("sig")).await.is_err());
     server.abort();
 }

@@ -11,7 +11,7 @@
 //! not drive long-running cancellable work).
 
 #[cfg(feature = "std")]
-pub use std_impl::CancellationToken;
+pub use std_impl::{CancellationToken, DropGuard};
 
 #[cfg(not(feature = "std"))]
 pub use no_std_impl::CancellationToken;
@@ -52,16 +52,32 @@ mod std_impl {
             self.0.cancelled().await;
         }
 
-        /// Borrow the underlying tokio token (e.g. for `run_until_cancelled`).
-        #[must_use]
-        pub fn inner(&self) -> &tokio_util::sync::CancellationToken {
-            &self.0
+        /// Run `fut` until it finishes (`Some` of its output) or this token is
+        /// cancelled (`None`, and `fut` is dropped).
+        pub async fn run_until_cancelled<F: core::future::Future>(
+            &self,
+            fut: F,
+        ) -> Option<F::Output> {
+            self.0.run_until_cancelled(fut).await
+        }
+
+        /// A guard that cancels this token when it is dropped, unless it is
+        /// [`disarm`](DropGuard::disarm)ed first.
+        pub fn drop_guard(self) -> DropGuard {
+            DropGuard(self.0.drop_guard())
         }
     }
 
-    impl From<tokio_util::sync::CancellationToken> for CancellationToken {
-        fn from(t: tokio_util::sync::CancellationToken) -> Self {
-            Self(t)
+    /// Cancels its token when dropped, unless [`disarm`](Self::disarm)ed. From
+    /// [`CancellationToken::drop_guard`].
+    #[derive(Debug)]
+    #[must_use = "dropping the guard cancels its token at once"]
+    pub struct DropGuard(tokio_util::sync::DropGuard);
+
+    impl DropGuard {
+        /// Keep the token uncancelled, and hand it back.
+        pub fn disarm(self) -> CancellationToken {
+            CancellationToken(self.0.disarm())
         }
     }
 }

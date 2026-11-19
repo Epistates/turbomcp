@@ -21,7 +21,7 @@ use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
 use turbomcp_service::GovernorRateLimiter;
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 const SECRET: &[u8] = b"test-hmac-secret-key-thirty-two!";
 const KID: &str = "test-1";
@@ -66,24 +66,25 @@ fn dispatcher() -> VersionDispatcher<Tiny> {
 }
 
 /// An open (no-auth) endpoint with the given limiter.
-fn open_app(limiter: GovernorRateLimiter) -> axum::Router {
-    router(
+fn open_app(limiter: GovernorRateLimiter) -> turbomcp_transport_http::HttpService {
+    service(
         dispatcher(),
         HttpConfig::new().with_rate_limiter(Arc::new(limiter)),
     )
 }
 
 /// An authenticated endpoint with the given limiter (per-subject keying).
-fn authed_app(limiter: GovernorRateLimiter) -> axum::Router {
+fn authed_app(limiter: GovernorRateLimiter) -> turbomcp_transport_http::HttpService {
     let k = URL_SAFE_NO_PAD.encode(SECRET);
     let jwks = StaticJwks::from_json(
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let metadata = ResourceMetadata::new(RESOURCE, [ISSUER]);
     let rs = ResourceServer::new(validator, metadata, METADATA_URL);
-    router(
+    service(
         dispatcher(),
         HttpConfig::new()
             .with_authenticator(Arc::new(rs))
@@ -198,13 +199,14 @@ async fn the_ip_gate_throttles_bad_tokens_before_they_are_verified() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let rs = ResourceServer::new(
         validator,
         ResourceMetadata::new(RESOURCE, [ISSUER]),
         METADATA_URL,
     );
-    let app = router(
+    let app = service(
         dispatcher(),
         HttpConfig::new()
             .with_authenticator(Arc::new(rs))

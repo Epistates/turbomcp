@@ -69,9 +69,9 @@ pub enum HttpClientError {
     /// The transport's inbound channel closed (connection torn down).
     #[error("http client transport closed")]
     Closed,
-    /// The underlying `reqwest` client could not be built.
+    /// The underlying HTTP client could not be built.
     #[error("http client build failed: {0}")]
-    Build(#[source] reqwest::Error),
+    Build(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// A caller-supplied header is one the protocol owns (`Mcp-*`); the
     /// transport sets those itself.
     #[error("`{0}` is a protocol header; the transport sets it")]
@@ -800,7 +800,7 @@ fn default_http_client(
         .connect_timeout(Duration::from_secs(10))
         .default_headers(headers)
         .build()
-        .map_err(HttpClientError::Build)
+        .map_err(|e| HttpClientError::Build(Box::new(e)))
 }
 
 impl Transport for HttpClientTransport {

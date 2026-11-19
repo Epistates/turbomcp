@@ -13,7 +13,7 @@ use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, Server, VersionDispatcher,
     WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Forecast;
@@ -49,8 +49,8 @@ fn card() -> ServerCard {
         .with_remote(Remote::streamable_http("https://api.example.com/mcp"))
 }
 
-fn app(config: HttpConfig) -> axum::Router {
-    router(
+fn app(config: HttpConfig) -> turbomcp_transport_http::HttpService {
+    service(
         Server::new(VersionDispatcher::new(
             Forecast,
             MethodRouter::new().with_tools(),
@@ -178,6 +178,8 @@ async fn a_client_fetches_and_revalidates_the_card() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = app(HttpConfig::new().with_server_card(card()).unwrap());
+    // Mounted the way an application mounts it in an axum app of its own.
+    let app = axum::Router::new().fallback_service(app);
     tokio::spawn(async move { axum::serve(listener, app).await });
     let url = turbomcp_protocol::server_card::default_url(&format!("http://{addr}/mcp"));
 

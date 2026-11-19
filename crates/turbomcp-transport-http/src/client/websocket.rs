@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::stream::SplitStream;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::header::{
     CONNECTION, HOST, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE,
@@ -86,14 +85,15 @@ async fn within_deadline<T>(
 }
 
 impl WebSocketClientTransport {
-    /// Connect with `request`: a `ws://` or `wss://` URL, or an
-    /// `http::Request` carrying headers of your own (an `Authorization`
-    /// bearer, a tenant header). Gives up after 30 s.
+    /// Connect with `request`: a `GET` to the `ws://` or `wss://` URL,
+    /// carrying headers of your own (an `Authorization` bearer, a tenant
+    /// header). The WebSocket handshake headers it lacks are filled in. For a
+    /// URL alone, [`connect_websocket`] is shorter. Gives up after 30 s.
     ///
     /// # Errors
     /// [`WsError::Socket`] if the connection or the handshake fails or times
     /// out.
-    pub async fn connect(request: impl IntoClientRequest + Unpin) -> Result<Self, WsError> {
+    pub async fn connect(request: http::Request<()>) -> Result<Self, WsError> {
         let (request, network) = prepare(request)?;
         let (socket, _response) =
             within_deadline(tokio_tungstenite::connect_async(request)).await?;
@@ -111,7 +111,7 @@ impl WebSocketClientTransport {
     /// # Errors
     /// [`WsError::Socket`] if the handshake fails or takes over 30 s.
     pub async fn connect_over(
-        request: impl IntoClientRequest + Unpin,
+        request: http::Request<()>,
         stream: tokio::net::TcpStream,
     ) -> Result<Self, WsError> {
         let (request, network) = prepare(request)?;
@@ -145,7 +145,7 @@ impl WebSocketClientTransport {
 /// The request with the `mcp` subprotocol asked for, and what it says about
 /// the peer.
 fn prepare(
-    request: impl IntoClientRequest + Unpin,
+    mut request: http::Request<()>,
 ) -> Result<
     (
         tokio_tungstenite::tungstenite::handshake::client::Request,
@@ -153,12 +153,8 @@ fn prepare(
     ),
     WsError,
 > {
-    let mut request = request
-        .into_client_request()
-        .map_err(|e| WsError::Socket(Box::new(e)))?;
-    // A URL gets the handshake headers from tungstenite; an `http::Request`
-    // of the caller's own is passed through as built, so fill in what it
-    // lacks rather than fail the upgrade.
+    // The caller's request carries what it needs to say; fill in the
+    // handshake headers it lacks rather than fail the upgrade.
     let host = request.uri().authority().map(|authority| {
         authority
             .as_str()
@@ -207,7 +203,10 @@ fn prepare(
 /// # Errors
 /// [`WsError::Socket`] if the connection or the handshake fails.
 pub async fn connect_websocket(url: &str) -> Result<WebSocketClientTransport, WsError> {
-    WebSocketClientTransport::connect(url).await
+    let request = http::Request::get(url)
+        .body(())
+        .map_err(|e| WsError::Socket(Box::new(e)))?;
+    WebSocketClientTransport::connect(request).await
 }
 
 impl Transport for WebSocketClientTransport {

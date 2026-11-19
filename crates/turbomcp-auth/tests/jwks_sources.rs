@@ -35,12 +35,12 @@ fn a_lone_key_resolves_without_a_kid() {
     futures::executor::block_on(async {
         use turbomcp_auth::JwkSource as _;
         assert!(
-            jwks.decoding_key(None).await.is_ok(),
+            jwks.verifying_key(None).await.is_ok(),
             "one key and no kid is unambiguous"
         );
-        assert!(jwks.decoding_key(Some("only")).await.is_ok());
+        assert!(jwks.verifying_key(Some("only")).await.is_ok());
         assert!(
-            jwks.decoding_key(Some("other")).await.is_err(),
+            jwks.verifying_key(Some("other")).await.is_err(),
             "a named kid that isn't present must not fall back to the lone key"
         );
     });
@@ -53,9 +53,9 @@ fn several_keys_without_a_kid_is_ambiguous_and_refused() {
     let jwks = StaticJwks::from_json(&json!({ "keys": [jwk("a"), jwk("b")] }).to_string()).unwrap();
     futures::executor::block_on(async {
         use turbomcp_auth::JwkSource as _;
-        assert!(jwks.decoding_key(None).await.is_err());
-        assert!(jwks.decoding_key(Some("a")).await.is_ok());
-        assert!(jwks.decoding_key(Some("b")).await.is_ok());
+        assert!(jwks.verifying_key(None).await.is_err());
+        assert!(jwks.verifying_key(Some("a")).await.is_ok());
+        assert!(jwks.verifying_key(Some("b")).await.is_ok());
     });
 }
 
@@ -66,17 +66,6 @@ fn a_malformed_document_is_rejected_at_construction() {
         StaticJwks::from_json(&json!({ "keys": "nope" }).to_string()).is_err(),
         "`keys` must be an array"
     );
-}
-
-#[test]
-fn an_already_parsed_key_set_can_be_wrapped_directly() {
-    let set: jsonwebtoken::jwk::JwkSet =
-        serde_json::from_value(json!({ "keys": [jwk("pre")] })).unwrap();
-    let jwks = StaticJwks::new(set);
-    futures::executor::block_on(async {
-        use turbomcp_auth::JwkSource as _;
-        assert!(jwks.decoding_key(Some("pre")).await.is_ok());
-    });
 }
 
 // ---- HttpJwks ----------------------------------------------------------------
@@ -125,11 +114,11 @@ mod http {
         let (uri, ep) = spawn(vec![jwk("k1")]).await;
         let source = HttpJwks::new(uri, Duration::from_secs(3600));
 
-        assert!(source.decoding_key(Some("k1")).await.is_ok());
+        assert!(source.verifying_key(Some("k1")).await.is_ok());
         assert_eq!(ep.hits.load(Ordering::SeqCst), 1, "first call fetches");
 
         for _ in 0..5 {
-            assert!(source.decoding_key(Some("k1")).await.is_ok());
+            assert!(source.verifying_key(Some("k1")).await.is_ok());
         }
         assert_eq!(
             ep.hits.load(Ordering::SeqCst),
@@ -143,9 +132,9 @@ mod http {
         let (uri, ep) = spawn(vec![jwk("k1")]).await;
         let source = HttpJwks::new(uri, Duration::from_millis(50));
 
-        assert!(source.decoding_key(Some("k1")).await.is_ok());
+        assert!(source.verifying_key(Some("k1")).await.is_ok());
         tokio::time::sleep(Duration::from_millis(80)).await;
-        assert!(source.decoding_key(Some("k1")).await.is_ok());
+        assert!(source.verifying_key(Some("k1")).await.is_ok());
         assert_eq!(ep.hits.load(Ordering::SeqCst), 2);
     }
 
@@ -159,12 +148,12 @@ mod http {
         // limit on it — those are exercised separately below.
         let source = HttpJwks::new(uri, Duration::from_secs(3600)).refresh_cooldown(Duration::ZERO);
 
-        assert!(source.decoding_key(Some("old")).await.is_ok());
+        assert!(source.verifying_key(Some("old")).await.is_ok());
         assert_eq!(ep.hits.load(Ordering::SeqCst), 1);
 
         *ep.keys.lock().unwrap() = vec![jwk("new")];
         assert!(
-            source.decoding_key(Some("new")).await.is_ok(),
+            source.verifying_key(Some("new")).await.is_ok(),
             "a kid absent from a still-fresh cache must trigger a refresh"
         );
         assert_eq!(ep.hits.load(Ordering::SeqCst), 2);
@@ -182,7 +171,7 @@ mod http {
         let (uri, ep) = spawn(vec![jwk("k1")]).await;
         let source = HttpJwks::new(uri, Duration::from_secs(3600));
 
-        assert!(source.decoding_key(Some("nope")).await.is_err());
+        assert!(source.verifying_key(Some("nope")).await.is_err());
         assert_eq!(
             ep.hits.load(Ordering::SeqCst),
             1,
@@ -191,7 +180,7 @@ mod http {
         );
 
         for _ in 0..20 {
-            assert!(source.decoding_key(Some("nope")).await.is_err());
+            assert!(source.verifying_key(Some("nope")).await.is_err());
         }
         assert_eq!(
             ep.hits.load(Ordering::SeqCst),
@@ -207,16 +196,16 @@ mod http {
         let source = HttpJwks::new(uri, Duration::from_secs(3600))
             .refresh_cooldown(Duration::from_millis(50));
 
-        assert!(source.decoding_key(Some("old")).await.is_ok());
+        assert!(source.verifying_key(Some("old")).await.is_ok());
         *ep.keys.lock().unwrap() = vec![jwk("new")];
 
         assert!(
-            source.decoding_key(Some("new")).await.is_err(),
+            source.verifying_key(Some("new")).await.is_err(),
             "inside the cooldown the stale cache still answers"
         );
         tokio::time::sleep(Duration::from_millis(80)).await;
         assert!(
-            source.decoding_key(Some("new")).await.is_ok(),
+            source.verifying_key(Some("new")).await.is_ok(),
             "once the cooldown lapses the rotation is picked up"
         );
     }
@@ -225,12 +214,12 @@ mod http {
     async fn a_lone_fetched_key_resolves_without_a_kid() {
         let (uri, _) = spawn(vec![jwk("solo")]).await;
         let source = HttpJwks::new(uri, Duration::from_secs(3600));
-        assert!(source.decoding_key(None).await.is_ok());
+        assert!(source.verifying_key(None).await.is_ok());
 
         let (uri, _) = spawn(vec![jwk("a"), jwk("b")]).await;
         let source = HttpJwks::new(uri, Duration::from_secs(3600));
         assert!(
-            source.decoding_key(None).await.is_err(),
+            source.verifying_key(None).await.is_err(),
             "two fetched keys and no kid is as ambiguous as it is for StaticJwks"
         );
     }
@@ -243,7 +232,7 @@ mod http {
         // Port 1 on loopback: reserved, nothing binds it.
         let source = HttpJwks::new("http://127.0.0.1:1/jwks", Duration::from_secs(60));
         let err = source
-            .decoding_key(Some("k1"))
+            .verifying_key(Some("k1"))
             .await
             .expect_err("no server");
         let msg = err.to_string();
@@ -264,7 +253,10 @@ mod http {
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         let source = HttpJwks::new(uri, Duration::from_secs(60));
-        let err = source.decoding_key(Some("k1")).await.expect_err("bad body");
+        let err = source
+            .verifying_key(Some("k1"))
+            .await
+            .expect_err("bad body");
         let msg = err.to_string();
         assert!(
             msg.contains("JWKS decode failed"),

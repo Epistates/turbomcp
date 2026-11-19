@@ -18,6 +18,10 @@ pub enum AuthError {
     /// fetch failure).
     #[error("signing key unavailable: {0}")]
     KeyUnavailable(String),
+    /// A key given to this crate (a PEM, a JWK, a secret) isn't one it can
+    /// use. A configuration error, met when the key is built.
+    #[error("invalid key: {0}")]
+    InvalidKey(String),
     /// What tokens are checked against couldn't be reached (the JWKS
     /// endpoint, the introspection endpoint): nothing is known about the
     /// token, which is answered `503`, not `401`.

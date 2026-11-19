@@ -2782,6 +2782,7 @@ dependencies = [
  "eventsource-stream",
  "futures",
  "http",
+ "http-body",
  "hyper",
  "hyper-util",
  "ipnet",

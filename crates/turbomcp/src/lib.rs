@@ -425,8 +425,8 @@ pub mod testing {
 /// # }
 /// ```
 ///
-/// [`router`](http::router) builds the axum `Router` to mount inside a larger
-/// app.
+/// [`service`](http::service) builds the endpoint as a `tower` service to
+/// mount inside a larger app (in axum, with `Router::fallback_service`).
 ///
 /// WebSocket (feature `websocket`, not an MCP-spec transport) is a route on
 /// the same endpoint, behind the same guards:
@@ -438,8 +438,8 @@ pub mod testing {
 pub mod http {
     pub use turbomcp_service::SessionTerminator;
     pub use turbomcp_transport_http::{
-        EventFuture, EventStore, EventStoreError, Http, HttpConfig, InMemoryEventStore, SsePolling,
-        StoredEvent, router,
+        EventFuture, EventStore, EventStoreError, Http, HttpBody, HttpConfig, HttpService,
+        InMemoryEventStore, SsePolling, StoredEvent, service,
     };
 
     #[cfg(feature = "websocket")]
@@ -492,7 +492,7 @@ pub mod client {
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
     pub use turbomcp_transport_http::{
         BearerSource, FetchedCard, HttpClientError, HttpClientLimits, HttpClientTransport,
-        Zeroizing, connect_http, fetch_server_card,
+        Zeroizing, connect_http, fetch_server_card, reqwest,
     };
 
     #[cfg(feature = "websocket")]

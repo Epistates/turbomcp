@@ -7,6 +7,7 @@ pub(crate) mod fuzzing;
 mod guards;
 mod reject;
 mod resume;
+mod service;
 mod sse;
 mod streams;
 mod validate;
@@ -15,6 +16,7 @@ mod websocket;
 
 pub use config::{HttpConfig, SsePolling};
 pub use resume::{EventFuture, EventStore, EventStoreError, InMemoryEventStore, StoredEvent};
+pub use service::{BoxError, HttpBody, HttpService};
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketConfig;
 
@@ -146,19 +148,24 @@ impl<S> HttpState<S> {
     }
 }
 
-/// Build the configured axum [`Router`] for `server` without binding a socket —
-/// the unit of composition (mount it under a larger app) and the seam tests
-/// drive via `tower::ServiceExt::oneshot`.
+/// The configured endpoint for `server` as an [`HttpService`], without
+/// binding a socket: the unit of composition (mount it in an app of your
+/// own), and the seam tests drive with `tower::ServiceExt::oneshot`.
 ///
 /// `server` is usually a `turbomcp-server` `Server` (or a builder's
 /// `.layer(…)`), which brings its supported revisions and its `DELETE`
 /// handler. A bare service works too and brings neither.
 ///
 /// Closing `subscriptions/listen` streams at shutdown is the listener's job,
-/// not the router's: [`Http`] does it. When you serve this
-/// router yourself, call `ServerHandle::close_subscriptions` before firing
-/// the configured shutdown token.
-pub fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
+/// not the service's: [`Http`] does it. When you serve this yourself, call
+/// `ServerHandle::close_subscriptions` before firing the configured shutdown
+/// token.
+pub fn service<H: ServerHandle>(server: H, config: HttpConfig) -> HttpService {
+    HttpService::new(router(server, config))
+}
+
+/// The axum [`Router`] [`service`] wraps and the listener serves.
+fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
     let supported_versions = config
         .supported_versions
         .clone()

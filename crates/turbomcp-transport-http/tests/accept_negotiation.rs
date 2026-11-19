@@ -13,7 +13,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Echo;
@@ -42,8 +42,8 @@ impl WithTools for Echo {
     }
 }
 
-fn app() -> axum::Router {
-    router(
+fn app() -> turbomcp_transport_http::HttpService {
+    service(
         VersionDispatcher::new(Echo, MethodRouter::new().with_tools()),
         HttpConfig::new(),
     )
@@ -74,7 +74,7 @@ fn get(accept: Option<&str>) -> Request<Body> {
     req.body(Body::empty()).unwrap()
 }
 
-async fn body_json(resp: axum::response::Response) -> Value {
+async fn body_json(resp: axum::http::Response<turbomcp_transport_http::HttpBody>) -> Value {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
 }

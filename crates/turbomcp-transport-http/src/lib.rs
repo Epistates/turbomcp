@@ -3,7 +3,7 @@
 //! The Streamable HTTP transport, both halves of it:
 //!
 //! - **`server`** (default): a single MCP endpoint served by **axum 0.8**
-//!   ([`Http`], [`HttpConfig`], and [`router`] to mount it in an app).
+//!   ([`Http`], [`HttpConfig`], and [`service`] to mount it in an app).
 //! - **`client`**: [`HttpClientTransport`], a
 //!   [`Transport`](turbomcp_service::Transport) for `turbomcp-client`'s
 //!   `Client`, and [`connect_http`]. **`oauth`** adds the challenge-driven
@@ -120,12 +120,20 @@ pub use server::WebSocketConfig;
 #[cfg(feature = "server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "server")))]
 pub use server::{
-    EventFuture, EventStore, EventStoreError, Http, HttpConfig, InMemoryEventStore, SsePolling,
-    StoredEvent, router,
+    BoxError, EventFuture, EventStore, EventStoreError, Http, HttpBody, HttpConfig, HttpService,
+    InMemoryEventStore, SsePolling, StoredEvent, service,
 };
 
 #[cfg(feature = "client")]
 mod client;
+
+/// The HTTP client [`HttpClientTransport`] sends through, re-exported so a
+/// client you hand it (your own proxy, roots, client certificate) is the
+/// same `reqwest` it takes. It is a public dependency: a `reqwest` major is a
+/// TurboMCP major.
+#[cfg(feature = "client")]
+#[cfg_attr(docsrs, doc(cfg(feature = "client")))]
+pub use reqwest;
 
 /// Entry points for `fuzz/`; compiled only under `cfg(fuzzing)`. Not API.
 #[cfg(fuzzing)]

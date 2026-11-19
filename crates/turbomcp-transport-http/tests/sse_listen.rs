@@ -16,7 +16,7 @@ use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, ServerNotifier,
     VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Watched;
@@ -46,10 +46,10 @@ impl WithTools for Watched {
 }
 
 /// One app + the notifier that publishes into it.
-fn app(config: HttpConfig) -> (axum::Router, ServerNotifier) {
+fn app(config: HttpConfig) -> (turbomcp_transport_http::HttpService, ServerNotifier) {
     let dispatcher = VersionDispatcher::new(Watched, MethodRouter::new().with_tools());
     let notifier = dispatcher.notifier();
-    (router(dispatcher, config), notifier)
+    (service(dispatcher, config), notifier)
 }
 
 fn listen_request(id: i64, notifications: Value) -> Request<Body> {
@@ -78,7 +78,10 @@ fn listen_request(id: i64, notifications: Value) -> Request<Body> {
 /// Pull raw chunks off the SSE body until one complete event (terminated by a
 /// blank line) is buffered; returns it (comments included). A priming event
 /// (an id with empty `data`) is skipped, as clients skip it.
-async fn next_sse_chunk(body: &mut Body, buffer: &mut String) -> String {
+async fn next_sse_chunk(
+    body: &mut turbomcp_transport_http::HttpBody,
+    buffer: &mut String,
+) -> String {
     loop {
         if let Some(end) = buffer.find("\n\n") {
             let event: String = buffer.drain(..end + 2).collect();
@@ -166,7 +169,7 @@ async fn shutdown_closes_the_listen_stream_with_a_result_envelope() {
     let closer = dispatcher.clone();
     let config = HttpConfig::new();
     let shutdown = config.shutdown_token();
-    let app = router(dispatcher, config);
+    let app = service(dispatcher, config);
 
     let resp = app
         .oneshot(listen_request(7, json!({ "toolsListChanged": true })))
@@ -318,7 +321,7 @@ impl turbomcp_server::WithResources for Resourceful {
 async fn legacy_get_stream_delivers_subscribed_resource_updates() {
     let dispatcher = VersionDispatcher::new(Resourceful, MethodRouter::new().with_resources());
     let notifier = dispatcher.notifier();
-    let app = router(dispatcher, HttpConfig::new());
+    let app = service(dispatcher, HttpConfig::new());
 
     // 1. initialize mints the session.
     let init = json!({
@@ -392,7 +395,7 @@ async fn legacy_get_stream_delivers_subscribed_resource_updates() {
 async fn concurrent_legacy_sessions_get_only_their_own_events() {
     let dispatcher = VersionDispatcher::new(Resourceful, MethodRouter::new().with_resources());
     let notifier = dispatcher.notifier();
-    let app = router(dispatcher, HttpConfig::new());
+    let app = service(dispatcher, HttpConfig::new());
 
     let initialize = |name: &str| {
         json!({

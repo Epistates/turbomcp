@@ -30,7 +30,8 @@ fn jwks_json() -> String {
 /// A `ResourceServer` over the test JWKS, requiring `mcp:use`.
 fn resource_server() -> ResourceServer<JwtValidator<StaticJwks>> {
     let jwks = StaticJwks::from_json(&jwks_json()).expect("valid jwks");
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let metadata = ResourceMetadata::new(RESOURCE, [ISSUER]).scopes_supported(["mcp:use"]);
     ResourceServer::new(validator, metadata, METADATA_URL).required_scopes(["mcp:use"])
 }
@@ -261,7 +262,8 @@ async fn kid_resolution_failures_are_rejected() {
     ]})
     .to_string();
     let jwks = StaticJwks::from_json(&two).expect("valid jwks");
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let metadata = ResourceMetadata::new(RESOURCE, [ISSUER]);
     let rs = ResourceServer::new(validator, metadata, METADATA_URL);
     let kidless = encode(
@@ -311,7 +313,8 @@ async fn a_key_published_for_another_algorithm_verifies_nothing() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS384", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     assert!(validator.validate(&sign(good_claims())).await.is_err());
 }
 
@@ -325,7 +328,7 @@ async fn an_untyped_token_is_refused_when_access_tokens_must_be_typed() {
         RESOURCE,
         ISSUER,
     )
-    .algorithms(vec![Algorithm::HS256])
+    .algorithms(vec![turbomcp_auth::Algorithm::HS256])
     .require_access_token_type();
     assert!(
         validator.validate(&sign(good_claims())).await.is_err(),

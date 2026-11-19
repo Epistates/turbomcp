@@ -3,7 +3,7 @@
 //! Streamable HTTP endpoint — `server/discover`, `tools/list`, `tools/call` —
 //! plus the transport's guards (Origin, body limit, 405 on GET, parse error).
 //!
-//! Tests drive the configured `axum::Router` via `tower::ServiceExt::oneshot`,
+//! Tests drive the configured `turbomcp_transport_http::HttpService` via `tower::ServiceExt::oneshot`,
 //! so no socket is bound.
 
 use axum::body::Body;
@@ -16,7 +16,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Calculator;
@@ -60,9 +60,9 @@ impl WithTools for Calculator {
 
 const DRAFT_META: &str = r#"{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#;
 
-fn app(config: HttpConfig) -> axum::Router {
+fn app(config: HttpConfig) -> turbomcp_transport_http::HttpService {
     let dispatcher = VersionDispatcher::new(Calculator, MethodRouter::new().with_tools());
-    router(dispatcher, config)
+    service(dispatcher, config)
 }
 
 fn post(body: &str) -> Request<Body> {
@@ -91,7 +91,7 @@ fn draft_post(body: &str, method: &str, name: Option<&str>) -> Request<Body> {
     req.body(Body::from(body.to_owned())).unwrap()
 }
 
-async fn body_json(resp: axum::response::Response) -> Value {
+async fn body_json(resp: axum::http::Response<turbomcp_transport_http::HttpBody>) -> Value {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
 }
@@ -152,7 +152,7 @@ async fn discover_list_and_call_over_http() {
 }
 
 /// A legacy session on `app`, for requests that need one.
-async fn legacy_session(app: &axum::Router) -> String {
+async fn legacy_session(app: &turbomcp_transport_http::HttpService) -> String {
     let init = r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#;
     let resp = app.clone().oneshot(post(init)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -376,7 +376,7 @@ async fn a_panicking_tool_answers_with_an_internal_error() {
 
     let app = || {
         let dispatcher = VersionDispatcher::new(Exploding, MethodRouter::new().with_tools());
-        router(dispatcher, HttpConfig::new())
+        service(dispatcher, HttpConfig::new())
     };
 
     let resp = app()

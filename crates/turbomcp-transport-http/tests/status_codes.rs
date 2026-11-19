@@ -16,7 +16,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Plain;
@@ -45,10 +45,10 @@ impl WithTools for Plain {
     }
 }
 
-fn app(config: HttpConfig) -> axum::Router {
+fn app(config: HttpConfig) -> turbomcp_transport_http::HttpService {
     let dispatcher = VersionDispatcher::new(Plain, MethodRouter::new().with_tools());
     let terminator = dispatcher.session_terminator();
-    router(
+    service(
         dispatcher,
         config.with_session_terminator(Arc::new(terminator)),
     )
@@ -81,12 +81,12 @@ const MODERN: [(&str, &str); 2] = [
     ("Mcp-Method", "tools/list"),
 ];
 
-async fn json_body(resp: axum::response::Response) -> Value {
+async fn json_body(resp: axum::http::Response<turbomcp_transport_http::HttpBody>) -> Value {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).expect("a JSON-RPC body")
 }
 
-async fn legacy_session(app: &axum::Router) -> String {
+async fn legacy_session(app: &turbomcp_transport_http::HttpService) -> String {
     let init = json!({
         "jsonrpc": "2.0", "id": 0, "method": "initialize",
         "params": {
@@ -237,7 +237,7 @@ async fn a_full_session_table_refuses_initialize_and_keeps_its_sessions() {
             .with_session_backend(Arc::new(turbomcp_server::SessionStore::with_capacity(1))),
     );
     let terminator = dispatcher.session_terminator();
-    let app = router(
+    let app = service(
         dispatcher,
         HttpConfig::new().with_session_terminator(Arc::new(terminator)),
     );
@@ -264,7 +264,9 @@ async fn a_full_session_table_refuses_initialize_and_keeps_its_sessions() {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
-async fn error_of(resp: axum::response::Response) -> (StatusCode, Value) {
+async fn error_of(
+    resp: axum::http::Response<turbomcp_transport_http::HttpBody>,
+) -> (StatusCode, Value) {
     let status = resp.status();
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&bytes).expect("a JSON-RPC body");

@@ -13,7 +13,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Calculator;
@@ -55,8 +55,8 @@ impl WithTools for Calculator {
     }
 }
 
-fn app() -> axum::Router {
-    router(
+fn app() -> turbomcp_transport_http::HttpService {
+    service(
         VersionDispatcher::new(Calculator, MethodRouter::new().with_tools()),
         HttpConfig::new(),
     )
@@ -87,7 +87,7 @@ fn initialize_body() -> Value {
     })
 }
 
-async fn body_json(resp: axum::response::Response) -> Value {
+async fn body_json(resp: axum::http::Response<turbomcp_transport_http::HttpBody>) -> Value {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
 }

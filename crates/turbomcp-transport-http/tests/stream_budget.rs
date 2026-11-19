@@ -18,7 +18,7 @@ use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
 use turbomcp_service::CancellationToken;
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Quiet;
@@ -85,7 +85,7 @@ fn from(ip: [u8; 4], mut request: Request<Body>) -> Request<Body> {
     request
 }
 
-async fn initialize(app: &axum::Router) -> String {
+async fn initialize(app: &turbomcp_transport_http::HttpService) -> String {
     let body = json!({
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {
@@ -120,7 +120,7 @@ fn get(sid: &str) -> Request<Body> {
 }
 
 /// Wait for the stream to end, skipping keep-alives and events.
-async fn ends(mut body: Body) {
+async fn ends(mut body: turbomcp_transport_http::HttpBody) {
     tokio::time::timeout(Duration::from_secs(5), async {
         while let Some(frame) = body.frame().await {
             frame.expect("frame ok");
@@ -134,7 +134,7 @@ async fn ends(mut body: Body) {
 /// `max_concurrent_requests` of them refused every request from everyone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn open_streams_do_not_hold_request_slots() {
-    let app = router(dispatcher(), HttpConfig::new().max_concurrent_requests(2));
+    let app = service(dispatcher(), HttpConfig::new().max_concurrent_requests(2));
     let mut streams = Vec::new();
     for id in 0..3 {
         let resp = app.clone().oneshot(listen(id)).await.unwrap();
@@ -151,7 +151,7 @@ async fn open_streams_do_not_hold_request_slots() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_client_is_held_to_its_share_of_streams() {
-    let app = router(dispatcher(), HttpConfig::new().max_streams_per_client(2));
+    let app = service(dispatcher(), HttpConfig::new().max_streams_per_client(2));
     let mut streams = Vec::new();
     for id in 0..2 {
         let resp = app
@@ -190,7 +190,7 @@ async fn a_client_is_held_to_its_share_of_streams() {
 /// own quota.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_full_endpoint_refuses_streams_with_503() {
-    let app = router(dispatcher(), HttpConfig::new().max_streams(1));
+    let app = service(dispatcher(), HttpConfig::new().max_streams(1));
     let open = app.clone().oneshot(listen(1)).await.unwrap();
     assert_eq!(open.status(), StatusCode::OK);
     let refused = app.clone().oneshot(listen(2)).await.unwrap();
@@ -206,7 +206,7 @@ async fn a_full_endpoint_refuses_streams_with_503() {
 /// held it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_replaced_get_stream_ends() {
-    let app = router(dispatcher(), HttpConfig::new());
+    let app = service(dispatcher(), HttpConfig::new());
     let sid = initialize(&app).await;
     let first = app.clone().oneshot(get(&sid)).await.unwrap();
     assert_eq!(first.status(), StatusCode::OK);
@@ -219,7 +219,7 @@ async fn a_replaced_get_stream_ends() {
 async fn deleting_a_session_ends_its_get_stream() {
     let dispatcher = dispatcher();
     let terminator = dispatcher.session_terminator();
-    let app = router(
+    let app = service(
         dispatcher,
         HttpConfig::new().with_session_terminator(Arc::new(terminator)),
     );
@@ -243,7 +243,7 @@ async fn deleting_a_session_ends_its_get_stream() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_ends_get_streams() {
     let shutdown = CancellationToken::new();
-    let app = router(
+    let app = service(
         dispatcher(),
         HttpConfig::new().with_shutdown(shutdown.clone()),
     );
@@ -263,7 +263,7 @@ async fn an_expired_session_ends_its_get_stream() {
         MethodRouter::new().with_tools(),
         turbomcp_server::ServerConfig::new().with_session_idle_timeout(Duration::from_millis(400)),
     );
-    let app = router(dispatcher, HttpConfig::new());
+    let app = service(dispatcher, HttpConfig::new());
     let sid = initialize(&app).await;
     let stream = app.clone().oneshot(get(&sid)).await.unwrap();
     assert_eq!(stream.status(), StatusCode::OK);

@@ -81,6 +81,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `neutral::Cacheable` and `turbomcp::testing::TestServer` are
   sealed.
 
+- **Breaking:** third-party types whose majors would force TurboMCP majors
+  are out of the public API.
+  - `turbomcp-auth` has its own `Algorithm`, `VerifyingKey` and (with
+    `oauth-client`) `SigningKey`, built from PEM, JWK JSON, RSA/EC/Ed
+    components or a secret; `jsonwebtoken`'s are no longer re-exported or
+    taken. `JwkSource::decoding_key` / `decoding_key_for` are
+    `verifying_key` / `verifying_key_for` and return a `VerifyingKey`;
+    `StaticJwks::new(JwkSet)` is gone (`from_json` stays);
+    `ClientAssertion::new` takes a `SigningKey`. A malformed key is the new
+    `AuthError::InvalidKey`.
+  - `turbomcp_transport_http::router` (an `axum::Router`) is `service`, an
+    `HttpService`: a `tower` service over `http` types with an `HttpBody`
+    response, which mounts in an axum app of any version with
+    `Router::fallback_service`. A `SocketAddr` request extension supplies
+    the client address for per-client limits.
+  - `WebSocketClientTransport::connect` / `connect_over` take an
+    `http::Request<()>` (handshake headers are filled in); a bare URL goes
+    through `connect_websocket`.
+  - `GovernorRateLimiter::new(Quota)` is gone; `per_second`,
+    `per_second_burst` and the new `per_period` cover it.
+  - `CancellationToken::inner()` and its `From<tokio_util::…>` are gone;
+    `run_until_cancelled` and `drop_guard` (with `DropGuard`) are new.
+  - `reqwest` stays public on purpose (it is how a client brings its own
+    proxy, roots and certificates) and is re-exported from `turbomcp-auth`,
+    `turbomcp-transport-http` and `turbomcp::client`. `HttpClientError::Build`
+    holds a boxed error.
+
 ### Removed
 
 - **Breaking:** `turbomcp_transport_http::serve_http` and `HttpError`.

@@ -798,7 +798,7 @@ async fn handle<S: McpServerCore>(
                     call,
                     tracing::Span::current(),
                 ));
-                let abandoned = cancel.inner().clone().drop_guard();
+                let abandoned = cancel.clone().drop_guard();
                 let id = id.clone();
                 Box::pin(async move {
                     // Polled once here first: the request starts as it

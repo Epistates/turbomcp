@@ -14,7 +14,7 @@ use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 #[derive(Clone)]
 struct Bare;
@@ -44,10 +44,10 @@ impl WithTools for Bare {
 }
 
 /// An endpoint that honors DELETE (terminator wired from the dispatcher).
-fn app_with_termination() -> axum::Router {
+fn app_with_termination() -> turbomcp_transport_http::HttpService {
     let dispatcher = VersionDispatcher::new(Bare, MethodRouter::new().with_tools());
     let terminator = dispatcher.session_terminator();
-    router(
+    service(
         dispatcher,
         HttpConfig::new().with_session_terminator(Arc::new(terminator)),
     )
@@ -84,7 +84,7 @@ fn initialize_body() -> Value {
     })
 }
 
-async fn init_session(app: &axum::Router) -> String {
+async fn init_session(app: &turbomcp_transport_http::HttpService) -> String {
     let resp = app
         .clone()
         .oneshot(post(initialize_body(), &[]))
@@ -132,7 +132,7 @@ async fn delete_without_session_header_is_400() {
 #[tokio::test]
 async fn delete_unsupported_without_terminator_is_405() {
     // No terminator configured → the spec-permitted refusal.
-    let app = router(
+    let app = service(
         VersionDispatcher::new(Bare, MethodRouter::new().with_tools()),
         HttpConfig::new(),
     );

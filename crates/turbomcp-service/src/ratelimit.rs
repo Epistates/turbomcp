@@ -75,8 +75,8 @@ const SHRINK_EVERY: usize = 1024;
 
 /// An in-process [GCRA](governor) rate limiter, keyed by [`RateKey`].
 ///
-/// Each key gets an independent token bucket: `quota` sets the steady-state
-/// rate and the burst allowance. Memory is bounded by opportunistic
+/// Each key gets an independent token bucket; the constructor sets the
+/// steady-state rate and the burst allowance. Memory is bounded by opportunistic
 /// [`retain_recent`](DefaultKeyedRateLimiter::retain_recent) — idle keys are
 /// reclaimed once their bucket refills.
 #[cfg(feature = "governor")]
@@ -102,10 +102,7 @@ impl core::fmt::Debug for GovernorRateLimiter {
 
 #[cfg(feature = "governor")]
 impl GovernorRateLimiter {
-    /// A limiter from an explicit [`Quota`] (full control over rate, burst, and
-    /// replenish period).
-    #[must_use]
-    pub fn new(quota: Quota) -> Self {
+    fn from_quota(quota: Quota) -> Self {
         Self {
             inner: DefaultKeyedRateLimiter::keyed(quota),
             clock: DefaultClock::default(),
@@ -117,14 +114,22 @@ impl GovernorRateLimiter {
     /// allowance equal to `rate` (the `governor` default for `per_second`).
     #[must_use]
     pub fn per_second(rate: NonZeroU32) -> Self {
-        Self::new(Quota::per_second(rate))
+        Self::from_quota(Quota::per_second(rate))
     }
 
     /// A limiter allowing `rate` requests per second per key with a distinct
     /// `burst` ceiling (the maximum a key may spend in one instant).
     #[must_use]
     pub fn per_second_burst(rate: NonZeroU32, burst: NonZeroU32) -> Self {
-        Self::new(Quota::per_second(rate).allow_burst(burst))
+        Self::from_quota(Quota::per_second(rate).allow_burst(burst))
+    }
+
+    /// A limiter that gives each key one request back every `period`, up to
+    /// `burst` at once: rates slower than one a second (`period` of a
+    /// minute is one a minute). `None` for a zero `period`.
+    #[must_use]
+    pub fn per_period(period: Duration, burst: NonZeroU32) -> Option<Self> {
+        Quota::with_period(period).map(|quota| Self::from_quota(quota.allow_burst(burst)))
     }
 }
 

@@ -21,7 +21,7 @@ use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
 use turbomcp_service::{SessionTerminator, TerminateFuture};
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 const SECRET: &[u8] = b"test-hmac-secret-key-thirty-two!";
 const KID: &str = "test-1";
@@ -76,17 +76,18 @@ impl WithTools for Whoami {
     }
 }
 
-fn app() -> axum::Router {
+fn app() -> turbomcp_transport_http::HttpService {
     let k = URL_SAFE_NO_PAD.encode(SECRET);
     let jwks = StaticJwks::from_json(
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let metadata = ResourceMetadata::new(RESOURCE, [ISSUER]);
     let rs = ResourceServer::new(validator, metadata, METADATA_URL);
     let dispatcher = VersionDispatcher::new(Whoami, MethodRouter::new().with_tools());
-    router(
+    service(
         dispatcher,
         HttpConfig::new().with_authenticator(Arc::new(rs)),
     )
@@ -143,7 +144,7 @@ fn call_tool_request(tool: &str, auth: Option<&str>) -> Request<Body> {
     req.body(Body::from(body.to_string())).unwrap()
 }
 
-async fn body_json(resp: axum::response::Response) -> Value {
+async fn body_json(resp: axum::http::Response<turbomcp_transport_http::HttpBody>) -> Value {
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
 }
@@ -208,14 +209,15 @@ async fn delete_requires_auth_before_terminating() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let rs = ResourceServer::new(
         validator,
         ResourceMetadata::new(RESOURCE, [ISSUER]),
         METADATA_URL,
     );
     let dispatcher = VersionDispatcher::new(Whoami, MethodRouter::new().with_tools());
-    let app = router(
+    let app = service(
         dispatcher,
         HttpConfig::new()
             .with_authenticator(Arc::new(rs))
@@ -258,7 +260,8 @@ async fn insufficient_scope_is_403_over_the_wire() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let rs = ResourceServer::new(
         validator,
         ResourceMetadata::new(RESOURCE, [ISSUER]).scopes_supported(["mcp:use"]),
@@ -266,7 +269,7 @@ async fn insufficient_scope_is_403_over_the_wire() {
     )
     .required_scopes(["mcp:use"]);
     let dispatcher = VersionDispatcher::new(Whoami, MethodRouter::new().with_tools());
-    let app = router(
+    let app = service(
         dispatcher,
         HttpConfig::new().with_authenticator(Arc::new(rs)),
     );
@@ -435,7 +438,8 @@ async fn a_get_stream_ends_when_its_token_expires() {
         &json!({ "keys": [ { "kty": "oct", "k": k, "alg": "HS256", "kid": KID } ]}).to_string(),
     )
     .unwrap();
-    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![Algorithm::HS256]);
+    let validator =
+        JwtValidator::new(jwks, RESOURCE, ISSUER).algorithms(vec![turbomcp_auth::Algorithm::HS256]);
     let rs = ResourceServer::new(
         validator,
         ResourceMetadata::new(RESOURCE, [ISSUER]),
@@ -443,7 +447,7 @@ async fn a_get_stream_ends_when_its_token_expires() {
     );
     let dispatcher = VersionDispatcher::new(Whoami, MethodRouter::new().with_tools());
     let terminator = dispatcher.session_terminator();
-    let app = router(
+    let app = service(
         dispatcher,
         HttpConfig::new()
             .with_authenticator(Arc::new(rs))

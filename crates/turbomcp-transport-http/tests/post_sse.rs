@@ -23,7 +23,7 @@ use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
 use turbomcp_service::{Peer, ProtocolError};
-use turbomcp_transport_http::{HttpConfig, router};
+use turbomcp_transport_http::{HttpConfig, service};
 
 fn call_request(id: i64) -> Request<Body> {
     let body = json!({
@@ -84,7 +84,7 @@ impl WithTools for Quiet {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quiet_request_answers_plain_json() {
-    let app = router(
+    let app = service(
         VersionDispatcher::new(Quiet, MethodRouter::new().with_tools()),
         HttpConfig::new(),
     );
@@ -163,7 +163,7 @@ fn call_with_token(id: i64) -> Request<Body> {
 }
 
 /// Collect every `data:` event until the stream ends.
-async fn all_sse_events(body: Body) -> Vec<Value> {
+async fn all_sse_events(body: turbomcp_transport_http::HttpBody) -> Vec<Value> {
     let bytes = tokio::time::timeout(Duration::from_secs(5), body.collect())
         .await
         .expect("the stream should terminate")
@@ -178,7 +178,7 @@ async fn all_sse_events(body: Body) -> Vec<Value> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn progress_notifications_ride_the_posts_own_stream() {
-    let app = router(
+    let app = service(
         VersionDispatcher::new(Slow, MethodRouter::new().with_tools()),
         HttpConfig::new(),
     );
@@ -252,7 +252,7 @@ fn call_at(id: i64, session: &str, version: &str) -> Request<Body> {
 
 /// The streamed body of a progress-reporting call at `version`, on `config`.
 async fn streamed_call(config: HttpConfig, version: &str) -> String {
-    let app = router(
+    let app = service(
         VersionDispatcher::new(Slow, MethodRouter::new().with_tools()),
         config,
     );
@@ -302,7 +302,7 @@ async fn session_streams_are_resumable_and_primed_on_2025_11_25() {
 /// had recovered from.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_streams_advertise_no_resumability_they_cannot_honour() {
-    let app = router(
+    let app = service(
         VersionDispatcher::new(Slow, MethodRouter::new().with_tools()),
         HttpConfig::new().without_event_store(),
     );
@@ -357,7 +357,7 @@ async fn legacy_streams_advertise_no_resumability_they_cannot_honour() {
 /// no event IDs at all.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn draft_streams_are_not_primed() {
-    let app = router(
+    let app = service(
         VersionDispatcher::new(Slow, MethodRouter::new().with_tools()),
         HttpConfig::new(),
     );
@@ -429,7 +429,7 @@ impl tower::Service<McpRequest> for Parked {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropping_the_upgraded_stream_drops_the_call() {
     let dropped = Arc::new(AtomicBool::new(false));
-    let app = router(
+    let app = service(
         Parked {
             dropped: dropped.clone(),
         },
@@ -510,7 +510,7 @@ impl WithTools for Sleepy {
 /// it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_long_quiet_tool_outlives_the_request_deadline() {
-    let app = router(
+    let app = service(
         VersionDispatcher::new(Sleepy(400), MethodRouter::new().with_tools()),
         HttpConfig::new()
             .request_timeout(Duration::from_millis(200))
@@ -535,7 +535,7 @@ async fn a_long_quiet_tool_outlives_the_request_deadline() {
 /// JSON-RPC error body it can parse, not an empty `504`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_passed_request_deadline_answers_a_json_rpc_error() {
-    let app = router(
+    let app = service(
         VersionDispatcher::new(Sleepy(400), MethodRouter::new().with_tools()),
         HttpConfig::new()
             .request_timeout(Duration::from_millis(50))
@@ -594,10 +594,10 @@ impl WithTools for Recorded {
     }
 }
 
-fn recorded_app(server: Recorded) -> axum::Router {
+fn recorded_app(server: Recorded) -> turbomcp_transport_http::HttpService {
     let dispatcher = VersionDispatcher::new(server, MethodRouter::new().with_tools());
     let terminator = dispatcher.session_terminator();
-    router(
+    service(
         dispatcher,
         HttpConfig::new()
             .sse_upgrade_after(Duration::from_millis(20))
@@ -605,7 +605,7 @@ fn recorded_app(server: Recorded) -> axum::Router {
     )
 }
 
-async fn open_session(app: &axum::Router) -> String {
+async fn open_session(app: &turbomcp_transport_http::HttpService) -> String {
     let resp = app.clone().oneshot(legacy_initialize()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     resp.headers()["mcp-session-id"]

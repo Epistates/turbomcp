@@ -288,7 +288,7 @@ impl HttpConfig {
     /// never send a request can't exhaust file descriptors and memory: the
     /// request limits only see a connection once it has sent one. Applies to
     /// the listener [`Http`](crate::Http) runs, not to a
-    /// [`router`](crate::router) you serve yourself.
+    /// [`service`](crate::service) you serve yourself.
     #[must_use]
     pub fn max_connections(mut self, limit: usize) -> Self {
         self.max_connections = limit.max(1);

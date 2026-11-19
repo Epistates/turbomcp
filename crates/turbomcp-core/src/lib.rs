@@ -41,6 +41,8 @@ mod protocol_version;
 pub mod scopes;
 
 pub use cancellation::CancellationToken;
+#[cfg(feature = "std")]
+pub use cancellation::DropGuard;
 pub use context::{Extensions, Implementation, LogLevel, RequestContext, TraceContext};
 pub use envelope::{ConnectionClosed, ConnectionId, McpRequest, ObservedHeaders, SessionId};
 pub use error::{McpError, McpResult, codes};

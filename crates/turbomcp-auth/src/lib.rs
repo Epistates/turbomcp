@@ -53,6 +53,14 @@ pub mod network;
 pub use introspection::{ClientAuth, IntrospectionValidator};
 #[cfg(feature = "network")]
 pub use network::NetworkPolicy;
+
+/// The HTTP client this crate's network calls go through, re-exported so a
+/// client you build for [`NetworkPolicy`] (your own roots, proxy or client
+/// certificate) is the same `reqwest` this crate takes. It is a public
+/// dependency: a `reqwest` major is a TurboMCP major.
+#[cfg(feature = "network")]
+#[cfg_attr(docsrs, doc(cfg(feature = "network")))]
+pub use reqwest;
 /// The wrapper secrets travel in (tokens, client secrets, the PKCE verifier):
 /// wiped from memory when dropped.
 pub use zeroize::Zeroizing;
@@ -61,6 +69,8 @@ mod error;
 mod jwks;
 #[cfg(feature = "jwt")]
 mod jwt;
+#[cfg(feature = "jwt")]
+mod keys;
 mod metadata;
 mod resource_server;
 mod validator;
@@ -72,6 +82,12 @@ pub use jwks::{JwkSource, StaticJwks};
 #[cfg(feature = "jwt")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jwt")))]
 pub use jwt::{IssuerValidators, JwtValidator};
+#[cfg(all(feature = "jwt", feature = "oauth-client"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "jwt", feature = "oauth-client"))))]
+pub use keys::SigningKey;
+#[cfg(feature = "jwt")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwt")))]
+pub use keys::{Algorithm, VerifyingKey};
 pub use metadata::ResourceMetadata;
 pub use resource_server::ResourceServer;
 pub use validator::{AuthPrincipal, BearerValidator};
@@ -79,8 +95,3 @@ pub use validator::{AuthPrincipal, BearerValidator};
 #[cfg(feature = "http-jwks")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http-jwks")))]
 pub use jwks::HttpJwks;
-
-/// Re-exported from `jsonwebtoken` for configuring [`JwtValidator`].
-#[cfg(feature = "jwt")]
-#[cfg_attr(docsrs, doc(cfg(feature = "jwt")))]
-pub use jsonwebtoken::Algorithm;
