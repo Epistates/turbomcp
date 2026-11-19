@@ -1,24 +1,18 @@
 # v4 documentation
 
-The active candidate is 4.0.0-alpha.6. The codebase provides the library/server
-and typed client, three protocol revisions, stdio/HTTP transports, WebSocket as
-a convenience transport, OAuth, telemetry, and Tasks. There is no v4 standalone
-MCP proxy, CLI, OpenAPI adapter, or implemented Apps extension. Trusted HTTP
-reverse-proxy configuration is supported and is a separate feature.
+The current release is 4.0.0-beta.1, the API we intend to ship as 4.0.0. It
+provides the server and typed client, three protocol revisions, stdio and
+Streamable HTTP (with WebSocket as a route on the same endpoint), OAuth on both
+sides, telemetry, Tasks, Server Cards, and the gateway (`turbomcp-proxy`, and
+the `turbomcp` command) that serves remote MCP servers beside local tools.
+There is no OpenAPI adapter, and the Apps extension is not implemented.
 
 - [Quickstart and package map](../README.md)
-- [Deployment, limits, auth, and alpha migration](DEPLOYMENT.md)
+- [Deployment, limits, auth, and prerelease migration](DEPLOYMENT.md)
 - [v3 migration](../crates/turbomcp/MIGRATION.md)
 - [Contributor commands](../CONTRIBUTING.md)
 - [Versioning and public API policy](../VERSIONING.md)
 - [Security reporting](../SECURITY.md)
-- [Docs/test audit and measured optimization](DOCS-TESTS-AUDIT.md)
 - [Critical test coverage and limits](TESTING.md)
 - [Actual benchmark targets and methodology](../benches/README.md)
 - [Release checklist](../scripts/RELEASE_CHECKLIST.md)
-- [Alpha.4 verification snapshot](ALPHA4-RELEASE.md)
-- [Audit remediation evidence](V4-AUDIT-REMEDIATION.md)
-
-Files in audits/ and bugs/ are historical records. Their findings, test counts,
-package names, and completion claims must not be read as current guarantees.
-Release verification documents are dated snapshots, not live test counts.

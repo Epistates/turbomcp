@@ -4,53 +4,51 @@ Where TurboMCP is going, and what it is deliberately not doing. No dates —
 this is maintained around a day job, and a date I can't keep is worse than none.
 Order within a section is roughly the order things will be picked up.
 
-Release candidate: **`4.0.0-alpha.6`**. The stable line is `3.x`.
+Current release: **`4.0.0-beta.1`**, the API we intend to ship as `4.0.0`
+(see [VERSIONING.md](VERSIONING.md)). The stable line is `3.x`.
 
 ## Shipped
 
-The v4 alpha currently provides:
+The v4 beta provides:
 
 - **Three protocol revisions from one handler** — `2025-06-18`, `2025-11-25`,
   `2026-07-28` — each generated from its frozen upstream schema, with
   conversions that destructure exhaustively so a field added to one revision is
   a compile error until someone decides what the others do with it.
 - **Both halves.** A macro-driven server and a typed client, verified against
-  the official Rust SDK (`rmcp`) in both directions.
-- **Transports:** stdio, Streamable HTTP, WebSocket.
+  the official Rust, TypeScript, Python and Go SDKs.
+- **Transports:** stdio, Streamable HTTP, and WebSocket as a route on the HTTP
+  endpoint. The HTTP endpoint is a `tower` service that mounts in any axum app.
 - **Composition and visibility.** `Composite` mounts servers under a prefix or
   flat; `with_visibility` decides per caller which components exist at all.
+- **A gateway.** `turbomcp-proxy` serves remote MCP servers (stdio, HTTP,
+  WebSocket) beside local tools behind one endpoint, with OAuth on both sides,
+  and the `turbomcp` command runs it from an mcpServers file.
 - **`tower` middleware** at the frame seam — the dispatcher *is* a
   `tower::Service`.
 - **Production seams:** OAuth 2.1 on both halves, identity-keyed rate limiting,
-  OpenTelemetry traces and metrics, response caching, bidirectional elicitation.
+  OpenTelemetry traces and metrics, response caching, bidirectional elicitation,
+  Tasks, and Server Cards.
 - **Conformance in CI, both directions** — the official suite scores the server
   *and* the client on every push.
 
 ## Next
 
-**Audit remediation and stable API review.** Track implementation and verification
-in [the remediation record](docs/V4-AUDIT-REMEDIATION.md). Client authentication
-conformance now uses the public OAuth coordinator; both failure baselines are
-empty, and distinct successful checks are pinned in inventories.
+**`4.0.0` stable.** The API is frozen as of beta.1. What remains is evidence:
+reproducible HTTP and stdio performance numbers, soak and cancellation-storm
+runs, longer fuzz campaigns, and real deployments. Breaking changes from here
+are for defects only, and the CHANGELOG calls each one out.
 
-**`4.0.0` stable.** Requires the security and lifecycle regressions to stay green,
-reproducible performance measurements, public API review, and deployment
-feedback. Passing conformance alone is insufficient release evidence.
+**The next MCP revision.** The specification moves to a release every six
+months, and the next one is due in late March 2027. Support for it lands as a
+`4.x` minor release, alongside the three revisions served today.
 
 **Deployment documentation.** See [deployment and migration](docs/DEPLOYMENT.md).
 
 ## Planned
 
-**A proxy and CLI.** Aggregating N upstream MCP servers behind one endpoint,
-with per-caller filtering — built on `Composite` at the capability level rather
-than piping frames. No v4 proxy or CLI package is currently shipped. Remote authentication,
-notification routing, cancellation, pagination, and upstream lifecycle need
-explicit contracts before support can be claimed.
-
-**The Apps extension** (SEP-1865), currently a skeleton crate.
-
-**Fewer crates.** There are 12 workspace members and two excluded verification crates (the codec now lives in `turbomcp-core`, the stdio transport in `turbomcp-service`, both halves of Streamable HTTP and the WebSocket route in `turbomcp-transport-http`, and the Apps skeleton is out until it is implemented). Package boundaries must be settled before stable. Removing or moving a public
-subcrate API is a breaking change even if the facade stays unchanged.
+**The Apps extension** (SEP-1865), now Stable upstream. It isn't implemented
+yet and will land in a `4.x` minor.
 
 ## Not planned
 

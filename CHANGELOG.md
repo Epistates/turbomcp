@@ -7,7 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The beta. This release freezes the public API: from here to 4.0.0, a
+breaking change is made only to fix a defect, and the CHANGELOG calls it out
+([VERSIONING.md](VERSIONING.md) has the policy). To get there, it makes the
+last round of breaking changes in bulk, each one so that the API can grow in
+4.x minors without another break: types that will grow are non-exhaustive,
+one concept has one type, third-party types whose majors would force ours are
+out of the signatures, and every setter is named the same way. Nothing in the
+protocol behavior changes, apart from the three items marked as behavior
+changes below.
+
+### Upgrading from 4.0.0-alpha.6
+
+`crates/turbomcp/MIGRATION.md` has a short guide; the compiler points at
+almost everything.
+
+- **Setters** are `with_*` on every builder (`HttpConfig`, `CallOptions`,
+  `RemoteServerBuilder`, the auth validators, …).
+- **HTTP** mounts with `turbomcp::http::service` (a `tower` service);
+  `router`, `serve_http` and `HttpError` are gone.
+- **Non-exhaustive** enum variants and spec structs are built with
+  constructors (`Identity::bearer`, `AuthDecision::challenge`,
+  `AuthPrincipal::new`, …) and matched with `..`.
+- **Client handlers** have one method each, taking the `HandlerContext`.
+- **Auth** has its own `Algorithm`, `VerifyingKey` and `SigningKey`.
+- **Sessions** are keyed by `SessionId`; `SessionBackend::update` replaces
+  `set_log_level`.
+- **`on_cancelled`** takes a `CancelledContext`; `ConnectMode` is
+  `Auto` / `Stateless` / `Stateful`.
+- **The generated wire modules** are hidden and outside semver; the crates
+  require each other exactly.
+- **Behavior changes:** `Implementation`'s `description`, `website_url` and
+  `icons` are typed fields, no longer in `extra`; the `turbomcp` command reads
+  its gateway settings from a `"turbomcp"` object on each entry; and it exits
+  `70` for a failure it doesn't classify.
+
 ### Changed
+
+- **Breaking:** the compatibility policy for the beta and 4.x, in
+  `VERSIONING.md`: the API is frozen from beta.1 except for defects; the
+  generated wire modules and hidden items are outside it; the Tasks
+  extension, Server Cards and `turbomcp-telemetry`'s OpenTelemetry surface
+  may break in a 4.x minor, since they track Beta extensions and
+  `opentelemetry` 0.x; and the third-party types that remain public are
+  listed.
 
 - **Breaking:** the generated wire modules (`turbomcp_protocol::v2025_06_18`,
   `v2025_11_25` and `v2026_07_28`) are hidden from the docs and are not
@@ -168,6 +211,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schema has since moved on from `2026-07-28`, so the old name now points
   at the wrong revision. Use `ProtocolVersion::V2026_07_28` and
   `turbomcp_protocol::v2026_07_28`.
+
+### Internal
+
+- Every dependency at its latest release that builds on Rust 1.88, and the
+  CI actions at their latest, pinned by commit; bun 1.4.5 for the TypeScript
+  interop peers. `typify` stays on 0.8 for `turbomcp-codegen`: 0.10 needs
+  Rust 1.97 and would regenerate the wire types.
+- The facade and CLI tests find their target directory by
+  `.rustc_info.json` as well as `CACHEDIR.TAG`, which cargo writes only into
+  a target directory it created.
+- The audit and release-verification records under `docs/` leave the
+  repository; `docs/README.md`, the bench README and the release checklist
+  stop pointing at them.
 
 ## [4.0.0-alpha.6] - 2026-11-18
 

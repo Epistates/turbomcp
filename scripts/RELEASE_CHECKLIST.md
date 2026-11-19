@@ -19,5 +19,4 @@
 `DRY_RUN=false` delegates to the same guarded publication recipe. It does not
 skip verification, maintain a second package list, or ignore failed publishes.
 
-See [alpha.4 handoff](../docs/ALPHA4-RELEASE.md) for the candidate's evidence and
-[versioning policy](../VERSIONING.md) for compatibility rules.
+See the [versioning policy](../VERSIONING.md) for compatibility rules.

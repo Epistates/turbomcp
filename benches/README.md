@@ -18,13 +18,13 @@ Run measurements sequentially on an idle machine, using the same toolchain,
 protocol, transport, inputs, features, concurrency, and limits. Record CPU,
 memory, OS, exact revision/diff, lockfile, command, raw Criterion output, and
 confidence intervals. Use at least the default Criterion warmup/sample settings
-for a baseline. See the [metadata-cache measurements](../docs/DOCS-TESTS-AUDIT.md)
-for a measured optimization and a matched-argument comparison. Do not compare results across different machines or error paths.
+for a baseline. Do not compare results across different machines or error
+paths.
 
 There is no automated 5% performance gate, hardware normalization, allocation
 threshold, or throughput certification. Criterion results live in the relevant
-target/criterion directory. Short audit measurements did not establish a speed
-advantage over rmcp; see [audit evidence](../docs/V4-AUDIT-REMEDIATION.md).
+target/criterion directory. Short measurements so far have not established a
+speed advantage over rmcp, and none is claimed.
 
 Performance work must retain input/output validation, authorization, cancellation,
 and protocol behavior. Before claiming leadership, measure HTTP as well as stdio,

@@ -445,3 +445,39 @@ covered by the v4 crates in the table at the top of the [README](README.md).
 See the [alpha migration and deployment guide](../../docs/DEPLOYMENT.md) for
 authoritative lookup, runtime schema enforcement, session/task ownership,
 subscription context, OAuth orchestration, and HTTP resource limits.
+
+## alpha.6 to beta.1
+
+beta.1 freezes the API, so this is the last prerelease with breaking changes
+in bulk. The `4.0.0-beta.1` section of the CHANGELOG lists each one; most are
+renames the compiler points at.
+
+- **Setters are `with_*`.** `HttpConfig::new().max_body_bytes(n)` is
+  `.with_max_body_bytes(n)`, and the same holds on every builder. Two names
+  changed beyond the prefix: `HttpConfig`'s `max_concurrent_requests` and
+  `shutdown_timeout` are `with_max_in_flight` and `with_drain_timeout`.
+- **Mounting HTTP.** `turbomcp::http::router(server, config)` is
+  `service(server, config)`, a `tower` service; in axum, mount it with
+  `Router::fallback_service`. `serve_http(addr, server, config)` is
+  `server.serve(Http::bind(addr).with_config(config))`.
+- **Building enum variants and spec types.** Variants and structs that may
+  grow are `#[non_exhaustive]`: build them with their constructors
+  (`Identity::bearer(sub, claims)`, `AuthDecision::challenge(401, header)`,
+  `AuthPrincipal::new(sub, claims)`, `Icon::new(src).with_theme(…)`), and
+  match them with `..`.
+- **Client handlers** have one method each, taking a `&HandlerContext`:
+  `async fn elicit(&self, ctx: &HandlerContext, request: ElicitParams) ->
+  ClientResult<ElicitOutcome>`. Wrap a former `elicit` body in `Ok(…)`.
+- **Auth keys.** `turbomcp::auth::{Algorithm, VerifyingKey, SigningKey}`
+  replace `jsonwebtoken`'s types, and `JwkSource::decoding_key` is
+  `verifying_key`.
+- **Sessions.** `SessionBackend` and `TaskBackend::end_session` take a
+  `&SessionId`, and `set_log_level` is `update(id, &|state| …)`.
+- **Hooks.** `#[on_cancelled]` takes `ctx: &CancelledContext` first.
+- **Client modes.** `ConnectMode::Modern` / `Legacy` are `Stateless` /
+  `Stateful`.
+- **`Implementation`.** `description`, `website_url` and `icons` are fields
+  now, no longer entries in `extra`.
+- **The `turbomcp` command.** Move an entry's gateway settings into a
+  `"turbomcp": { … }` object, use `--mode stateless|stateful`, and
+  `call --args-json` for a JSON object of arguments.
