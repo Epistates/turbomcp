@@ -386,8 +386,9 @@ test:
   echo "Step 6/9: Verifying wasm portability (no_std foundation, default + no-default)..."
   cargo build -p turbomcp-core -p turbomcp-protocol --target wasm32-unknown-unknown
   cargo build -p turbomcp-core -p turbomcp-protocol --no-default-features --target wasm32-unknown-unknown
-  echo "Step 7/9: Building docs the way docs.rs does (nightly, --cfg docsrs)..."
+  echo "Step 7/9: Building docs the way docs.rs does (nightly, --cfg docsrs), and checking Markdown links..."
   just docs-rs
+  just docs-links
   echo "Step 8/9: Checking generated artifacts still match their sources..."
   just lock-check
   just codes-check
