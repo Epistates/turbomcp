@@ -29,7 +29,9 @@ members = [
     "crates/turbomcp-transport-streamable", # v3.0: Streamable HTTP transport types
     "demo",
 ]
-resolver = "2"
+# "3" is "2" plus preferring dependency versions that build on the
+# workspace rust-version (1.89), so `cargo update` keeps the MSRV job green.
+resolver = "3"
 
 [workspace.lints.rust]
 # Declare expected cfgs from feature-gated code in the #[server] macro
