@@ -41,16 +41,6 @@ pub enum ProtocolVersion {
 }
 
 impl ProtocolVersion {
-    /// The in-development draft channel, before `2026-07-28` froze.
-    ///
-    /// Kept as an alias so code written against the pre-freeze API still
-    /// compiles and dispatches identically. A future draft will get a new
-    /// channel constant rather than reusing this one, which is pinned to a
-    /// now-published revision.
-    #[deprecated(since = "4.0.0-alpha.2", note = "the draft froze: use V2026_07_28")]
-    #[allow(non_upper_case_globals, reason = "preserves the old variant spelling")]
-    pub const Draft: Self = Self::V2026_07_28;
-
     /// The latest version this build targets.
     pub const LATEST: Self = Self::V2026_07_28;
 
@@ -198,15 +188,6 @@ mod tests {
             serde_json::to_string(&ProtocolVersion::V2026_07_28).unwrap(),
             "\"2026-07-28\""
         );
-    }
-
-    /// The pre-freeze spelling still resolves, and to the same revision — code
-    /// written against `Draft` keeps compiling and dispatching identically.
-    #[test]
-    #[allow(deprecated, reason = "asserting the deprecated alias still works")]
-    fn draft_alias_still_names_the_frozen_revision() {
-        assert_eq!(ProtocolVersion::Draft, ProtocolVersion::V2026_07_28);
-        assert_eq!(ProtocolVersion::Draft.as_str(), "2026-07-28");
     }
 
     #[test]

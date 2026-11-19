@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the generated wire modules (`turbomcp_protocol::v2025_06_18`,
+  `v2025_11_25` and `v2026_07_28`) are hidden from the docs and are not
+  covered by semver. They hold several hundred typify-named types that track
+  the upstream schema, so a schema erratum or a codegen fix can change them
+  in any release. The `neutral` types are the contract; convert through
+  their `From` impls.
+
+### Removed
+
+- **Breaking:** the deprecated `ProtocolVersion::Draft` and
+  `turbomcp_protocol::draft` aliases for `2026-07-28`. Upstream's `draft`
+  schema has since moved on from `2026-07-28`, so the old name now points
+  at the wrong revision. Use `ProtocolVersion::V2026_07_28` and
+  `turbomcp_protocol::v2026_07_28`.
+
 ## [4.0.0-alpha.6] - 2026-11-18
 
 The largest alpha so far: two months and 165 commits since alpha.5. It adds

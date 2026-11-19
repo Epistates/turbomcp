@@ -1,23 +1,26 @@
 //! # turbomcp-protocol
 //!
-//! Per-spec-version typed MCP wire modules. Each version's `types` module is
-//! **@generated** by `turbomcp-codegen` from the official schema and checked
-//! in (reviewed on each spec update); behaviour (dispatch, capability
-//! negotiation) is hand-written.
+//! The cross-version [`neutral`] types that handlers speak, and the routing
+//! primitives ([`methods`], [`version`]) that pick a revision per request.
+//! `neutral` is the stable contract.
 //!
-//! - [`v2025_06_18`] — stateful model; `2025-11-25` without Tasks, `icons`
-//!   or URL elicitation. Its conversions step down from the `2025-11-25` wire.
-//! - [`v2025_11_25`] — stateful model: `initialize`, `ping`, `resources/subscribe`,
-//!   and **core Tasks** (`tasks/get|list|cancel|result`).
-//! - [`v2026_07_28`] — stateless model: `server/discover`,
-//!   `subscriptions/listen`, MRTR (`InputRequiredResult`); Tasks moves to the
-//!   `extensions` mechanism. (Named `draft` until the spec froze on
-//!   2026-07-28; [`draft`] survives as a deprecated alias.)
+//! Under it sit three per-revision wire modules, `v2025_06_18`, `v2025_11_25`
+//! and `v2026_07_28`. Each one's `types` is **@generated** by
+//! `turbomcp-codegen` from that revision's official schema. They are public
+//! because the other TurboMCP crates convert through them, but they are
+//! hidden from the docs and are not covered by semver: an upstream erratum or
+//! a codegen fix can change them in any release. Convert to and from them
+//! through the `From` impls on the `neutral` types.
 //!
-//! The cross-version [`neutral`] handler surface and the [`methods`]/[`version`]
-//! routing primitives live here; the `VersionDispatcher` that consumes them is
-//! in `turbomcp-server` (it is generic over the user's `McpServerCore`, which
-//! sits above this layer — keeping the dependency graph acyclic).
+//! - `v2025_06_18`: stateful; `2025-11-25` without Tasks, `icons` or URL
+//!   elicitation. Its conversions step down from the `2025-11-25` wire.
+//! - `v2025_11_25`: stateful: `initialize`, `ping`, `resources/subscribe`, and
+//!   core Tasks (`tasks/get|list|cancel|result`).
+//! - `v2026_07_28`: stateless: `server/discover`, `subscriptions/listen`, MRTR
+//!   (`InputRequiredResult`); Tasks moves to the `extensions` mechanism.
+//!
+//! The `VersionDispatcher` that consumes these is in `turbomcp-server`: it is
+//! generic over the user's `McpServerCore`, which sits above this layer.
 //!
 //! ## What a decode and re-encode keeps
 //!
@@ -56,16 +59,12 @@ mod lenient;
 pub mod methods;
 pub mod neutral;
 pub mod server_card;
+// The generated wire modules: public for the other TurboMCP crates, hidden
+// and outside semver (see the crate docs).
+#[doc(hidden)]
 pub mod v2025_06_18;
+#[doc(hidden)]
 pub mod v2025_11_25;
+#[doc(hidden)]
 pub mod v2026_07_28;
 pub mod version;
-
-/// The `2026-07-28` wire module under its pre-freeze name.
-///
-/// It was called `draft` while the revision was still in development. Kept as
-/// a deprecated re-export so `turbomcp_protocol::draft::types` keeps resolving;
-/// use [`v2026_07_28`] instead. A future draft will get its own `draft` module
-/// rather than reusing this alias.
-#[deprecated(since = "4.0.0-alpha.2", note = "the draft froze: use v2026_07_28")]
-pub use v2026_07_28 as draft;

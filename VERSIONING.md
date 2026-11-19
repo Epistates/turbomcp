@@ -63,8 +63,7 @@ Some things worth being explicit about:
   them, use [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk), which
   does.
 - A revision that upstream marks as draft may change shape before it freezes. We
-  only ship dated, frozen revisions on the stable channel; the pre-freeze
-  `Draft` names survive as deprecated aliases and are not a supported surface.
+  only ship dated, frozen revisions.
 
 ## Minimum supported Rust version
 
