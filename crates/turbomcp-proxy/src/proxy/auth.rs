@@ -349,7 +349,7 @@ mod tests {
 
         assert!(jwt.is_ok());
         let jwt_str = jwt.unwrap();
-        assert!(!jwt_str.is_empty());
+        assert_ne!(jwt_str, "");
         assert!(jwt_str.contains('.')); // JWT format: header.payload.signature
     }
 
@@ -361,7 +361,7 @@ mod tests {
 
         assert!(jwt.is_ok());
         let jwt_str = jwt.unwrap();
-        assert!(!jwt_str.is_empty());
+        assert_ne!(jwt_str, "");
     }
 
     #[test]

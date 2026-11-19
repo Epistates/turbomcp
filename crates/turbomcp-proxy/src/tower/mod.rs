@@ -129,7 +129,7 @@ mod tests {
         let config = ProxyLayerConfig::default();
         assert_eq!(config.timeout, Duration::from_secs(30));
         assert!(config.include_timing);
-        assert!(config.bypass_methods.is_empty());
+        assert_eq!(config.bypass_methods, Vec::<String>::new());
         assert!(config.default_metadata.is_empty());
         assert!(config.enable_logging);
     }
