@@ -3,7 +3,7 @@
 use axum::http::HeaderMap;
 use axum::response::Response;
 use turbomcp_core::{JsonRpcMessage, ProtocolVersion, RequestId, meta};
-use turbomcp_service::mcp_headers;
+use turbomcp_service::__private::mcp_headers;
 
 use super::reject::header_mismatch_rejection;
 use crate::headers;

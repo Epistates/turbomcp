@@ -22,7 +22,7 @@ use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
 use turbomcp_protocol::v2026_07_28::types as v0728;
 use turbomcp_protocol::{methods, neutral};
-use turbomcp_service::mcp_headers;
+use turbomcp_service::__private::mcp_headers;
 
 use crate::context::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext,

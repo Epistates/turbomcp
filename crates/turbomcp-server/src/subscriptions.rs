@@ -37,7 +37,8 @@ use turbomcp_core::{
 };
 use turbomcp_protocol::methods;
 use turbomcp_protocol::v2026_07_28::types as v0728;
-use turbomcp_service::{Delivery, Peer, Reserved, SessionStreams};
+use turbomcp_service::__private::SessionStreams;
+use turbomcp_service::{Delivery, Peer, Reserved};
 
 /// How long a `*_list_changed` burst is allowed to accumulate before the one
 /// coalesced notification goes out.

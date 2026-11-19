@@ -51,7 +51,8 @@ use tokio::time::Instant;
 use turbomcp_core::CancellationToken;
 use turbomcp_core::{ConnectionId, Identity, JsonRpcMessage, McpRequest};
 
-use crate::{McpService, Peer, ProtocolError, Transport, catch_handler_panic};
+use crate::panic::catch_handler_panic;
+use crate::{McpService, Peer, ProtocolError, Transport};
 
 /// Fired once a request's reply is in its connection's outbound queue.
 ///

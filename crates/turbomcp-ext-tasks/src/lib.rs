@@ -443,7 +443,7 @@ impl Extension for TasksExtension {
         // per client address instead, so one can't spend everyone's.
         let new_task = NewTask::new(self.ttl_ms)
             .with_poll_interval_ms(self.poll_interval_ms)
-            .with_quota_key(turbomcp_server::quota_key(&context));
+            .with_quota_key(turbomcp_server::__private::quota_key(&context));
         let task = match self
             .store
             .create(&owner(&context), new_task, cancel.clone())
@@ -494,11 +494,11 @@ impl Extension for TasksExtension {
                 // `2025-11-25` and for any cancelled request.
                 () = cancel.cancelled() => return,
                 // Out of time: stop the work and fail the task now.
-                () = turbomcp_server::ttl_elapsed(ttl) => {
+                () = turbomcp_server::__private::ttl_elapsed(ttl) => {
                     cancel.cancel();
                     TaskOutcome::expired(ttl.unwrap_or_default())
                 }
-                out = turbomcp_service::catch_panic(run.run()) => match out {
+                out = turbomcp_service::__private::catch_panic(run.run()) => match out {
                     Ok(Ok(result)) => TaskOutcome::Completed(result),
                     Ok(Err(err)) => TaskOutcome::Error(err),
                     Err(panic) => {

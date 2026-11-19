@@ -8,7 +8,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use turbomcp_core::codec::{Codec, DefaultCodec};
 use turbomcp_core::{ConnectionId, JsonRpcMessage, McpRequest, RequestId};
-use turbomcp_service::{CancellationToken, Peer, ProtocolError, StreamGuard};
+use turbomcp_service::__private::StreamGuard;
+use turbomcp_service::{CancellationToken, Peer, ProtocolError};
 
 use super::streams::StreamSlot;
 

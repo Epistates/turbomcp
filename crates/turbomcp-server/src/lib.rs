@@ -89,14 +89,22 @@ pub use router::{CapabilityFlags, MethodRouter};
 pub use runtime::Server;
 pub use session::{ExpiredSession, SessionBackend, SessionError, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
-pub use task_handle::{TaskHandle, TaskLink, TaskSlot};
+pub use task_handle::{TaskHandle, TaskLink};
 pub use tasks::{
     InputWaiter, NewTask, TaskBackend, TaskError, TaskOutcome, TaskOwner, TaskSnapshot, TaskStatus,
-    TaskStore, TaskUpdate, quota_key, ttl_elapsed,
+    TaskStore, TaskUpdate,
 };
 pub use traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
 pub use uri_template::{UriTemplate, UriTemplateError};
 pub use visibility::{ComponentKind, Visibility, VisibilityPolicy, VisibleComponent};
+
+/// What the TurboMCP crates share with each other and nobody else. Not public
+/// API: it can change in any release, which is safe because the crates require
+/// each other at exactly the same version.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::tasks::{quota_key, ttl_elapsed};
+}
 
 /// Support items called by `#[server]`-generated code. Not part of the stable
 /// API — do not depend on it directly.

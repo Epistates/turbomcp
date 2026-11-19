@@ -15,8 +15,8 @@ use turbomcp_core::{
 use turbomcp_protocol::methods;
 use turbomcp_protocol::neutral::{self, TaskSupport};
 use turbomcp_protocol::v2025_11_25::types as legacy;
+use turbomcp_service::__private::catch_panic;
 use turbomcp_service::Peer;
-use turbomcp_service::catch_panic;
 
 use crate::context::CallToolContext;
 use crate::mrtr::ClientHandle;
@@ -121,7 +121,7 @@ pub(super) async fn task_augmented_call<S: McpServerCore>(
     let task_owner = owner(&sid, &ctx.extensions);
     let reply_queued = ctx
         .extensions
-        .get::<turbomcp_service::ReplyQueued>()
+        .get::<turbomcp_service::__private::ReplyQueued>()
         .cloned();
     let quota = crate::tasks::quota_key(&ctx);
     // The call outlives its request: what it sends on the call's behalf may

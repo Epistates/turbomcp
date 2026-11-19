@@ -31,7 +31,8 @@ use turbomcp_protocol::methods::{notification, request};
 use turbomcp_protocol::neutral;
 use turbomcp_protocol::v2025_11_25::types as legacy;
 use turbomcp_protocol::v2026_07_28::types as v0728;
-use turbomcp_service::{ParamHeaders, Transport, WireVersion, mcp_headers};
+use turbomcp_service::__private::mcp_headers;
+use turbomcp_service::{ParamHeaders, Transport, WireVersion};
 
 use crate::cache::ResponseCache;
 use crate::connection::{Connection, Wait};

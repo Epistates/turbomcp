@@ -2,7 +2,7 @@
 //!
 //! How header *values* mirror body fields (the `Mcp-Param-*` value codec, the
 //! argument rendering rules) is in
-//! [`turbomcp_service::mcp_headers`], because the typed client and the
+//! `turbomcp_service`'s `mcp_headers`, because the typed client and the
 //! dispatcher use it without knowing about HTTP.
 
 use http::HeaderName;

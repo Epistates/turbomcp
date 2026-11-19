@@ -3,6 +3,9 @@
 //! The framework consumes a fixed set of keys; everything else is preserved in
 //! [`crate::RequestContext::propagated_meta`] and echoed back on responses.
 //! Extensions add keys under their reverse-DNS namespace.
+//!
+//! [`keys`] is public API. The helper functions are shared by the TurboMCP
+//! crates and hidden: they can change in any release.
 
 use crate::{JsonRpcMessage, ProtocolVersion, TraceContext};
 use alloc::string::{String, ToString};
@@ -67,6 +70,7 @@ pub mod keys {
     pub const SCOPES: &str = "io.turbomcp/scopes";
 }
 
+#[doc(hidden)]
 /// The first required `_meta` field a `2026-07-28` request is missing, or
 /// `None` if the envelope is complete.
 ///
@@ -110,7 +114,7 @@ pub fn missing_request_envelope_field(params: Option<&Value>) -> Option<&'static
 /// Whether a `_meta` key is consumed by the framework (and therefore should not
 /// be blindly propagated to responses without the framework's involvement).
 #[must_use]
-pub fn is_framework_key(key: &str) -> bool {
+pub(crate) fn is_framework_key(key: &str) -> bool {
     matches!(
         key,
         keys::PROTOCOL_VERSION
@@ -125,6 +129,7 @@ pub fn is_framework_key(key: &str) -> bool {
     )
 }
 
+#[doc(hidden)]
 /// Whether `key` is a `_meta` key with a prefix, by the spec's naming rules:
 /// a prefix of dot-separated labels (each starting with a letter, ending with
 /// a letter or digit, hyphens inside) and a slash, then a non-empty name that
@@ -160,12 +165,13 @@ pub fn is_prefixed_key(key: &str) -> bool {
 /// Returns `None` if the key is absent or not a string. Unrecognized version
 /// strings parse to [`ProtocolVersion::Unknown`] rather than `None`.
 #[must_use]
-pub fn extract_protocol_version(meta: &Map<String, Value>) -> Option<ProtocolVersion> {
+pub(crate) fn extract_protocol_version(meta: &Map<String, Value>) -> Option<ProtocolVersion> {
     meta.get(keys::PROTOCOL_VERSION)
         .and_then(Value::as_str)
         .map(ProtocolVersion::from_wire)
 }
 
+#[doc(hidden)]
 /// Partition a `_meta` map into (framework-consumed, propagated) halves.
 ///
 /// The propagated half is what the framework preserves on the request context
@@ -184,6 +190,7 @@ pub fn partition(meta: Map<String, Value>) -> (Map<String, Value>, Map<String, V
     (consumed, propagated)
 }
 
+#[doc(hidden)]
 /// Insert `key: value` into a request's or notification's `params._meta`,
 /// creating `params` and `_meta` as needed. Responses are left untouched, as
 /// are (already-invalid) non-object `params`.
@@ -209,6 +216,7 @@ pub fn set_request_meta(msg: &mut JsonRpcMessage, key: &str, value: Value) {
     }
 }
 
+#[doc(hidden)]
 /// Extract the W3C Trace Context (`traceparent`/`tracestate`/`baggage`) from a
 /// `_meta` map, if a `traceparent` is present (SEP-414 propagation over `_meta`).
 ///

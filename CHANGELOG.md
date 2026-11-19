@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** the turbomcp crates require each other at exactly the same
   version (`=`), as serde does serde_derive. Mixing versions across the
   family was already unsupported; now cargo enforces it.
+- **Breaking:** what the crates share only with each other moves out of the
+  public API, into hidden `__private` modules or hidden items:
+  - `turbomcp-service`: `catch_panic`, `catch_handler_panic`,
+    `close_then_shut_down`, `client_ip`, `client_key`, `SessionStreams`,
+    `StreamGuard`, `ReplyQueued` and the `mcp_headers` module.
+    `NetworkFacts::client_key` stays.
+  - `turbomcp-core`: the `meta` helper functions. `meta::keys` stays.
+  - `turbomcp-protocol`: `version::request_protocol_version`.
+  - `turbomcp-server`: `quota_key`, `ttl_elapsed` and `TaskSlot`.
+  - `turbomcp`: the `SessionStreams` re-export.
 
 ### Removed
 

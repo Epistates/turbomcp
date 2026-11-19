@@ -82,7 +82,10 @@ impl NetworkFacts {
         self.with_peer(addr.ip().to_string(), Some(addr.port()))
     }
 
-    /// What a per-client limit counts this peer against: see [`client_key`].
+    /// What a per-client limit counts this peer against: an IPv4 address as
+    /// itself, an IPv4-mapped IPv6 one as the IPv4 client it is, and any other
+    /// IPv6 address by its `/64`, the block one subscriber is typically handed.
+    /// Anything that isn't an IP address is its own key.
     #[must_use]
     pub fn client_key(&self) -> Option<String> {
         self.peer_address.as_deref().map(client_key)

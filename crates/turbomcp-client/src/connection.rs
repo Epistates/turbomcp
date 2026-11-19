@@ -991,7 +991,7 @@ async fn deliver_notifications(
         // A handler that panics loses that one notification, not every one
         // after it: the task used to end, and later notifications were
         // dropped without a word.
-        let delivered = turbomcp_service::catch_panic(async {
+        let delivered = turbomcp_service::__private::catch_panic(async {
             // `elicitation/complete` reaches the elicitation handler's
             // dedicated hook; everything reaches the notification observer.
             if let (Some(h), Some(id)) = (&handler.elicitation, completed_elicitation) {
@@ -1284,12 +1284,9 @@ fn route_inbound(
                         // server sat out its own 120s timeout with no way to tell a
                         // buggy client from a slow human. Every request gets an
                         // answer, even a `-32603` one.
-                        let outcome = turbomcp_service::catch_panic(dispatch_server_request(
-                            &handlers,
-                            &ctx,
-                            &req.method,
-                            req.params,
-                        ))
+                        let outcome = turbomcp_service::__private::catch_panic(
+                            dispatch_server_request(&handlers, &ctx, &req.method, req.params),
+                        )
                         .await
                         .unwrap_or_else(|detail| {
                             tracing::error!(

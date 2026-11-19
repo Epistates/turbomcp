@@ -218,7 +218,7 @@ fn expired_error(ttl_ms: i64) -> JsonRpcError {
 }
 
 /// What an unauthenticated caller's running tasks count against: its
-/// address ([`turbomcp_service::client_key`]), where the transport knows one
+/// address ([`NetworkFacts::client_key`](turbomcp_service::NetworkFacts::client_key)), where the transport knows one
 /// (see [`NewTask::quota_key`]). An authenticated caller is its own owner, so
 /// `None`.
 #[must_use]

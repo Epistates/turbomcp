@@ -121,7 +121,7 @@ impl TaskLink {
 /// The late-bound [`TaskLink`] a call's context shares with its
 /// [`CallRunner`](crate::CallRunner); filled once, before the work starts,
 /// if the call becomes a task.
-pub type TaskSlot = Arc<OnceLock<TaskLink>>;
+pub(crate) type TaskSlot = Arc<OnceLock<TaskLink>>;
 
 /// The task a handler runs as, if it runs as one: `ctx.task`.
 ///

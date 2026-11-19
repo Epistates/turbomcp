@@ -11,10 +11,12 @@ use turbomcp_core::ProtocolVersion;
 use turbomcp_core::meta::keys::PROTOCOL_VERSION;
 
 /// Read the protocol version from a request's `params._meta`, if present.
+/// Shared with the other TurboMCP crates and hidden: not public API.
 ///
 /// Returns `None` when `params`, `_meta`, or the version key is absent — the
 /// dispatcher decides what an absent version means (see
 /// `VersionDispatcher`'s missing-version policy).
+#[doc(hidden)]
 #[must_use]
 pub fn request_protocol_version(params: Option<&Value>) -> Option<ProtocolVersion> {
     let meta = params?.get("_meta")?.as_object()?;

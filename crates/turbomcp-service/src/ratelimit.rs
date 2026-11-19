@@ -44,12 +44,13 @@ pub enum RateKey {
 }
 
 impl RateKey {
-    /// The bucket for an anonymous client at `ip`: an IPv6 client by its
-    /// `/64` ([`client_ip`](crate::client_ip)), so one holding a block of
-    /// addresses can't rotate through them for a fresh budget each time.
+    /// The bucket for an anonymous client at `ip`: an IPv4-mapped address as
+    /// its IPv4 address, and any other IPv6 client by its `/64`, so one
+    /// holding a block of addresses can't rotate through them for a fresh
+    /// budget each time.
     #[must_use]
     pub fn client(ip: IpAddr) -> Self {
-        Self::Ip(crate::client_ip(ip))
+        Self::Ip(crate::network::client_ip(ip))
     }
 }
 

@@ -39,10 +39,10 @@ use turbomcp_core::codec::{Codec, DefaultCodec};
 use turbomcp_core::{
     Extensions, JsonRpcMessage, McpRequest, ObservedHeaders, ProtocolVersion, SessionId, meta,
 };
+use turbomcp_service::__private::{SessionStreams, catch_handler_panic, close_then_shut_down};
 use turbomcp_service::{
     CancellationToken, HttpAuthenticator, McpService, NetworkFacts, Peer, ProtocolError, RateKey,
-    RateLimiter, ScopeChallenge, Serve, ServerHandle, SessionStreams, SessionTerminator,
-    catch_handler_panic, close_then_shut_down,
+    RateLimiter, ScopeChallenge, Serve, ServerHandle, SessionTerminator,
 };
 
 use config::{HostPolicy, OriginPolicy, RESOURCE_METADATA_PATH};

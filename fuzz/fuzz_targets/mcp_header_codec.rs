@@ -5,7 +5,7 @@
 //! for any value the encoder accepts.
 
 use libfuzzer_sys::fuzz_target;
-use turbomcp_service::mcp_headers;
+use turbomcp_service::__private::mcp_headers;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(s) = std::str::from_utf8(data) else {

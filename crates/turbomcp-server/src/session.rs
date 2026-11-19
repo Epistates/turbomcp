@@ -116,7 +116,7 @@ impl SessionState {
 
     /// Who this session counts against for a per-owner quota: its
     /// [`owner`](Self::owner) principal, else its client address (keyed by
-    /// [`turbomcp_service::client_key`]: an IPv6 client by its `/64`), else
+    /// `turbomcp_service`'s `client_key`: an IPv6 client by its `/64`), else
     /// nobody (a pipe carries one client).
     #[must_use]
     pub fn quota_key(&self) -> Option<String> {
@@ -124,7 +124,10 @@ impl SessionState {
             return Some(format!("principal:{owner}"));
         }
         let address = self.peer_address.as_deref()?;
-        Some(format!("ip:{}", turbomcp_service::client_key(address)))
+        Some(format!(
+            "ip:{}",
+            turbomcp_service::__private::client_key(address)
+        ))
     }
 }
 

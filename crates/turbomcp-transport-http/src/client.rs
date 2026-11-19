@@ -46,9 +46,8 @@ use turbomcp_core::{
     RequestId,
 };
 use turbomcp_protocol::methods::{notification, request};
-use turbomcp_service::{
-    HttpFailure, ParamHeaders, Transport, TransportFailure, WireVersion, mcp_headers,
-};
+use turbomcp_service::__private::mcp_headers;
+use turbomcp_service::{HttpFailure, ParamHeaders, Transport, TransportFailure, WireVersion};
 pub use zeroize::Zeroizing;
 
 use turbomcp_client::{Client, ClientBuilder, ClientError, ClientResult};

@@ -30,7 +30,7 @@ mod auth;
 mod error;
 mod host;
 pub mod io;
-pub mod mcp_headers;
+mod mcp_headers;
 pub mod memory;
 mod middleware;
 mod network;
@@ -46,16 +46,15 @@ pub use auth::{
     AuthDecision, AuthFuture, HttpAuthenticator, ScopeChallenge, SubjectToken, bearer_of,
 };
 pub use error::ProtocolError;
-pub use host::{Pipe, Serve, ServerHandle, close_then_shut_down};
+pub use host::{Pipe, Serve, ServerHandle};
 pub use middleware::{Timeout, TimeoutLayer, Tracing, TracingLayer};
-pub use network::{NetworkFacts, client_ip, client_key};
-pub use panic::{catch_handler_panic, catch_panic};
-pub use peer::{Delivery, Peer, PeerClosed, Reserved, SessionStreams, StreamGuard};
+pub use network::NetworkFacts;
+pub use peer::{Delivery, Peer, PeerClosed, Reserved};
 #[cfg(feature = "governor")]
 #[cfg_attr(docsrs, doc(cfg(feature = "governor")))]
 pub use ratelimit::GovernorRateLimiter;
 pub use ratelimit::{RateKey, RateLimiter};
-pub use serve::{ReplyQueued, ServeConfig, serve, serve_with};
+pub use serve::{ServeConfig, serve, serve_with};
 pub use session::{SessionTerminator, SessionVersionFuture, TerminateFuture};
 pub use session_observer::{EndedSession, SessionEndReason, SessionObserver, StartedSession};
 pub use transport::{
@@ -64,6 +63,21 @@ pub use transport::{
 };
 
 pub use turbomcp_core::CancellationToken;
+
+/// What the TurboMCP crates share with each other and nobody else. Not public
+/// API: it can change in any release, which is safe because the crates require
+/// each other at exactly the same version.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::host::close_then_shut_down;
+    pub mod mcp_headers {
+        pub use crate::mcp_headers::*;
+    }
+    pub use crate::network::{client_ip, client_key};
+    pub use crate::panic::{catch_handler_panic, catch_panic};
+    pub use crate::peer::{SessionStreams, StreamGuard};
+    pub use crate::serve::ReplyQueued;
+}
 
 use turbomcp_core::JsonRpcMessage;
 pub use turbomcp_core::McpRequest;
