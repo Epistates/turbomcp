@@ -2346,7 +2346,7 @@ alpha changes public contracts; see [migration guidance](docs/DEPLOYMENT.md).
   zero failures, skips, or warnings. See the [fixture correction record](crates/turbomcp-conformance/fixtures/README.md)
   for the precise changes and raw upstream mode, which retains its original
   fixture skips/warnings. The real POST-stream recovery gap is fixed in the SDK.
-- See [audit evidence and remaining release gates](docs/V4-AUDIT-REMEDIATION.md).
+- See [audit evidence and remaining release gates](https://github.com/Epistates/turbomcp/blob/v4.0.0-alpha.4/docs/V4-AUDIT-REMEDIATION.md).
 
 ## [4.0.0-alpha.3] - 2026-09-07
 
