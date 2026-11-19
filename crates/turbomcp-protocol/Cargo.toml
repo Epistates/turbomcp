@@ -23,7 +23,7 @@ turbomcp-wire = { workspace = true, optional = true }
 # Core async - explicit non-workspace entry to scope this lower-layer crate to
 # rt/time/sync/macros only (Cargo forbids default-features=false when inheriting
 # from a workspace dep that doesn't itself set default-features=false).
-tokio = { version = "1.53", default-features = false, features = ["rt", "time", "sync", "macros"] }
+tokio = { version = "1.54", default-features = false, features = ["rt", "time", "sync", "macros"] }
 futures = { workspace = true }
 pin-project-lite = { workspace = true }
 
@@ -63,7 +63,7 @@ dashmap = { workspace = true }
 fastrand = { workspace = true }
 
 # Memory-mapped files (optional, requires unsafe feature)
-memmap2 = { version = "0.9.11", optional = true }
+memmap2 = { version = "0.9.12", optional = true }
 
 # Zero-copy serialization (optional)
 rkyv_crate = { package = "rkyv", version = ">=0.8.13", default-features = false, optional = true, features = ["alloc", "bytecheck"] }
@@ -79,7 +79,7 @@ url = "2.5"
 criterion = { workspace = true }
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
-proptest = "1.11"
+proptest = "1.12"
 
 [features]
 default = ["std", "simd"]

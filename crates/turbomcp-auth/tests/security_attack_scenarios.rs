@@ -43,7 +43,7 @@ fn test_jsonwebtoken_rejects_none_algorithm() {
 
     let result = decode::<serde_json::Value>(
         malicious_jwt,
-        &DecodingKey::from_secret(b"any_key"),
+        &DecodingKey::from_secret(b"any_key").expect("a non-empty HMAC key"),
         &validation,
     );
 

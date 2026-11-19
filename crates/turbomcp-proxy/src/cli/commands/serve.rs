@@ -296,13 +296,10 @@ impl FrontendJwtAuth {
                 if !issuers.is_empty() {
                     validation.set_issuer(issuers);
                 }
-                decode::<StandardClaims>(
-                    token,
-                    &DecodingKey::from_secret(secret.expose_secret().as_bytes()),
-                    &validation,
-                )
-                .map(|_| ())
-                .map_err(|_| "invalid bearer token")
+                DecodingKey::from_secret(secret.expose_secret().as_bytes())
+                    .and_then(|key| decode::<StandardClaims>(token, &key, &validation))
+                    .map(|_| ())
+                    .map_err(|_| "invalid bearer token")
             }
             Self::Jwks(validator) => validator
                 .validate_with_refresh(token)

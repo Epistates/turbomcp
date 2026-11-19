@@ -49,14 +49,14 @@ uuid = { workspace = true, features = ["v4", "v7", "serde"] }
 bon = "3.10"
 
 # Redis storage (optional)
-redis = { version = "1.7.0", features = ["aio", "tokio-comp"], optional = true }
+redis = { version = "1.8.2", features = ["aio", "tokio-comp"], optional = true }
 
 # HSM support - PKCS#11 (optional)
 cryptoki = { version = "0.12", optional = true }
 r2d2 = { version = "0.8", optional = true }
 secrecy = { version = "0.10", optional = true }
 parking_lot = { workspace = true, optional = true }
-asn1 = { version = "0.24.1", optional = true }
+asn1 = { version = "0.24.2", optional = true }
 
 # HSM support - YubiHSM (optional)
 yubihsm = { version = "0.42", optional = true, features = ["usb", "http"] }

@@ -233,7 +233,8 @@ impl JwtSigner {
     /// Encode JWT claims (shared logic for sign and `sign_minimal`)
     fn encode_jwt(&self, claims: &serde_json::Value) -> ProxyResult<String> {
         let header = Header::new(self.algorithm);
-        let encoding_key = EncodingKey::from_secret(self.secret.expose_secret().as_bytes());
+        let encoding_key = EncodingKey::from_secret(self.secret.expose_secret().as_bytes())
+            .map_err(|e| ProxyError::Auth(format!("JWT signing key rejected: {e}")))?;
 
         encode(&header, claims, &encoding_key)
             .map_err(|e| ProxyError::Auth(format!("JWT signing failed: {e}")))
@@ -393,7 +394,7 @@ mod tests {
         let backend_jwt = signer.sign(&auth_context).unwrap();
 
         // Decode the JWT to verify audience binding
-        let key = DecodingKey::from_secret("secret".as_bytes());
+        let key = DecodingKey::from_secret("secret".as_bytes()).expect("a non-empty HMAC key");
         let mut validation = Validation::new(Algorithm::HS256);
         validation.set_audience(&["backend"]);
         validation.set_issuer(&["proxy"]);
@@ -437,7 +438,7 @@ mod tests {
         validation.set_audience(&["backend"]);
         let claims = decode::<serde_json::Value>(
             &jwt,
-            &DecodingKey::from_secret("secret".as_bytes()),
+            &DecodingKey::from_secret("secret".as_bytes()).expect("a non-empty HMAC key"),
             &validation,
         )
         .unwrap()
@@ -480,7 +481,8 @@ mod tests {
         let jwt = signer.sign(&auth_context).unwrap();
 
         // Verify the JWT can be decoded
-        let decoding_key = DecodingKey::from_secret(secret.as_bytes());
+        let decoding_key =
+            DecodingKey::from_secret(secret.as_bytes()).expect("a non-empty HMAC key");
         let mut validation = Validation::new(Algorithm::HS256);
         validation.set_audience(&["backend-server"]);
         validation.set_issuer(&["test-proxy"]);

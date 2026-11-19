@@ -33,7 +33,7 @@ tower = { workspace = true }
 
 # Schema generation (always required by macros)
 schemars = { version = "1.2", features = ["chrono04", "uuid1"] }
-uuid = { version = "1.26", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.29", features = ["v4", "v7", "serde"] }
 
 # Internal dependencies
 turbomcp-core = { workspace = true }

@@ -80,7 +80,7 @@ const_is_empty = "allow"
 # Core async runtime and utilities
 # Tokio: Production optimization - use only needed features instead of "full"
 # Includes: runtime, networking, sync, timers, signal handling, process, macros, io
-tokio = { version = "1.53", features = [
+tokio = { version = "1.54", features = [
     "rt", "rt-multi-thread",  # Multi-threaded async runtime
     "net",                     # TCP/UDP networking
     "sync",                    # Channels, mutexes, RwLock
@@ -90,7 +90,7 @@ tokio = { version = "1.53", features = [
     "macros",                  # #[tokio::main] macro
     "io-util",                 # Async I/O utilities
 ] }
-tokio-util = { version = "0.7.19", features = ["codec", "io"] }
+tokio-util = { version = "0.7.20", features = ["codec", "io"] }
 futures = "0.3.34"
 pin-project-lite = "0.2.17"
 
@@ -99,12 +99,12 @@ tempfile = "3.27"
 
 # Serialization with performance focus
 serde = { version = "1.0.229", features = ["derive", "rc"] }
-serde_json = { version = "1.0.151", features = ["raw_value", "preserve_order"] }
+serde_json = { version = "1.0.154", features = ["raw_value", "preserve_order"] }
 msgpacker = { version = "0.7", features = ["derive"] }  # MessagePack for binary efficiency
-sonic-rs = "0.5.8"   # High-performance JSON
+sonic-rs = "0.5.12"   # High-performance JSON
 
 # Schema generation
-schemars = { version = "1.2.2", features = ["chrono04", "uuid1"] }
+schemars = { version = "1.2.3", features = ["chrono04", "uuid1"] }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls", "http2", "form", "query"] }
@@ -114,7 +114,7 @@ tower-http = { version = "0.7.1", features = ["cors", "timeout", "trace", "limit
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 
 # Error handling and diagnostics
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 anyhow = "1.0.104"
 
 # Observability and monitoring
@@ -136,20 +136,20 @@ fastrand = "2.5"
 
 # Configuration and CLI
 config = "0.15"
-clap = { version = "4.6.6", features = ["derive", "env", "color"] }
+clap = { version = "4.6.8", features = ["derive", "env", "color"] }
 
 # Security and authentication
 subtle = "2.6"  # Constant-time comparison for secret values
 base64 = "0.23.1"
 percent-encoding = "2.3.2"  # URL percent encoding/decoding (RFC 3986)
-uuid = { version = "1.26", features = ["v4", "serde"] }
-jsonwebtoken = { version = "11.0", features = ["aws_lc_rs", "use_pem"] }
+uuid = { version = "1.29", features = ["v4", "serde"] }
+jsonwebtoken = { version = "12.0", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling
 chrono = { version = "0.4.45", features = ["serde"] }
 
 # Memory and performance optimizations
-bytes = "1.12.1"
+bytes = "1.12.2"
 
 # Caching
 moka = { version = "0.12.16", features = ["future"] }
@@ -161,15 +161,15 @@ governor = "0.10.4"
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
 
 # Serde extensions
-serde_with = "3.23"
+serde_with = "3.24"
 
 # Development and testing
 criterion = { version = "0.8.2", features = ["html_reports"] }
-proptest = "1.11"
+proptest = "1.12"
 tokio-test = "0.4"
 wiremock = "0.6.5"
 pretty_assertions = "1.4.1"
-serial_test = "3.5"
+serial_test = "4.0.1"
 # oauth2 is still on the digest-0.10 stack, so sha2 0.10 is compiled alongside 0.11
 # until it moves.
 sha2 = "0.11"
@@ -185,7 +185,6 @@ sha2 = "0.11"
 #
 # All other crates either have empty defaults (removed vestigial `default-features = false`)
 # or useful defaults that should be enabled by default.
-turbomcp = { version = "3.6.0", path = "crates/turbomcp" }
 # v3: turbomcp-types is THE source of truth for all MCP types
 turbomcp-types = { version = "3.6.0", path = "crates/turbomcp-types" }
 # v3: turbomcp-core is the no_std foundation layer
@@ -202,16 +201,9 @@ turbomcp-protocol = { version = "3.6.0", path = "crates/turbomcp-protocol" }
 turbomcp-transport = { version = "3.6.0", path = "crates/turbomcp-transport", default-features = false }
 turbomcp-client = { version = "3.6.0", path = "crates/turbomcp-client" }
 turbomcp-server = { version = "3.6.0", path = "crates/turbomcp-server" }
-turbomcp-macros = { version = "3.6.0", path = "crates/turbomcp-macros" }
-turbomcp-cli = { version = "3.6.0", path = "crates/turbomcp-cli" }
-turbomcp-telemetry = { version = "3.6.0", path = "crates/turbomcp-telemetry" }
 turbomcp-auth = { version = "3.6.0", path = "crates/turbomcp-auth" }
 turbomcp-dpop = { version = "3.6.0", path = "crates/turbomcp-dpop" }
-turbomcp-proxy = { version = "3.6.0", path = "crates/turbomcp-proxy" }
-turbomcp-grpc = { version = "3.6.0", path = "crates/turbomcp-grpc" }
-turbomcp-openapi = { version = "3.6.0", path = "crates/turbomcp-openapi" }
 turbomcp-wire = { version = "3.6.0", path = "crates/turbomcp-wire", default-features = false }
-turbomcp-wasm = { version = "3.6.0", path = "crates/turbomcp-wasm" }
 turbomcp-wasm-macros = { version = "3.6.0", path = "crates/turbomcp-wasm-macros" }
 turbomcp-transport-streamable = { version = "3.6.0", path = "crates/turbomcp-transport-streamable", default-features = false }
 

@@ -62,7 +62,7 @@ syn = { version = "3", features = ["parsing", "full"], optional = true }
 dashmap = "6.2"
 
 # Utilities
-uuid = { version = "1.26", features = ["v4"] }
+uuid = { version = "1.29", features = ["v4"] }
 tracing = "0.1"
 thiserror = "2.0"
 url = "2.5"

@@ -167,7 +167,7 @@ async fn test_jwt_expiration_boundary() {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
@@ -175,7 +175,11 @@ async fn test_jwt_expiration_boundary() {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.leeway = 0; // No clock skew tolerance
 
-    let result = decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
 
     // THEN: Token is expired (exp is inclusive boundary)
     // RFC 7519: "exp" claim identifies expiration time on or after which JWT MUST NOT be accepted
@@ -204,7 +208,7 @@ async fn test_clock_skew_tolerance() {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
@@ -214,7 +218,11 @@ async fn test_clock_skew_tolerance() {
     validation.validate_nbf = true;
     validation.validate_aud = false; // Don't validate audience
 
-    let result = decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
 
     // THEN: Token is accepted (within clock skew tolerance)
     assert!(
@@ -236,13 +244,13 @@ async fn test_clock_skew_tolerance() {
     let token_too_far = encode(
         &Header::new(Algorithm::HS256),
         &claims_too_far,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
     let result_too_far = decode::<TestClaims>(
         &token_too_far,
-        &DecodingKey::from_secret(&secret),
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
         &validation,
     );
 
@@ -271,7 +279,7 @@ async fn test_nbf_claim_validation() {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
@@ -280,7 +288,11 @@ async fn test_nbf_claim_validation() {
     validation.validate_nbf = true;
     validation.leeway = 0; // No clock skew
 
-    let result = decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
 
     // THEN: Token is rejected (not yet valid)
     assert!(
@@ -290,8 +302,11 @@ async fn test_nbf_claim_validation() {
 
     // Test with leeway
     validation.leeway = 60;
-    let result_with_leeway =
-        decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result_with_leeway = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
     assert!(
         result_with_leeway.is_err(),
         "JWT still invalid even with 60s leeway (nbf is 120s in future)"
@@ -314,7 +329,7 @@ async fn test_missing_required_claims() {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims_no_sub,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
@@ -323,8 +338,11 @@ async fn test_missing_required_claims() {
     validation.set_required_spec_claims(&["sub", "exp", "iss"]);
     validation.validate_aud = false; // Don't validate audience for this test
 
-    let result =
-        decode::<serde_json::Value>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result = decode::<serde_json::Value>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
 
     // THEN: Validation fails due to missing claim
     assert!(
@@ -343,13 +361,13 @@ async fn test_missing_required_claims() {
     let token_complete = encode(
         &Header::new(Algorithm::HS256),
         &claims_complete,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
     let result_complete = decode::<serde_json::Value>(
         &token_complete,
-        &DecodingKey::from_secret(&secret),
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
         &validation,
     );
 
@@ -379,7 +397,7 @@ async fn test_audience_claim_variations() {
     let token_single = encode(
         &Header::new(Algorithm::HS256),
         &claims_single,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
@@ -388,7 +406,7 @@ async fn test_audience_claim_variations() {
 
     let result_single = decode::<TestClaims>(
         &token_single,
-        &DecodingKey::from_secret(&secret),
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
         &validation,
     );
     assert!(
@@ -412,13 +430,13 @@ async fn test_audience_claim_variations() {
     let token_array = encode(
         &Header::new(Algorithm::HS256),
         &claims_array,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
     let result_array = decode::<TestClaims>(
         &token_array,
-        &DecodingKey::from_secret(&secret),
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
         &validation,
     );
     assert!(
@@ -432,7 +450,7 @@ async fn test_audience_claim_variations() {
 
     let result_mismatch = decode::<TestClaims>(
         &token_single,
-        &DecodingKey::from_secret(&secret),
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
         &validation_wrong,
     );
     assert!(
@@ -460,7 +478,7 @@ async fn test_issuer_validation() {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
@@ -469,7 +487,11 @@ async fn test_issuer_validation() {
     validation.set_issuer(&["https://auth.example.com"]);
     validation.validate_aud = false; // Don't validate audience
 
-    let result = decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
     assert!(
         result.is_ok(),
         "JWT from expected issuer should be accepted: {:?}",
@@ -483,7 +505,7 @@ async fn test_issuer_validation() {
 
     let result_wrong = decode::<TestClaims>(
         &token,
-        &DecodingKey::from_secret(&secret),
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
         &validation_wrong,
     );
     assert!(
@@ -498,7 +520,7 @@ async fn test_issuer_validation() {
 
     let result_multi = decode::<TestClaims>(
         &token,
-        &DecodingKey::from_secret(&secret),
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
         &validation_multi,
     );
     assert!(
@@ -526,14 +548,18 @@ async fn test_expired_token() {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
     // WHEN: We validate
     let validation = Validation::new(Algorithm::HS256);
 
-    let result = decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
 
     // THEN: Token is rejected
     assert!(result.is_err(), "Expired JWT should be rejected");
@@ -562,7 +588,7 @@ async fn test_missing_expiration() {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
@@ -571,8 +597,11 @@ async fn test_missing_expiration() {
     validation.validate_exp = true;
     validation.set_required_spec_claims(&["exp"]);
 
-    let result =
-        decode::<serde_json::Value>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result = decode::<serde_json::Value>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
 
     // THEN: Validation fails
     assert!(
@@ -600,14 +629,18 @@ async fn test_far_future_expiration() {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
     // WHEN: We validate
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_aud = false; // Don't validate audience
-    let result = decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation);
+    let result = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
+        &validation,
+    );
 
     // THEN: Token is valid (though long expiration is poor security practice)
     assert!(
@@ -639,7 +672,7 @@ async fn test_algorithm_mismatch() {
     let _token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&secret),
+        &EncodingKey::from_secret(&secret).expect("a non-empty HMAC key"),
     )
     .expect("Failed to encode JWT");
 
