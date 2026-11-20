@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The bundled `InMemoryEventStore` keeps finished streams in the order they
+  finished. Making room for a new stream in a full store is now a lookup at
+  the front of that order; it was a scan of every stream under the store's
+  one lock, which a busy session paid on every call once the store filled
+  (10,000 streams by default, in about a second at full load).
+  `forget_session` now touches only that session's streams.
+
 ### Documentation
 
 - `docs/PERFORMANCE.md` publishes the first performance sweep and soak, with

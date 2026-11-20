@@ -18,7 +18,7 @@
 //! ids: an id is a promise of replay, and a promise the endpoint can't keep
 //! turns a visible disconnect into a silent gap.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -106,12 +106,23 @@ struct StreamLog {
     events: VecDeque<(StoredEvent, usize)>,
     /// The highest seq dropped to stay within a bound.
     dropped_through: u64,
-    completed_at: Option<Instant>,
+    /// When the stream got its last event, and its place in
+    /// [`Logs::finished`].
+    finished: Option<(Instant, u64)>,
     /// The serialized size of `events`.
     bytes: usize,
 }
 
 impl StreamLog {
+    fn new() -> Self {
+        Self {
+            events: VecDeque::new(),
+            dropped_through: 0,
+            finished: None,
+            bytes: 0,
+        }
+    }
+
     /// Drop the oldest event, returning its size.
     fn drop_oldest(&mut self) -> Option<usize> {
         let (old, size) = self.events.pop_front()?;
@@ -119,15 +130,70 @@ impl StreamLog {
         self.bytes -= size;
         Some(size)
     }
+
+    fn expired(&self, retention: Duration) -> bool {
+        self.finished
+            .is_some_and(|(at, _)| at.elapsed() >= retention)
+    }
 }
 
-/// Every stream, and their combined size.
+/// Every stream, by session, with the finished ones in the order they
+/// finished.
+///
+/// That order is what the bounds evict by, oldest first, and what retention
+/// expires. Keeping it is what makes making room a lookup at the front
+/// rather than a scan of every stream under the lock: a full store (10,000
+/// streams by default, which a busy session fills in about a second) paid
+/// that scan on every new stream.
 #[derive(Default)]
 struct Logs {
-    streams: HashMap<(String, String), StreamLog>,
+    sessions: HashMap<String, HashMap<String, StreamLog>>,
+    /// The number of streams across every session.
+    streams: usize,
+    /// Finished streams by the order they finished. Completion times are
+    /// read under the lock, so this order is also their time order.
+    finished: BTreeMap<u64, (String, String)>,
+    next_finished: u64,
+    /// The serialized size of every stream's events.
     bytes: usize,
-    /// New streams since the last retention sweep.
-    since_sweep: usize,
+}
+
+impl Logs {
+    fn get(&self, session: &str, stream: &str) -> Option<&StreamLog> {
+        self.sessions.get(session)?.get(stream)
+    }
+
+    fn get_mut(&mut self, session: &str, stream: &str) -> Option<&mut StreamLog> {
+        self.sessions.get_mut(session)?.get_mut(stream)
+    }
+
+    /// Remove a stream and its accounting.
+    fn remove(&mut self, session: &str, stream: &str) {
+        let Some(streams) = self.sessions.get_mut(session) else {
+            return;
+        };
+        let Some(log) = streams.remove(stream) else {
+            return;
+        };
+        if streams.is_empty() {
+            self.sessions.remove(session);
+        }
+        self.streams -= 1;
+        self.bytes -= log.bytes;
+        if let Some((_, order)) = log.finished {
+            self.finished.remove(&order);
+        }
+    }
+
+    /// Remove the stream that finished first, if any has.
+    fn remove_oldest_finished(&mut self) -> bool {
+        let Some((_, (session, stream))) = self.finished.pop_first() else {
+            return false;
+        };
+        // Popped from the order already; `remove` finds nothing left there.
+        self.remove(&session, &stream);
+        true
+    }
 }
 
 /// A bounded in-process [`EventStore`].
@@ -211,37 +277,33 @@ impl InMemoryEventStore {
         self.logs.lock()
     }
 
-    /// Before a new stream: drop expired finished streams (every 256 new
-    /// streams, or when full, not on each one: the sweep is a scan under the
-    /// lock), then the oldest finished (or, failing that, any) streams
-    /// beyond the bound.
+    /// Before a new stream: drop the finished streams past their retention
+    /// (the oldest are at the front of the order), then the oldest finished
+    /// (or, failing that, any) streams beyond the bound.
     fn make_room_for_a_stream(&self, logs: &mut Logs) {
-        logs.since_sweep += 1;
-        if logs.since_sweep >= 256 || logs.streams.len() >= self.max_streams {
-            logs.since_sweep = 0;
-            let now = Instant::now();
-            let mut freed = 0;
-            logs.streams.retain(|_, log| {
-                let keep = log
-                    .completed_at
-                    .is_none_or(|at| now.duration_since(at) < self.retention);
-                if !keep {
-                    freed += log.bytes;
-                }
-                keep
-            });
-            logs.bytes -= freed;
-        }
-        while logs.streams.len() >= self.max_streams {
-            let victim = logs
-                .streams
-                .iter()
-                .min_by_key(|(_, log)| (log.completed_at.is_none(), log.completed_at))
-                .map(|(key, _)| key.clone());
-            match victim.and_then(|key| logs.streams.remove(&key)) {
-                Some(log) => logs.bytes -= log.bytes,
-                None => break,
+        while let Some((_, (session, stream))) = logs.finished.first_key_value() {
+            if !logs
+                .get(session, stream)
+                .is_some_and(|log| log.expired(self.retention))
+            {
+                break;
             }
+            logs.remove_oldest_finished();
+        }
+        while logs.streams >= self.max_streams {
+            if logs.remove_oldest_finished() {
+                continue;
+            }
+            // Every stream is still running: one of them gives way.
+            let Some((session, stream)) = logs.sessions.iter().find_map(|(session, streams)| {
+                streams
+                    .keys()
+                    .next()
+                    .map(|stream| (session.clone(), stream.clone()))
+            }) else {
+                break;
+            };
+            logs.remove(&session, &stream);
         }
     }
 
@@ -249,19 +311,15 @@ impl InMemoryEventStore {
     /// streams, oldest first, then the oldest events of the largest stream.
     fn shed_bytes(&self, logs: &mut Logs) {
         while logs.bytes > self.max_bytes {
-            let finished = logs
-                .streams
-                .iter()
-                .filter(|(_, log)| log.completed_at.is_some())
-                .min_by_key(|(_, log)| log.completed_at)
-                .map(|(key, _)| key.clone());
-            if let Some(key) = finished {
-                if let Some(log) = logs.streams.remove(&key) {
-                    logs.bytes -= log.bytes;
-                }
+            if logs.remove_oldest_finished() {
                 continue;
             }
-            let Some(largest) = logs.streams.values_mut().max_by_key(|log| log.bytes) else {
+            let Some(largest) = logs
+                .sessions
+                .values_mut()
+                .flat_map(HashMap::values_mut)
+                .max_by_key(|log| log.bytes)
+            else {
                 break;
             };
             match largest.drop_oldest() {
@@ -286,16 +344,23 @@ impl EventStore for InMemoryEventStore {
             let size = serde_json::to_vec(message).map_or(0, |bytes| bytes.len());
             let mut logs = self.lock();
             let logs = &mut *logs;
-            let key = (session.to_owned(), stream.to_owned());
-            if !logs.streams.contains_key(&key) {
+            if logs.get(session, stream).is_none() {
                 self.make_room_for_a_stream(logs);
+                // The session's key is allocated once, not with every stream.
+                match logs.sessions.get_mut(session) {
+                    Some(streams) => {
+                        streams.insert(stream.to_owned(), StreamLog::new());
+                    }
+                    None => {
+                        let streams = HashMap::from([(stream.to_owned(), StreamLog::new())]);
+                        logs.sessions.insert(session.to_owned(), streams);
+                    }
+                }
+                logs.streams += 1;
             }
-            let log = logs.streams.entry(key).or_insert_with(|| StreamLog {
-                events: VecDeque::new(),
-                dropped_through: 0,
-                completed_at: None,
-                bytes: 0,
-            });
+            let Some(log) = logs.get_mut(session, stream) else {
+                unreachable!("inserted above");
+            };
             if size > self.max_bytes {
                 // Larger than the whole store: not kept, and a resume from
                 // before it is refused rather than silently skipping it.
@@ -310,12 +375,13 @@ impl EventStore for InMemoryEventStore {
                 size,
             ));
             log.bytes += size;
-            logs.bytes += size;
+            let mut freed = 0;
             while log.events.len() > self.events_per_stream {
                 if let Some(size) = log.drop_oldest() {
-                    logs.bytes -= size;
+                    freed += size;
                 }
             }
+            logs.bytes = logs.bytes + size - freed;
             self.shed_bytes(logs);
             Ok(())
         })
@@ -330,15 +396,12 @@ impl EventStore for InMemoryEventStore {
     ) -> EventFuture<'a, Result<Option<Vec<StoredEvent>>, EventStoreError>> {
         Box::pin(async move {
             let logs = self.lock();
-            let Some(log) = logs.streams.get(&(session.to_owned(), stream.to_owned())) else {
+            let Some(log) = logs.get(session, stream) else {
                 return Ok(None);
             };
-            // Expired streams are swept in batches; one past its retention is
-            // gone to a resume whether or not the sweep has reached it.
-            if log
-                .completed_at
-                .is_some_and(|at| at.elapsed() >= self.retention)
-            {
+            // Expired streams are dropped as new ones arrive; one past its
+            // retention is gone to a resume whether or not that has happened.
+            if log.expired(self.retention) {
                 return Ok(None);
             }
             if after < log.dropped_through {
@@ -361,12 +424,17 @@ impl EventStore for InMemoryEventStore {
         stream: &'a str,
     ) -> EventFuture<'a, Result<(), EventStoreError>> {
         Box::pin(async move {
-            if let Some(log) = self
-                .lock()
-                .streams
-                .get_mut(&(session.to_owned(), stream.to_owned()))
-            {
-                log.completed_at = Some(Instant::now());
+            let mut logs = self.lock();
+            let logs = &mut *logs;
+            let order = logs.next_finished;
+            let Some(log) = logs.get_mut(session, stream) else {
+                return Ok(());
+            };
+            if log.finished.is_none() {
+                log.finished = Some((Instant::now(), order));
+                logs.next_finished += 1;
+                logs.finished
+                    .insert(order, (session.to_owned(), stream.to_owned()));
             }
             Ok(())
         })
@@ -379,15 +447,16 @@ impl EventStore for InMemoryEventStore {
         Box::pin(async move {
             let mut logs = self.lock();
             let logs = &mut *logs;
-            let mut freed = 0;
-            logs.streams.retain(|(owner, _), log| {
-                let keep = owner != session;
-                if !keep {
-                    freed += log.bytes;
+            let Some(streams) = logs.sessions.remove(session) else {
+                return Ok(());
+            };
+            logs.streams -= streams.len();
+            for log in streams.into_values() {
+                logs.bytes -= log.bytes;
+                if let Some((_, order)) = log.finished {
+                    logs.finished.remove(&order);
                 }
-                keep
-            });
-            logs.bytes -= freed;
+            }
             Ok(())
         })
     }
@@ -777,6 +846,41 @@ mod tests {
         );
         store.forget_session("s").await.unwrap();
         assert!(store.replay("s", "b", 0, 9).await.unwrap().is_none());
+    }
+
+    /// A full store gives up the stream that finished first, then the next,
+    /// and only when none has finished, a running one.
+    #[tokio::test]
+    async fn a_full_store_evicts_in_the_order_streams_finished() {
+        let store = InMemoryEventStore::new().with_max_streams(3);
+        for stream in ["a", "b", "c"] {
+            store.append("s", stream, 1, &note(1)).await.unwrap();
+        }
+        store.complete("s", "b").await.unwrap();
+        store.complete("s", "a").await.unwrap();
+        let kept =
+            |store: &InMemoryEventStore, stream: &str| store.lock().get("s", stream).is_some();
+
+        store.append("t", "d", 1, &note(1)).await.unwrap();
+        assert!(!kept(&store, "b"), "b finished first, so it went first");
+        assert!(kept(&store, "a"));
+        store.append("t", "e", 1, &note(1)).await.unwrap();
+        assert!(!kept(&store, "a"));
+        // c, d and e are all running: one of them gives way to f.
+        store.append("t", "f", 1, &note(1)).await.unwrap();
+        assert_eq!(store.lock().streams, 3);
+        assert!(store.lock().finished.is_empty());
+
+        store.complete("t", "f").await.unwrap();
+        store.forget_session("t").await.unwrap();
+        store.forget_session("s").await.unwrap();
+        let logs = store.lock();
+        assert_eq!((logs.streams, logs.bytes), (0, 0));
+        assert!(
+            logs.finished.is_empty(),
+            "a forgotten stream leaves the order too"
+        );
+        assert!(logs.sessions.is_empty());
     }
 
     #[test]
