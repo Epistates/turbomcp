@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Internal
+
+- `just test` checks the local links in the maintained Markdown, as CI does.
+- Harnesses for the evidence 4.0.0 needs, each off unless asked for:
+  `just soak` runs one HTTP server under mixed traffic (steady calls,
+  session churn, cancellation storms, listen streams) for hours and fails
+  on errors or on memory or descriptor growth that doesn't level off;
+  `just perf-sweep` runs the dispatch benchmark, the comparison with rmcp
+  (now over Streamable HTTP too) and a new load test of throughput and tail
+  latency under concurrency, recording the machine beside the results.
+
 ## [4.0.0-beta.1] - 2026-11-19
 
 The beta. This release freezes the public API: from here to 4.0.0, a

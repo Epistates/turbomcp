@@ -11,6 +11,9 @@
 //! main lockfile). Run it directly:
 //!   `cd crates/turbomcp-interop && cargo bench --bench sdk_comparison`
 //! `tests/perf_parity.rs` turns the same measurement into a gate.
+//!
+//! `call_tool_roundtrip_http` repeats it over Streamable HTTP on loopback, for
+//! turbomcp alone (see `bench_call_tool_http`).
 
 #[path = "../fixtures/adders.rs"]
 mod adders;
@@ -34,5 +37,21 @@ fn bench_call_tool(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_call_tool);
+/// The same round trip over Streamable HTTP on loopback, turbomcp only, one
+/// connection kept alive, handshake outside timing. rmcp is left out: its
+/// Streamable HTTP client (3.11) opens a TCP connection for every call, so a
+/// benchmark loop runs out of local ports in seconds (see `tests/load.rs`).
+fn bench_call_tool_http(c: &mut Criterion) {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    for (era, name) in [(Era::Legacy, "2025-11-25"), (Era::Modern, "2026-07-28")] {
+        let mut group = c.benchmark_group(format!("call_tool_roundtrip_http/{name}"));
+        let turbo = rt.block_on(adders::turbomcp_http(era));
+        group.bench_function("turbomcp", |b| {
+            b.to_async(&rt).iter(|| adders::turbomcp_call(&turbo));
+        });
+        group.finish();
+    }
+}
+
+criterion_group!(benches, bench_call_tool, bench_call_tool_http);
 criterion_main!(benches);

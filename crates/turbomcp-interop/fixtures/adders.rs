@@ -1,6 +1,11 @@
 //! The same one-tool server in both SDKs, and each SDK's client connected to
-//! its own server over an in-process duplex: what the comparison benchmark
-//! and the performance parity test measure.
+//! its own server, over an in-process duplex or Streamable HTTP on loopback:
+//! what the comparison benchmark, the performance parity test and the load
+//! test measure. Each of those uses part of it.
+#![allow(
+    dead_code,
+    reason = "each bench and test includes the file and uses part of it"
+)]
 
 use std::hint::black_box;
 
@@ -154,4 +159,80 @@ pub async fn rmcp_call(client: &RunningService<RoleClient, ()>) {
         .expect("call_tool");
     debug_assert_ne!(result.is_error, Some(true));
     black_box(result);
+}
+
+/// A turbomcp server on a loopback Streamable HTTP endpoint, and a turbomcp
+/// client connected to it.
+pub async fn turbomcp_http(era: Era) -> Client {
+    use turbomcp::http::{Http, HttpConfig};
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("address");
+    tokio::spawn(
+        TurboAdder
+            .into_server()
+            .serve(Http::listener(listener).with_config(HttpConfig::new())),
+    );
+    turbomcp::client::connect_http(
+        ClientBuilder::new("bench-client", "1.0.0").with_connect_mode(match era {
+            Era::Legacy => ConnectMode::Stateful,
+            Era::Modern => ConnectMode::Stateless,
+        }),
+        &format!("http://{addr}/mcp"),
+    )
+    .await
+    .expect("turbomcp http connect")
+}
+
+/// An rmcp server on a loopback Streamable HTTP endpoint, and an rmcp client
+/// connected to it.
+///
+/// The server answers with JSON and no sessions, rmcp's fastest HTTP setting.
+/// Its default answers each POST with an SSE stream, which its client stops
+/// reading once the response arrives, so the connection can't be reused: a
+/// tight loop then opens a TCP connection per call and runs out of local
+/// ports in seconds.
+pub async fn rmcp_http(era: Era) -> RunningService<RoleClient, ()> {
+    use rmcp::transport::StreamableHttpClientTransport;
+    use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService,
+    };
+    let version = match era {
+        Era::Legacy => ProtocolVersion::V_2025_11_25,
+        Era::Modern => ProtocolVersion::V_2026_07_28,
+    };
+    let server_version = version.clone();
+    let service = StreamableHttpService::new(
+        move || Ok(RmcpAdder::new(server_version.clone())),
+        std::sync::Arc::new(LocalSessionManager::default()),
+        {
+            let mut config = StreamableHttpServerConfig::default();
+            config.json_response = true;
+            config.legacy_session_mode = false;
+            config
+        },
+    );
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("address");
+    tokio::spawn(async move {
+        let app = axum::Router::new().nest_service("/mcp", service);
+        let _ = axum::serve(listener, app).await;
+    });
+    let transport = StreamableHttpClientTransport::from_uri(format!("http://{addr}/mcp"));
+    match era {
+        Era::Legacy => ().serve(transport).await.expect("rmcp http handshake"),
+        Era::Modern => ()
+            .serve_with_lifecycle(
+                transport,
+                ClientLifecycleMode::Discover {
+                    preferred_versions: vec![version],
+                },
+            )
+            .await
+            .expect("rmcp http discovery"),
+    }
 }

@@ -753,6 +753,43 @@ benchmarks:
   cargo bench --workspace
   @echo "Benchmarks completed"
 
+# The performance sweep: the dispatch benchmark,
+# the turbomcp/rmcp comparison (pipe and HTTP), and the load test, with the
+# machine and toolchain recorded beside the results in target/perf/<time>/.
+# About an hour; run it on a quiet machine.
+[group: 'bench']
+perf-sweep:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  out="target/perf/$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$out"
+  {
+    echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "revision: $(git rev-parse HEAD)"
+    echo "rustc: $(rustc -V)"
+    echo "os: $(uname -srm)"
+    if [ "$(uname)" = Darwin ]; then
+      echo "cpu: $(sysctl -n machdep.cpu.brand_string)"
+      echo "cores: $(sysctl -n hw.ncpu)"
+      echo "memory_bytes: $(sysctl -n hw.memsize)"
+    else
+      echo "cpu: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2-)"
+      echo "cores: $(nproc)"
+    fi
+  } > "$out/machine.txt"
+  cargo bench -p turbomcp --bench dispatch --locked 2>&1 | tee "$out/dispatch.txt"
+  (cd crates/turbomcp-interop && cargo bench --bench sdk_comparison --locked) 2>&1 | tee "$out/sdk_comparison.txt"
+  (cd crates/turbomcp-interop && TURBOMCP_LOAD=1 TURBOMCP_LOAD_OUT="../../$out/load.csv" \
+    cargo test --release --locked --test load -- --nocapture) 2>&1 | tee "$out/load.txt"
+  echo "Results in $out"
+
+# A soak run: one HTTP server under mixed traffic for `secs` (default four
+# hours), failing on errors or on growth that doesn't level off. Samples go to
+# target/soak/<unix time>.csv. See crates/turbomcp/tests/soak.rs.
+[group: 'bench']
+soak secs='14400':
+  TURBOMCP_SOAK_SECS={{secs}} cargo test --release --locked -p turbomcp --all-features --test soak -- --nocapture
+
 # Run basic performance test
 [group: 'bench']
 performance-test:
