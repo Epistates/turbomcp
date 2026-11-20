@@ -72,10 +72,31 @@ fn io_error(e: std::io::Error) -> ProtocolError {
 }
 
 /// Per-request shared state: the service to dispatch into, the codec, the
-/// Origin policy, and the optional resource-server authenticator. Cheap to
-/// clone (the service clones per request by contract).
-#[derive(Clone)]
-struct HttpState<S> {
+/// Origin policy, and the optional resource-server authenticator.
+///
+/// One `Arc`, so each of the clones axum makes for every request is one
+/// reference count. Cloning the fields instead took a lock on every request
+/// (the shutdown token's clone and drop do) plus a reference count per
+/// field, all on state every request shares, and a busy endpoint queued on
+/// that lock.
+struct HttpState<S>(Arc<HttpShared<S>>);
+
+impl<S> Clone for HttpState<S> {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+impl<S> std::ops::Deref for HttpState<S> {
+    type Target = HttpShared<S>;
+
+    fn deref(&self) -> &HttpShared<S> {
+        &self.0
+    }
+}
+
+/// What [`HttpState`] shares.
+struct HttpShared<S> {
     service: S,
     codec: DefaultCodec,
     origins: OriginPolicy,
@@ -110,7 +131,7 @@ struct HttpState<S> {
     detached_stream_ttl: Duration,
 }
 
-impl<S> HttpState<S> {
+impl<S> HttpShared<S> {
     /// Whether this endpoint serves the revision a `MCP-Protocol-Version`
     /// header names.
     fn serves(&self, version: &str) -> bool {
@@ -180,7 +201,7 @@ fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
     let request_timeout = config.request_timeout;
     let ip_rate_limiter = config.ip_rate_limiter.clone();
     let gate_proxies: Arc<[IpNet]> = config.trusted_proxies.clone().into();
-    let state = HttpState {
+    let state = HttpState(Arc::new(HttpShared {
         service: server.service(),
         codec: DefaultCodec::default(),
         origins: config.origins.clone(),
@@ -200,7 +221,7 @@ fn router<H: ServerHandle>(server: H, config: HttpConfig) -> Router {
         resumable: resume::ResumableStreams::default(),
         sse_polling: config.sse_polling,
         detached_stream_ttl: config.detached_stream_ttl,
-    };
+    }));
     let mut app = Router::new()
         .route(
             &config.path,

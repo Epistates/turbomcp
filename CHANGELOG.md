@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the wait before the endpoint starts a stream), and recorded from then on.
   A custom `EventStore` now sees only streams a client can resume, and
   `append` is no longer called once per message of every stateful call.
+- The Streamable HTTP endpoint keeps its per-request state behind one
+  `Arc`. axum clones that state several times for every request, and
+  cloning it field by field took a lock each time (the shutdown token's
+  clone and drop do), so under concurrency requests queued on that one
+  lock. Stateless `2026-07-28` HTTP at 64 callers went from about 61,000 to
+  72,000 calls a second, and throughput no longer falls between 16 callers
+  and 64.
 
 ### Documentation
 
