@@ -7,52 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- The bundled `InMemoryEventStore` keeps finished streams in the order they
-  finished. Making room for a new stream in a full store is now a lookup at
-  the front of that order; it was a scan of every stream under the store's
-  one lock, which a busy session paid on every call once the store filled
-  (10,000 streams by default, in about a second at full load).
-  `forget_session` now touches only that session's streams. With this
-  change and the next, stateful `2025-11-25` HTTP went from about 10,800
-  calls a second at any concurrency to about 63,000 at 64 callers, and one
-  call's round trip from 148 µs to 64 µs; this change made nearly all of
-  the difference (`docs/PERFORMANCE.md`).
-- **A stateful Streamable HTTP call answered with plain JSON is no longer
-  recorded in the event store.** Such a response carries no event ids, so no
-  client can resume it. A call's messages are held until its response
-  becomes a resumable SSE stream (its first message before the response, or
-  the wait before the endpoint starts a stream), and recorded from then on.
-  A custom `EventStore` now sees only streams a client can resume, and
-  `append` is no longer called once per message of every stateful call.
-- The Streamable HTTP endpoint keeps its per-request state behind one
-  `Arc`. axum clones that state several times for every request, and
-  cloning it field by field took a lock each time (the shutdown token's
-  clone and drop do), so under concurrency requests queued on that one
-  lock. Stateless `2026-07-28` HTTP at 64 callers went from about 61,000 to
-  72,000 calls a second, and throughput no longer falls between 16 callers
-  and 64.
-
-### Documentation
-
-- `docs/PERFORMANCE.md` publishes the first performance sweep and soak, with
-  the machine, revision and commands, and rmcp's numbers beside TurboMCP's,
-  including where rmcp is faster.
-- The READMEs named rmcp 3.5 as the interop pin; it's 3.11.
-
-### Internal
-
-- `just test` checks the local links in the maintained Markdown, as CI does.
-- CI cancels a run when a newer push to the same branch or PR supersedes it.
-- Harnesses for the evidence 4.0.0 needs, each off unless asked for:
-  `just soak` runs one HTTP server under mixed traffic (steady calls,
-  session churn, cancellation storms, listen streams) for hours and fails
-  on errors or on memory or descriptor growth that doesn't level off;
-  `just perf-sweep` runs the dispatch benchmark, the comparison with rmcp
-  (now over Streamable HTTP too) and a new load test of throughput and tail
-  latency under concurrency, recording the machine beside the results.
-
 ## [4.0.0-beta.1] - 2026-11-19
 
 The beta. This release freezes the public API: from here to 4.0.0, a
@@ -62,8 +16,9 @@ last round of breaking changes in bulk, each one so that the API can grow in
 4.x minors without another break: types that will grow are non-exhaustive,
 one concept has one type, third-party types whose majors would force ours are
 out of the signatures, and every setter is named the same way. Nothing in the
-protocol behavior changes, apart from the three items marked as behavior
-changes below.
+protocol behavior changes, apart from the four items marked as behavior
+changes below. It also fixes the two Streamable HTTP throughput limits the
+first performance sweep found ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 
 ### Upgrading from 4.0.0-alpha.6
 
@@ -87,8 +42,9 @@ almost everything.
   require each other exactly.
 - **Behavior changes:** `Implementation`'s `description`, `website_url` and
   `icons` are typed fields, no longer in `extra`; the `turbomcp` command reads
-  its gateway settings from a `"turbomcp"` object on each entry; and it exits
-  `70` for a failure it doesn't classify.
+  its gateway settings from a `"turbomcp"` object on each entry; it exits
+  `70` for a failure it doesn't classify; and a stateful HTTP call answered
+  with plain JSON is no longer recorded in the event store.
 
 ### Changed
 
@@ -243,6 +199,30 @@ almost everything.
   where it took `modern` / `legacy`, and `call --args` is `--args-json`,
   one letter from `--arg` no longer. An unclassified failure exits `70`,
   apart from a tool's own error, which stays `1`.
+- The bundled `InMemoryEventStore` keeps finished streams in the order they
+  finished. Making room for a new stream in a full store is now a lookup at
+  the front of that order; it was a scan of every stream under the store's
+  one lock, which a busy session paid on every call once the store filled
+  (10,000 streams by default, in about a second at full load).
+  `forget_session` now touches only that session's streams. With this
+  change and the next, stateful `2025-11-25` HTTP went from about 10,800
+  calls a second at any concurrency to about 63,000 at 64 callers, and one
+  call's round trip from 148 µs to 64 µs; this change made nearly all of
+  the difference (`docs/PERFORMANCE.md`).
+- **A stateful Streamable HTTP call answered with plain JSON is no longer
+  recorded in the event store.** Such a response carries no event ids, so no
+  client can resume it. A call's messages are held until its response
+  becomes a resumable SSE stream (its first message before the response, or
+  the wait before the endpoint starts a stream), and recorded from then on.
+  A custom `EventStore` now sees only streams a client can resume, and
+  `append` is no longer called once per message of every stateful call.
+- The Streamable HTTP endpoint keeps its per-request state behind one
+  `Arc`. axum clones that state several times for every request, and
+  cloning it field by field took a lock each time (the shutdown token's
+  clone and drop do), so under concurrency requests queued on that one
+  lock. Stateless `2026-07-28` HTTP at 64 callers went from about 61,000 to
+  72,000 calls a second, and throughput no longer falls between 16 callers
+  and 64.
 
 ### Removed
 
@@ -260,6 +240,13 @@ almost everything.
   at the wrong revision. Use `ProtocolVersion::V2026_07_28` and
   `turbomcp_protocol::v2026_07_28`.
 
+### Documentation
+
+- `docs/PERFORMANCE.md` publishes the first performance sweep and soak, with
+  the machine, revision and commands, and rmcp's numbers beside TurboMCP's,
+  including where rmcp is faster.
+- The READMEs named rmcp 3.5 as the interop pin; it's 3.11.
+
 ### Internal
 
 - Every dependency at its latest release that builds on Rust 1.88, and the
@@ -272,6 +259,15 @@ almost everything.
 - The audit and release-verification records under `docs/` leave the
   repository; `docs/README.md`, the bench README and the release checklist
   stop pointing at them.
+- `just test` checks the local links in the maintained Markdown, as CI does.
+- CI cancels a run when a newer push to the same branch or PR supersedes it.
+- Harnesses for the evidence 4.0.0 needs, each off unless asked for:
+  `just soak` runs one HTTP server under mixed traffic (steady calls,
+  session churn, cancellation storms, listen streams) for hours and fails
+  on errors or on memory or descriptor growth that doesn't level off;
+  `just perf-sweep` runs the dispatch benchmark, the comparison with rmcp
+  (now over Streamable HTTP too) and a new load test of throughput and tail
+  latency under concurrency, recording the machine beside the results.
 
 ## [4.0.0-alpha.6] - 2026-11-18
 
