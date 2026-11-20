@@ -4,6 +4,7 @@
 //! the call live to its response.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -11,14 +12,18 @@ use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
-use turbomcp_core::{Implementation, McpResult};
+use turbomcp_core::{Implementation, JsonRpcMessage, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, ListToolsContext, McpServerCore, MethodRouter, VersionDispatcher, WithTools,
 };
-use turbomcp_transport_http::{HttpConfig, InMemoryEventStore, service};
+use turbomcp_transport_http::{
+    EventFuture, EventStore, EventStoreError, HttpConfig, InMemoryEventStore, StoredEvent, service,
+};
 
-/// Reports progress twice, 150 ms apart, then answers.
+/// `steps` reports progress twice, 150 ms apart, then answers; `slow` sends
+/// nothing for six seconds, longer than the endpoint waits before it starts
+/// a stream, then answers.
 #[derive(Clone)]
 struct Stepped;
 
@@ -34,17 +39,21 @@ impl WithTools for Stepped {
         _ctx: &ListToolsContext,
         _params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
-        Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
-            "steps",
-            json!({"type":"object"}),
-        )]))
+        Ok(neutral::ListToolsResult::new(vec![
+            neutral::Tool::new("steps", json!({"type":"object"})),
+            neutral::Tool::new("slow", json!({"type":"object"})),
+        ]))
     }
 
     async fn call_tool(
         &self,
         ctx: &CallToolContext,
-        _params: neutral::CallToolParams,
+        params: neutral::CallToolParams,
     ) -> McpResult<neutral::CallToolResult> {
+        if params.name == "slow" {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            return Ok(neutral::CallToolResult::text("late"));
+        }
         ctx.progress.report(1.0, Some(2.0), None).await;
         tokio::time::sleep(Duration::from_millis(150)).await;
         ctx.progress.report(2.0, Some(2.0), None).await;
@@ -88,9 +97,13 @@ async fn open_session(app: &turbomcp_transport_http::HttpService) -> String {
 }
 
 fn call(session: &str) -> Request<Body> {
+    call_tool(session, "steps")
+}
+
+fn call_tool(session: &str, tool: &str) -> Request<Body> {
     let body = json!({
         "jsonrpc": "2.0", "id": 9, "method": "tools/call",
-        "params": { "name": "steps", "arguments": {}, "_meta": { "progressToken": "p" } }
+        "params": { "name": tool, "arguments": {}, "_meta": { "progressToken": "p" } }
     });
     Request::builder()
         .method("POST")
@@ -244,6 +257,131 @@ async fn a_finished_stream_replays_through_its_response() {
             "notifications/progress",
             "response"
         ]
+    );
+}
+
+/// A call that sends nothing before its response, but outlasts the wait
+/// before the endpoint starts a stream: the stream opens with only its
+/// priming event, and a client that reconnects with that id after the call
+/// finished still gets the response. The events reach the store from the
+/// moment the stream opens, not only from its first event.
+#[tokio::test(start_paused = true)]
+async fn a_stream_opened_on_a_silent_call_replays_its_response() {
+    let app = app();
+    let sid = open_session(&app).await;
+    let resp = app.clone().oneshot(call_tool(&sid, "slow")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body = resp.into_body();
+    let mut buffer = String::new();
+    let prime = next_event(&mut body, &mut buffer).await.unwrap();
+    assert!(prime.data.is_empty());
+    drop(body); // the connection drops before the call answers
+
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let resumed = app
+        .clone()
+        .oneshot(resume(&sid, prime.id.as_deref().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), StatusCode::OK);
+    let mut body = resumed.into_body();
+    let mut buffer = String::new();
+    let done = next_event(&mut body, &mut buffer).await.unwrap();
+    assert_eq!(json_of(&done)["id"], 9);
+    assert_eq!(json_of(&done)["result"]["content"][0]["text"], "late");
+    assert!(next_event(&mut body, &mut buffer).await.is_none());
+}
+
+/// Counts what reaches the store it wraps.
+struct Counting {
+    inner: InMemoryEventStore,
+    appends: AtomicUsize,
+}
+
+impl EventStore for Counting {
+    fn append<'a>(
+        &'a self,
+        session: &'a str,
+        stream: &'a str,
+        seq: u64,
+        message: &'a JsonRpcMessage,
+    ) -> EventFuture<'a, Result<(), EventStoreError>> {
+        self.appends.fetch_add(1, Ordering::Relaxed);
+        self.inner.append(session, stream, seq, message)
+    }
+
+    fn replay<'a>(
+        &'a self,
+        session: &'a str,
+        stream: &'a str,
+        after: u64,
+        before: u64,
+    ) -> EventFuture<'a, Result<Option<Vec<StoredEvent>>, EventStoreError>> {
+        self.inner.replay(session, stream, after, before)
+    }
+
+    fn complete<'a>(
+        &'a self,
+        session: &'a str,
+        stream: &'a str,
+    ) -> EventFuture<'a, Result<(), EventStoreError>> {
+        self.inner.complete(session, stream)
+    }
+
+    fn forget_session<'a>(
+        &'a self,
+        session: &'a str,
+    ) -> EventFuture<'a, Result<(), EventStoreError>> {
+        self.inner.forget_session(session)
+    }
+}
+
+/// A call that answers with plain JSON gave its client no stream id, so
+/// nothing about it is recorded; a call answered with a stream records every
+/// event.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn only_a_resumable_stream_reaches_the_store() {
+    let store = Arc::new(Counting {
+        inner: InMemoryEventStore::new(),
+        appends: AtomicUsize::new(0),
+    });
+    let dispatcher = VersionDispatcher::new(Stepped, MethodRouter::new().with_tools());
+    let terminator = dispatcher.session_terminator();
+    let app = service(
+        dispatcher,
+        HttpConfig::new()
+            .with_session_terminator(Arc::new(terminator))
+            .with_event_store(store.clone()),
+    );
+    let sid = open_session(&app).await;
+
+    let list = json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/list" });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header("accept", "application/json, text/event-stream")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("mcp-session-id", &sid)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .body(Body::from(list.to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let content_type = resp.headers()[header::CONTENT_TYPE].to_str().unwrap();
+    assert!(
+        content_type.starts_with("application/json"),
+        "{content_type}"
+    );
+    let _ = resp.into_body().collect().await.unwrap();
+    assert_eq!(store.appends.load(Ordering::Relaxed), 0);
+
+    let resp = app.clone().oneshot(call(&sid)).await.unwrap();
+    let mut body = resp.into_body();
+    let mut buffer = String::new();
+    while next_event(&mut body, &mut buffer).await.is_some() {}
+    assert_eq!(
+        store.appends.load(Ordering::Relaxed),
+        3,
+        "two progress notifications and the response"
     );
 }
 

@@ -1097,7 +1097,9 @@ where
 /// [`request_post`] on a session with an event store: the call's task numbers
 /// and records each message (see [`resume`]) and the response is a primed,
 /// resumable stream, unless the call answers first with nothing on the way,
-/// in which case it is plain JSON as usual.
+/// in which case it is plain JSON as usual. The stream is published, and its
+/// events reach the store, only once a response is about to carry its id: a
+/// call answered with JSON gave no client anything to resume.
 async fn resumable_post<S>(
     state: &HttpState<S>,
     store: Arc<dyn resume::EventStore>,
@@ -1123,8 +1125,8 @@ where
     let call = catch_handler_panic(Some(request_id.clone()), svc.call(request));
     let slot = admission.take();
     let (attached, mut events) = tokio::sync::mpsc::channel(SSE_CHANNEL_CAPACITY);
-    let recorder = state.resumable.open(store, &session, attached);
-    let stream = recorder.id().to_owned();
+    let (recorder, publisher) = state.resumable.open_held(store, &session, attached);
+    let stream = publisher.id().to_owned();
     let (outcome_tx, outcome) = tokio::sync::oneshot::channel();
     let id = request_id.clone();
     state.calls.spawn(async move {
@@ -1162,25 +1164,31 @@ where
                 Ok(Err(e)) => protocol_error_response(&e, Some(request_id)),
                 Ok(Ok(None)) | Err(_) => StatusCode::ACCEPTED.into_response(),
             },
-            Some(first) => resume::resumable_stream(
+            Some(first) => {
+                publisher.publish().await;
+                resume::resumable_stream(
+                    state.codec,
+                    stream,
+                    prime,
+                    vec![first],
+                    Some(events),
+                    (state.sse_keepalive, state.sse_polling),
+                    None,
+                )
+            }
+        },
+        () = tokio::time::sleep(state.sse_upgrade_after) => {
+            publisher.publish().await;
+            resume::resumable_stream(
                 state.codec,
                 stream,
                 prime,
-                vec![first],
+                Vec::new(),
                 Some(events),
                 (state.sse_keepalive, state.sse_polling),
                 None,
-            ),
-        },
-        () = tokio::time::sleep(state.sse_upgrade_after) => resume::resumable_stream(
-            state.codec,
-            stream,
-            prime,
-            Vec::new(),
-            Some(events),
-            (state.sse_keepalive, state.sse_polling),
-            None,
-        ),
+            )
+        }
     }
 }
 

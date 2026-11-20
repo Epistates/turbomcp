@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one lock, which a busy session paid on every call once the store filled
   (10,000 streams by default, in about a second at full load).
   `forget_session` now touches only that session's streams.
+- **A stateful Streamable HTTP call answered with plain JSON is no longer
+  recorded in the event store.** Such a response carries no event ids, so no
+  client can resume it. A call's messages are held until its response
+  becomes a resumable SSE stream (its first message before the response, or
+  the wait before the endpoint starts a stream), and recorded from then on.
+  A custom `EventStore` now sees only streams a client can resume, and
+  `append` is no longer called once per message of every stateful call.
 
 ### Documentation
 

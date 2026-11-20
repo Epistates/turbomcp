@@ -14,6 +14,11 @@
 //! task holds while recording and forwarding an event, so a resumed stream
 //! neither misses an event nor sees one twice.
 //!
+//! A call that answers before anything else is on its way gets plain JSON,
+//! and its client never sees a stream id. So a call's events are held until
+//! a response is about to carry the id, and only then recorded: most calls
+//! never touch the store at all.
+//!
 //! Without a store nothing here runs, and response streams carry no event
 //! ids: an id is a promise of replay, and a promise the endpoint can't keep
 //! turns a visible disconnect into a silent gap.
@@ -66,7 +71,9 @@ pub struct StoredEvent {
 /// anyway (see `docs/DEPLOYMENT.md`).
 pub trait EventStore: Send + Sync {
     /// Record `message` as event `seq` of `stream` in `session`. Called in
-    /// order, once per event.
+    /// order, once per event, for the streams a client can resume: a call
+    /// answered with plain JSON carried no event ids, so its messages never
+    /// get here.
     fn append<'a>(
         &'a self,
         session: &'a str,
@@ -471,6 +478,13 @@ struct Live {
     /// Woken when a resume replaces `attached`, so a send stalled on the
     /// replaced response gives up: the new one has the event from the store.
     replaced: Arc<tokio::sync::Notify>,
+    /// The events so far, while no response has carried the stream's id.
+    /// Until one does, no client can name the stream to resume it, so the
+    /// events wait here rather than in the store. Most calls answer with
+    /// plain JSON and never get further; see [`Publisher`].
+    held: Option<Vec<Numbered>>,
+    /// The stream got its last event.
+    finished: bool,
 }
 
 /// One running call's stream, shared by its recorder and any resume.
@@ -486,8 +500,15 @@ pub(super) struct ResumableStreams {
     live: Arc<Mutex<HashMap<(String, String), LiveStream>>>,
 }
 
-/// One running call's stream: what its task records and forwards through.
-pub(super) struct Recorder {
+/// One stream: what its task records and forwards through.
+pub(super) struct Recorder(Handle);
+
+/// The side of a held stream (see [`ResumableStreams::open_held`]) that
+/// decides whether a client will ever see its id.
+pub(super) struct Publisher(Handle);
+
+/// A stream's store, ids and live state, shared by its two sides.
+struct Handle {
     streams: ResumableStreams,
     store: Arc<dyn EventStore>,
     session: String,
@@ -496,28 +517,64 @@ pub(super) struct Recorder {
 }
 
 impl ResumableStreams {
-    /// Open a stream for a call, with `attached` receiving its events.
+    /// Open a stream that a response carries from the start (a session's
+    /// `GET` stream), with `attached` receiving its events: every event is
+    /// recorded as it is sent.
     pub(super) fn open(
         &self,
         store: Arc<dyn EventStore>,
         session: &str,
         attached: mpsc::Sender<Numbered>,
     ) -> Recorder {
-        let stream = uuid::Uuid::new_v4().simple().to_string();
-        let live = Arc::new(tokio::sync::Mutex::new(Live {
-            next_seq: 1,
-            attached: Some(attached),
-            replaced: Arc::new(tokio::sync::Notify::new()),
-        }));
-        self.live
-            .lock()
-            .insert((session.to_owned(), stream.clone()), Arc::clone(&live));
-        Recorder {
+        let stream = self.stream(store, session, attached, false);
+        self.live.lock().insert(
+            (stream.session.clone(), stream.stream.clone()),
+            Arc::clone(&stream.live),
+        );
+        Recorder(stream)
+    }
+
+    /// Open a call's stream whose response may yet be plain JSON, with
+    /// `attached` receiving its events. Nothing reaches the store unless the
+    /// [`Publisher`] publishes it: a call answered with JSON leaves no
+    /// trace there, and a store busy with calls no client can resume would
+    /// fill, then evict on every new one.
+    pub(super) fn open_held(
+        &self,
+        store: Arc<dyn EventStore>,
+        session: &str,
+        attached: mpsc::Sender<Numbered>,
+    ) -> (Recorder, Publisher) {
+        let stream = self.stream(store, session, attached, true);
+        let publisher = Publisher(Handle {
+            streams: self.clone(),
+            store: Arc::clone(&stream.store),
+            session: stream.session.clone(),
+            stream: stream.stream.clone(),
+            live: Arc::clone(&stream.live),
+        });
+        (Recorder(stream), publisher)
+    }
+
+    fn stream(
+        &self,
+        store: Arc<dyn EventStore>,
+        session: &str,
+        attached: mpsc::Sender<Numbered>,
+        held: bool,
+    ) -> Handle {
+        Handle {
             streams: self.clone(),
             store,
             session: session.to_owned(),
-            stream,
-            live,
+            stream: uuid::Uuid::new_v4().simple().to_string(),
+            live: Arc::new(tokio::sync::Mutex::new(Live {
+                next_seq: 1,
+                attached: Some(attached),
+                replaced: Arc::new(tokio::sync::Notify::new()),
+                held: held.then(Vec::new),
+                finished: false,
+            })),
         }
     }
 
@@ -565,15 +622,58 @@ impl ResumableStreams {
     }
 }
 
+impl Publisher {
+    /// The stream's id, as event ids carry it.
+    pub(super) fn id(&self) -> &str {
+        &self.0.stream
+    }
+
+    /// A response is about to carry the stream's id, so a client may resume
+    /// it: record what it holds, and from here on every event as it is sent.
+    ///
+    /// Under the stream's lock, as recording is, so a resume (which needs the
+    /// id, so comes after this) finds every event before `next_seq` in the
+    /// store.
+    pub(super) async fn publish(self) {
+        let Handle {
+            streams,
+            store,
+            session,
+            stream,
+            live: shared,
+        } = self.0;
+        let mut live = shared.lock().await;
+        let Some(held) = live.held.take() else {
+            return;
+        };
+        for (seq, message) in &held {
+            if let Err(e) = store.append(&session, &stream, *seq, message).await {
+                tracing::warn!(error = %e, "could not record an event; it can't be replayed");
+            }
+        }
+        if live.finished {
+            if let Err(e) = store.complete(&session, &stream).await {
+                tracing::warn!(error = %e, "could not mark a stream complete");
+            }
+        } else {
+            streams
+                .live
+                .lock()
+                .insert((session, stream), Arc::clone(&shared));
+        }
+    }
+}
+
 impl Recorder {
     /// The stream's id, as event ids carry it.
     pub(super) fn id(&self) -> &str {
-        &self.stream
+        &self.0.stream
     }
 
     /// Whether a response is attached to carry the stream right now.
     pub(super) async fn attached(&self) -> bool {
-        self.live
+        self.0
+            .live
             .lock()
             .await
             .attached
@@ -581,8 +681,9 @@ impl Recorder {
             .is_some_and(|tx| !tx.is_closed())
     }
 
-    /// Number `message`, record it, and hand it to the attached response, if
-    /// one is still there.
+    /// Number `message`, record it (or hold it, until the stream is
+    /// published), and hand it to the attached response, if one is still
+    /// there.
     ///
     /// Numbering and recording happen under the stream's lock, which is what
     /// lets a resume trust that everything before `next_seq` is in the store.
@@ -590,15 +691,19 @@ impl Recorder {
     /// the lock for as long as it stalled, and so block the very resume that
     /// would replace it.
     pub(super) async fn emit(&self, message: JsonRpcMessage) {
+        let Handle {
+            store,
+            session,
+            stream,
+            ..
+        } = &self.0;
         let (seq, tx, replaced) = {
-            let mut live = self.live.lock().await;
+            let mut live = self.0.live.lock().await;
             let seq = live.next_seq;
             live.next_seq += 1;
-            if let Err(e) = self
-                .store
-                .append(&self.session, &self.stream, seq, &message)
-                .await
-            {
+            if let Some(held) = &mut live.held {
+                held.push((seq, message.clone()));
+            } else if let Err(e) = store.append(session, stream, seq, &message).await {
                 tracing::warn!(error = %e, "could not record an event; it can't be replayed");
             }
             let Some(tx) = live.attached.clone() else {
@@ -617,7 +722,7 @@ impl Recorder {
             () = replaced => return,
         };
         if !delivered {
-            let mut live = self.live.lock().await;
+            let mut live = self.0.live.lock().await;
             // Only if it is still the response that went away: a resume may
             // have attached a new one meanwhile.
             if live
@@ -630,15 +735,28 @@ impl Recorder {
         }
     }
 
-    /// The call is over: mark the stream complete and stop tracking it.
+    /// The call is over: mark the stream complete and stop tracking it. A
+    /// stream still held was never published, so the store never saw it;
+    /// if it is published later, [`Publisher::publish`] completes it.
     pub(super) async fn finish(self) {
-        if let Err(e) = self.store.complete(&self.session, &self.stream).await {
+        let Handle {
+            streams,
+            store,
+            session,
+            stream,
+            live,
+        } = self.0;
+        {
+            let mut live = live.lock().await;
+            live.finished = true;
+            if live.held.is_some() {
+                return;
+            }
+        }
+        if let Err(e) = store.complete(&session, &stream).await {
             tracing::warn!(error = %e, "could not mark a stream complete");
         }
-        self.streams
-            .live
-            .lock()
-            .remove(&(self.session.clone(), self.stream.clone()));
+        streams.live.lock().remove(&(session, stream));
     }
 }
 
@@ -881,6 +999,52 @@ mod tests {
             "a forgotten stream leaves the order too"
         );
         assert!(logs.sessions.is_empty());
+    }
+
+    /// A held stream reaches the store only once published, whether that
+    /// happens while its call runs or after it finished.
+    #[tokio::test]
+    async fn a_held_stream_reaches_the_store_only_when_published() {
+        let store = Arc::new(InMemoryEventStore::new());
+        let streams = ResumableStreams::default();
+        let seqs = |events: Vec<StoredEvent>| events.iter().map(|e| e.seq).collect::<Vec<_>>();
+        let tracked = |id: &str| streams.live.lock().contains_key(&("s".into(), id.into()));
+
+        // Answered with JSON: never published, so never recorded.
+        let (tx, _rx) = mpsc::channel(8);
+        let (recorder, publisher) = streams.open_held(store.clone(), "s", tx);
+        recorder.emit(note(1)).await;
+        recorder.finish().await;
+        drop(publisher);
+        assert_eq!(store.lock().streams, 0);
+        assert!(streams.live.lock().is_empty());
+
+        // Published after its call finished: all of it, already complete.
+        let (tx, _rx) = mpsc::channel(8);
+        let (recorder, publisher) = streams.open_held(store.clone(), "s", tx);
+        let id = publisher.id().to_owned();
+        recorder.emit(note(1)).await;
+        recorder.emit(note(2)).await;
+        recorder.finish().await;
+        publisher.publish().await;
+        let replayed = store.replay("s", &id, 0, u64::MAX).await.unwrap();
+        assert_eq!(seqs(replayed.unwrap()), [1, 2]);
+        assert!(store.lock().get("s", &id).unwrap().finished.is_some());
+        assert!(!tracked(&id), "a finished call has nothing live to follow");
+
+        // Published while it runs: what it held, then each event as it goes.
+        let (tx, _rx) = mpsc::channel(8);
+        let (recorder, publisher) = streams.open_held(store.clone(), "s", tx);
+        let id = publisher.id().to_owned();
+        recorder.emit(note(1)).await;
+        publisher.publish().await;
+        assert!(tracked(&id), "a resume can follow it live");
+        recorder.emit(note(2)).await;
+        let replayed = store.replay("s", &id, 0, u64::MAX).await.unwrap();
+        assert_eq!(seqs(replayed.unwrap()), [1, 2]);
+        recorder.finish().await;
+        assert!(!tracked(&id));
+        assert!(store.lock().get("s", &id).unwrap().finished.is_some());
     }
 
     #[test]
