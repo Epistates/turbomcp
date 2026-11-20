@@ -10,6 +10,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or PR supersedes a run still in progress.
+# main moves by fast-forward through stacked PRs, each of which already
+# passed as a PR, and every move used to queue a full run behind the last.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1

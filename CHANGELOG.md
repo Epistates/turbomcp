@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Internal
 
 - `just test` checks the local links in the maintained Markdown, as CI does.
+- CI cancels a run when a newer push to the same branch or PR supersedes it.
 - Harnesses for the evidence 4.0.0 needs, each off unless asked for:
   `just soak` runs one HTTP server under mixed traffic (steady calls,
   session churn, cancellation storms, listen streams) for hours and fails
