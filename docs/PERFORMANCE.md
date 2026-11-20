@@ -123,7 +123,8 @@ In beta.1, stateful `2025-11-25` throughput stops near 10,800 calls a second
 however many callers there are, and its latency grows with the queue (fixed
 since; see [stateful HTTP after the fix](#stateful-http-after-the-fix)).
 Stateless `2026-07-28` scales to about 71,500 calls a second at 16 callers, then
-drops at 64.
+drops at 64 (also fixed since; see
+[HTTP under concurrency](#http-under-concurrency)).
 
 ### Why rmcp has no HTTP numbers
 
@@ -219,12 +220,40 @@ measured 3.65 µs, against 3.39 µs before), and stateless HTTP at 16 callers,
 which neither change touches, measured 71,511, 61,818 and 56,899 calls/s in
 three runs. Treat differences of about 10% or less between runs as noise.
 
+## HTTP under concurrency
+
+With the event store fixed, HTTP throughput on both revisions still stopped
+rising past 16 callers. A profile of stateless `2026-07-28` HTTP at 64 callers
+put most of the process's lock waits in copies of the endpoint's shared state:
+axum copies it several times for every request, and each copy and its drop took
+a lock (the shutdown token's) that every request shares. The state now sits
+behind one reference-counted pointer, so a copy takes no lock.
+
+Before (`8325698c`) and after (`92eaefc3`), run alternately on the same
+machine, twice each; the table gives the mean of the two runs.
+
+| Revision | C | Before calls/s | After calls/s |
+|---|---|---|---|
+| `2025-11-25` | 1 | 17,351 | 17,614 |
+| `2025-11-25` | 16 | 65,857 | 74,883 |
+| `2025-11-25` | 64 | 63,591 | 77,242 |
+| `2026-07-28` | 1 | 15,592 | 15,806 |
+| `2026-07-28` | 16 | 60,934 | 70,747 |
+| `2026-07-28` | 64 | 61,152 | 72,016 |
+
+Each pair of runs agreed within 3%. The full sweep at `92eaefc3` measured the
+same: 72,969 calls/s at 64 callers on `2026-07-28` (p50 869 µs, p99 1,407 µs)
+and 77,755 on `2025-11-25` (p50 815 µs, p99 1,314 µs). One caller's round trip
+didn't change (68.62 µs on `2026-07-28`), since the lock only cost anything when
+requests contended for it.
+
 ## Open work
 
-These are the measured gaps we're working on before 4.0.0. This page will carry
+This is the measured gap we're working on before 4.0.0. This page will carry
 before and after numbers from the same sweep on the same machine.
 
-1. **`2026-07-28` on the pipe under concurrency**, where rmcp is 8-16% faster and
-   TurboMCP's throughput falls from 16 callers to 64.
-2. **`2026-07-28` over HTTP at 16 and 64 callers**, where throughput varies
-   widely between runs and falls from 16 callers to 64.
+- **`2026-07-28` on the pipe under concurrency**, where rmcp is 7-16% faster and
+  TurboMCP's throughput falls from 16 callers to 64. A profile shows a
+  `2026-07-28` call costing about 60% more CPU than a `2025-11-25` call, spread
+  over the larger messages each request and response carries on that revision
+  and the per-request handling of them. A larger pipe buffer didn't change it.
