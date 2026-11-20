@@ -14,7 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the front of that order; it was a scan of every stream under the store's
   one lock, which a busy session paid on every call once the store filled
   (10,000 streams by default, in about a second at full load).
-  `forget_session` now touches only that session's streams.
+  `forget_session` now touches only that session's streams. With this
+  change and the next, stateful `2025-11-25` HTTP went from about 10,800
+  calls a second at any concurrency to about 63,000 at 64 callers, and one
+  call's round trip from 148 µs to 64 µs; this change made nearly all of
+  the difference (`docs/PERFORMANCE.md`).
 - **A stateful Streamable HTTP call answered with plain JSON is no longer
   recorded in the event store.** Such a response carries no event ids, so no
   client can resume it. A call's messages are held until its response

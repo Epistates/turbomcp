@@ -76,8 +76,9 @@ HTTP is Streamable HTTP over loopback.
 On the pipe, a TurboMCP call takes about 21% less time than an rmcp call on
 `2025-11-25`. On `2026-07-28` the two are within 2% of each other.
 
-Over HTTP, a `2025-11-25` call is stateful (it carries a session) and costs about
-twice a stateless `2026-07-28` call. See [open work](#open-work).
+Over HTTP, a `2025-11-25` call is stateful (it carries a session) and cost about
+twice a stateless `2026-07-28` call in beta.1. That's fixed since; see
+[stateful HTTP after the fix](#stateful-http-after-the-fix).
 
 ## Throughput under concurrency
 
@@ -118,9 +119,11 @@ Where each SDK leads:
 | `2026-07-28` | 16 | 71,511 | 213 / 400 µs |
 | `2026-07-28` | 64 | 61,197 | 1,041 / 1,662 µs |
 
-Stateful `2025-11-25` throughput stops near 10,800 calls a second however many
-callers there are, and its latency grows with the queue. Stateless `2026-07-28`
-scales to about 71,500 calls a second at 16 callers, then drops at 64.
+In beta.1, stateful `2025-11-25` throughput stops near 10,800 calls a second
+however many callers there are, and its latency grows with the queue (fixed
+since; see [stateful HTTP after the fix](#stateful-http-after-the-fix)).
+Stateless `2026-07-28` scales to about 71,500 calls a second at 16 callers, then
+drops at 64.
 
 ### Why rmcp has no HTTP numbers
 
@@ -179,14 +182,49 @@ The steady traffic is stateless. Stateful traffic here is the session churn,
 one call per session, so the soak doesn't load the stateful path the way the
 throughput test does.
 
+## Stateful HTTP after the fix
+
+In beta.1, each call on a session was recorded in the server's event store
+(`InMemoryEventStore`, on by default), the record a client resumes a dropped
+stream from. Most calls answer with plain JSON, which no client can resume, so
+the store filled to its 10,000-stream limit within about a second. From then
+on, every new call scanned all 10,000 streams under the store's lock to choose
+one to evict. A profile of the beta.1 server under 64 callers (macOS `sample`)
+put 73% of the process's busy samples in those scans.
+
+Two changes followed. The store now keeps finished streams in the order they
+finished, so eviction is a lookup at the front, not a scan. And a call
+answered with plain JSON no longer reaches the store at all: its messages are
+recorded only once its response becomes a resumable stream.
+
+The same sweep on the same machine, before (beta.1, `57b6b8f1`) and after
+(`8325698c`):
+
+| C | Before calls/s | p50 / p99 | After calls/s | p50 / p99 |
+|---|---|---|---|---|
+| 1 | 7,173 | 138 / 160 µs | 17,184 | 57 / 73 µs |
+| 16 | 10,467 | 1,353 / 4,807 µs | 65,064 | 240 / 418 µs |
+| 64 | 10,839 | 5,673 / 10,607 µs | 62,981 | 1,012 / 1,612 µs |
+
+One call's round trip went from 147.67 µs (147.22-148.16) to 64.40 µs
+(64.29-64.52). A stateful call now costs about what a stateless one does: in
+the same after-sweep, `2026-07-28` measured 69.13 µs and 60,917 calls/s at 64
+callers. The first change alone gave 16,585, 64,622 and 61,198 calls/s at 1, 16
+and 64 callers; the second adds little throughput on top, and keeps calls that
+can't be resumed out of the store.
+
+The rest of the after-sweep matched beta.1 within the noise between runs on
+this machine. Benchmarks the change can't reach moved by up to 8% (one dispatch
+measured 3.65 µs, against 3.39 µs before), and stateless HTTP at 16 callers,
+which neither change touches, measured 71,511, 61,818 and 56,899 calls/s in
+three runs. Treat differences of about 10% or less between runs as noise.
+
 ## Open work
 
 These are the measured gaps we're working on before 4.0.0. This page will carry
 before and after numbers from the same sweep on the same machine.
 
-1. **Stateful HTTP throughput.** `2025-11-25` over HTTP stops near 10,800 calls a
-   second regardless of concurrency.
-2. **`2026-07-28` on the pipe under concurrency**, where rmcp is 8-16% faster and
+1. **`2026-07-28` on the pipe under concurrency**, where rmcp is 8-16% faster and
    TurboMCP's throughput falls from 16 callers to 64.
-3. **`2026-07-28` over HTTP at 64 callers**, where throughput falls from its
-   16-caller peak.
+2. **`2026-07-28` over HTTP at 16 and 64 callers**, where throughput varies
+   widely between runs and falls from 16 callers to 64.
