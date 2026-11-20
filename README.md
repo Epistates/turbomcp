@@ -53,7 +53,7 @@ both directions, a TurboMCP client against an rmcp server and the reverse, on
 every change, alongside the same matrix over HTTP against the official
 TypeScript (v2), Python and Go SDKs.
 
-TurboMCP's interoperability tests pin `rmcp` 3.5. TurboMCP serves three
+TurboMCP's interoperability tests pin `rmcp` 3.11. TurboMCP serves three
 revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) using separate generated
 wire types and exhaustive conversions to a neutral handler API. It does not
 serve `2024-11-05` or `2025-03-26`.
@@ -61,7 +61,9 @@ serve `2024-11-05` or `2025-03-26`.
 The distinguishing APIs are macro-derived capabilities, typed per-RPC contexts,
 composition, caller-specific visibility, and Tower middleware. Conformance and
 interoperability are compatibility evidence; they do not establish performance
-superiority over another SDK. See [deployment and migration](docs/DEPLOYMENT.md)
+superiority over another SDK. [Measured performance](docs/PERFORMANCE.md), including
+where rmcp is faster, is published with its method and machine. See
+[deployment and migration](docs/DEPLOYMENT.md)
 for the limits and security contracts.
 
 ## Quickstart
@@ -129,7 +131,7 @@ Compliance is tested, not asserted:
   remains available with its original fixture limitations. Neither side has
   failure waivers (`crates/turbomcp-conformance`).
 - **Cross-SDK interop** — a TurboMCP client drives an official-Rust-SDK
-  (rmcp 3.5) server and vice-versa, in-process, on `2025-11-25` *and* the
+  (rmcp 3.11) server and vice-versa, in-process, on `2025-11-25` *and* the
   stateless `2026-07-28`; and over Streamable HTTP the same, both ways and both
   eras, against the official TypeScript (v2.3), Python (2.3) and Go (1.8) SDKs
   (`crates/turbomcp-interop`, `sdks/`).

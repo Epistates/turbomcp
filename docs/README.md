@@ -14,5 +14,6 @@ There is no OpenAPI adapter, and the Apps extension is not implemented.
 - [Versioning and public API policy](../VERSIONING.md)
 - [Security reporting](../SECURITY.md)
 - [Critical test coverage and limits](TESTING.md)
+- [Measured performance, and how to reproduce it](PERFORMANCE.md)
 - [Actual benchmark targets and methodology](../benches/README.md)
 - [Release checklist](../scripts/RELEASE_CHECKLIST.md)

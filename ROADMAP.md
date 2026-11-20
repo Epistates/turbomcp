@@ -36,8 +36,9 @@ The v4 beta provides:
 
 **`4.0.0` stable.** The API is frozen as of beta.1. What remains is evidence:
 reproducible HTTP and stdio performance numbers, soak and cancellation-storm
-runs, longer fuzz campaigns, and real deployments. Breaking changes from here
-are for defects only, and the CHANGELOG calls each one out.
+runs, longer fuzz campaigns, and real deployments. The first performance
+sweep and soak are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Breaking
+changes from here are for defects only, and the CHANGELOG calls each one out.
 
 **The next MCP revision.** The specification moves to a release every six
 months, and the next one is due in late March 2027. Support for it lands as a

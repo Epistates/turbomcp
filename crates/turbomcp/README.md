@@ -79,7 +79,7 @@ both directions, a TurboMCP client against an rmcp server and the reverse, on
 every change, alongside the same matrix over HTTP against the official
 TypeScript (v2), Python and Go SDKs.
 
-TurboMCP's interoperability tests pin `rmcp` 3.5. TurboMCP serves three
+TurboMCP's interoperability tests pin `rmcp` 3.11. TurboMCP serves three
 revisions (`2025-06-18`, `2025-11-25`, `2026-07-28`) using separate generated
 wire types and exhaustive conversions to a neutral handler API. It does not
 serve `2024-11-05` or `2025-03-26`.
@@ -87,7 +87,9 @@ serve `2024-11-05` or `2025-03-26`.
 The distinguishing APIs are macro-derived capabilities, typed per-RPC contexts,
 composition, caller-specific visibility, and Tower middleware. Conformance and
 interoperability are compatibility evidence; they do not establish performance
-superiority over another SDK. See [deployment and migration](https://github.com/Epistates/turbomcp/blob/main/docs/DEPLOYMENT.md)
+superiority over another SDK. [Measured performance](https://github.com/Epistates/turbomcp/blob/main/docs/PERFORMANCE.md), including
+where rmcp is faster, is published with its method and machine. See
+[deployment and migration](https://github.com/Epistates/turbomcp/blob/main/docs/DEPLOYMENT.md)
 for the limits and security contracts.
 
 ## Quickstart

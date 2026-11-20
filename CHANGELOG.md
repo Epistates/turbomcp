@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- `docs/PERFORMANCE.md` publishes the first performance sweep and soak, with
+  the machine, revision and commands, and rmcp's numbers beside TurboMCP's,
+  including where rmcp is faster.
+- The READMEs named rmcp 3.5 as the interop pin; it's 3.11.
+
 ### Internal
 
 - `just test` checks the local links in the maintained Markdown, as CI does.
