@@ -198,13 +198,14 @@ pub(super) fn enforce_rate_limit<S>(
 /// Media ranges are matched per RFC 9110 §12.5.1 — `*/*` and `type/*`
 /// wildcards count, and parameters (`;q=…`) are ignored for the "listed as
 /// supported" check the MCP transports spec makes. A missing `Accept` header
-/// fails: the spec says the client MUST include one.
+/// fails: the spec says the client MUST include one. Every `Accept` line
+/// counts, since RFC 9110 lets a client list the two types on two lines.
 pub(super) fn accepts(headers: &HeaderMap, required: &mime::Mime) -> bool {
-    let Some(accept) = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()) else {
-        return false;
-    };
-    accept
-        .split(',')
+    headers
+        .get_all(header::ACCEPT)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|accept| accept.split(','))
         .filter_map(|part| part.trim().parse::<mime::Mime>().ok())
         // "A weight of 0 means not acceptable" (RFC 9110 §12.4.2).
         .filter(|range| {
@@ -477,5 +478,19 @@ mod tests {
             &mime::TEXT_EVENT_STREAM
         ));
         assert!(!accepts(&with("*/*;q=0.0"), &mime::APPLICATION_JSON));
+    }
+
+    /// RFC 9110 lets the two types arrive on two `Accept` lines.
+    #[test]
+    fn every_accept_line_counts() {
+        let mut h = HeaderMap::new();
+        h.append(header::ACCEPT, HeaderValue::from_static("application/json"));
+        h.append(
+            header::ACCEPT,
+            HeaderValue::from_static("text/event-stream"),
+        );
+        assert!(accepts(&h, &mime::APPLICATION_JSON));
+        assert!(accepts(&h, &mime::TEXT_EVENT_STREAM));
+        assert!(!accepts(&HeaderMap::new(), &mime::APPLICATION_JSON));
     }
 }
