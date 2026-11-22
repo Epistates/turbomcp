@@ -159,15 +159,45 @@ async fn a_message_with_neither_a_session_nor_the_envelope_is_400() {
 }
 
 /// `server/discover` is how a client finds out which wire it is on, so it
-/// needs neither a session nor the header.
+/// needs no session.
 #[tokio::test]
-async fn discover_needs_neither_a_session_nor_the_header() {
-    let discover = json!({ "jsonrpc": "2.0", "id": 5, "method": "server/discover" });
+async fn discover_needs_no_session() {
+    let discover = json!({ "jsonrpc": "2.0", "id": 5, "method": "server/discover", "params": {
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        },
+    } });
+    let resp = app(HttpConfig::new())
+        .oneshot(post(
+            discover,
+            &[
+                ("mcp-protocol-version", "2026-07-28"),
+                ("mcp-method", "server/discover"),
+            ],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = json_body(resp).await;
+    assert!(v.get("error").is_none(), "{v}");
+}
+
+/// `server/discover` exists only on 2026-07-28, so one without the `_meta`
+/// its params require is malformed there, header or no header: "the server
+/// MUST reject it with JSON-RPC error code -32602 ... On HTTP, the response
+/// status MUST be 400 Bad Request".
+#[tokio::test]
+async fn a_bare_discover_is_malformed() {
+    let discover = json!({ "jsonrpc": "2.0", "id": 6, "method": "server/discover" });
     let resp = app(HttpConfig::new())
         .oneshot(post(discover, &[]))
         .await
         .unwrap();
-    assert_ne!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = json_body(resp).await;
+    assert_eq!(v["id"], 6);
+    assert_eq!(v["error"]["code"], codes::INVALID_PARAMS);
 }
 
 /// `UnsupportedProtocolVersionError`: "For HTTP, the response status code

@@ -704,7 +704,13 @@ where
         .as_deref()
         .or(header_version)
         .is_some_and(|v| ProtocolVersion::from_wire(v) == ProtocolVersion::V2026_07_28);
-    let stateless_request = modern_wire && matches!(&msg, JsonRpcMessage::Request(_));
+    // `server/discover` exists only on 2026-07-28, so it rides that wire even
+    // with no header or `_meta` to say so, and one missing its envelope is
+    // malformed (400), not an error answered with 200. An endpoint that
+    // doesn't serve 2026-07-28 still answers it as a method it doesn't have.
+    let discover = msg.method() == Some("server/discover")
+        && state.serves(ProtocolVersion::V2026_07_28.as_str());
+    let stateless_request = (modern_wire || discover) && matches!(&msg, JsonRpcMessage::Request(_));
 
     // SEP-2575: a stateless request MUST carry `protocolVersion` and
     // `clientCapabilities` in `_meta`. The dispatcher rejects these too (every

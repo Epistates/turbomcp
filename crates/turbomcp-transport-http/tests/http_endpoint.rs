@@ -282,8 +282,10 @@ async fn allowlisted_origin_passes() {
         .uri("/mcp")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::ORIGIN, "https://app.example.com")
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "server/discover")
         .body(Body::from(
-            r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#,
         ))
         .unwrap();
     let config = HttpConfig::new().with_allowed_origin("https://app.example.com");
@@ -318,8 +320,10 @@ async fn allowlisted_host_passes() {
         .uri("/mcp")
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::HOST, "mcp.example.com")
+        .header("mcp-protocol-version", "2026-07-28")
+        .header("mcp-method", "server/discover")
         .body(Body::from(
-            r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#,
         ))
         .unwrap();
     let config = HttpConfig::new().with_allowed_host("mcp.example.com");
