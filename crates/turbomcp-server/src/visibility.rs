@@ -61,10 +61,15 @@
 //! v3's `VisibilityLayer` owned a per-session enable/disable map, and its own
 //! documentation warned that the map leaks without explicit cleanup. There is no
 //! such map here. A policy is a function of `(component, request)`, and
-//! [`VisibleComponent::request`] carries the full [`RequestContext`] — so a
-//! deployment that really does want per-session unlocking implements the trait
-//! over its own store and owns that store's lifecycle, rather than inheriting a
-//! leak from the framework.
+//! [`VisibleComponent::request`] carries the full [`RequestContext`].
+//!
+//! On `2026-07-28` a catalog may vary by the authorization a request
+//! presents, but it "MUST NOT vary per-connection or as a side effect of other
+//! requests on the connection". Key a policy on what the request itself
+//! carries (its identity, scopes and `_meta`), which is all the bundled
+//! policies read. Unlocking components per session is something only the two
+//! stateful revisions allow; a deployment that wants it there implements the
+//! trait over its own store and owns that store's lifecycle.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

@@ -35,7 +35,10 @@ impl AuthPrincipal {
         }
     }
 
-    /// Whether the principal holds every scope in `required`.
+    /// Whether the principal holds every scope in `required`, matched
+    /// exactly. A declared scope hierarchy doesn't apply here, though the
+    /// per-tool scope check honours one; to check against a hierarchy, use
+    /// [`turbomcp_core::scopes::satisfies`] with these scopes.
     #[must_use]
     pub fn has_scopes(&self, required: &[String]) -> bool {
         required.iter().all(|r| self.scopes.iter().any(|s| s == r))
