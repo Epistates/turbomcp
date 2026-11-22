@@ -334,6 +334,10 @@ almost everything.
   CI actions at their latest, pinned by commit; bun 1.4.5 for the TypeScript
   interop peers. `typify` stays on 0.8 for `turbomcp-codegen`: 0.10 needs
   Rust 1.97 and would regenerate the wire types.
+- `url` 2.5.9, for RUSTSEC-2026-0592 (a stack overflow in `Url::origin()` on
+  nested `blob:` URLs). The OAuth client compares origins of URLs a server
+  chooses (a challenge's `resource_metadata`, an authorization server's
+  issuer), so a hostile server could crash it.
 - The facade and CLI tests find their target directory by
   `.rustc_info.json` as well as `CACHEDIR.TAG`, which cargo writes only into
   a target directory it created.
