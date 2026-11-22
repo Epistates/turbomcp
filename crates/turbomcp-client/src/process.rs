@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::process::Child;
 
 /// A server process launched for a stdio connection ([`connect_child`]).
@@ -63,13 +63,15 @@ impl ServerProcess {
         if let Some(stderr) = self.child.stderr.take() {
             let label = label.into();
             tokio::spawn(async move {
-                let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
+                let mut reader = BufReader::new(stderr);
+                let mut line = Vec::new();
+                while let Ok(true) = next_capped_line(&mut reader, &mut line).await {
+                    let text = String::from_utf8_lossy(&line);
                     tracing::info!(
                         target: "turbomcp::server_stderr",
                         server = %label,
                         "{}",
-                        sanitize_line(&line)
+                        sanitize_line(text.trim_end_matches('\r'))
                     );
                 }
             });
@@ -145,6 +147,34 @@ enum Signal {
 /// The most of one stderr line logged.
 const MAX_STDERR_LINE: usize = 4096;
 
+/// Read the next line of `reader` into `line`, without its `\n`, keeping
+/// at most one byte past [`MAX_STDERR_LINE`] (enough for [`sanitize_line`]
+/// to mark the cut): the rest of the line is read and dropped, so a child
+/// that never ends one can't grow it. `Ok(false)` at the end of the stream.
+async fn next_capped_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> std::io::Result<bool> {
+    line.clear();
+    let mut read_any = false;
+    loop {
+        let buf = reader.fill_buf().await?;
+        if buf.is_empty() {
+            return Ok(read_any);
+        }
+        read_any = true;
+        let newline = buf.iter().position(|&b| b == b'\n');
+        let chunk = &buf[..newline.unwrap_or(buf.len())];
+        let room = (MAX_STDERR_LINE + 1).saturating_sub(line.len());
+        line.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        let used = newline.map_or(buf.len(), |at| at + 1);
+        reader.consume(used);
+        if newline.is_some() {
+            return Ok(true);
+        }
+    }
+}
+
 /// `line` safe to log: control characters escaped (a terminal escape in a
 /// server's output must not reach the operator's terminal as one), and cut
 /// at [`MAX_STDERR_LINE`] bytes.
@@ -173,6 +203,23 @@ mod tests {
         assert_eq!(sanitize_line("ok \u{1b}[31mred"), "ok \\u{1b}[31mred");
         let long = "x".repeat(10_000);
         assert!(sanitize_line(&long).len() <= MAX_STDERR_LINE + '…'.len_utf8());
+    }
+
+    /// A child that writes megabytes without a newline is read past, never
+    /// held: a line keeps at most one byte past the cap, and the next line
+    /// still arrives whole.
+    #[tokio::test]
+    async fn a_line_without_an_end_is_never_held_whole() {
+        let mut input = vec![b'x'; 1 << 20];
+        input.extend_from_slice(b"\nnext\r\n");
+        let mut reader = BufReader::with_capacity(8192, input.as_slice());
+        let mut line = Vec::new();
+        assert!(next_capped_line(&mut reader, &mut line).await.unwrap());
+        assert_eq!(line.len(), MAX_STDERR_LINE + 1);
+        assert!(line.capacity() < 2 * (MAX_STDERR_LINE + 8192));
+        assert!(next_capped_line(&mut reader, &mut line).await.unwrap());
+        assert_eq!(line, b"next\r");
+        assert!(!next_capped_line(&mut reader, &mut line).await.unwrap());
     }
 
     /// A server that ignores `SIGTERM` and starts a grandchild (as `npx` does)

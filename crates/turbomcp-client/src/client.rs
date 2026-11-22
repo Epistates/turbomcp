@@ -50,6 +50,12 @@ use crate::task::{Detached, TaskInfo, TaskPage, ToolTask};
 /// `input_required` forever.
 const MAX_MRTR_ROUNDS: usize = 16;
 
+/// The most `inputRequests` one MRTR round may carry. Each starts a handler
+/// (a person, a model) and they run at once, so without a cap one result
+/// could start any number; the connection caps what servers ask outside
+/// MRTR the same way.
+const MAX_INPUT_REQUESTS: usize = 64;
+
 /// Cap on pages the `list_all_*` helpers will follow — a guard against a
 /// server whose `nextCursor` never terminates. Set far above any real catalog
 /// (even at one item per page) so it only ever trips on a broken server.
@@ -2480,6 +2486,13 @@ impl Client {
                     return Err(ClientError::Protocol(
                         "server requires input (MRTR) but the client registered no handler".into(),
                     ));
+                }
+                if requests.len() > MAX_INPUT_REQUESTS {
+                    return Err(ClientError::Protocol(format!(
+                        "server asked for {} inputs in one round; the client answers at most \
+                         {MAX_INPUT_REQUESTS} at once",
+                        requests.len()
+                    )));
                 }
                 // Answered concurrently: they are independent by construction,
                 // and one slow human should not serialize the rest.

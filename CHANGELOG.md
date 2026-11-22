@@ -252,6 +252,17 @@ almost everything.
   it leaves that tool's results unvalidated, as one that doesn't compile
   already did, and the client compiles an `outputSchema` again only when it
   changed since the last listing.
+- Bounds on what one message from a peer can make the SDK start or hold:
+  - the client answers at most 64 `inputRequests` in one multi-round-trip
+    round, which all run at once, and refuses a round asking for more;
+  - the client reads a child server's stderr a capped line at a time, so a
+    child that never ends a line can't grow its memory (lines were already
+    cut to 4 KiB, but only after being read whole);
+  - the server refuses an `initialize` whose `clientInfo` is over 64 KiB, as
+    it already refused such `capabilities`: both are kept for the session's
+    life;
+  - the Tasks extension's `subscriptions/listen` considers each task id once,
+    and at most 1,024 of them; the acknowledgement echoes the ones kept.
 
 ### Removed
 

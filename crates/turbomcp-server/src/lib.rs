@@ -628,6 +628,43 @@ mod tests {
         assert!(r.error.is_none(), "the first still answers");
     }
 
+    /// A session keeps its `clientInfo` for its whole life and copies it into
+    /// every request, so an oversized one is refused at `initialize`, as
+    /// oversized capabilities are.
+    #[tokio::test]
+    async fn an_oversized_client_info_is_refused() {
+        let mut svc = crate::LegacySessionAdapter::new(dispatcher());
+        let icon = format!("data:image/png;base64,{}", "A".repeat(80 * 1024));
+        let resp = svc
+            .ready()
+            .await
+            .unwrap()
+            .call(
+                JsonRpcRequest::new(
+                    1,
+                    "initialize",
+                    Some(json!({
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "clientInfo": { "name": "c", "version": "1", "icons": [{ "src": icon }] },
+                    })),
+                )
+                .into(),
+            )
+            .await
+            .unwrap();
+        let Some(JsonRpcMessage::Response(r)) = resp else {
+            panic!()
+        };
+        let err = r.error.expect("refused");
+        assert_eq!(err.code, turbomcp_core::codes::INVALID_PARAMS);
+        assert!(
+            err.message.contains("clientInfo exceeds"),
+            "{}",
+            err.message
+        );
+    }
+
     /// A session speaks the revision it negotiated: a request stating
     /// another is refused rather than answered in the other's shape.
     #[tokio::test]

@@ -208,6 +208,52 @@ async fn listen_then_cancel_pushes_notifications_tasks() {
     );
 }
 
+/// Each id costs a store lookup and, once subscribed, a status push, so a
+/// repeated id is honored once: the acknowledgement echoes what was kept.
+#[tokio::test]
+async fn a_repeated_task_id_is_subscribed_once() {
+    let conn = "notif-test-repeat-conn";
+    let mut svc = dispatcher();
+    let (tx, mut rx) = mpsc::channel(16);
+    let peer = Peer::new(conn, &tx);
+    let created = call_some(
+        &mut svc,
+        &peer,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "slow", "arguments": {}, "_meta": meta(conn, true) })),
+        ),
+    )
+    .await;
+    let JsonRpcMessage::Response(r) = created else {
+        panic!("expected response")
+    };
+    let task_id = r.result.unwrap()["taskId"]
+        .as_str()
+        .expect("taskId")
+        .to_owned();
+    let listen = call_none(
+        &mut svc,
+        &peer,
+        JsonRpcRequest::new(
+            2,
+            "subscriptions/listen",
+            Some(json!({
+                "_meta": meta(conn, true),
+                "notifications": { "taskIds": [task_id, task_id, task_id] },
+            })),
+        ),
+    )
+    .await;
+    assert!(listen.is_none());
+    let ack = as_notification(rx.recv().await.expect("ack"));
+    assert_eq!(
+        ack.params.as_ref().unwrap()["notifications"]["taskIds"],
+        json!([task_id])
+    );
+}
+
 #[tokio::test]
 async fn non_declaring_listen_with_task_ids_is_missing_capability() {
     let conn = "notif-test-undeclared-conn";

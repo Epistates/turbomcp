@@ -97,6 +97,10 @@ pub const DEFAULT_TTL_MS: i64 = 300_000;
 /// Default suggested polling interval, in milliseconds.
 pub const DEFAULT_POLL_INTERVAL_MS: i64 = 500;
 
+/// The most distinct task ids one `subscriptions/listen` considers: what the
+/// default task store holds at once, so more can't all be the caller's.
+const MAX_LISTEN_TASK_IDS: usize = TaskStore::DEFAULT_CAPACITY;
+
 /// Decides whether a given `tools/call` should run as a task. Receives the tool
 /// name and the request context (identity, capabilities, …).
 type TaskDecider = Arc<dyn Fn(&str, &RequestContext) -> bool + Send + Sync>;
@@ -382,11 +386,17 @@ impl Extension for TasksExtension {
             return SubscribeOutcome::MissingCapability;
         }
         // Only the caller's own tasks: another's answers as if it didn't
-        // exist.
+        // exist. Each id is a store lookup, so a repeat is skipped and no
+        // more are considered than a default store holds at once; the
+        // acknowledgement echoes the ones kept.
         let owner = owner(context);
+        let mut seen = std::collections::HashSet::new();
         let mut ids = Vec::new();
         for id in task_ids.iter().filter_map(serde_json::Value::as_str) {
-            if self.store.get(&owner, id).await.is_ok() {
+            if seen.len() == MAX_LISTEN_TASK_IDS {
+                break;
+            }
+            if seen.insert(id) && self.store.get(&owner, id).await.is_ok() {
                 ids.push(id.to_owned());
             }
         }

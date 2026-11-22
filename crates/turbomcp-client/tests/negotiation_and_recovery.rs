@@ -428,7 +428,10 @@ async fn mrtr_gives_up_after_the_round_cap() {
                     // A fresh key every round, so the handler keeps answering.
                     (format!("k{}", rounds.load(SeqCst))): {
                         "method": "elicitation/create",
-                        "params": { "message": "again", "requestedSchema": {} }
+                        "params": {
+                            "message": "again",
+                            "requestedSchema": { "type": "object", "properties": {} }
+                        }
                     }
                 })))
             }
@@ -450,6 +453,45 @@ async fn mrtr_gives_up_after_the_round_cap() {
         "{err:?}"
     );
     assert_eq!(rounds.load(SeqCst), 16, "the documented round cap");
+}
+
+/// One round may ask for at most 64 inputs, which all run at once: a server
+/// can't make one result start any number of handlers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_round_asks_for_at_most_64_inputs() {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    spawn_scripted(server_io, |method, _| match method {
+        "server/discover" => Some(discover_ok()),
+        "tools/call" => {
+            let requests: Map<String, Value> = (0..65)
+                .map(|i| {
+                    (
+                        format!("k{i}"),
+                        json!({ "method": "elicitation/create", "params": {
+                            "message": "?",
+                            "requestedSchema": { "type": "object", "properties": {} }
+                        } }),
+                    )
+                })
+                .collect();
+            Some(input_required_body(Value::Object(requests)))
+        }
+        other => panic!("unexpected method from client: {other}"),
+    });
+    let client = ClientBuilder::new("many", "1.0.0")
+        .with_connect_mode(ConnectMode::Stateless)
+        .with_elicitation(AcceptAll)
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+    let err = client
+        .call_tool("asks-too-much", Map::new())
+        .await
+        .expect_err("refused");
+    assert!(
+        matches!(&err, ClientError::Protocol(m) if m.contains("at most 64")),
+        "{err:?}"
+    );
 }
 
 // ---- packaged sampling / roots dispatch ------------------------------------------

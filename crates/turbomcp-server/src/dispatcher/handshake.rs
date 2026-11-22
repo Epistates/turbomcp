@@ -31,6 +31,11 @@ use super::error_response;
 /// Real ones are well under a kilobyte; the bound leaves room for extensions.
 const MAX_CLIENT_CAPABILITIES_BYTES: usize = 64 * 1024;
 
+/// Upper bound on the serialized `clientInfo` a session keeps. Real ones are
+/// a name, a version and perhaps a few icons; the bound leaves room for an
+/// icon sent inline as a `data:` URI.
+const MAX_CLIENT_INFO_BYTES: usize = 64 * 1024;
+
 /// Answer the `initialize` handshake (lifecycle spec §Version Negotiation):
 /// echo the requested version when supported, otherwise our latest
 /// `initialize`-speaking version. When the transport supplied a session id,
@@ -90,6 +95,14 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
             &McpError::invalid_params(format!(
                 "client capabilities exceed {MAX_CLIENT_CAPABILITIES_BYTES} bytes"
             )),
+        ));
+    }
+    // Kept as long, and copied into every request's context.
+    let size = serde_json::to_vec(&params.client_info).map_or(usize::MAX, |b| b.len());
+    if size > MAX_CLIENT_INFO_BYTES {
+        return Ok(error_response(
+            id,
+            &McpError::invalid_params(format!("clientInfo exceeds {MAX_CLIENT_INFO_BYTES} bytes")),
         ));
     }
     let client_info = from_legacy_impl(params.client_info);
