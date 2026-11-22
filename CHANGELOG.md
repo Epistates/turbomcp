@@ -284,6 +284,10 @@ almost everything.
   `just perf-sweep` runs the dispatch benchmark, the comparison with rmcp
   (now over Streamable HTTP too) and a new load test of throughput and tail
   latency under concurrency, recording the machine beside the results.
+- The `uri_template` fuzz target spends most inputs matching URIs against
+  fixed templates covering every operator, so it measures the matcher at
+  matching speed; the rest still compile a template of their own.
+  `fuzz/README.md` says how to run the targets and why their speeds differ.
 
 ## [4.0.0-alpha.6] - 2026-11-18
 
