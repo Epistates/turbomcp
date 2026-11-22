@@ -111,8 +111,15 @@ pub(super) fn validate_request_headers(
     };
     // An intermediary that routes on one copy of a repeated header while
     // this server validates the other is the split the mirrors exist to
-    // prevent.
-    for name in [&headers::MCP_METHOD, &headers::MCP_NAME] {
+    // prevent. That holds for an `Mcp-Param-*` mirror as much as for the
+    // routing headers, though the spec says nothing about repeats.
+    let mirrors = headers
+        .keys()
+        .filter(|name| name.as_str().starts_with(headers::MCP_PARAM_PREFIX));
+    for name in [&headers::MCP_METHOD, &headers::MCP_NAME]
+        .into_iter()
+        .chain(mirrors)
+    {
         if repeated(headers, name) {
             return Some(header_mismatch_rejection(
                 id,
@@ -293,6 +300,17 @@ mod tests {
         let msg = draft_call("eu");
         let mut h = headers(&draft_call_headers(&[]));
         h.append(&headers::MCP_METHOD, HeaderValue::from_static("tools/list"));
+        assert!(validate_request_headers(&msg, &h).is_some());
+    }
+
+    /// A gateway routing on the first `Mcp-Param-Region` while the server
+    /// checks the second would see a value nobody validated.
+    #[test]
+    fn a_repeated_mirror_header_is_refused() {
+        let msg = draft_call("eu");
+        let mut h = headers(&draft_call_headers(&[("Mcp-Param-region", "eu")]));
+        assert!(validate_request_headers(&msg, &h).is_none());
+        h.append("mcp-param-region", HeaderValue::from_static("us"));
         assert!(validate_request_headers(&msg, &h).is_some());
     }
 
