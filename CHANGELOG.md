@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [4.0.0-beta.1] - 2026-11-19
+## [4.0.0-beta.1] - 2026-11-22
 
 The beta. This release freezes the public API: from here to 4.0.0, a
 breaking change is made only to fix a defect, and the CHANGELOG calls it out
