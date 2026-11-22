@@ -44,9 +44,18 @@ impl<V: BearerValidator> ResourceServer<V> {
     /// If the validator names its audiences and the metadata's `resource` is
     /// not one of them. Clients request tokens for exactly that `resource`
     /// (RFC 8707), so such a server would refuse every token issued for it:
-    /// an endpoint URL used as one and the origin as the other, say.
+    /// an endpoint URL used as one and the origin as the other, say. And if
+    /// the metadata names no authorization server, which it "MUST include
+    /// ... containing at least one": a client would have nowhere to get a
+    /// token.
     #[must_use]
     pub fn new(validator: V, metadata: ResourceMetadata, metadata_url: impl Into<String>) -> Self {
+        assert!(
+            !metadata.authorization_servers.is_empty(),
+            "ResourceServer: the metadata for `{}` names no authorization server; \
+             the MCP authorization spec requires at least one, or no client can get a token",
+            metadata.resource
+        );
         let audiences = validator.audiences();
         assert!(
             audiences.is_empty() || audiences.contains(&metadata.resource),

@@ -365,6 +365,21 @@ fn a_resource_the_validator_rejects_is_a_construction_error() {
     );
 }
 
+/// Protected resource metadata "MUST include the `authorization_servers`
+/// field containing at least one authorization server": without one a
+/// client has nowhere to get a token, so it's refused at construction.
+#[test]
+#[should_panic(expected = "names no authorization server")]
+fn metadata_without_an_authorization_server_is_a_construction_error() {
+    let jwks = StaticJwks::from_json(&jwks_json()).unwrap();
+    let validator = JwtValidator::new(jwks, RESOURCE, ISSUER);
+    let _ = ResourceServer::new(
+        validator,
+        ResourceMetadata::new(RESOURCE, Vec::<String>::new()),
+        METADATA_URL,
+    );
+}
+
 /// A Bearer header that isn't one is `400 invalid_request`; another scheme
 /// gets the bare `401` challenge (RFC 6750 §3.1).
 #[tokio::test]
