@@ -1873,15 +1873,25 @@ pub enum ElicitAction {
 /// supported to simplify client user experience."
 const ELICIT_PRIMITIVES: [&str; 4] = ["string", "number", "integer", "boolean"];
 
-/// Check a form-mode `requestedSchema` against the spec's restricted subset.
+/// Check a form-mode `requestedSchema` against the spec's restricted subset,
+/// and against the schema budget every compile site shares.
 ///
 /// A client cannot render what the subset excludes, so a server that sends a
 /// nested object gets back an empty form and no explanation. Catching it where
-/// the request is built names the offending property instead.
+/// the request is built names the offending property instead. The client runs
+/// the same check on what it receives, before compiling the schema to hold
+/// the answer to it.
 ///
 /// # Errors
 /// A description of the first property that falls outside the subset.
 fn validate_requested_schema(schema: &Value, primitives_only: bool) -> Result<(), String> {
+    if !turbomcp_core::budget::schema_within_budget(schema) {
+        return Err(alloc::format!(
+            "requestedSchema exceeds the schema budget (depth {}, {} values)",
+            turbomcp_core::budget::MAX_SCHEMA_DEPTH,
+            turbomcp_core::budget::MAX_SCHEMA_NODES
+        ));
+    }
     // The wire type makes both `type` and `properties` required, so this is
     // the schema's own floor rather than an extra rule.
     if schema.get("type").and_then(Value::as_str) != Some("object") {

@@ -1128,10 +1128,14 @@ impl Client {
         // A first page starts a listing afresh: a tool a newer list leaves
         // out is gone, not remembered as it was.
         if cursor.is_none() || catalog.generation != generation {
-            catalog.facts.clear();
+            catalog.previous = std::mem::take(&mut catalog.facts);
         }
         catalog.generation = generation;
-        let known = &mut catalog.facts;
+        let ToolCatalog {
+            facts: known,
+            previous,
+            ..
+        } = &mut *catalog;
         result.tools.retain(|tool| {
             let headers = if mirrors_headers {
                 match header_params_from_schema(&tool.input_schema) {
@@ -1149,7 +1153,8 @@ impl Client {
             } else {
                 Vec::new()
             };
-            known.insert(tool.name.clone(), ToolFacts::learn(tool, headers));
+            let facts = ToolFacts::learn(tool, headers, previous.get(&tool.name));
+            known.insert(tool.name.clone(), facts);
             true
         });
         drop(catalog);
@@ -2878,6 +2883,9 @@ impl Drop for CancelTaskOnDrop<'_> {
 #[derive(Default)]
 struct ToolCatalog {
     facts: HashMap<String, ToolFacts>,
+    /// The listing before this one, whose compiled schemas a tool that
+    /// hasn't changed keeps.
+    previous: HashMap<String, ToolFacts>,
     generation: u64,
 }
 
@@ -2917,14 +2925,34 @@ struct ToolFacts {
     task_support: Option<neutral::TaskSupport>,
     /// The compiled `outputSchema`, if the tool declares one that compiles.
     output: Option<Arc<jsonschema::Validator>>,
+    /// The schema `output` was compiled from.
+    output_schema: Option<Value>,
 }
 
 impl ToolFacts {
-    fn learn(tool: &neutral::Tool, headers: Vec<HeaderParam>) -> Self {
-        // A schema that doesn't compile can't be checked. That's the server's
-        // bug, and dropping the tool over it would punish the caller for it,
-        // so the tool stays callable and its results go unvalidated.
-        let output = tool.output_schema.as_ref().and_then(|schema| {
+    /// What `tool` commits the server to. An `outputSchema` the `previous`
+    /// listing already compiled is kept, so a server that re-lists on every
+    /// change doesn't make each listing compile every schema again.
+    fn learn(tool: &neutral::Tool, headers: Vec<HeaderParam>, previous: Option<&Self>) -> Self {
+        let unchanged = previous
+            .filter(|p| p.output_schema.is_some() && p.output_schema == tool.output_schema)
+            .and_then(|p| p.output.clone());
+        // A schema that doesn't compile, or is over the budget every compile
+        // site shares, can't be checked. That's the server's bug, and dropping
+        // the tool over it would punish the caller for it, so the tool stays
+        // callable and its results go unvalidated.
+        let output = unchanged.or_else(|| {
+            let schema = tool.output_schema.as_ref()?;
+            if !turbomcp_core::budget::schema_within_budget(schema) {
+                tracing::warn!(
+                    tool = %tool.name,
+                    "outputSchema exceeds the schema budget (depth {}, {} values); \
+                     this tool's results are not validated",
+                    turbomcp_core::budget::MAX_SCHEMA_DEPTH,
+                    turbomcp_core::budget::MAX_SCHEMA_NODES
+                );
+                return None;
+            }
             jsonschema::validator_for(schema)
                 .map(Arc::new)
                 .inspect_err(|e| {
@@ -2939,6 +2967,7 @@ impl ToolFacts {
         Self {
             headers,
             task_support: tool.task_support,
+            output_schema: output.as_ref().and(tool.output_schema.clone()),
             output,
         }
     }
@@ -3228,5 +3257,52 @@ impl Prepared {
                 .map(|registration| registration.ticks.clone()),
             input: self.input.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tool_facts_tests {
+    use super::*;
+
+    fn with_output(schema: Value) -> neutral::Tool {
+        neutral::Tool::new("t", json!({ "type": "object" })).with_output_schema(schema)
+    }
+
+    /// A server that re-lists on every change doesn't make each listing
+    /// compile every schema again.
+    #[test]
+    fn an_unchanged_output_schema_is_compiled_once() {
+        let tool =
+            with_output(json!({ "type": "object", "properties": { "n": { "type": "integer" } } }));
+        let first = ToolFacts::learn(&tool, Vec::new(), None);
+        let again = ToolFacts::learn(&tool, Vec::new(), Some(&first));
+        assert!(Arc::ptr_eq(
+            first.output.as_ref().unwrap(),
+            again.output.as_ref().unwrap()
+        ));
+        let changed = ToolFacts::learn(
+            &with_output(json!({ "type": "object" })),
+            Vec::new(),
+            Some(&first),
+        );
+        assert!(!Arc::ptr_eq(
+            first.output.as_ref().unwrap(),
+            changed.output.as_ref().unwrap()
+        ));
+    }
+
+    /// A server's `outputSchema` gets the budget every compile site shares;
+    /// over it, the tool stays callable and its results go unvalidated.
+    #[test]
+    fn an_output_schema_over_the_budget_is_not_compiled() {
+        let mut deep = json!({ "type": "object" });
+        for _ in 0..turbomcp_core::budget::MAX_SCHEMA_DEPTH {
+            deep = json!({ "type": "object", "properties": { "x": deep } });
+        }
+        assert!(
+            ToolFacts::learn(&with_output(deep), Vec::new(), None)
+                .output
+                .is_none()
+        );
     }
 }

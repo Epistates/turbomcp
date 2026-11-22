@@ -16,7 +16,7 @@ last round of breaking changes in bulk, each one so that the API can grow in
 4.x minors without another break: types that will grow are non-exhaustive,
 one concept has one type, third-party types whose majors would force ours are
 out of the signatures, and every setter is named the same way. Nothing in the
-protocol behavior changes, apart from the five items marked as behavior
+protocol behavior changes, apart from the six items marked as behavior
 changes below. It also fixes the two Streamable HTTP throughput limits the
 first performance sweep found ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 
@@ -44,9 +44,11 @@ almost everything.
   `icons` are typed fields, no longer in `extra`; the `turbomcp` command reads
   its gateway settings from a `"turbomcp"` object on each entry; it exits
   `70` for a failure it doesn't classify; a stateful HTTP call answered
-  with plain JSON is no longer recorded in the event store; and a URI
-  template over 2,048 bytes or 32 variables is refused (a `#[resource]` one
-  fails the build, and a gateway leaves an upstream's out).
+  with plain JSON is no longer recorded in the event store; a URI template
+  over 2,048 bytes or 32 variables is refused (a `#[resource]` one fails the
+  build, and a gateway leaves an upstream's out); and the client answers
+  `-32602` to a form elicitation without `message` or `requestedSchema`, or
+  whose schema is outside the form subset.
 
 ### Changed
 
@@ -239,6 +241,17 @@ almost everything.
   process shares, which the server's own matching and the gateway both use.
   That cache is bounded by an estimate of the memory it holds (64 MiB)
   instead of by 1,024 entries.
+- **The client refuses a form elicitation the spec doesn't allow**, with
+  `-32602`: one without `message` or `requestedSchema`, or whose schema is
+  outside the flat form subset of the session's revision or over the schema
+  budget. It used to hand the handler an empty form, and to compile whatever
+  schema came to check the answer against. `turbomcp_core::budget` now holds
+  the one schema budget (depth 64, 20,000 values) that every compile site
+  checks first: the server's tool schemas, the elicitation subset check on
+  both sides, and the client's `outputSchema`. A server's `outputSchema` over
+  it leaves that tool's results unvalidated, as one that doesn't compile
+  already did, and the client compiles an `outputSchema` again only when it
+  changed since the last listing.
 
 ### Removed
 

@@ -33,7 +33,9 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use async_trait::async_trait;
-use serde_json::{Map, Value, json};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::{Map, Value};
 use turbomcp_core::{JsonRpcError, ProtocolVersion};
 use turbomcp_protocol::methods::request;
 use turbomcp_protocol::neutral;
@@ -498,7 +500,7 @@ pub(crate) async fn dispatch_server_request(
                 .map(|m| m.as_str())
             {
                 None | Some(Some("form")) => {
-                    let request = parse_elicit_params(params)?;
+                    let request = parse_elicit_params(params, version)?;
                     let schema = request.requested_schema.clone();
                     let outcome = handler.elicit(ctx, request).await.map_err(handler_error)?;
                     check_form_answer(&schema, &outcome)?;
@@ -631,7 +633,9 @@ fn parse_elicit_url_params(
 /// Hold a form answer to the schema it was asked for ("Clients SHOULD
 /// validate all responses against the provided schema"): a handler that
 /// returns something else would hand the server data it never agreed to
-/// take. A schema that doesn't compile can't be checked and isn't.
+/// take. The schema passed [`parse_elicit_params`], so compiling it is
+/// within the budget; one that still doesn't compile can't be checked and
+/// isn't.
 fn check_form_answer(schema: &Value, outcome: &neutral::ElicitOutcome) -> Result<(), JsonRpcError> {
     if outcome.action != neutral::ElicitAction::Accept {
         return Ok(());
@@ -648,19 +652,31 @@ fn check_form_answer(schema: &Value, outcome: &neutral::ElicitOutcome) -> Result
         })
 }
 
-/// Parse an `elicitation/create` request's params into [`neutral::ElicitParams`].
-fn parse_elicit_params(params: Option<Value>) -> Result<neutral::ElicitParams, JsonRpcError> {
+/// Parse a form-mode `elicitation/create` request's params into
+/// [`neutral::ElicitParams`], refusing (`-32602`) what the spec doesn't
+/// allow: `message` and `requestedSchema` are required, and the schema must
+/// be the flat form subset `version` defines, within the schema budget. It
+/// comes from the server, or a gateway's upstream, and the answer is checked
+/// against it, which compiles it.
+fn parse_elicit_params(
+    params: Option<Value>,
+    version: &ProtocolVersion,
+) -> Result<neutral::ElicitParams, JsonRpcError> {
     let params = params.ok_or_else(|| invalid_params("elicitation/create requires params"))?;
     let message = params
         .get("message")
         .and_then(Value::as_str)
-        .unwrap_or_default()
+        .ok_or_else(|| invalid_params("form elicitation/create requires `message`"))?
         .to_owned();
     let requested_schema = params
         .get("requestedSchema")
         .cloned()
-        .unwrap_or_else(|| json!({}));
-    Ok(neutral::ElicitParams::new(message, requested_schema))
+        .ok_or_else(|| invalid_params("form elicitation/create requires `requestedSchema`"))?;
+    let request = neutral::ElicitParams::new(message, requested_schema);
+    request
+        .validate_for(version)
+        .map_err(|e| invalid_params(&e.to_string()))?;
+    Ok(request)
 }
 
 fn invalid_params(msg: &str) -> JsonRpcError {
@@ -914,9 +930,10 @@ mod must_tests {
         }
 
         // Form mode still works, with or without the explicit discriminator.
+        let schema = json!({ "type": "object", "properties": {} });
         for params in [
-            json!({ "message": "?" }),
-            json!({ "mode": "form", "message": "?" }),
+            json!({ "message": "?", "requestedSchema": schema }),
+            json!({ "mode": "form", "message": "?", "requestedSchema": schema }),
         ] {
             assert!(
                 dispatch(&form_only(), request::ELICITATION_CREATE, Some(params))
@@ -1242,5 +1259,38 @@ mod must_tests {
         .await
         .expect_err("refused");
         assert_eq!(err.code, -32603);
+    }
+
+    /// A form request the spec doesn't allow is refused before the handler
+    /// runs or its schema compiles: `message` and `requestedSchema` are
+    /// required, and the schema is the flat form subset, within the budget
+    /// every peer schema gets.
+    #[tokio::test]
+    async fn a_form_request_outside_the_subset_is_refused_before_compiling() {
+        let handlers = form_only();
+        let wide: Map<String, Value> = (0..turbomcp_core::budget::MAX_SCHEMA_NODES)
+            .map(|i| (format!("p{i}"), json!({ "type": "string" })))
+            .collect();
+        let nested = json!({ "address": { "type": "object", "properties": {} } });
+        for (params, why) in [
+            (
+                json!({ "requestedSchema": { "type": "object", "properties": {} } }),
+                "no message",
+            ),
+            (json!({ "message": "?" }), "no requestedSchema"),
+            (
+                json!({ "message": "?", "requestedSchema": { "type": "object", "properties": nested } }),
+                "a nested object",
+            ),
+            (
+                json!({ "message": "?", "requestedSchema": { "type": "object", "properties": wide } }),
+                "over the budget",
+            ),
+        ] {
+            let err = dispatch(&handlers, request::ELICITATION_CREATE, Some(params))
+                .await
+                .expect_err(why);
+            assert_eq!(err.code, -32602, "{why}");
+        }
     }
 }
