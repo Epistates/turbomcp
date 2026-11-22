@@ -16,7 +16,7 @@ last round of breaking changes in bulk, each one so that the API can grow in
 4.x minors without another break: types that will grow are non-exhaustive,
 one concept has one type, third-party types whose majors would force ours are
 out of the signatures, and every setter is named the same way. Nothing in the
-protocol behavior changes, apart from the six items marked as behavior
+protocol behavior changes, apart from the items marked as behavior
 changes below. It also fixes the two Streamable HTTP throughput limits the
 first performance sweep found ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 
@@ -46,9 +46,14 @@ almost everything.
   `70` for a failure it doesn't classify; a stateful HTTP call answered
   with plain JSON is no longer recorded in the event store; a URI template
   over 2,048 bytes or 32 variables is refused (a `#[resource]` one fails the
-  build, and a gateway leaves an upstream's out); and the client answers
+  build, and a gateway leaves an upstream's out); the client answers
   `-32602` to a form elicitation without `message` or `requestedSchema`, or
-  whose schema is outside the form subset.
+  whose schema is outside the form subset; and the fixes from checking every
+  supported revision against the current spec, listed under Changed (a stale
+  `Last-Event-ID` is a `400`, a bare `server/discover` is a `400`, a
+  WebSocket's rate limit applies per request, and the OAuth client follows an
+  off-origin `resource_metadata` URL and matches an authorization server's
+  issuer exactly).
 
 ### Changed
 
@@ -263,6 +268,42 @@ almost everything.
     life;
   - the Tasks extension's `subscriptions/listen` considers each task id once,
     and at most 1,024 of them; the acknowledgement echoes the ones kept.
+- Every supported revision was checked against the MCP spec as it stands
+  (upstream `862397ce`, 2026-11-21, which edited the released texts after
+  their tags). What changed:
+  - **The client accepts a `2026-07-28` URL-mode elicitation without
+    `elicitationId`**, which that revision's schema doesn't have; every valid
+    one was refused. `2025-11-25` still requires it, and `2025-06-18`, which
+    has no URL mode, refuses one.
+  - **A `Last-Event-ID` the endpoint can't replay is answered `400`, not
+    `404`.** On a request with a session id, `404` means the session is gone,
+    and a client MUST start a new one. The client drops the cursor and
+    reopens on either status.
+  - **A `server/discover` without the `_meta` its params require is a
+    `400`**, with `-32602`, header or no header; it was answered `200`.
+  - **A configured rate limiter charges every WebSocket request**, not just
+    the upgrade, which let one connection call tools without limit. One over
+    budget is answered with the error HTTP sends with its `429`, the wait in
+    `data.retryAfterMs`.
+  - **The OAuth client uses the challenge's `resource_metadata` URL on any
+    origin** (it MUST when one is given); an off-origin one was ignored. The
+    fetch runs under the network policy, the document must still name the
+    resource being accessed, and an off-origin URL must be HTTPS.
+  - **An authorization server's metadata `issuer` must match exactly**: one
+    differing by a trailing `/` from the identifier the resource names is
+    refused. An operator's own issuer pin still matches with or without it.
+  - **`ResourceServer::new` panics on metadata naming no authorization
+    server**, which the document MUST include.
+  - **`ClientBuilder::with_extension` panics on an id that isn't a prefixed
+    `_meta` key**, as the server side already did.
+  - The client rejects a tool whose `x-mcp-header` is the pre-release
+    boolean `true` rather than a header name, and treats a sampling request's
+    `tools` or `toolChoice` as provided whenever it's present, however it
+    parses.
+  - `Composite` resumes a mount whose cursor is the empty string (a valid
+    cursor) instead of restarting it.
+  - Codegen pins the spec commit, not the `2026-07-28` tag; regenerating
+    changed only doc comments.
 
 ### Removed
 
