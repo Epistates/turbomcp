@@ -264,11 +264,22 @@ impl ClientBuilder {
 
     /// Declare participation in an extension (`2026-07-28` `extensions`
     /// capability); older wires have no such field and drop it.
+    ///
+    /// # Panics
+    /// If `id` doesn't follow the `_meta` key naming rules with a prefix
+    /// (`com.example/name`), which extension identifiers MUST; the server
+    /// side refuses such an id the same way.
     #[must_use]
     pub fn with_extension(mut self, id: impl Into<String>, value: Value) -> Self {
+        let id = id.into();
+        assert!(
+            turbomcp_core::meta::is_prefixed_key(&id),
+            "extension id `{id}` must follow the `_meta` key naming rules with a prefix \
+             (`com.example/name`): extension identifiers MUST"
+        );
         self.extensions
             .get_or_insert_with(Map::new)
-            .insert(id.into(), value);
+            .insert(id, value);
         self
     }
 
@@ -3044,11 +3055,12 @@ fn header_params_from_schema(input_schema: &Value) -> Result<Vec<HeaderParam>, S
                     path.join(".")
                 ));
             }
+            // The value names the header. A pre-release revision of SEP-2243
+            // spelled it `true` ("mirror under the property's own name"), but
+            // a boolean isn't a name, and a tool breaking the constraints
+            // MUST be rejected.
             let header = match annotation {
                 Value::String(s) => s.clone(),
-                // Obsolete boolean form (pre-string SEP-2243 revisions):
-                // treat as "mirror under the property's own name".
-                Value::Bool(true) => path.last().cloned().unwrap_or_default(),
                 _ => {
                     return Err(format!(
                         "invalid x-mcp-header value at {:?}",
@@ -3141,14 +3153,17 @@ mod header_param_tests {
         );
     }
 
+    /// "Clients using the Streamable HTTP transport MUST reject tool
+    /// definitions where any `x-mcp-header` value violates these
+    /// constraints": the value is the header's name, and `true` (a
+    /// pre-release spelling) is not one.
     #[test]
-    fn tolerates_the_obsolete_boolean_form() {
+    fn rejects_the_pre_release_boolean_form() {
         let schema = json!({
             "type": "object",
             "properties": { "region": { "type": "string", "x-mcp-header": true } }
         });
-        let params = header_params_from_schema(&schema).unwrap();
-        assert_eq!(params[0].header, "region");
+        assert!(header_params_from_schema(&schema).is_err());
     }
 
     /// A `null` value omits the header, so a nullable primitive (how
@@ -3317,5 +3332,13 @@ mod tool_facts_tests {
                 .output
                 .is_none()
         );
+    }
+
+    /// "Extension identifiers MUST" follow the `_meta` key naming rules with
+    /// a prefix; the server refuses such an id, and so does the client.
+    #[test]
+    #[should_panic(expected = "must follow the `_meta` key naming rules")]
+    fn an_extension_id_without_a_prefix_is_refused() {
+        let _ = ClientBuilder::new("c", "1").with_extension("tasks", json!({}));
     }
 }

@@ -1820,10 +1820,10 @@ impl ElicitParams {
 /// directs the user to `url` (e.g. an OAuth consent page); the response carries
 /// an [`ElicitAction`] but no form content.
 ///
-/// `elicitation_id` is a server-unique opaque id required by **both** wires
-/// (the draft briefly dropped it; the 2026-07-28 RC restored it as required,
-/// pairing it with `notifications/elicitation/complete`). The server mints
-/// one when unset.
+/// `elicitation_id` is a server-unique opaque id that `2025-11-25` requires,
+/// pairing it with `notifications/elicitation/complete`; the server mints one
+/// there when unset. The `2026-07-28` schema has neither, so it's absent on
+/// that wire.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ElicitUrlParams {

@@ -513,7 +513,7 @@ pub(crate) async fn dispatch_server_request(
                         ));
                     }
                     let outcome = handler
-                        .elicit_url(ctx, parse_elicit_url_params(params)?)
+                        .elicit_url(ctx, parse_elicit_url_params(params, version)?)
                         .await
                         .map_err(handler_error)?;
                     // A URL-mode answer carries no content: the form, if any,
@@ -535,14 +535,19 @@ pub(crate) async fn dispatch_server_request(
                 .sampling
                 .as_ref()
                 .ok_or_else(|| not_supported(method))?;
-            let params = neutral::CreateMessageParams::from_wire(&params.unwrap_or(Value::Null))
+            let raw = params.unwrap_or(Value::Null);
+            // "if this field is provided": present at all, however it parses.
+            // Parsing drops a malformed tool or `toolChoice`, which used to
+            // make `"tools": [{}]` count as no tools.
+            let provides_tools = raw.get("tools").is_some() || raw.get("toolChoice").is_some();
+            let params = neutral::CreateMessageParams::from_wire(&raw)
                 .map_err(|e| invalid_params(&e.to_string()))?;
             // "The client MUST return an error if this field is provided but
             // ClientCapabilities.sampling.tools is not declared" — the server
             // is supposed to have checked, so this is the backstop for one
             // that did not. `includeContext` carries the same promise.
             let declared = handler.capability();
-            if !declared.tools && params.uses_tools() {
+            if !declared.tools && (provides_tools || params.uses_tools()) {
                 return Err(invalid_params("this client did not declare sampling.tools"));
             }
             if !declared.context && params.uses_context() {
@@ -606,10 +611,18 @@ fn not_supported(method: &str) -> JsonRpcError {
 /// spec requires and a handler shouldn't have to check: "The `url` parameter
 /// MUST contain a valid URL", here an `http` or `https` one (a `file:`,
 /// `javascript:` or `data:` URL is not somewhere to send a user), and the
-/// `message` and `elicitationId` the schema requires.
+/// fields `version`'s schema requires. `2025-11-25` requires `elicitationId`,
+/// which its `notifications/elicitation/complete` refers back to; the
+/// `2026-07-28` schema has neither, and `2025-06-18` has no URL mode at all.
 fn parse_elicit_url_params(
     params: Option<Value>,
+    version: &ProtocolVersion,
 ) -> Result<neutral::ElicitUrlParams, JsonRpcError> {
+    if matches!(version, ProtocolVersion::V2025_06_18) {
+        return Err(invalid_params(
+            "2025-06-18 has no url-mode elicitation; its only mode is the form",
+        ));
+    }
     let params = params.ok_or_else(|| invalid_params("elicitation/create requires params"))?;
     let field = |name: &str| {
         params.get(name).and_then(Value::as_str).ok_or_else(|| {
@@ -617,7 +630,14 @@ fn parse_elicit_url_params(
         })
     };
     let message = field("message")?.to_owned();
-    let id = field("elicitationId")?.to_owned();
+    let id = if matches!(version, ProtocolVersion::V2025_11_25) {
+        Some(field("elicitationId")?.to_owned())
+    } else {
+        params
+            .get("elicitationId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
     let url = field("url")?;
     let parsed = url::Url::parse(url)
         .map_err(|e| invalid_params(&format!("url-mode elicitation `url` is not a URL: {e}")))?;
@@ -627,7 +647,11 @@ fn parse_elicit_url_params(
             parsed.scheme()
         )));
     }
-    Ok(neutral::ElicitUrlParams::new(message, url).with_elicitation_id(id))
+    let request = neutral::ElicitUrlParams::new(message, url);
+    Ok(match id {
+        Some(id) => request.with_elicitation_id(id),
+        None => request,
+    })
 }
 
 /// Hold a form answer to the schema it was asked for ("Clients SHOULD
@@ -706,8 +730,18 @@ mod test_support {
         method: &str,
         params: Option<Value>,
     ) -> Result<Value, JsonRpcError> {
+        dispatch_on(ProtocolVersion::V2025_11_25, handlers, method, params).await
+    }
+
+    /// Dispatch on `version`.
+    pub(super) async fn dispatch_on(
+        version: ProtocolVersion,
+        handlers: &ClientHandlers,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, JsonRpcError> {
         let ctx = super::HandlerContext::new(
-            ProtocolVersion::V2025_11_25,
+            version,
             params.as_ref(),
             turbomcp_core::CancellationToken::new(),
         );
@@ -957,6 +991,10 @@ mod must_tests {
             json!({ "messages": [], "maxTokens": 8, "tools": [tool] }),
             json!({ "messages": [], "maxTokens": 8, "toolChoice": { "mode": "auto" } }),
             json!({ "messages": [], "maxTokens": 8, "includeContext": "allServers" }),
+            // Provided, however malformed: still provided.
+            json!({ "messages": [], "maxTokens": 8, "tools": [] }),
+            json!({ "messages": [], "maxTokens": 8, "tools": [{ "bad": 1 }] }),
+            json!({ "messages": [], "maxTokens": 8, "toolChoice": {} }),
         ] {
             let err = dispatch(
                 &plain,
@@ -1220,6 +1258,28 @@ mod must_tests {
             json!({ "action": "accept" }),
             "url mode omits content"
         );
+
+        // The 2026-07-28 schema has no `elicitationId`: a request without one
+        // is the normal shape there. 2025-06-18 has no URL mode at all.
+        let on = crate::handler::test_support::dispatch_on;
+        let modern = on(
+            ProtocolVersion::V2026_07_28,
+            &handlers,
+            request::ELICITATION_CREATE,
+            Some(ask("https://ok.example", None)),
+        )
+        .await
+        .expect("a 2026-07-28 url elicitation carries no elicitationId");
+        assert_eq!(modern, json!({ "action": "accept" }));
+        let old = on(
+            ProtocolVersion::V2025_06_18,
+            &handlers,
+            request::ELICITATION_CREATE,
+            Some(ask("https://ok.example", Some("e"))),
+        )
+        .await
+        .expect_err("2025-06-18 has no url mode");
+        assert_eq!(old.code, -32602);
     }
 
     /// A form answer that breaks the schema it was asked for is not sent.
