@@ -681,20 +681,88 @@ async fn by_default_the_engine_refuses_internal_addresses() {
     assert!(err.to_string().contains("NetworkPolicy"), "got {err}");
 }
 
-/// A challenge's `resource_metadata` pointing off the resource's origin is
-/// only that document's word that it's about this resource, so it is ignored
-/// and discovery uses the resource's own well-known location.
+/// Clients "MUST ... use the resource metadata URL from the parsed
+/// WWW-Authenticate headers when present", on another origin too: what makes
+/// the document trustworthy is that it names this resource (RFC 9728 §3.3).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_off_origin_resource_metadata_pointer_is_ignored() {
+async fn an_off_origin_resource_metadata_url_is_used() {
     let state = Shared::default();
     let base = spawn_mock(Arc::clone(&state)).await;
-    let challenge = turbomcp_auth::client::parse_bearer_challenge(
-        r#"Bearer resource_metadata="https://attacker.example/.well-known/oauth-protected-resource""#,
-    )
+    // A separate metadata host: another port is another origin.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let elsewhere = format!("http://{}", listener.local_addr().unwrap());
+    let document = json!({
+        "resource": format!("{base}/mcp"),
+        "authorization_servers": [base.clone()],
+        "scopes_supported": ["from-elsewhere"],
+    });
+    let app = axum::Router::new()
+        .route(
+            "/prm",
+            get(move || {
+                let document = document.clone();
+                async move { axum::Json(document) }
+            }),
+        )
+        .route(
+            "/other",
+            get(|| async {
+                axum::Json(json!({
+                    "resource": "https://other.example/mcp",
+                    "authorization_servers": ["https://as.other.example"],
+                }))
+            }),
+        );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let challenge = turbomcp_auth::client::parse_bearer_challenge(&format!(
+        r#"Bearer resource_metadata="{elsewhere}/prm""#
+    ))
     .expect("a bearer challenge");
     let discovered = engine(&base)
         .discover(Some(&challenge))
         .await
-        .expect("fell back to the resource's own metadata");
-    assert!(discovered.resource.resource.starts_with(&base));
+        .expect("used the challenge's metadata URL");
+    assert_eq!(
+        discovered.resource.scopes_supported.as_deref(),
+        Some(&["from-elsewhere".to_owned()][..])
+    );
+
+    // A document there that names another resource is still refused.
+    let wrong = turbomcp_auth::client::parse_bearer_challenge(&format!(
+        r#"Bearer resource_metadata="{elsewhere}/other""#
+    ))
+    .expect("a bearer challenge");
+    let err = engine(&base).discover(Some(&wrong)).await.unwrap_err();
+    assert!(
+        err.to_string().contains("not the server being accessed"),
+        "{err}"
+    );
+}
+
+/// The URL comes from the server, so the fetch is under the network policy:
+/// by default a challenge can't aim the client at a private or loopback
+/// address.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_private_resource_metadata_url_is_refused() {
+    for url in [
+        "https://10.0.0.7/.well-known/oauth-protected-resource",
+        "https://127.0.0.1:1/.well-known/oauth-protected-resource",
+    ] {
+        let engine = OAuthClient::new(
+            "https://mcp.example.com/mcp",
+            "http://127.0.0.1:19999/callback",
+            RegistrationStrategy::Dynamic(DynamicRegistration::native(
+                "turbomcp-test",
+                vec!["http://127.0.0.1:19999/callback".to_owned()],
+            )),
+        );
+        let challenge = turbomcp_auth::client::parse_bearer_challenge(&format!(
+            r#"Bearer resource_metadata="{url}""#
+        ))
+        .expect("a bearer challenge");
+        let err = engine.discover(Some(&challenge)).await.unwrap_err();
+        assert!(err.to_string().contains("NetworkPolicy"), "{url}: {err}");
+    }
 }

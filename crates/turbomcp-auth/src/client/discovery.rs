@@ -95,19 +95,20 @@ pub(crate) async fn discover_protected_resource_with_policy(
     challenge_metadata_url: Option<&str>,
     policy: &crate::NetworkPolicy,
 ) -> Result<ProtectedResourceMetadata, OAuthClientError> {
-    // The challenge names where to look, but a document fetched from
-    // somewhere else only has its own word that it is about this resource.
-    // RFC 9728 puts the metadata at the resource's origin, so an off-origin
-    // pointer is ignored in favour of the well-known locations there.
+    // Clients "MUST ... use the resource metadata URL from the parsed
+    // WWW-Authenticate headers when present; otherwise, they MUST fall back to
+    // constructing and requesting the well-known URIs". The URL can be on
+    // another origin (a separate metadata host, a CDN). What makes its
+    // document trustworthy is the RFC 9728 §3.3 check below that it names this
+    // resource, and the fetch runs under the network policy like every other,
+    // so a server can't aim it at a private address. Off the resource's
+    // origin it must also be HTTPS.
     let candidates: Vec<String> = match challenge_metadata_url {
-        Some(url) if same_origin(url, resource_url) => vec![url.to_owned()],
         Some(url) => {
-            tracing::warn!(
-                resource_metadata = url,
-                resource = resource_url,
-                "ignoring an off-origin resource_metadata URL; trying the resource's well-known locations"
-            );
-            protected_resource_wellknown_candidates(resource_url)?
+            if !same_origin(url, resource_url) {
+                require_secure_url(url, "the challenge's resource_metadata URL")?;
+            }
+            vec![url.to_owned()]
         }
         None => protected_resource_wellknown_candidates(resource_url)?,
     };
