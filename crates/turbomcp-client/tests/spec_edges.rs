@@ -119,6 +119,25 @@ async fn an_unrecognized_result_type_is_invalid_on_any_result() {
     assert!(matches!(err, ClientError::Protocol(_)), "{err:?}");
 }
 
+/// A `resultType` that isn't a string is unrecognized, not absent: absent
+/// would read the result as complete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_result_type_that_isnt_a_string_is_invalid() {
+    let (client, _) = connect(
+        ClientBuilder::new("edges", "1.0.0"),
+        |method, frame| match method {
+            "tools/list" => vec![result_for(
+                frame,
+                json!({ "tools": [], "resultType": 7, "cacheScope": "private", "ttlMs": 0 }),
+            )],
+            other => panic!("unexpected method {other}"),
+        },
+    )
+    .await;
+    let err = client.list_tools(None).await.expect_err("invalid result");
+    assert!(matches!(err, ClientError::Protocol(_)), "{err:?}");
+}
+
 /// Only `tools/call`, `resources/read` and `prompts/get` can ask for input.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn input_required_is_invalid_where_no_input_can_be_asked() {

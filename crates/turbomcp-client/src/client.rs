@@ -2574,6 +2574,7 @@ impl Client {
     ///
     /// "A `resultType` of any value unrecognized by the client MUST be
     /// considered invalid", and an absent one MUST be treated as `"complete"`.
+    /// A value that isn't a string is unrecognized too, never absent.
     /// `"task"` is recognized only by a client that declared the Tasks
     /// extension, the only one a server may send it to. The stateful
     /// revisions have no `resultType`, so nothing is checked there.
@@ -2581,12 +2582,21 @@ impl Client {
         if self.version.is_stateful() {
             return Ok(false);
         }
-        match result.get("resultType").and_then(Value::as_str) {
-            None | Some(neutral::result_type::COMPLETE) => Ok(false),
-            Some(neutral::result_type::INPUT_REQUIRED) => Ok(true),
-            Some(RESULT_TYPE_TASK) if self.declares_extension(TASKS_EXTENSION) => Ok(false),
-            Some(other) if self.handler.claiming_result(other).is_some() => Ok(false),
-            Some(other) => Err(ClientError::Protocol(format!(
+        let kind = match result.get("resultType") {
+            None => return Ok(false),
+            Some(Value::String(kind)) => kind.as_str(),
+            Some(_) => {
+                return Err(ClientError::Protocol(
+                    "server answered with a resultType that isn't a string".into(),
+                ));
+            }
+        };
+        match kind {
+            neutral::result_type::COMPLETE => Ok(false),
+            neutral::result_type::INPUT_REQUIRED => Ok(true),
+            RESULT_TYPE_TASK if self.declares_extension(TASKS_EXTENSION) => Ok(false),
+            other if self.handler.claiming_result(other).is_some() => Ok(false),
+            other => Err(ClientError::Protocol(format!(
                 "server answered with an unrecognized resultType `{other}`"
             ))),
         }
