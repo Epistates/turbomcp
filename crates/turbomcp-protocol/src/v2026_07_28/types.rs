@@ -3005,12 +3005,12 @@ impl<'de> ::serde::Deserialize<'de> for InternalErrorCode {
 ///
 /// In MCP, this error is returned in various contexts when request parameters fail validation:
 ///
-/// - **Tools**: Unknown tool name or invalid tool arguments
+/// - **Tools**: Unknown tool name, or a request that does not satisfy the `CallToolRequest` schema. Invalid tool arguments are instead reported as tool execution errors, with `isError` set to true
 /// - **Prompts**: Unknown prompt name or missing required arguments
 /// - **Pagination**: Invalid or expired cursor values
-/// - **Logging**: Invalid log level
+/// - **Logging** (deprecated): Invalid log level
 /// - **Elicitation**: Server requests an elicitation mode not declared in client capabilities
-/// - **Sampling**: Missing tool result or tool results mixed with other content
+/// - **Sampling** (deprecated): Missing tool result or tool results mixed with other content
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
 pub struct InvalidParamsError {
     ///The error type that occurred.
@@ -8016,6 +8016,11 @@ impl ::core::convert::TryFrom<::alloc::string::String> for ToolChoiceMode {
 /// composition keywords (`oneOf`, `anyOf`, `allOf`, `not`), conditional keywords
 /// (`if`/`then`/`else`), reference keywords (`$ref`, `$defs`, `$anchor`), and any other
 /// standard validation or annotation keywords.
+///
+/// When using composition keywords, declare `properties` at the schema root and keep the
+/// branches to presence assertions such as `required`. A subschema that fails on a type
+/// error is indistinguishable from one that does not apply, so type constraints placed
+/// inside `oneOf` branches are not enforced for whichever branch does not match.
 ///
 /// Property schemas may carry an `x-mcp-header` annotation to mirror the
 /// argument value into an HTTP header on the Streamable HTTP transport. See

@@ -30,12 +30,14 @@ coverage_min := "85"
 # v4 codegen: root of the checked-out MCP schema (override with MCP_SCHEMA_ROOT)
 mcp_schema_root := env_var_or_default("MCP_SCHEMA_ROOT", "../reference/modelcontextprotocol/schema")
 
-# The upstream revision the checked-in wire types were generated from. All three
-# dated schemas are frozen, so one tag covers all three. The `drift` job in
-# .github/workflows/test.yml reads this back with `just --evaluate` and clones
-# that exact ref, so a local `just codegen` and CI cannot disagree about which
-# schema is authoritative. Bump it deliberately when adopting a new revision.
-mcp_schema_ref := "2026-07-28"
+# The upstream revision the checked-in wire types were generated from. The dated
+# schemas are released, but upstream still edits them after the tag (2026-07-28
+# gained new descriptions and examples in November), so this pins a commit, not
+# the tag. The `drift` job in .github/workflows/test.yml reads this back with
+# `just --evaluate` and clones that exact ref, so a local `just codegen` and CI
+# cannot disagree about which schema is authoritative. Bump it deliberately when
+# adopting a new revision, after checking the code against what changed.
+mcp_schema_ref := "862397cec702e8f828713071da501cf56158e8fc"
 
 # Set shell for both unix and Windows environments
 set shell := ["sh", "-euc"]
@@ -117,7 +119,7 @@ codegen-check:
   # (see the `drift` job), so the check is never skipped where it counts.
   if [ ! -d "{{mcp_schema_root}}" ]; then
     echo "SKIP: no MCP schema at {{mcp_schema_root}}."
-    echo "      Clone modelcontextprotocol/modelcontextprotocol at tag {{mcp_schema_ref}}"
+    echo "      Clone modelcontextprotocol/modelcontextprotocol at {{mcp_schema_ref}}"
     echo "      and point MCP_SCHEMA_ROOT at its schema/ directory to enable this check."
     exit 0
   fi
