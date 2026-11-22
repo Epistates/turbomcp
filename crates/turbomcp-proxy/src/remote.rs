@@ -28,6 +28,10 @@ use crate::{OutboundAuth, ProxyError, Upstream};
 /// unless the upstream says it changed first.
 const DEFAULT_CATALOG_TTL: Duration = Duration::from_secs(30);
 
+/// How many refused upstream templates are logged by name; later ones are
+/// still refused, without a line each.
+const MAX_REFUSALS_LOGGED: usize = 64;
+
 /// The ceiling on one forwarded call, however much progress it reports.
 const DEFAULT_MAX_CALL: Duration = Duration::from_secs(60 * 60);
 
@@ -89,6 +93,9 @@ struct Shared {
     /// so a connection opened later subscribes to them too).
     watched: crate::link::Watched,
     pool: Pool,
+    /// Hashes of the upstream templates already refused and logged, up to
+    /// [`MAX_REFUSALS_LOGGED`].
+    refused_templates: Mutex<std::collections::HashSet<u64>>,
 }
 
 impl core::fmt::Debug for RemoteServer {
@@ -466,6 +473,7 @@ impl RemoteServerBuilder {
             key,
             label,
             watched,
+            refused_templates: Mutex::default(),
             pool: {
                 // The startup connection is the gateway's own: under token
                 // exchange it must never serve a caller.
@@ -740,6 +748,7 @@ impl RemoteServer {
                     .map_err(|e| self.upstream_error(link, &e))?;
                 Ok(templates
                     .into_iter()
+                    .filter(|t| self.matchable(t))
                     .map(|t| (t.uri_template.clone(), self.downstream_template(t)))
                     .collect())
             })
@@ -751,8 +760,8 @@ impl RemoteServer {
         Ok(candidates
             .into_iter()
             .find(|t| {
-                UriTemplate::parse(&t.uri_template)
-                    .is_ok_and(|parsed| parsed.matches(uri).is_some())
+                UriTemplate::cached(&t.uri_template)
+                    .is_ok_and(|compiled| compiled.matches(uri).is_some())
             })
             .cloned())
     }
@@ -1178,6 +1187,7 @@ impl WithResources for RemoteServer {
         page.resource_templates = page
             .resource_templates
             .into_iter()
+            .filter(|t| self.matchable(t))
             .map(|t| self.downstream_template(t))
             .collect();
         Ok(page)
@@ -1281,6 +1291,33 @@ impl RemoteServer {
     fn downstream_resource(&self, mut resource: neutral::Resource) -> neutral::Resource {
         self.gateway_meta(&mut resource.meta);
         resource
+    }
+
+    /// Whether the gateway can match URIs against `template`. One it can't
+    /// (malformed, or over the matcher's limits) is refused: left out of
+    /// what the gateway lists and looks up, and logged the first time it's
+    /// seen. Compiling is cached, refusals included, so an upstream can't make
+    /// each lookup compile its templates again.
+    fn matchable(&self, template: &neutral::ResourceTemplate) -> bool {
+        let Err(why) = UriTemplate::cached(&template.uri_template) else {
+            return true;
+        };
+        // By hash: a refused template can be as long as the upstream likes.
+        let key = std::hash::BuildHasher::hash_one(
+            &std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default(),
+            &template.uri_template,
+        );
+        let first = {
+            let mut refused = self.inner.refused_templates.lock();
+            refused.len() < MAX_REFUSALS_LOGGED && refused.insert(key)
+        };
+        if first {
+            tracing::warn!(
+                upstream = %self.inner.label,
+                "refused a resource template the upstream lists: {why}"
+            );
+        }
+        false
     }
 
     fn downstream_template(

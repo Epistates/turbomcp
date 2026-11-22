@@ -16,7 +16,7 @@ last round of breaking changes in bulk, each one so that the API can grow in
 4.x minors without another break: types that will grow are non-exhaustive,
 one concept has one type, third-party types whose majors would force ours are
 out of the signatures, and every setter is named the same way. Nothing in the
-protocol behavior changes, apart from the four items marked as behavior
+protocol behavior changes, apart from the five items marked as behavior
 changes below. It also fixes the two Streamable HTTP throughput limits the
 first performance sweep found ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 
@@ -43,8 +43,10 @@ almost everything.
 - **Behavior changes:** `Implementation`'s `description`, `website_url` and
   `icons` are typed fields, no longer in `extra`; the `turbomcp` command reads
   its gateway settings from a `"turbomcp"` object on each entry; it exits
-  `70` for a failure it doesn't classify; and a stateful HTTP call answered
-  with plain JSON is no longer recorded in the event store.
+  `70` for a failure it doesn't classify; a stateful HTTP call answered
+  with plain JSON is no longer recorded in the event store; and a URI
+  template over 2,048 bytes or 32 variables is refused (a `#[resource]` one
+  fails the build, and a gateway leaves an upstream's out).
 
 ### Changed
 
@@ -223,6 +225,20 @@ almost everything.
   lock. Stateless `2026-07-28` HTTP at 64 callers went from about 61,000 to
   72,000 calls a second, and throughput no longer falls between 16 callers
   and 64.
+- **A URI template over 2,048 bytes or 32 variables is refused**
+  (`UriTemplate::MAX_LEN`, `UriTemplate::MAX_VARIABLES`). What a compiled
+  template holds grows with its text and, once a URI matches it, with its
+  variables: one with 800 variables held about 248 MB. A `#[resource]`
+  template over either limit fails the build, with the limit and its count.
+  A gateway compiled every upstream template again on every lookup, and an
+  upstream picks both its templates and, through `resources/updated`, URIs
+  to match against them. Now it refuses an upstream template over the
+  limits when it's listed, leaves it out of the templates it lists, and logs
+  it once; the upstream's other templates keep working. The new
+  `UriTemplate::cached` compiles each template once, into a cache the
+  process shares, which the server's own matching and the gateway both use.
+  That cache is bounded by an estimate of the memory it holds (64 MiB)
+  instead of by 1,024 entries.
 
 ### Removed
 

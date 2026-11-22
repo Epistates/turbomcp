@@ -1978,7 +1978,7 @@ fn gen_resources_impl(target: &Target, resources: &[Handler]) -> TokenStream {
             const _: () = if let ::core::result::Result::Err(__why) =
                 ::turbomcp::__macros::validate_uri_template(#uri)
             {
-                ::core::panic!("{}", __why);
+                ::core::panic!("{}", __why.as_str());
             };
         }
     });

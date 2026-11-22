@@ -25,6 +25,13 @@
 //! An optional variable the URI leaves out is simply absent from the result.
 //! Prefix modifiers (`{var:3}`) match like the bare variable; an exploded
 //! (`{var*}`) list comes back as the expanded text after its leading operator.
+//!
+//! A template has at most [`UriTemplate::MAX_LEN`] bytes and
+//! [`UriTemplate::MAX_VARIABLES`] variables. What a compiled template holds
+//! grows with its text and, once a URI matches it, with its variables: one
+//! with 800 variables holds about 248 MB (regex 1.13). A server's own
+//! templates sit far inside both limits. A gateway's come from its upstreams,
+//! and the limits are what make those safe to compile and cache.
 
 use std::sync::{Arc, LazyLock};
 
@@ -65,44 +72,131 @@ enum Kind {
     Parameter,
 }
 
-/// Check `template` against the RFC 6570 grammar this matcher accepts: the
-/// one grammar, shared by [`UriTemplate::parse`] (which calls it first) and
-/// by `#[resource]`, which evaluates it at compile time so a template the
-/// matcher could never read fails the build instead of being listed forever.
+/// Why [`validate`] refuses a template. The text is built in a `const`, so
+/// the build error `#[resource]` reports can carry a limit and the count
+/// that broke it.
+#[derive(Clone, Copy)]
+pub struct Refusal {
+    text: [u8; 96],
+    len: usize,
+}
+
+impl Refusal {
+    const fn new(text: &str) -> Self {
+        Self {
+            text: [0; 96],
+            len: 0,
+        }
+        .push(text)
+    }
+
+    /// `self` followed by `text` (ASCII), cut at capacity.
+    const fn push(mut self, text: &str) -> Self {
+        let b = text.as_bytes();
+        let mut i = 0;
+        while i < b.len() && self.len < self.text.len() {
+            self.text[self.len] = b[i];
+            self.len += 1;
+            i += 1;
+        }
+        self
+    }
+
+    /// `self` followed by `n` in decimal.
+    const fn number(mut self, mut n: usize) -> Self {
+        let mut digits = [0u8; 20];
+        let mut count = 0;
+        loop {
+            digits[count] = b'0' + (n % 10) as u8;
+            count += 1;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        while count > 0 && self.len < self.text.len() {
+            count -= 1;
+            self.text[self.len] = digits[count];
+            self.len += 1;
+        }
+        self
+    }
+
+    /// The reason, as text.
+    #[must_use]
+    pub const fn as_str(&self) -> &str {
+        match core::str::from_utf8(self.text.split_at(self.len).0) {
+            Ok(text) => text,
+            Err(_) => "invalid URI template",
+        }
+    }
+}
+
+impl core::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl core::fmt::Debug for Refusal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("Refusal").field(&self.as_str()).finish()
+    }
+}
+
+/// Check `template` against the RFC 6570 grammar this matcher accepts, and
+/// against its limits: the one check, shared by [`UriTemplate::parse`]
+/// (which calls it first) and by `#[resource]`, which evaluates it at
+/// compile time so a template the matcher could never read fails the build
+/// instead of being listed forever.
 ///
 /// # Errors
-/// What the template breaks, as a fixed message.
-pub const fn validate(template: &str) -> Result<(), &'static str> {
+/// What the template breaks.
+pub const fn validate(template: &str) -> Result<(), Refusal> {
     let b = template.as_bytes();
+    if b.len() > UriTemplate::MAX_LEN {
+        return Err(Refusal::new("a URI template can be at most ")
+            .number(UriTemplate::MAX_LEN)
+            .push(" bytes; this one is ")
+            .number(b.len()));
+    }
+    let mut variables = 0;
     let mut i = 0;
     while i < b.len() {
         match b[i] {
-            b'}' => return Err("unmatched `}`"),
+            b'}' => return Err(Refusal::new("unmatched `}`")),
             b'{' => {
                 let mut close = i + 1;
                 while close < b.len() && b[close] != b'}' {
                     if b[close] == b'{' {
-                        return Err("`{` inside an expression");
+                        return Err(Refusal::new("`{` inside an expression"));
                     }
                     close += 1;
                 }
                 if close == b.len() {
-                    return Err("unclosed `{`");
+                    return Err(Refusal::new("unclosed `{`"));
                 }
-                if let Err(e) = validate_expression(b, i + 1, close) {
-                    return Err(e);
+                match validate_expression(b, i + 1, close) {
+                    Ok(specs) => variables += specs,
+                    Err(e) => return Err(Refusal::new(e)),
                 }
                 i = close + 1;
             }
             _ => i += 1,
         }
     }
+    if variables > UriTemplate::MAX_VARIABLES {
+        return Err(Refusal::new("a URI template can have at most ")
+            .number(UriTemplate::MAX_VARIABLES)
+            .push(" variables; this one has ")
+            .number(variables));
+    }
     Ok(())
 }
 
 /// One expression's body, `b[start..end]`: an optional operator, then
-/// comma-separated variable specs.
-const fn validate_expression(b: &[u8], start: usize, end: usize) -> Result<(), &'static str> {
+/// comma-separated variable specs, counted.
+const fn validate_expression(b: &[u8], start: usize, end: usize) -> Result<usize, &'static str> {
     let mut i = start;
     if i < end {
         match b[i] {
@@ -117,16 +211,18 @@ const fn validate_expression(b: &[u8], start: usize, end: usize) -> Result<(), &
         return Err("empty expression");
     }
     let mut spec = i;
+    let mut specs = 0;
     while i <= end {
         if i == end || b[i] == b',' {
             if let Err(e) = validate_varspec(b, spec, i) {
                 return Err(e);
             }
+            specs += 1;
             spec = i + 1;
         }
         i += 1;
     }
-    Ok(())
+    Ok(specs)
 }
 
 /// `varname [ "*" | ":" max-length ]`, where a varname is varchar runs
@@ -195,12 +291,23 @@ pub struct UriTemplate {
 }
 
 impl UriTemplate {
-    /// Parse `template`, rejecting what RFC 6570 does not allow.
+    /// The longest template the matcher compiles, in bytes. A compiled
+    /// template holds about 340 bytes for each byte of its text.
+    pub const MAX_LEN: usize = 2048;
+
+    /// The most variables a template can have. Once a URI matches, a
+    /// template holds up to about 16 KiB more for each, and the growth
+    /// steepens past a few hundred.
+    pub const MAX_VARIABLES: usize = 32;
+
+    /// Parse `template`, rejecting what RFC 6570 does not allow and what is
+    /// over the matcher's limits.
     ///
     /// # Errors
-    /// The [`UriTemplateError`] saying what RFC 6570 does not allow.
+    /// The [`UriTemplateError`] saying what the template breaks.
     pub fn parse(template: &str) -> Result<Self, UriTemplateError> {
-        validate(template).map_err(|e| UriTemplateError(format!("{e} in `{template}`")))?;
+        validate(template)
+            .map_err(|e| UriTemplateError(format!("{e} in `{}`", quoted(template))))?;
         let mut pattern = String::from("^");
         let mut captures = Vec::new();
         let mut group = 0usize;
@@ -224,6 +331,17 @@ impl UriTemplate {
             regex,
             captures,
         })
+    }
+
+    /// `template` parsed, from a cache the whole process shares: each
+    /// template compiles once, however often it's matched. The cache is
+    /// bounded by an estimate of the memory its templates hold, so templates
+    /// from a peer (a gateway's upstreams) can use it too.
+    ///
+    /// # Errors
+    /// As [`parse`](Self::parse); a refusal is cached as well.
+    pub fn cached(template: &str) -> Result<Arc<Self>, UriTemplateError> {
+        COMPILED.get_with_by_ref(template, || Self::parse(template).map(Arc::new))
     }
 
     /// The template as written.
@@ -362,15 +480,50 @@ impl VarSpec {
     }
 }
 
-/// Templates are compiled once. A server lists the same handful every time,
-/// so a bounded cache keyed by the template text stops every read from
-/// recompiling every template it tries.
-static COMPILED: LazyLock<moka::sync::Cache<String, Arc<Result<UriTemplate, UriTemplateError>>>> =
-    LazyLock::new(|| moka::sync::Cache::new(1024));
+/// `template` as an error quotes it: whole, or its first 120 bytes and `…`.
+fn quoted(template: &str) -> String {
+    const SHOWN: usize = 120;
+    if template.len() <= SHOWN {
+        return template.to_owned();
+    }
+    let mut end = SHOWN;
+    while !template.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &template[..end])
+}
 
-/// The compiled form of `template`, from the cache.
-pub(crate) fn compiled(template: &str) -> Arc<Result<UriTemplate, UriTemplateError>> {
-    COMPILED.get_with_by_ref(template, || Arc::new(UriTemplate::parse(template)))
+/// What the cache of compiled templates may hold, in estimated bytes.
+const CACHE_BUDGET: u64 = 64 * 1024 * 1024;
+
+/// Templates are compiled once. A server lists the same handful every time,
+/// so a cache keyed by the template text stops every read from recompiling
+/// every template it tries. It's bounded by [`weight`], an estimate of
+/// memory, rather than by a count that a few large templates could fill with
+/// gigabytes.
+static COMPILED: LazyLock<moka::sync::Cache<String, Result<Arc<UriTemplate>, UriTemplateError>>> =
+    LazyLock::new(|| {
+        moka::sync::Cache::builder()
+            .max_capacity(CACHE_BUDGET)
+            .weigher(|template: &String, compiled| weight(template, compiled))
+            .build()
+    });
+
+/// Roughly what a cached template holds, in bytes, measured with regex 1.13:
+/// a fixed cost, about 340 bytes for each byte of the template, and up to
+/// about 16 KiB for each variable once a URI has matched. A refusal holds
+/// only its text.
+fn weight(template: &str, compiled: &Result<Arc<UriTemplate>, UriTemplateError>) -> u32 {
+    let len = u32::try_from(template.len()).unwrap_or(u32::MAX);
+    match compiled {
+        Ok(compiled) => {
+            let variables = u32::try_from(compiled.captures.len()).unwrap_or(u32::MAX);
+            16_384u32
+                .saturating_add(len.saturating_mul(384))
+                .saturating_add(variables.saturating_mul(16_384))
+        }
+        Err(_) => len.saturating_add(1024),
+    }
 }
 
 #[cfg(test)]
@@ -568,8 +721,64 @@ mod tests {
 
     #[test]
     fn the_cache_hands_back_one_compilation() {
-        let a = compiled("cache://{v}");
-        let b = compiled("cache://{v}");
+        let a = UriTemplate::cached("cache://{v}").unwrap();
+        let b = UriTemplate::cached("cache://{v}").unwrap();
         assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    /// `n` variables, `{v0}-{v1}-…`, after `x://`.
+    fn with_variables(n: usize) -> String {
+        let vars: Vec<String> = (0..n).map(|i| format!("{{v{i}}}")).collect();
+        format!("x://{}", vars.join("-"))
+    }
+
+    /// A template with 800 variables would hold about 248 MB once a URI
+    /// matched it. The limits refuse it, by its length here, and say so with
+    /// the numbers.
+    #[test]
+    fn the_limits_refuse_a_template_too_costly_to_match() {
+        let huge = with_variables(800);
+        let e = UriTemplate::parse(&huge).unwrap_err().to_string();
+        assert!(
+            e.contains(&format!("at most 2048 bytes; this one is {}", huge.len())),
+            "{e}"
+        );
+        assert!(e.ends_with("…`"), "the error quotes only the start: {e}");
+
+        let max = with_variables(UriTemplate::MAX_VARIABLES);
+        assert!(UriTemplate::parse(&max).is_ok());
+        let over = with_variables(UriTemplate::MAX_VARIABLES + 1);
+        assert_eq!(
+            validate(&over).unwrap_err().as_str(),
+            "a URI template can have at most 32 variables; this one has 33"
+        );
+        // Variables in one expression count one by one.
+        let list: Vec<String> = (0..33).map(|i| format!("q{i}")).collect();
+        assert!(validate(&format!("x://s{{?{}}}", list.join(","))).is_err());
+
+        let long = format!("x://{}{{v}}", "a".repeat(UriTemplate::MAX_LEN));
+        assert!(UriTemplate::parse(&long).is_err());
+    }
+
+    /// The cache's estimate of what it holds stays within its budget however
+    /// many large templates pass through it.
+    #[test]
+    fn the_cache_stays_within_its_memory_budget() {
+        let pad = "p".repeat(UriTemplate::MAX_LEN - with_variables(32).len() - 8);
+        let heaviest = weight(
+            &format!("{}{pad}", with_variables(32)),
+            &UriTemplate::parse(&format!("{}{pad}", with_variables(32))).map(Arc::new),
+        );
+        let templates = usize::try_from(CACHE_BUDGET / u64::from(heaviest)).unwrap() * 2;
+        for i in 0..templates {
+            let template = format!("{}{pad}{i:08}", with_variables(32));
+            assert!(UriTemplate::cached(&template).is_ok(), "{i}");
+        }
+        COMPILED.run_pending_tasks();
+        assert!(
+            COMPILED.weighted_size() <= CACHE_BUDGET,
+            "{} > {CACHE_BUDGET}",
+            COMPILED.weighted_size()
+        );
     }
 }

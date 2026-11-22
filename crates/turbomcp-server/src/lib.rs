@@ -453,14 +453,12 @@ pub mod __macro_support {
     /// Match a concrete `uri` against an RFC 6570 URI template, returning the
     /// decoded variables it binds (in template order) on a match. Every
     /// operator is supported; see [`UriTemplate`](crate::UriTemplate). Returns
-    /// `None` if the template is malformed or doesn't match. Templates are
-    /// compiled once and cached.
+    /// `None` if the template is malformed, over the matcher's limits, or
+    /// doesn't match. Templates are compiled once and cached
+    /// ([`UriTemplate::cached`](crate::UriTemplate::cached)).
     #[must_use]
     pub fn match_uri_template(template: &str, uri: &str) -> Option<Vec<(String, String)>> {
-        match crate::uri_template::compiled(template).as_ref() {
-            Ok(compiled) => compiled.matches(uri),
-            Err(_) => None,
-        }
+        crate::UriTemplate::cached(template).ok()?.matches(uri)
     }
 }
 
