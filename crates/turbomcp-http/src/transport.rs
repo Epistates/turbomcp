@@ -2025,7 +2025,11 @@ mod tests {
     fn an_endpoint_event_naming_a_non_http_uri_is_refused() {
         let base = "https://mcp.example.com/mcp";
         let nested = format!("{}https://mcp.example.com/mcp", "blob:".repeat(100_000));
-        for data in [nested.as_str(), "blob:https://mcp.example.com/mcp", "file:///etc/passwd"] {
+        for data in [
+            nested.as_str(),
+            "blob:https://mcp.example.com/mcp",
+            "file:///etc/passwd",
+        ] {
             let err = resolve_endpoint_event(base, data).unwrap_err();
             assert!(err.to_string().contains("non-HTTP"), "{err}");
         }
