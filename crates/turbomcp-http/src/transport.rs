@@ -152,6 +152,15 @@ fn resolve_endpoint_event(endpoint_url: &str, data: &str) -> TransportResult<Str
     let resolved = base
         .join(&uri)
         .map_err(|e| TransportError::ProtocolError(format!("Invalid endpoint URI {uri:?}: {e}")))?;
+    // An endpoint is somewhere to POST, so anything but HTTP(S) is refused
+    // before its origin is taken: `Url::origin()` recurses through nested
+    // `blob:` URLs, and url before 2.5.9 overflowed the stack on a deep one
+    // (RUSTSEC-2026-0592), which a server could send here.
+    if !matches!(resolved.scheme(), "http" | "https") {
+        return Err(TransportError::ProtocolError(format!(
+            "Refusing endpoint event naming a non-HTTP URI: {uri:?}"
+        )));
+    }
     if resolved.origin() != base.origin() {
         return Err(TransportError::ProtocolError(format!(
             "Refusing endpoint event naming another origin: {resolved}"
@@ -593,6 +602,12 @@ impl StreamableHttpClientTransport {
                 client_builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
                     if attempt.previous().len() >= 10 {
                         return attempt.error("too many redirects");
+                    }
+                    // The target comes from the server's `Location`; anything
+                    // but HTTP(S) stops here, before its origin is taken (see
+                    // `resolve_endpoint_event` on nested `blob:` URLs).
+                    if !matches!(attempt.url().scheme(), "http" | "https") {
+                        return attempt.stop();
                     }
                     let prev_origin = attempt.previous().last().map(reqwest::Url::origin);
                     if prev_origin.as_ref() == Some(&attempt.url().origin()) {
@@ -2000,6 +2015,19 @@ mod tests {
                 resolve_endpoint_event(base, data).is_err(),
                 "{data} must not be accepted"
             );
+        }
+    }
+
+    /// A server picks the event's URI, and `Url::origin()` recursed through
+    /// nested `blob:` URLs until the stack overflowed (RUSTSEC-2026-0592). A
+    /// URI that isn't HTTP(S) is refused before its origin is taken.
+    #[test]
+    fn an_endpoint_event_naming_a_non_http_uri_is_refused() {
+        let base = "https://mcp.example.com/mcp";
+        let nested = format!("{}https://mcp.example.com/mcp", "blob:".repeat(100_000));
+        for data in [nested.as_str(), "blob:https://mcp.example.com/mcp", "file:///etc/passwd"] {
+            let err = resolve_endpoint_event(base, data).unwrap_err();
+            assert!(err.to_string().contains("non-HTTP"), "{err}");
         }
     }
 
