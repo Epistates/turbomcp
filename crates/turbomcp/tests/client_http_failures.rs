@@ -97,11 +97,13 @@ async fn handle_post(State(ep): State<Arc<Endpoint>>, body: String) -> Response 
 }
 
 async fn handle_delete(State(ep): State<Arc<Endpoint>>, headers: HeaderMap) -> StatusCode {
-    ep.deletes.fetch_add(1, Ordering::SeqCst);
+    // The session first: a test that sees the count read the session next,
+    // and on a slow runner it used to find none yet.
     *ep.deleted_session.lock().unwrap() = headers
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
+    ep.deletes.fetch_add(1, Ordering::SeqCst);
     StatusCode::NO_CONTENT
 }
 
