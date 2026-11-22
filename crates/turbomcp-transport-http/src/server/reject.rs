@@ -113,12 +113,14 @@ pub(super) fn session_not_found(id: Option<&RequestId>) -> Response {
     )
 }
 
-/// `404` for a `Last-Event-ID` naming nothing this endpoint can replay: an
+/// `400` for a `Last-Event-ID` naming nothing this endpoint can replay: an
 /// unknown or expired stream, or one whose events after that id are gone.
-/// Serving the live remainder instead would leave a silent gap.
+/// Serving the live remainder instead would leave a silent gap. Not `404`: on
+/// a request carrying a session id that means the session is gone, and a
+/// client "MUST start a new session" on it, throwing away a live one.
 pub(super) fn unknown_event_rejection(id: &str) -> Response {
     transport_error(
-        StatusCode::NOT_FOUND,
+        StatusCode::BAD_REQUEST,
         None,
         turbomcp_core::codes::SERVER_ERROR,
         format!("cannot resume from event `{id}`: unknown, expired, or no longer complete"),

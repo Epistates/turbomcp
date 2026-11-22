@@ -250,12 +250,19 @@ async fn the_standalone_stream_is_open_before_connect_returns() {
 }
 
 /// A server that no longer has the stream a `Last-Event-ID` names (its event
-/// store expired it, or it restarted) answers the resuming `GET` with `404`.
-/// The session is fine: the client must drop the cursor and reopen, not start
-/// a new session. Taking it for an expired session re-initialized, kept the
-/// cursor, got `404` again, and looped with no delay.
+/// store expired it, or it restarted) refuses the resuming `GET`: TurboMCP
+/// with `400`, some servers with `404`. The session is fine either way: the
+/// client must drop the cursor and reopen, not start a new session. Taking a
+/// `404` for an expired session re-initialized, kept the cursor, got `404`
+/// again, and looped with no delay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_404_to_a_resuming_get_drops_the_cursor_not_the_session() {
+async fn a_refused_resuming_get_drops_the_cursor_not_the_session() {
+    for status in [StatusCode::BAD_REQUEST, StatusCode::NOT_FOUND] {
+        a_refused_cursor_is_dropped(status).await;
+    }
+}
+
+async fn a_refused_cursor_is_dropped(status: StatusCode) {
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
     let initializes = Arc::new(AtomicUsize::new(0));
     let resumes = Arc::new(AtomicUsize::new(0));
@@ -302,7 +309,7 @@ async fn a_404_to_a_resuming_get_drops_the_cursor_not_the_session() {
                 async move {
                     if headers.contains_key("last-event-id") {
                         refused.fetch_add(1, SeqCst);
-                        return StatusCode::NOT_FOUND.into_response();
+                        return status.into_response();
                     }
                     // One event with an id, then the server ends the stream.
                     (
@@ -328,12 +335,12 @@ async fn a_404_to_a_resuming_get_drops_the_cursor_not_the_session() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(
         resumes.load(SeqCst) > 0,
-        "the test is vacuous unless the client tried to resume"
+        "{status}: the test is vacuous unless the client tried to resume"
     );
     assert_eq!(
         initializes.load(SeqCst),
         1,
-        "a stream the server forgot is not a session it forgot"
+        "{status}: a stream the server forgot is not a session it forgot"
     );
 
     drop(client);

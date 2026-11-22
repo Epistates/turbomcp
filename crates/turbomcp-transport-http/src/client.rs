@@ -1627,14 +1627,15 @@ async fn listen(shared: Arc<Shared>) {
                 // each got a 400 rather than the 404 that triggers recovery,
                 // and the client stayed broken for good.
                 //
-                // A 404 to a *resuming* GET may only mean the server no longer
-                // has that stream (its event store expired it, or it
-                // restarted): the cursor is dead, not necessarily the session.
+                // A 400 or 404 to a *resuming* GET may only mean the server no
+                // longer has that stream (its event store expired it, or it
+                // restarted; TurboMCP answers 400, others 404): the cursor is
+                // dead, not necessarily the session.
                 // Reopen without it before concluding anything; treating it as
                 // a lost session re-initialized, kept the cursor, got 404
                 // again, and looped with no delay until the server's session
                 // table was full.
-                if status.as_u16() == 404 && last_event_id.take().is_some() {
+                if matches!(status.as_u16(), 400 | 404) && last_event_id.take().is_some() {
                     continue;
                 }
                 // A `401`/`403` is the bearer source's to answer (refresh,

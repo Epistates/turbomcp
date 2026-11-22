@@ -386,14 +386,15 @@ async fn only_a_resumable_stream_reaches_the_store() {
 }
 
 /// An id the endpoint can't replay from is refused: serving the live rest
-/// instead would leave a silent gap.
+/// instead would leave a silent gap. With `400`, not `404`, which a client
+/// must take to mean its session is gone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unknown_event_id_is_refused() {
     let app = app();
     let sid = open_session(&app).await;
     for id in ["nosuchstream:3", "garbage"] {
         let resp = app.clone().oneshot(resume(&sid, id)).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{id}");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{id}");
     }
 }
 
@@ -413,7 +414,7 @@ async fn a_stream_cannot_be_resumed_from_another_session() {
         .oneshot(resume(&other, prime.id.as_deref().unwrap()))
         .await
         .unwrap();
-    assert_eq!(stolen.status(), StatusCode::NOT_FOUND);
+    assert_eq!(stolen.status(), StatusCode::BAD_REQUEST);
 }
 
 /// With polling on, the server closes the connection soon after priming it
