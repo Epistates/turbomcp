@@ -73,7 +73,7 @@ rancor_crate = { package = "rancor", version = "0.1", default-features = false, 
 regex = "1.13"
 
 # URL parsing (for icons and URL elicitation - core protocol feature)
-url = "2.5"
+url = "2.5.9"
 
 [dev-dependencies]
 criterion = { workspace = true }

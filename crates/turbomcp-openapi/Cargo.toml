@@ -34,7 +34,7 @@ serde_norway = "0.9"
 thiserror = { workspace = true }
 
 # URL handling
-url = "2.5"
+url = "2.5.9"
 percent-encoding = { workspace = true }
 
 # Regex for route pattern matching

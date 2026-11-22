@@ -37,7 +37,7 @@ hex = "0.4"
 zeroize = "1.9"
 subtle = "2.6"
 
-url = "2.5"
+url = "2.5.9"
 
 # Time handling
 chrono = { workspace = true, features = ["serde"] }

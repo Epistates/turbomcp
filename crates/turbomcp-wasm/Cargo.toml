@@ -83,7 +83,7 @@ console_error_panic_hook = { version = "0.1", optional = true }
 
 # WASI Preview 2 dependencies (optional - for wasi feature)
 wasi = { version = "0.14", optional = true }
-url = { version = "2.5", optional = true }
+url = { version = "2.5.9", optional = true }
 urlencoding = { version = "2.1", optional = true }
 
 # Cloudflare Workers SDK (optional - for cloudflare feature)

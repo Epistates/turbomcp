@@ -65,7 +65,7 @@ dashmap = "6.2"
 uuid = { version = "1.29", features = ["v4"] }
 tracing = "0.1"
 thiserror = "2.0"
-url = "2.5"
+url = "2.5.9"
 ipnetwork = { version = "0.21", features = ["serde"] }
 
 # Security
