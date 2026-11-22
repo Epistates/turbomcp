@@ -285,6 +285,55 @@ async fn a_malformed_frame_is_answered_and_the_connection_survives() {
     assert_eq!(reply["result"]["content"][0]["text"], "still here");
 }
 
+/// A configured limiter charges every request on the socket, as HTTP charges
+/// every POST ("Servers MUST ... rate limit tool invocations"): charging only
+/// the upgrade let one connection call tools without limit. One over budget
+/// is answered with an error and the wait, and the connection goes on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_rate_limit_applies_to_each_request_not_just_the_upgrade() {
+    use std::num::NonZeroU32;
+    let one = NonZeroU32::new(1).unwrap();
+    let two = NonZeroU32::new(2).unwrap();
+    let limited = with_ws().with_rate_limiter(Arc::new(
+        turbomcp::GovernorRateLimiter::per_second_burst(one, two),
+    ));
+    let server = spawn(limited).await;
+    let (mut socket, _) = tokio_tungstenite::connect_async(server.url.as_str())
+        .await
+        .unwrap();
+    let call = |id: u64| {
+        json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {
+                "name": "echo", "arguments": { "msg": "hi" },
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+            },
+        })
+        .to_string()
+    };
+    // The upgrade took one of the two; this call takes the other.
+    socket.send(Message::text(call(1))).await.unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(reply["result"]["content"][0]["text"], "hi");
+
+    socket.send(Message::text(call(2))).await.unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(reply["id"], 2);
+    assert_eq!(reply["error"]["message"], "rate limit exceeded");
+    assert!(reply["error"]["data"]["retryAfterMs"].as_u64().is_some());
+
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    socket.send(Message::text(call(3))).await.unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(
+        reply["result"]["content"][0]["text"], "hi",
+        "the budget refills"
+    );
+}
+
 async fn next_json<S>(socket: &mut S) -> Value
 where
     S: futures::Stream<Item = Result<Message, WsProtocolError>> + Unpin,

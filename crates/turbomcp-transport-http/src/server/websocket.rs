@@ -30,8 +30,8 @@ use turbomcp_core::Identity;
 use turbomcp_service::{ServeConfig, ServerHandle};
 
 use super::{
-    HttpConfig, HttpState, PeerIp, check_host, check_origin, enforce_auth, enforce_rate_limit,
-    expires_at,
+    HttpConfig, HttpState, PeerIp, check_host, check_origin, client_key, enforce_auth,
+    enforce_rate_limit, expires_at,
 };
 use crate::ws_link::{Frame, Keepalive, Link, Read, WsError, close};
 
@@ -192,6 +192,12 @@ async fn upgrade<H: ServerHandle>(
     if let Some(rejection) = enforce_rate_limit(&state.http, subject, client_ip) {
         return rejection;
     }
+    // That charged the upgrade; every request on the socket is charged too.
+    let rate = state
+        .http
+        .rate_limiter
+        .clone()
+        .map(|limiter| (limiter, client_key(subject, client_ip)));
     let Ok(slot) = Arc::clone(&state.config.slots).try_acquire_owned() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -213,7 +219,14 @@ async fn upgrade<H: ServerHandle>(
         .max_message_size(max)
         .max_frame_size(max)
         .on_upgrade(move |socket| {
-            connection(state, socket, (identity, subject_token), network, slot)
+            connection(
+                state,
+                socket,
+                (identity, subject_token),
+                network,
+                rate,
+                slot,
+            )
         })
 }
 
@@ -224,12 +237,19 @@ async fn connection<H: ServerHandle>(
     socket: WebSocket,
     (identity, subject_token): (Option<Identity>, Option<turbomcp_service::SubjectToken>),
     network: turbomcp_service::NetworkFacts,
+    rate: Option<(
+        Arc<dyn turbomcp_service::RateLimiter>,
+        turbomcp_service::RateKey,
+    )>,
     _slot: OwnedSemaphorePermit,
 ) {
     let shutdown = state.http.shutdown.child_token();
-    let link = Link::new(socket, state.config.keepalive())
+    let mut link = Link::new(socket, state.config.keepalive())
         .going_away_on(state.http.shutdown.clone())
         .with_network(network);
+    if let Some((limiter, key)) = rate {
+        link = link.rate_limited(limiter, key);
+    }
     let close_with = link.close_with();
     let expiry = identity.as_ref().and_then(expires_at);
     let mut config = ServeConfig::new()

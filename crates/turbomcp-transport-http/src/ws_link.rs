@@ -123,6 +123,12 @@ pub(crate) struct Link<M, R> {
     close_with: CloseWith,
     going_away: Option<CancellationToken>,
     network: turbomcp_service::NetworkFacts,
+    /// Charged once per inbound request; see [`Link::rate_limited`].
+    #[cfg(feature = "server")]
+    rate: Option<(
+        Arc<dyn turbomcp_service::RateLimiter>,
+        turbomcp_service::RateKey,
+    )>,
 }
 
 impl<M, S, E> Link<M, SplitStream<S>>
@@ -146,6 +152,8 @@ where
             close_with: CloseWith(Arc::default()),
             going_away: None,
             network: turbomcp_service::NetworkFacts::websocket(),
+            #[cfg(feature = "server")]
+            rate: None,
         }
     }
 }
@@ -161,6 +169,38 @@ impl<M, R> Link<M, R> {
     #[cfg(feature = "client")]
     pub(crate) fn set_keepalive(&mut self, keepalive: Option<Keepalive>) {
         self.keepalive = keepalive;
+    }
+
+    /// Charge every inbound request against `key`, as HTTP charges every
+    /// POST: one over budget is answered with an error naming when to retry,
+    /// and never dispatched. Charging only the upgrade let one connection
+    /// call tools without limit.
+    #[cfg(feature = "server")]
+    pub(crate) fn rate_limited(
+        mut self,
+        limiter: Arc<dyn turbomcp_service::RateLimiter>,
+        key: turbomcp_service::RateKey,
+    ) -> Self {
+        self.rate = Some((limiter, key));
+        self
+    }
+
+    /// The answer to `msg` when it's a request over the rate limit: the
+    /// error HTTP sends with its `429`, with the wait in `data`.
+    #[cfg(feature = "server")]
+    fn over_budget(&self, msg: &JsonRpcMessage) -> Option<JsonRpcMessage> {
+        let (JsonRpcMessage::Request(req), Some((limiter, key))) = (msg, &self.rate) else {
+            return None;
+        };
+        let retry_after = limiter.check(key).err()?;
+        let error = turbomcp_core::JsonRpcError {
+            code: turbomcp_core::codes::SERVER_ERROR,
+            message: "rate limit exceeded".into(),
+            data: Some(serde_json::json!({
+                "retryAfterMs": u64::try_from(retry_after.as_millis()).unwrap_or(u64::MAX),
+            })),
+        };
+        Some(turbomcp_core::JsonRpcResponse::error(req.id.clone(), error).into())
     }
 
     /// Where to set the code this link closes with.
@@ -275,9 +315,16 @@ where
             };
             match frame.read() {
                 Read::Data(bytes) => {
-                    return decode_message(&self.codec, bytes)
-                        .map(Some)
-                        .map_err(WsError::InvalidFrame);
+                    let msg = decode_message(&self.codec, bytes).map_err(WsError::InvalidFrame)?;
+                    // Queued without waiting, so `recv` stays cancel-safe; a
+                    // peer flooding past a full queue loses the refusal, not
+                    // the connection.
+                    #[cfg(feature = "server")]
+                    if let Some(refusal) = self.over_budget(&msg) {
+                        let _ = self.out.try_send(M::text(self.codec.encode(&refusal)?)?);
+                        continue;
+                    }
+                    return Ok(Some(msg));
                 }
                 Read::Close => return Ok(None),
                 Read::Skip => {}
