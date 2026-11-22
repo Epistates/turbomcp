@@ -681,6 +681,18 @@ async fn by_default_the_engine_refuses_internal_addresses() {
     assert!(err.to_string().contains("NetworkPolicy"), "got {err}");
 }
 
+/// The metadata's `issuer` "MUST be identical to the issuer identifier used
+/// to construct the well-known URL. If they differ, the client MUST NOT use
+/// the metadata": a trailing `/` the resource didn't name is a difference.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_issuer_that_differs_by_a_trailing_slash_is_refused() {
+    let state = Shared::default();
+    let base = spawn_mock(Arc::clone(&state)).await;
+    state.lock().unwrap().issuer_override = Some(format!("{base}/"));
+    let err = engine(&base).discover(None).await.unwrap_err();
+    assert!(err.to_string().contains("issuer mismatch"), "{err}");
+}
+
 /// Clients "MUST ... use the resource metadata URL from the parsed
 /// WWW-Authenticate headers when present", on another origin too: what makes
 /// the document trustworthy is that it names this resource (RFC 9728 §3.3).

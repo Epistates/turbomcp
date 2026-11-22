@@ -338,26 +338,31 @@ pub(crate) async fn discover_with_policy(
         policy,
     )
     .await?;
-    if !resource
+    let Some(named) = resource
         .authorization_servers
         .iter()
-        .any(|named| same_issuer(named, issuer))
-    {
+        .find(|named| same_issuer(named, issuer))
+        .cloned()
+    else {
         return Err(OAuthClientError::IssuerChanged {
             expected: issuer.to_owned(),
             discovered: resource.authorization_servers.join(", "),
         });
-    }
-    let server = fetch_authorization_server(http, issuer, policy).await?;
+    };
+    // The identifier the resource names is the one the well-known URL is
+    // built from, so it's the one the metadata's `issuer` must be identical
+    // to; the operator's pin only has to name the same server.
+    let server = fetch_authorization_server(http, &named, policy).await?;
     Ok(super::flow::Discovered { resource, server })
 }
 
-/// Whether two issuer identifiers name the same server. The metadata's
-/// `issuer` "MUST be identical" to the one asked for (RFC 8414 §3.3), so this
-/// compares strings, with one allowance: a root issuer with and without its
-/// `/` (`https://as.example` and `https://as.example/`), which URL
-/// serialization itself disagrees on. A path issuer must match exactly:
-/// `https://as.example/t/` and `https://as.example/t` are different issuers.
+/// Whether an issuer an operator configured (a pin, a preregistration) names
+/// the same server as one a document gives. This compares strings, with one
+/// allowance for what a person types: a root issuer with and without its `/`
+/// (`https://as.example` and `https://as.example/`), which URL serialization
+/// itself disagrees on. A path issuer must match exactly: `https://as.example/t/`
+/// and `https://as.example/t` are different issuers. The metadata's own
+/// `issuer` gets no allowance (see [`fetch_authorization_server`]).
 pub(crate) fn same_issuer(a: &str, b: &str) -> bool {
     if a == b {
         return true;
@@ -371,8 +376,10 @@ pub(crate) fn same_issuer(a: &str, b: &str) -> bool {
     matches!((root(a), root(b)), (Some(x), Some(y)) if x == y)
 }
 
-/// Fetch and validate `issuer`'s metadata: the document's `issuer` MUST equal
-/// the one asked for, and every endpoint it names must be HTTPS. What a
+/// Fetch and validate `issuer`'s metadata: the document's `issuer` "MUST be
+/// identical" to the one its well-known URL was built from, or "the client
+/// MUST NOT use the metadata" (RFC 8414 §3.3; authorization server discovery,
+/// 2026-07-28), and every endpoint it names must be HTTPS. What a
 /// particular grant further requires (PKCE, a grant profile) is the caller's
 /// to check.
 pub(crate) async fn fetch_authorization_server(
@@ -390,7 +397,9 @@ pub(crate) async fn fetch_authorization_server(
         match fetch_json::<AuthorizationServerMetadata>(http, candidate, policy).await {
             Ok(meta) => {
                 // RFC 8414 §3.3 / OIDC Discovery §4.3: reject impersonation.
-                if !same_issuer(&meta.issuer, issuer) {
+                // Identical means identical: `https://as.example/` is not the
+                // issuer `https://as.example` asked for.
+                if meta.issuer != issuer {
                     return Err(OAuthClientError::Discovery(format!(
                         "authorization server metadata issuer mismatch: document says {}, expected {issuer}",
                         meta.issuer
