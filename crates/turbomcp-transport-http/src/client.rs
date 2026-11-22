@@ -339,6 +339,12 @@ fn handshake_version(body: &[u8], is_sse: bool) -> Option<String> {
 /// sends no `retry:` of its own.
 const DEFAULT_SSE_RETRY: Duration = Duration::from_secs(1);
 
+/// The shortest reconnect delay a server's `retry:` can set. Waiting longer
+/// than the server asks still respects the field ("wait the given number of
+/// milliseconds before attempting to reconnect"); `retry: 0` otherwise turned
+/// each reconnect, and each refused one, into a busy loop of GETs.
+const MIN_SSE_RETRY: Duration = Duration::from_millis(100);
+
 /// How far refusal backoff grows the standalone stream's reconnect delay. A
 /// server `retry` longer than this is waited out as given, never shortened:
 /// that would reconnect earlier than the server permits.
@@ -1421,7 +1427,7 @@ async fn pump_sse(
                 cursor = Some(event.id);
             }
             if let Some(delay) = event.retry {
-                retry = delay;
+                retry = delay.max(MIN_SSE_RETRY);
             }
             if event.data.is_empty() {
                 continue;
@@ -1586,7 +1592,7 @@ async fn listen(shared: Arc<Shared>) {
                         last_event_id = Some(event.id.clone());
                     }
                     if let Some(server_retry) = event.retry {
-                        retry = server_retry;
+                        retry = server_retry.max(MIN_SSE_RETRY);
                     }
                     if event.data.is_empty() {
                         continue; // keep-alive / priming event

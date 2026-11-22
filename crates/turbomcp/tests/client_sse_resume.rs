@@ -174,6 +174,21 @@ async fn a_long_retry_is_waited_out_never_shortened() {
     f.client.connection().close().await;
 }
 
+/// `retry: 0` gets a short floor: waiting longer than the server asks still
+/// respects the field, and zero made every reconnect immediate.
+#[tokio::test]
+async fn a_zero_retry_still_waits_before_resuming() {
+    let f = fixture(0).await;
+    let start = Instant::now();
+    assert_eq!(f.client.list_tools(None).await.unwrap().tools.len(), 1);
+    assert!(
+        start.elapsed() >= Duration::from_millis(100),
+        "resumed at once"
+    );
+    assert_eq!(f.state.resumes.load(Ordering::SeqCst), 1);
+    f.client.connection().close().await;
+}
+
 #[tokio::test]
 async fn retry_limit_does_not_discard_a_completed_response() {
     let f = fixture_with_completion(30_001, true).await;
