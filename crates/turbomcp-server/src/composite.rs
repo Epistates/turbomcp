@@ -926,7 +926,10 @@ pub(crate) fn resume_at<'a>(
         .into_iter()
         .position(|mount| mount == id)
         .ok_or_else(bad)?;
-    Ok((at, (!own.is_empty()).then(|| own.to_owned())))
+    // A cursor names a mount only when that mount reported another page, so
+    // what follows the separator is the mount's own cursor, even when it's
+    // empty: "an empty string is a valid cursor" (pagination, 2026-07-28).
+    Ok((at, Some(own.to_owned())))
 }
 
 /// Wrap a mount's own cursor so the next request resumes at that mount.
@@ -1480,6 +1483,22 @@ fn claim(
 mod tests {
     use super::*;
     use crate::IntoServerBuilder;
+
+    /// "An empty string is a valid cursor": a mount that pages with `""` is
+    /// resumed with it, not restarted from its first page.
+    #[test]
+    fn a_mounts_empty_cursor_resumes_it() {
+        assert_eq!(
+            resume_at(["a", "b"], Some("b:")).unwrap(),
+            (1, Some(String::new()))
+        );
+        assert_eq!(
+            resume_at(["a", "b"], Some("a:x")).unwrap(),
+            (0, Some("x".into()))
+        );
+        assert_eq!(resume_at(["a", "b"], None).unwrap(), (0, None));
+        assert!(resume_at(["a", "b"], Some("c:x")).is_err());
+    }
 
     #[derive(Clone)]
     struct Bare;
