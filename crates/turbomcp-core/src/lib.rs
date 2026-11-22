@@ -17,6 +17,7 @@
 //! - [`RequestContext`] — read-only request metadata + [`Extensions`] type-map.
 //! - [`CancellationToken`] — always-present per-request cancellation.
 //! - [`meta`] — `_meta` well-known keys and propagation policy.
+//! - [`budget`] — what a peer's JSON Schema may cost before it is compiled.
 //! - [`codec`] — bytes ↔ [`JsonRpcMessage`] (serde_json, or sonic-rs with
 //!   `simd`), and the classification of a frame that isn't a message.
 //!
@@ -28,6 +29,7 @@
 
 extern crate alloc;
 
+pub mod budget;
 mod cancellation;
 pub mod codec;
 mod context;

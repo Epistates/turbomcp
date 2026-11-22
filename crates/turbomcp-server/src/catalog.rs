@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::{Arc, Weak};
+use turbomcp_core::budget::{MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES, schema_within_budget};
 use turbomcp_core::{McpError, McpResult};
 use turbomcp_protocol::neutral;
 
@@ -58,33 +59,9 @@ where
     Err(McpError::internal("catalog page limit exceeded"))
 }
 
-/// The deepest schema compiled (nesting of objects and arrays).
-const MAX_SCHEMA_DEPTH: usize = 64;
-/// The most JSON values a compiled schema may contain.
-const MAX_SCHEMA_NODES: usize = 20_000;
 /// Compiled validators kept by default; see
 /// [`ServerBuilder::with_schema_cache_capacity`](crate::ServerBuilder::with_schema_cache_capacity).
 pub(crate) const DEFAULT_SCHEMA_CACHE: u64 = 256;
-
-/// Whether `schema` stays within the compile budget (basic/index.mdx,
-/// "Composition-Keyword Resource Use": bound schema depth and subschema count).
-/// A gateway compiles schemas an upstream wrote, so this runs before compile.
-fn within_budget(schema: &Value) -> bool {
-    let mut nodes = 0usize;
-    let mut stack = vec![(schema, 1usize)];
-    while let Some((value, depth)) = stack.pop() {
-        nodes += 1;
-        if nodes > MAX_SCHEMA_NODES || depth > MAX_SCHEMA_DEPTH {
-            return false;
-        }
-        match value {
-            Value::Array(items) => stack.extend(items.iter().map(|v| (v, depth + 1))),
-            Value::Object(map) => stack.extend(map.values().map(|v| (v, depth + 1))),
-            _ => {}
-        }
-    }
-    true
-}
 
 /// Cache keyed by the complete schema, not a tool name or a first caller's
 /// catalog. Changed definitions acquire a new validator; errors aren't cached.
@@ -213,7 +190,8 @@ fn check(validator: &jsonschema::Validator, value: &Value) -> McpResult<()> {
 /// unsupported dialect (basic/index.mdx: "return an error indicating the
 /// dialect is not supported"), not as a malformed schema.
 fn compile(schema: &Value) -> McpResult<jsonschema::Validator> {
-    if !within_budget(schema) {
+    // A gateway compiles schemas an upstream wrote, so the budget comes first.
+    if !schema_within_budget(schema) {
         return Err(McpError::internal(format!(
             "tool schema exceeds the validation budget \
              (depth {MAX_SCHEMA_DEPTH}, {MAX_SCHEMA_NODES} values)"
