@@ -61,9 +61,14 @@ pub mod codes {
     /// The implementation-defined floor: authentication, authorization,
     /// timeouts, transport failures, rate limiting, and anything else with no
     /// allocated number. The HTTP status, where there is one, is the signal.
+    ///
+    /// On `2026-07-28` this and [`TASK_CANCELLED`] are in the legacy
+    /// `-32000..-32019` range, which "receivers MUST NOT assume any specific
+    /// meaning for". They carry none there; the spec names no replacements
+    /// yet, and TurboMCP will adopt its codes when it does.
     pub const SERVER_ERROR: i32 = -32000;
     /// A task was cancelled before it finished; the outcome its result
-    /// request reports.
+    /// request reports. Legacy-range on `2026-07-28` (see [`SERVER_ERROR`]).
     pub const TASK_CANCELLED: i32 = -32010;
 
     /// A stateful (`2025-11-25`, `2025-06-18`) request arrived with no live
