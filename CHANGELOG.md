@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.1] - 2026-11-22
+
+A security patch: a server could crash a TurboMCP HTTP client. `url` before
+2.5.9 overflowed the stack in `Url::origin()` on a URL with deeply nested
+`blob:` prefixes (RUSTSEC-2026-0592), and the client took the origin of URLs
+a server chooses.
+
+### Security
+
+- **Every crate requires `url` 2.5.9**, so no lockfile can resolve an
+  affected release.
+- **The HTTP client refuses a URL that isn't HTTP(S) before taking its
+  origin.** A legacy SSE `endpoint` event naming one is refused, and so is a
+  redirect to one on a client carrying a bearer token. Both points took the
+  origin of a URL the server chose: the event's URI, and the redirect's
+  `Location`.
+
 ## [3.7.0] - 2026-11-19
 
 Every dependency moves to its latest release that builds on Rust 1.89, the

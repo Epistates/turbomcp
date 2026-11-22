@@ -518,7 +518,7 @@ Examples:
 
 ## Development Status
 
-**Current Version:** 3.7.0 (tracks the TurboMCP workspace)
+**Current Version:** 3.7.1 (tracks the TurboMCP workspace)
 **Transport Coverage:**
 - [x] **Backends:** STDIO, Streamable HTTP, TCP, Unix domain sockets, WebSocket
 - [x] **Frontends:** Streamable HTTP, STDIO, WebSocket (`RuntimeProxy`)
