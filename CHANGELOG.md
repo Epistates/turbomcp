@@ -113,6 +113,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it), not signed. The HTTP crate's docs say a session's response streams
   resume from `Last-Event-ID` by default. `with_allowed_origin`'s panic
   names it, and MIGRATION.md no longer names the removed codec crate.
+- `HttpConfig::with_max_in_flight` says what it and the body limit allow
+  in memory together (a parsed body takes up to about 16 times its size),
+  and `IntrospectionValidator` says to serve it behind a per-address limit,
+  since each unseen token costs a call to the authorization server.
 - The visibility docs say that on `2026-07-28` a catalog may vary only by
   what the request presents, never per connection, so per-session
   unlocking belongs to the stateful revisions.
@@ -121,6 +125,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- The in-memory event store copies a replay after releasing its lock, so
+  one resume of a large stream no longer stalls every other stream's
+  appends. A `resources/updated` checks each subscription's URIs as a set.
 - Every dependency at its latest release: jsonschema 0.63, sha2 0.11, hmac
   0.13, chacha20poly1305 0.11, tokio-tungstenite 0.30, parking_lot 0.13 and
   uuid 1.29. None of them appears in the public API.
