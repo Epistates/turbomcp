@@ -124,6 +124,14 @@ struct Cached {
 ///     "https://mcp.example.com/.well-known/oauth-protected-resource",
 /// );
 /// ```
+///
+/// Every token it hasn't seen costs one call to the endpoint, and a caller
+/// needs no credentials to send a new one each time. At most
+/// [`MAX_IN_FLIGHT`](Self::MAX_IN_FLIGHT) calls run at
+/// once, but their rate is the caller's. Serve it behind a per-address limit
+/// that runs before authentication (`HttpConfig::with_ip_rate_limiter` in
+/// `turbomcp-transport-http`) so the authorization server isn't paying for
+/// whoever can reach this one.
 pub struct IntrospectionValidator {
     endpoint: String,
     auth: ClientAuth,

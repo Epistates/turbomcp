@@ -228,6 +228,11 @@ impl HttpConfig {
     /// Long-lived streams (a legacy `GET` stream, a `subscriptions/listen`
     /// stream) don't count here once open: they have
     /// [their own budget](Self::with_max_streams).
+    ///
+    /// This and [`with_max_body_bytes`](Self::with_max_body_bytes) together
+    /// bound the memory requests hold: a parsed body takes up to about 16
+    /// times its size, so the defaults allow on the order of 16 GiB while
+    /// slow handlers hold every slot. Size both to the memory you have.
     #[must_use]
     pub fn with_max_in_flight(mut self, limit: usize) -> Self {
         self.max_concurrent_requests = limit.max(1);
