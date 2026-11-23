@@ -981,10 +981,10 @@ impl ClientHandle {
     }
 
     /// Stash typed resume state for every later round of this request, until
-    /// it is replaced or [cleared](Self::clear_state). It is signed
-    /// into the result's `requestState` — signed, not encrypted: the client
-    /// can read it — and each retry's verified copy is readable via
-    /// [`ClientHandle::load_state`].
+    /// it is replaced or [cleared](Self::clear_state). It is sealed into the
+    /// result's `requestState` (XChaCha20-Poly1305, bound to this request),
+    /// so the client can neither read nor alter it, and each retry's opened
+    /// copy is readable via [`ClientHandle::load_state`].
     ///
     /// # Errors
     /// `value` failing to serialize.

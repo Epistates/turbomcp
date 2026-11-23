@@ -432,7 +432,7 @@ one workspace while you migrate the server/client code.
 | `turbomcp-cli` | Rebuilt for v4 (same crate, binary `turbomcp`): see [the gateway and the CLI](#gateway-and-cli-turbomcp-proxy-and-turbomcp-cli). |
 | `turbomcp-proxy` | Rebuilt for v4 (same crate, now a library; the facade's `proxy` feature): see [the gateway and the CLI](#gateway-and-cli-turbomcp-proxy-and-turbomcp-cli). |
 | `turbomcp-openapi` | Not ported. Planned post-GA. |
-| `turbomcp-wasm` / `turbomcp-wasm-macros` | No WASM *transport* at GA, but the foundation (`turbomcp-core`, `-codec`, `-protocol`) builds `no_std` for `wasm32-unknown-unknown` — CI enforces it on every run. The bindings layer is a later effort. |
+| `turbomcp-wasm` / `turbomcp-wasm-macros` | No WASM *transport* at GA, but the foundation (`turbomcp-core`, with its codec, and `turbomcp-protocol`) builds `no_std` for `wasm32-unknown-unknown` — CI enforces it on every run. The bindings layer is a later effort. |
 | `turbomcp-grpc` | Not ported, and unlikely to be: gRPC is not an MCP-spec transport. |
 | `turbomcp-dpop` | Not ported. DPoP (RFC 9449) is still absent from the MCP spec. |
 
@@ -445,6 +445,26 @@ covered by the v4 crates in the table at the top of the [README](README.md).
 See the [alpha migration and deployment guide](../../docs/DEPLOYMENT.md) for
 authoritative lookup, runtime schema enforcement, session/task ownership,
 subscription context, OAuth orchestration, and HTTP resource limits.
+
+## alpha.5 to alpha.6
+
+The CHANGELOG's "Upgrading from 4.0.0-alpha.5" list covers the renames and
+moves, which the compiler points at. Two changes compile unchanged and behave
+differently:
+
+- **Cancellation is cooperative.** A cancelled call (`notifications/cancelled`,
+  the call limit, an HTTP client disconnecting) fires the handler's
+  `ctx.base.cancellation` and lets it run on, its result discarded. alpha.5
+  dropped it at its next `.await`. A handler with side effects, one that
+  places an order after waiting for approval say, has to check the token
+  before it acts, or the server can keep the old behavior with
+  `.with_cancellation(Cancellation::Abort)` on its builder.
+- **stdio closes with a 2-second grace.** When standard input closes,
+  calls in flight get `ServeConfig::eof_grace` (2 s) to answer, then their
+  cancellation fires. alpha.5 gave them the whole drain window (30 s). A
+  script that closes its input and waits on a long call needs a longer
+  grace: serve `Pipe::new(transport).with_config(ServeConfig::new()
+  .with_eof_grace(…))`.
 
 ## alpha.6 to beta.1
 

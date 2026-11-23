@@ -35,10 +35,12 @@
 //!   running after [`HttpConfig::with_sse_upgrade_after`] — a
 //!   `200 text/event-stream` *scoped to that request*: the request-related
 //!   messages as events, then the final response, which terminates the stream
-//!   (transports spec §Sending Messages). Events carry no `id`, which is a
-//!   MAY belonging to §Resumability and Redelivery — this endpoint does not
-//!   read `Last-Event-ID`, so advertising one would promise a replay that
-//!   never comes. A modern `subscriptions/listen`
+//!   (transports spec §Sending Messages). On a session (`2025-06-18` /
+//!   `2025-11-25`) such a stream is resumable by default: its events carry
+//!   ids, and a client that lost it sends `GET` with `Last-Event-ID` to be
+//!   caught up (see [`HttpConfig::with_event_store`]). Without an event
+//!   store, events carry no `id`, since an id promises a replay the endpoint
+//!   couldn't give. A modern `subscriptions/listen`
 //!   request yields a long-lived `200 text/event-stream` instead: the
 //!   acknowledged notification first, then the opted-in change notifications.
 //!   Every SSE response carries keep-alive comments (default 15s) and

@@ -331,7 +331,7 @@ impl HttpConfig {
     pub fn with_allowed_origin(mut self, origin: impl Into<String>) -> Self {
         let origin = origin.into();
         let normalized = super::guards::normalized_origin(&origin)
-            .unwrap_or_else(|| panic!("allow_origin: `{origin}` is not an origin"));
+            .unwrap_or_else(|| panic!("with_allowed_origin: `{origin}` is not an origin"));
         match &mut self.origins {
             OriginPolicy::Allowlist(list) => list.push(normalized),
             OriginPolicy::Any => {}
