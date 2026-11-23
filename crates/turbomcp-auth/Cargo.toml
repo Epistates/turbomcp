@@ -2,7 +2,7 @@
 name = "turbomcp-auth"
 version = "4.0.0-beta.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "TurboMCP v4 auth: OAuth 2.1 resource-server (bearer-token validation, RFC 9728 metadata)."
 readme = "README.md"

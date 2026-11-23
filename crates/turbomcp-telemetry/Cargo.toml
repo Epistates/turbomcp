@@ -2,7 +2,7 @@
 name = "turbomcp-telemetry"
 version = "4.0.0-beta.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "TurboMCP v4 telemetry: OpenTelemetry, W3C Trace Context, metrics."
 readme = "README.md"

@@ -2,7 +2,7 @@
 name = "turbomcp-client"
 version = "4.0.0-beta.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "TurboMCP v4 client: ClientBuilder, ConnectMode probe, MRTR loop, SEP-2549 response cache."
 readme = "README.md"

@@ -2,7 +2,7 @@
 name = "turbomcp-proxy"
 version = "4.0.0-beta.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "TurboMCP v4 gateway: remote MCP servers as mountable, version-translating capability servers."
 readme = "README.md"

@@ -70,11 +70,13 @@ Some things worth being explicit about:
 
 ## Minimum supported Rust version
 
-**MSRV is 1.88**, edition 2024, and it is checked in CI.
+**MSRV is 1.95**, edition 2024, and CI checks it.
 
-Raising it is a **minor** version bump, not a patch. We raise it only for a
-concrete reason — a language or standard-library feature the codebase actually
-uses, or a dependency that raised its own — and never in a patch release.
+The MSRV rolls, as tokio's does: a release may raise it to a Rust version
+released at least six months before. A raise comes in a minor or major
+release, never a patch, and the CHANGELOG says so. It keeps the
+dependencies on their current releases, which raise their own floors over
+time. The unpublished codegen tool may need a newer Rust than this.
 
 ## Deprecations
 

@@ -219,7 +219,7 @@ jobs:
       run: cargo hack check -p turbomcp --feature-powerset --depth 2 --no-dev-deps
 
   msrv:
-    name: MSRV (1.88)
+    name: MSRV (1.95)
     runs-on: ubuntu-latest
 
     steps:
@@ -235,15 +235,15 @@ jobs:
     - name: Install system dependencies
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-    # All crates in this workspace declare `rust-version = "1.88"` (the real floor
-    # imposed by dependencies: jsonwebtoken 10, time 0.3, tonic 0.14). The other
-    # CI jobs use `stable`, so an MSRV regression (e.g. a newer-than-1.88 stdlib
-    # API) would pass CI and break downstream consumers pinned to 1.88. This job
-    # catches that.
-    - name: Install Rust 1.88
+    # The published crates declare `rust-version = "1.95"` (VERSIONING.md has
+    # the policy). The other CI jobs use `stable`, so an MSRV regression (a
+    # newer standard-library API, a dependency that raised its own floor)
+    # would pass CI and break downstream consumers pinned to 1.95. This job
+    # catches that. The codegen tool isn't published, so it isn't held to it.
+    - name: Install Rust 1.95
       uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
       with:
-        toolchain: '1.88'
+        toolchain: '1.95'
 
     - name: Cache cargo registry
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -256,7 +256,7 @@ jobs:
         restore-keys: ${{ runner.os }}-cargo-msrv-
 
     - name: cargo check at MSRV
-      run: cargo check --workspace --all-features
+      run: cargo check --workspace --all-features --exclude turbomcp-codegen
 
   supply-chain:
     name: Supply chain (cargo-deny)

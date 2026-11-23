@@ -2,7 +2,7 @@
 name = "turbomcp-conformance"
 version = "4.0.0-beta.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 description = "Runs the official MCP conformance suite (@modelcontextprotocol/conformance) against TurboMCP's server and client."
 license = "MIT"
 publish = false

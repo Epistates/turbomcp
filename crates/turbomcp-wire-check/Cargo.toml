@@ -2,7 +2,7 @@
 name = "turbomcp-wire-check"
 version = "4.0.0-beta.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Test support: validates the JSON-RPC TurboMCP emits against the official MCP schema. Not published."
 license = "MIT"

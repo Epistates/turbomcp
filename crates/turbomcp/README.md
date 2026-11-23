@@ -6,7 +6,7 @@ zero-boilerplate surface and strict spec compliance as a feature.
 
 > **Status: `4.0.0-beta.1` — the API we intend to ship as `4.0.0`.** A
 > ground-up rewrite of `turbomcp` for the v4 major version; the stable line is
-> `3.x`. Edition 2024, MSRV 1.88. Both halves pass the official MCP conformance
+> `3.x`. Edition 2024, MSRV 1.95. Both halves pass the official MCP conformance
 > suite with zero failures, skips, or warnings using pinned client fixture
 > corrections, and interoperate
 > with the official Rust SDK (rmcp 3.x) in-process and with the official

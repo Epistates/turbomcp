@@ -10,7 +10,7 @@ zero-boilerplate surface and strict spec compliance as a feature.
 
 > **Status: `4.0.0-beta.1` — the API we intend to ship as `4.0.0`.** v4 is a
 > from-scratch rewrite of TurboMCP; the stable line is `3.x`. Edition 2024,
-> MSRV 1.88. It interoperates with the official Rust, TypeScript, Python and Go
+> MSRV 1.95. It interoperates with the official Rust, TypeScript, Python and Go
 > SDKs in both directions, on both revisions, and both halves are scored against the official MCP conformance
 > suite: 232 successful server assertions and 534 distinct successful client
 > scenario/check pairs using pinned client fixture corrections, with zero failures, skips, or warnings. All three advertised revisions (`2025-06-18`, `2025-11-25`,

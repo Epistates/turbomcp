@@ -2,7 +2,7 @@
 name = "turbomcp-macros"
 version = "4.0.0-beta.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "TurboMCP v4 macros: #[server], #[tool], #[resource], #[prompt], #[completion], #[mcp_header]."
 readme = "README.md"

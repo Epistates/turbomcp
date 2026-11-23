@@ -13,7 +13,7 @@ say so — retargeting is cheap.
 
 ## Getting set up
 
-Rust **1.88** or newer, edition 2024. [`just`](https://github.com/casey/just)
+Rust **1.95** or newer, edition 2024. [`just`](https://github.com/casey/just)
 runs everything:
 
 ```bash

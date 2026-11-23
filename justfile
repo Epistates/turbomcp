@@ -6,7 +6,7 @@
 
 # Project configuration
 project_name := "TurboMCP"
-rust_version := "1.88.0"
+rust_version := "1.95.0"
 
 # Build flags
 release_flags := "--release"
