@@ -82,6 +82,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # An action runs in CI with this repository's tokens as soon as its update
+    # lands, so an update waits until its release is a week old. Security
+    # updates are never delayed.
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "ci(deps)"
     # Every action is pinned to a commit with its release in a trailing
