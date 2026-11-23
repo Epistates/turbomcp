@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repeating the cursor just sent (a server alternating two never ended), and
   refuse a listing past 100,000 items. Page with the single-page methods
   past that.
+- **Behavior change:** the schema budget every peer schema passes before it
+  compiles now also counts its regular expressions (at most 128) and its
+  size with each `$ref` expanded (at most 100,000 values). A few dozen
+  definitions, each naming the next twice, are a small document whose
+  expansion doubles per level: validating one string against thirty levels
+  took seconds, on the client for a server's `outputSchema` and on a
+  gateway for an upstream's `inputSchema`. A recursive schema still passes.
+  Each regular expression compiles to at most 1 MiB, with a 1 MiB DFA cache
+  and 1,000,000 backtracking steps; the engine's own default size is 10 MiB.
 - **Behavior change:** the client's response cache keeps about 64 MiB of
   parsed results, evicting the least used past that, and keeps none longer
   than an hour whatever its `ttlMs`. It held up to 1,024 results of any
