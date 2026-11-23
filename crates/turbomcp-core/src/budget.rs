@@ -36,11 +36,7 @@ pub fn shortened(text: &str, max: usize) -> Cow<'_, str> {
     if text.len() <= max {
         return Cow::Borrowed(text);
     }
-    let mut end = max;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    Cow::Owned(format!("{}…", &text[..end]))
+    Cow::Owned(format!("{}…", &text[..text.floor_char_boundary(max)]))
 }
 
 /// The deepest schema compiled (nesting of objects and arrays).
