@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading from 4.0.0-beta.1
+
+- **The MSRV is 1.95** (it was 1.88). `VERSIONING.md` now says how it moves:
+  a minor or major release may raise it to a Rust version released at least
+  six months before, and the CHANGELOG says so.
+
 ### Added
 
 - `WebSocketConfig::with_serve_config`: the limits each WebSocket connection
@@ -80,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unlocking belongs to the stateful revisions.
 - `AuthPrincipal::has_scopes` says it matches scopes exactly and points at
   `turbomcp_core::scopes::satisfies` for a hierarchy.
+
+### Internal
+
+- Every dependency at its latest release: jsonschema 0.63, sha2 0.11, hmac
+  0.13, chacha20poly1305 0.11, tokio-tungstenite 0.30, parking_lot 0.13 and
+  uuid 1.29. None of them appears in the public API.
+- The MSRV job no longer checks the unpublished codegen tool, which may need
+  a newer Rust than the published crates.
 
 ## [4.0.0-beta.1] - 2026-11-22
 
