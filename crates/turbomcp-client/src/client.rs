@@ -355,7 +355,9 @@ impl ClientBuilder {
     /// or a `*_list_changed` / `resources/updated` notification invalidates
     /// them. Servers that don't opt in (`ttlMs: 0`, the wire default — and
     /// every `2025-11-25` server, whose wire has no cache fields) are never
-    /// cached, so enabling this is safe against any server.
+    /// cached, so enabling this is safe against any server. A result is kept
+    /// for at most an hour whatever its `ttlMs`, and the cache holds about
+    /// 64 MiB of parsed results, evicting the least used past that.
     #[must_use]
     pub fn with_response_cache(mut self, enabled: bool) -> Self {
         self.response_cache = enabled;

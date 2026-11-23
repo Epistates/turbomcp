@@ -2659,6 +2659,7 @@ dependencies = [
  "async-trait",
  "futures",
  "jsonschema",
+ "moka",
  "parking_lot 0.13.0",
  "rustix",
  "serde",

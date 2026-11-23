@@ -7,7 +7,8 @@
 //! `resources/updated` notifications invalidate the affected entries early.
 //! A missing or zero `ttlMs` (including every legacy `2025-11-25` result,
 //! whose wire has no cache fields) is never stored, so the cache is inert
-//! unless the server opts in.
+//! unless the server opts in. It holds about 64 MiB of parsed results, by an
+//! estimate of what each holds, and keeps none longer than an hour.
 //!
 //! Scope: this cache is per-[`Client`](crate::Client) connection. On a
 //! transport that guarantees one principal for the connection, `"private"`
@@ -16,23 +17,70 @@
 //! only `cacheScope: "public"` results are kept: a `"private"` one (the
 //! default) is valid only "for the same authorization context".
 
-use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use turbomcp_protocol::methods::{notification, request};
 
-/// Cap on stored entries (each distinct cursor/URI is one entry). At the cap,
-/// the soonest-to-expire entry is evicted to admit the new one.
-const MAX_ENTRIES: usize = 1024;
+/// What the cache may hold, in estimated bytes of parsed results. A result
+/// can be up to the frame limit, and a parsed `Value` is several times its
+/// wire size, so a count of entries bounded nothing.
+const CACHE_BYTES: u64 = 64 * 1024 * 1024;
 
-/// One cached raw result and its expiry deadline.
-#[derive(Debug)]
+/// The longest a result is kept, whatever its `ttlMs` says. `ttlMs` is a
+/// freshness hint, and a server's `u64::MAX` would otherwise mean forever.
+const MAX_TTL: Duration = Duration::from_secs(60 * 60);
+
+/// One cached raw result, how long it stays fresh, and its estimated size.
+#[derive(Clone, Debug)]
 struct Entry {
     value: Value,
-    expires_at: Instant,
+    ttl: Duration,
+    weight: u32,
+}
+
+/// Each entry expires after its own `ttlMs`, counted again when a newer
+/// result for the same key replaces it.
+struct PerEntryTtl;
+
+impl moka::Expiry<Key, Entry> for PerEntryTtl {
+    fn expire_after_create(&self, _: &Key, entry: &Entry, _: Instant) -> Option<Duration> {
+        Some(entry.ttl)
+    }
+
+    fn expire_after_update(
+        &self,
+        _: &Key,
+        entry: &Entry,
+        _: Instant,
+        _: Option<Duration>,
+    ) -> Option<Duration> {
+        Some(entry.ttl)
+    }
+}
+
+/// An estimate of the memory a parsed result holds: every value's slot plus
+/// its string and key bytes.
+fn weight(value: &Value) -> u32 {
+    let slot = std::mem::size_of::<Value>();
+    let mut bytes = 0usize;
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        bytes = bytes.saturating_add(slot);
+        match value {
+            Value::String(text) => bytes = bytes.saturating_add(text.len()),
+            Value::Array(items) => stack.extend(items),
+            Value::Object(map) => {
+                for (key, value) in map {
+                    bytes = bytes.saturating_add(key.len() + slot);
+                    stack.push(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    u32::try_from(bytes).unwrap_or(u32::MAX)
 }
 
 /// Method + discriminator (pagination cursor for `*/list`, URI for
@@ -42,9 +90,9 @@ type Key = (String, Option<String>);
 /// An in-process response cache keyed by method + discriminator. Shared
 /// between the [`Client`](crate::Client) (lookups/stores) and the connection
 /// actor (notification-driven invalidation).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ResponseCache {
-    entries: Mutex<HashMap<Key, Entry>>,
+    entries: moka::sync::Cache<Key, Entry>,
     /// Whether only `cacheScope: "public"` results may be kept (see the
     /// module docs).
     public_only: bool,
@@ -95,32 +143,44 @@ impl ResponseCache {
     /// A cache that keeps only `cacheScope: "public"` results when
     /// `public_only`.
     pub(crate) fn new(public_only: bool) -> Self {
+        Self::with_budget(public_only, CACHE_BYTES)
+    }
+
+    fn with_budget(public_only: bool, bytes: u64) -> Self {
         Self {
+            entries: moka::sync::Cache::builder()
+                .max_capacity(bytes)
+                .weigher(|_: &Key, entry: &Entry| entry.weight)
+                .expire_after(PerEntryTtl)
+                .support_invalidation_closures()
+                .build(),
             public_only,
-            ..Self::default()
+            generations: Default::default(),
         }
+    }
+
+    /// Drop every entry of `method`.
+    fn drop_method(&self, method: &'static str) {
+        // Only fails when invalidation closures are off; they're on.
+        let _ = self
+            .entries
+            .invalidate_entries_if(move |(m, _), _| m == method);
     }
 
     /// Forget every page of `method`: the server refused one of its cursors
     /// ("clients SHOULD discard cached pages" for a cursor it no longer
     /// honours), so the rest may be from a list that no longer exists.
     pub(crate) fn forget(&self, method: &str) {
-        self.entries.lock().retain(|(m, _), _| m != method);
+        let method = method.to_owned();
+        let _ = self
+            .entries
+            .invalidate_entries_if(move |(m, _), _| *m == method);
     }
 
-    /// A fresh cached result for `method` + `discriminator`, if any. Expired
-    /// entries are dropped on the way out.
+    /// A fresh cached result for `method` + `discriminator`, if any.
     pub(crate) fn get(&self, method: &str, discriminator: Option<&str>) -> Option<Value> {
         let key = (method.to_owned(), discriminator.map(str::to_owned));
-        let mut entries = self.entries.lock();
-        match entries.get(&key) {
-            Some(entry) if entry.expires_at > Instant::now() => Some(entry.value.clone()),
-            Some(_) => {
-                entries.remove(&key);
-                None
-            }
-            None => None,
-        }
+        self.entries.get(&key).map(|entry| entry.value)
     }
 
     /// Note the generation `method`'s family is at, before requesting it.
@@ -159,23 +219,12 @@ impl ResponseCache {
         if self.public_only && value.get("cacheScope").and_then(Value::as_str) != Some("public") {
             return;
         }
-        let mut entries = self.entries.lock();
-        if entries.len() >= MAX_ENTRIES {
-            entries.retain(|_, e| e.expires_at > Instant::now());
-        }
-        if entries.len() >= MAX_ENTRIES
-            && let Some(evict) = entries
-                .iter()
-                .min_by_key(|(_, e)| e.expires_at)
-                .map(|(k, _)| k.clone())
-        {
-            entries.remove(&evict);
-        }
-        entries.insert(
+        self.entries.insert(
             (method.to_owned(), discriminator.map(str::to_owned)),
             Entry {
                 value: value.clone(),
-                expires_at: Instant::now() + Duration::from_millis(ttl_ms),
+                ttl: Duration::from_millis(ttl_ms).min(MAX_TTL),
+                weight: weight(value),
             },
         );
     }
@@ -188,24 +237,18 @@ impl ResponseCache {
         if let Some(family) = Family::of_notification(method) {
             self.generations[family as usize].fetch_add(1, Ordering::AcqRel);
         }
-        let mut entries = self.entries.lock();
         match method {
-            notification::TOOLS_LIST_CHANGED => {
-                entries.retain(|(m, _), _| m != request::TOOLS_LIST);
-            }
-            notification::PROMPTS_LIST_CHANGED => {
-                entries.retain(|(m, _), _| m != request::PROMPTS_LIST);
-            }
+            notification::TOOLS_LIST_CHANGED => self.drop_method(request::TOOLS_LIST),
+            notification::PROMPTS_LIST_CHANGED => self.drop_method(request::PROMPTS_LIST),
             notification::RESOURCES_LIST_CHANGED => {
-                entries.retain(|(m, _), _| {
-                    m != request::RESOURCES_LIST
-                        && m != request::RESOURCES_TEMPLATES_LIST
-                        && m != request::RESOURCES_READ
-                });
+                self.drop_method(request::RESOURCES_LIST);
+                self.drop_method(request::RESOURCES_TEMPLATES_LIST);
+                self.drop_method(request::RESOURCES_READ);
             }
             notification::RESOURCES_UPDATED => {
                 if let Some(uri) = params.and_then(|p| p.get("uri")).and_then(Value::as_str) {
-                    entries.remove(&(request::RESOURCES_READ.to_owned(), Some(uri.to_owned())));
+                    self.entries
+                        .invalidate(&(request::RESOURCES_READ.to_owned(), Some(uri.to_owned())));
                 }
             }
             _ => {}
@@ -214,7 +257,13 @@ impl ResponseCache {
 
     /// Drop every entry.
     pub(crate) fn clear(&self) {
-        self.entries.lock().clear();
+        self.entries.invalidate_all();
+    }
+}
+
+impl Default for ResponseCache {
+    fn default() -> Self {
+        Self::new(false)
     }
 }
 
@@ -305,34 +354,47 @@ mod tests {
         );
     }
 
+    /// The cache holds what fits its byte budget: a result past it isn't
+    /// kept, and many results stay within it together.
     #[test]
-    fn at_capacity_the_soonest_to_expire_entry_is_evicted() {
-        let cache = ResponseCache::default();
-        // Entry 0 expires first; fill the rest of the capacity with later ones.
+    fn the_cache_stays_within_its_byte_budget() {
+        let cache = ResponseCache::with_budget(false, 20_000);
+        let item = |n: usize| json!({ "ttlMs": 60_000, "text": "x".repeat(n) });
         cache.store(
-            "tools/list",
-            Some("cursor-0"),
-            &json!({ "ttlMs": 10_000 }),
+            "resources/read",
+            Some("huge"),
+            &item(50_000),
             Requested(None),
         );
-        for i in 1..MAX_ENTRIES {
+        cache.entries.run_pending_tasks();
+        assert!(cache.get("resources/read", Some("huge")).is_none());
+        for i in 0..100 {
             cache.store(
-                "tools/list",
-                Some(&format!("cursor-{i}")),
-                &json!({ "ttlMs": 100_000 }),
+                "resources/read",
+                Some(&format!("r{i}")),
+                &item(1_000),
                 Requested(None),
             );
         }
-        // Admitting one more evicts the soonest-to-expire (entry 0), not the new one.
+        cache.entries.run_pending_tasks();
+        assert!(cache.entries.weighted_size() <= 20_000);
+    }
+
+    /// `ttlMs` is a hint; a server's "forever" is kept for at most an hour.
+    #[test]
+    fn a_ttl_is_capped() {
+        let cache = ResponseCache::default();
         cache.store(
             "tools/list",
-            Some("overflow"),
-            &json!({ "ttlMs": 100_000 }),
+            None,
+            &json!({ "tools": [], "ttlMs": u64::MAX }),
             Requested(None),
         );
-        assert!(cache.get("tools/list", Some("cursor-0")).is_none());
-        assert!(cache.get("tools/list", Some("cursor-1")).is_some());
-        assert!(cache.get("tools/list", Some("overflow")).is_some());
+        let entry = cache
+            .entries
+            .get(&("tools/list".to_owned(), None))
+            .expect("stored");
+        assert_eq!(entry.ttl, MAX_TTL);
     }
 
     #[test]
