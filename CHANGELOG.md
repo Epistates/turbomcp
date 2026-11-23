@@ -378,7 +378,7 @@ almost everything.
   stop pointing at them.
 - `just test` checks the local links in the maintained Markdown, as CI does.
 - CI cancels a run when a newer push to the same branch or PR supersedes it.
-- Harnesses for the evidence 4.0.0 needs, each off unless asked for:
+- Load and soak harnesses, each off unless asked for:
   `just soak` runs one HTTP server under mixed traffic (steady calls,
   session churn, cancellation storms, listen streams) for hours and fails
   on errors or on memory or descriptor growth that doesn't level off;
@@ -1291,8 +1291,8 @@ gathers them by area.
 - A `#[mcp_header]` integer outside ±(2^53−1) was answered "header is
   missing" (the client rightly doesn't mirror it); it is now invalid
   params naming the limit, and the generated schema states the bounds.
-- Public docs no longer cite internal planning documents (`PLAN §4.10`,
-  `Phase 4`) a reader can't follow; `just test` checks for them.
+- Public docs no longer cite planning documents a reader can't follow;
+  `just test` checks for them.
 
 - Resource subscriptions through the gateway reach the upstream:
   `resources/subscribe` on `2025-*` and the listen filter on `2026-07-28`.
@@ -1546,9 +1546,9 @@ gathers them by area.
   `turbomcp proxy --timeout` sets the per-request timeout; a long tool
   failed at 60 s through the gateway even while reporting progress.
 - `cargo test -p turbomcp-transport-http --all-features` compiles again.
-- Conformance is pinned to `@modelcontextprotocol/conformance@0.2.0-alpha.12`
-  (server 232 passed of 237, client 534 distinct passing pairs, zero
-  failures either way, and the unmodified upstream client run passes too).
+- Conformance is pinned to `@modelcontextprotocol/conformance@0.2.0-alpha.12`,
+  with no failures on the server or the client, and none in the unmodified
+  upstream client run.
   Client fixture corrections v2 drop the SSE-retry one, which upstream
   fixed. `TURBOMCP_CONFORMANCE_BLESS=1` rewrites the exact inventories from
   a passing run after a harness update. The interop suite resolves rmcp
@@ -2500,17 +2500,6 @@ alpha changes public contracts; see [migration guidance](docs/DEPLOYMENT.md).
 - Documentation distinguishes supported features from the Apps placeholder and
   removes unsupported performance claims.
 
-### Validation
-
-- The updated candidate passed 720 workspace tests, strict Clippy, Rust 1.88,
-  foundation WASM checks, 43 feature combinations, and four fuzz smoke campaigns.
-- Strict conformance: 650 corrected-client success messages (488 distinct
-  scenario/check pairs) and 231 unmodified-server successes (215 distinct pairs),
-  zero failures, skips, or warnings. See the [fixture correction record](crates/turbomcp-conformance/fixtures/README.md)
-  for the precise changes and raw upstream mode, which retains its original
-  fixture skips/warnings. The real POST-stream recovery gap is fixed in the SDK.
-- See [audit evidence and remaining release gates](https://github.com/Epistates/turbomcp/blob/v4.0.0-alpha.4/docs/V4-AUDIT-REMEDIATION.md).
-
 ## [4.0.0-alpha.3] - 2026-09-07
 
 The client had never been measured. Scoring it against the official conformance
@@ -2652,9 +2641,7 @@ found the stdio cancel-safety bug below.
   union-on-reauth, and re-registration when the resource moves to a different
   authorization server.
 
-- **Cross-SDK interop on `2026-07-28`**, in both directions. The suite had only
-  ever run the legacy path, so the stateless revision was verified by nothing but
-  our own code on both ends.
+- **Cross-SDK interop on `2026-07-28`**, in both directions.
 
 - **CI checks that generated artifacts still match their generators** — the wire
   types against the pinned upstream schema, and the workspace lockfile against
@@ -3193,8 +3180,8 @@ nothing in them is a break against any released version.
   example as a real child process and runs handshake → `tools/list` →
   `tools/call` → teardown over its stdio.
 
-- **Test-suite hardening across every crate** (per-crate audit): ~70 new tests
-  pinning previously unexercised spec invariants and defensive branches —
+- **Test-suite hardening across every crate**: tests pin previously
+  unexercised spec invariants and defensive branches —
   modern-path version rejection (`-32004` + the supported list), capability
   enforcement (unadvertised capability → `-32601`), pagination-cursor
   plumbing, the malformed-params matrix, the client's `Auto`→legacy fallback,
@@ -3371,7 +3358,7 @@ nothing in them is a break against any released version.
 ## [3.1.5] - 2026-05-11
 
 Patch release: Streamable HTTP interoperability hardening for RMCP/Codex
-clients, plus dogfood coverage for two-way Rust SDK compatibility.
+clients, plus interop coverage for two-way Rust SDK compatibility.
 
 ### Added
 
@@ -3385,8 +3372,8 @@ clients, plus dogfood coverage for two-way Rust SDK compatibility.
   cached component registry populated by list responses or lazily on first
   direct use, with explicit refresh/clear hooks for dynamic servers whose
   advertised components change at runtime.
-- **TurboMCP <-> RMCP Streamable HTTP dogfood interop checks** — the dogfood
-  benchmark suite now validates RMCP client to TurboMCP HTTP server and TurboMCP
+- **TurboMCP <-> RMCP Streamable HTTP interop checks** — the benchmark
+  suite now validates RMCP client to TurboMCP HTTP server and TurboMCP
   client to RMCP HTTP server flows, including initialization, tools, resources,
   prompts, and Codex-compatible standalone SSE startup framing.
 - **RMCP comparison diligence notes** — added a focused comparison of
@@ -3763,8 +3750,8 @@ and cleaning up deprecated surfaces left over from 3.1.0.
 
 ## [3.1.0] - 2026-04-17
 
-This release lands the remediation pass from the v3.0.13 audit
-(`.strategy/AUDIT_v3.0.13_ACTION_PLAN.md`). Five categories of fix: security
+This release lands the remediation pass from the v3.0.13 audit. Five
+categories of fix: security
 correctness, transport correctness, protocol/macro correctness, CI/test
 coverage, extension-crate honesty markers.
 
@@ -3850,7 +3837,7 @@ coverage, extension-crate honesty markers.
 
 - **OpenAPI `$ref` references are resolved and inlined** — `crates/turbomcp-openapi/src/provider.rs`. `schema_to_json` now walks the converted schema and recursively expands `#/components/schemas/*` pointers into the emitted MCP tool / resource input schemas, with cycle detection that preserves the innermost `$ref` so self-referential schemas stay finite. `allOf`, `oneOf`, `anyOf`, `discriminator`, and `nullable` round-trip through the serialization path as JSON Schema keywords that MCP clients speaking JSON Schema 2020-12 consume directly. README's former "Known Limitations" section is replaced with a positive description of what's supported. New tests: `test_ref_resolution_inlines_components`, `test_ref_resolution_handles_cycles`.
 
-- **Proxy `graphql` feature removed from `adapters` bundle** — `crates/turbomcp-proxy/Cargo.toml`. The `graphql` adapter was Phase 6 scaffolding with no `async-graphql` deps actually pinned; enabling the feature did not produce a working GraphQL adapter. Kept as a placeholder feature flag (so existing references don't break) but no longer included in `features = ["adapters"]` or `["full"]`.
+- **Proxy `graphql` feature removed from `adapters` bundle** — `crates/turbomcp-proxy/Cargo.toml`. The `graphql` adapter was a placeholder with no `async-graphql` deps actually pinned; enabling the feature did not produce a working GraphQL adapter. Kept as a placeholder feature flag (so existing references don't break) but no longer included in `features = ["adapters"]` or `["full"]`.
 
 - **WASM WASI completeness clarified** — `crates/turbomcp-wasm/README.md`. New section noting WASI bindings cover stdio + HTTP only (no streaming, no WASI sockets), and that the browser target is the more mature one.
 
@@ -3897,7 +3884,7 @@ See `MIGRATION.md` for `3.0.x → 3.1.0` upgrade notes. Summary:
 
 ### Changed
 
-- **`SessionManager` routes SSE messages to a single subscriber per session** — Previously backed by `tokio::sync::broadcast`, which delivered every outbound message to every active subscriber for a session. That violated MCP Streamable HTTP §Multiple Connections ("The server MUST send each of its JSON-RPC messages on only one of the connected streams; that is, it MUST NOT broadcast the same message across multiple streams"). `SessionData` now carries `subscribers: Vec<mpsc::UnboundedSender<String>>`, and `send_to_session` / `broadcast` route each message to exactly one live subscriber per session, dropping dead senders as they go. `subscribe_session` returns a dedicated `mpsc::UnboundedReceiver<String>`. Verified by the new `send_to_session_routes_to_single_subscriber` unit test.
+- **`SessionManager` routes SSE messages to a single subscriber per session** — Previously backed by `tokio::sync::broadcast`, which delivered every outbound message to every active subscriber for a session. That violated MCP Streamable HTTP §Multiple Connections ("The server MUST send each of its JSON-RPC messages on only one of the connected streams; that is, it MUST NOT broadcast the same message across multiple streams"). `SessionData` now carries `subscribers: Vec<mpsc::UnboundedSender<String>>`, and `send_to_session` / `broadcast` route each message to exactly one live subscriber per session, dropping dead senders as they go. `subscribe_session` returns a dedicated `mpsc::UnboundedReceiver<String>`.
 
 - **`ServerBuilder::into_axum_router` / `into_service` delegate to `transport::http::build_router`** — Removed 180+ lines of duplicated `handle_json_rpc` logic from `crates/turbomcp-server/src/builder.rs`. BYO-Axum integrations now automatically inherit the full streamable HTTP spec coverage (session management, origin validation, request-id dedup, 413/413 body limits, SSE primer) rather than running a reduced fork.
 
@@ -3937,7 +3924,7 @@ See `MIGRATION.md` for `3.0.x → 3.1.0` upgrade notes. Summary:
 
 ### Fixed
 
-- **`wasm-server` feature compiles again** — The `wasm-server`-gated files `turbomcp-wasm/src/wasm_server/server.rs` and `composite.rs` carried two latent build breaks introduced during the icons + extensions work (they are skipped by default `cargo check --workspace --all-targets`). Removes spurious `website_url: None` from eight `Tool`/`Resource`/`ResourceTemplate`/`Prompt` literals (only `Implementation` carries `website_url`), and adds `completions: None` + `extensions: None` to the two `ServerCapabilities` constructors to match the new core shape. Verified with `cargo check`, `cargo clippy -- -D warnings`, and `cargo test --lib -p turbomcp-wasm --features wasm-server` (119 tests passing).
+- **`wasm-server` feature compiles again** — The `wasm-server`-gated files `turbomcp-wasm/src/wasm_server/server.rs` and `composite.rs` carried two latent build breaks introduced during the icons + extensions work (they are skipped by default `cargo check --workspace --all-targets`). Removes spurious `website_url: None` from eight `Tool`/`Resource`/`ResourceTemplate`/`Prompt` literals (only `Implementation` carries `website_url`), and adds `completions: None` + `extensions: None` to the two `ServerCapabilities` constructors to match the new core shape.
 
 - **Stdio backend spawn tests no longer depend on Python** (`turbomcp-proxy`) — Tests hardcoded `python server.py` / `python -c '...'`, which fail on systems where only `python3` is on `PATH` (current macOS default) and race because `python -c` exits before `wait_for_ready` can observe a running child. Replaced with `/bin/cat`, gated `#[cfg(unix)]` since Windows handles subprocess spawning differently.
 
@@ -4323,12 +4310,6 @@ Full security audit across all 25 crates with fixes at all severity levels.
 - **TelemetryGuard lifecycle** (`turbomcp-telemetry`) - Drop behavior documentation
 - **CLI security warnings** (`turbomcp-cli`) - STDIO risks, token exposure, permissions
 
-### Test Results
-
-- 1,787 tests passing
-- Zero clippy warnings with `--all-features`
-- All transports verified: STDIO, TCP, HTTP, WebSocket, Unix socket, gRPC
-
 ## [3.0.0-beta.3] - 2026-01-22
 
 ### Security
@@ -4514,7 +4495,6 @@ is now leaner, faster, and more maintainable.
 - Comprehensive crate-by-crate audit completed across all 23 crates
 - Verified consistent versioning (3.0.0-beta.1), lint settings, and documentation
 - Confirmed no vestigial or partially implemented code remains
-- All workspace tests passing
 
 ## [2.3.7] - 2026-01-05
 
@@ -4697,16 +4677,6 @@ This release includes multiple security hardening improvements identified during
 
 ## [2.3.2] - 2025-12-09
 
-### Added
-
-#### Comprehensive Regression Test Coverage
-- **Tool Serialization Tests** (`turbomcp-protocol`):
-  - Added `test_tool_serialization_roundtrip()` - Validates tool JSON serialization/deserialization
-  - Added `test_tool_list_result_serialization()` - Tests ListToolsResult with mixed execution modes
-  - Added `test_tool_call_request_with_task_support()` - Validates CallToolRequest with task metadata
-  - Added `test_backward_compatibility_tools_without_execution()` - Ensures pre-v2.3.1 tools work
-  - Added `test_mixed_tools_in_list()` - Real-world scenario with mixed tool configurations
-  - All tests prevent future tool serialization/visibility regressions
 ### Fixed
 
 #### MCP Inspector Compatibility (GitHub Issue #9)
@@ -4731,8 +4701,6 @@ This release includes multiple security hardening improvements identified during
 - ✅ SSE streaming with proper Content-Type
 - ✅ Session management headers exposed to browser clients
 - ✅ Last-Event-ID resumption support
-- ✅ 227 turbomcp-server tests passing
-- ✅ 258 turbomcp-transport tests passing
 
 #### Configuration Guards and Feature Gating
 - Removed unnecessary `#[cfg(feature = "mcp-tasks")]` guards on now-unconditional `task` fields
@@ -4745,14 +4713,6 @@ This release includes multiple security hardening improvements identified during
 - Updated HTTP server example documentation with CORS setup guidance
 - Clarified CORS messaging: "CORS disabled (secure mode)" instead of "CORS enabled (development mode)"
 - Added explicit instructions for enabling CORS with `ENABLE_CORS=1` for browser-based tools
-
-### Testing & Verification
-
-- ✅ Verified tool listing works correctly in HTTP transport
-- ✅ Confirmed new `execution` field serializes properly (optional, skipped when None)
-- ✅ All 950+ tests passing
-- ✅ Zero clippy warnings
-- ✅ Backward compatibility maintained for tools without `execution` field
 
 ## [2.3.1] - 2025-12-09
 
@@ -4778,11 +4738,6 @@ This release includes multiple security hardening improvements identified during
 - Updated all `Tool` struct initializers across 11 files to include new `execution: None` field
 - Fixed `TimeoutLayer::new()` deprecation warnings (0.6.8 API change)
 - Ensured backward compatibility: all new fields are optional with sensible defaults
-
-#### Test Coverage
-- All 950+ tests passing
-- Zero clippy warnings
-- All examples compiling without errors
 
 ## [2.3.0] - 2025-12-02
 
@@ -5042,7 +4997,6 @@ Added detailed documentation explaining that `Content` is a backward compatibili
 
 **File Modified**: `crates/turbomcp-protocol/src/types/content.rs:55-82`
 
-
 ## [2.2.1] - 2025-11-05
 
 ### Fixed
@@ -5056,13 +5010,13 @@ Added detailed documentation explaining that `Content` is a backward compatibili
 
 ## [2.2.0] - 2025-11-05
 
-### 🔐 Major Security Release: Sprint 0 & Sprint 1 Complete
+### 🔐 Major Security Release
 
 This release represents a comprehensive security hardening effort across the entire TurboMCP stack, addressing 1 critical cryptographic vulnerability and 6 high-priority security issues. Security rating improved from 7.0/10 to 8.5/10.
 
 ---
 
-### Sprint 0: RSA Removal (CRITICAL CRYPTOGRAPHIC VULNERABILITY)
+### RSA Removal (Critical Cryptographic Vulnerability)
 
 #### ❌ Eliminated RUSTSEC-2023-0071: RSA Timing Attack Vulnerability
 **Removed all RSA support from turbomcp-dpop to eliminate timing attack vulnerability**
@@ -5101,14 +5055,9 @@ This release represents a comprehensive security hardening effort across the ent
 - `crates/turbomcp-dpop/src/helpers.rs`: Removed RSA conversion functions
 - `crates/turbomcp-dpop/src/proof.rs`: Updated to ES256-only validation
 
-**Test Results:**
-- All 21 turbomcp-dpop tests passing
-- Zero compiler warnings
-- Zero production uses of RSA remaining
-
 ---
 
-### Sprint 1: Core Security Hardening (6 HIGH-PRIORITY FIXES)
+### Core Security Hardening
 
 #### 1.1 Response Size Validation (Memory Exhaustion DoS Prevention)
 
@@ -5235,11 +5184,6 @@ let config = TlsConfig::insecure();
 **Files Added:**
 - `crates/turbomcp-proxy/src/codegen/sanitize.rs`: Complete sanitization module (650 lines)
 
-**Test Coverage:**
-- 31 sanitization tests covering all attack vectors
-- SQL injection, code injection, path traversal, XSS, Unicode attacks
-- 100% coverage of security-critical paths
-
 ---
 
 #### 1.5 CLI Path Traversal Protection (File System Security)
@@ -5267,12 +5211,6 @@ let config = TlsConfig::insecure();
 - `crates/turbomcp-cli/src/executor.rs`: Updated export command to use secure paths
 - `crates/turbomcp-cli/src/error.rs`: Added `SecurityViolation` error variant
 - `crates/turbomcp-cli/tests/path_security_tests.rs`: Comprehensive security tests (343 lines)
-
-**Test Coverage:**
-- 13 unit tests validating sanitization and path checking
-- 14 integration tests covering real-world attack scenarios
-- Tests include: path traversal, absolute paths, symlink attacks, reserved filenames, Unicode handling
-- All tests passing with 100% coverage of security-critical code paths
 
 **Error Handling:**
 - Clear, actionable error messages for security violations
@@ -5352,11 +5290,6 @@ let config = BackendValidationConfig {
 - `crates/turbomcp-proxy/src/config.rs`: Updated to use `ipnetwork::IpNetwork`
 - Removed custom implementation (78 lines of hand-rolled code)
 
-**Test Coverage:**
-- 26 SSRF protection tests passing
-- Tests cover: strict/balanced/disabled modes, IPv4/IPv6, cloud metadata, custom blocklists
-- 100% coverage of validation logic
-
 ---
 
 ### 📊 Overall Security Impact
@@ -5367,19 +5300,7 @@ let config = BackendValidationConfig {
 - ✅ 1 Critical (RSA timing attack)
 - ✅ 6 High (memory exhaustion, resource exhaustion, code injection, path traversal, SSRF, weak TLS)
 
-**Test Coverage:**
-- Sprint 0: 21 tests (turbomcp-dpop)
-- Sprint 1.1: 8 tests (response/request limits)
-- Sprint 1.2: 12 tests (timeouts)
-- Sprint 1.3: 6 tests (TLS)
-- Sprint 1.4: 31 tests (template injection)
-- Sprint 1.5: 13 tests (path traversal)
-- Sprint 1.6: 26 tests (SSRF)
-- **Total: 117 new security tests**
-
 **Code Quality:**
-- Zero compiler warnings
-- Zero clippy warnings
 - 100% test pass rate
 - Comprehensive documentation
 
@@ -5433,13 +5354,6 @@ let config = BackendValidationConfig {
 - Created `REMAINING_CONNECTION_ISSUES.md` tracking all known WebSocket issues with migration roadmap
 - Documented `num-bigint-dig` future incompatibility warning (non-blocking, transitive dependency)
 - Fixed clippy linting errors (collapsed nested if statements for better code style)
-- All 1000+ tests passing
-
-#### Test Results
-- Full test suite: 100% pass rate
-- WebSocket ping/pong: ✅ PASSING (was failing)
-- Sampling rejection: ✅ 65µs (was 60 seconds)
-- Benchmark verification: ✅ Bug confirmed fixed
 
 ### Performance Impact
 - Sampling rejection: **1,000,000x faster** (60s → 65µs)
@@ -5497,16 +5411,8 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
 - Properly documented ignored tests with clear justification
 - Fixed feature gate compilation errors when building without `websocket` feature
 - Updated import paths after WebSocket refactoring
-- All 340+ tests passing with zero regressions
-
-**Test Results:**
-- turbomcp-server: 183 tests passing (175 lib + 8 config)
-- turbomcp-proxy: 73 tests passing (5 properly ignored)
-- Proxy end-to-end validation: Confirmed working with stdio_server backend
 
 #### Maintenance & Quality
-- Zero compiler warnings
-- Zero clippy warnings
 - Feature gates working correctly for all feature combinations
 - Production build validated and ready for deployment
 
@@ -5652,19 +5558,12 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
 - **RFC 9728**: OAuth 2.0 Protected Resource Metadata - ✅ Full server implementation
 - **RFC 9449**: DPoP (Proof-of-Possession) - ✅ Optional feature
 
-#### Testing
-- **turbomcp-auth**: 18 tests passing
-- **turbomcp-dpop**: 21 tests passing
-- **turbomcp-proxy**: 40+ integration tests (all 25 transport combinations)
-- **Total**: 80+ comprehensive tests with 100% pass rate
-
 #### Breaking Changes
 - ✅ **Zero breaking changes** - fully backward compatible with 2.0.5
 
 #### Migration Path
 - See MIGRATION.md in turbomcp-auth and turbomcp-dpop for detailed upgrade guides
 - Existing API unchanged; new features are purely additive
-
 
 ---
 
@@ -5820,48 +5719,6 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
     - Non-critical logging, metrics emission
     - Must be <100ms and truly non-critical
   
-  #### Testing
-  - **Unit Tests**: 6 new tests in `runtime::tests::*`
-  - **Integration Tests**: 9 new tests in `stdio_lifecycle_test.rs`
-  - **Regression Prevention**: Tests verify clean shutdown without panics
-  - **All Existing Tests Pass**: No breaking changes
-  
-  #### Breaking Changes
-  - **None** - All changes are internal implementation details
-  - Public APIs unchanged
-  - Backward compatible
-  - Can be released as patch version (2.0.3)
-  
-  #### Performance Impact
-  - **JoinSet Overhead**: ~16 bytes per task + Arc operations (negligible for infrastructure tasks)
-  - **Semaphore Overhead**: Fixed memory, atomic operations (highly efficient)
-  - **Shutdown Time**: +0-5 seconds for graceful cleanup (configurable timeout)
-  - **Runtime Overhead**: None - tasks run identically
-  
-  #### Files Changed
-  - `crates/turbomcp-server/src/runtime.rs` - STDIO JoinSet implementation
-  - `crates/turbomcp-server/src/runtime/websocket.rs` - WebSocket semaphore implementation
-  - `crates/turbomcp-transport/src/tcp.rs` - TCP JoinSet implementation
-  - `crates/turbomcp-client/src/client/core.rs` - Client semaphore implementation
-  - `crates/turbomcp-server/tests/stdio_lifecycle_test.rs` - New integration tests
-  - `TASK_LIFECYCLE_GUIDELINES.md` - Developer guidelines
-  - `TASK_LIFECYCLE_ANALYSIS.md` - Technical analysis
-  - `TASK_LIFECYCLE_VISUAL.md` - Visual documentation
-  
-  #### Verification Steps
-  ```bash
-  # All tests pass
-  cargo test --package turbomcp-server runtime::tests      # 6 tests ✅
-  cargo test --package turbomcp-server stdio_lifecycle_test # 9 tests ✅  
-  cargo test --package turbomcp-transport tcp              # 1 test ✅
-  cargo test --package turbomcp-client                     # 72 tests ✅
-  
-  # Manual verification
-  echo '{"jsonrpc":"2.0","method":"ping","id":1}' | cargo run --example stdio_server
-  # Expected: Clean exit without panic ✅
-  ```
-  
-
 ## [2.0.2] - 2025-10-19
 
 ### Fixed
@@ -5875,7 +5732,6 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
   - **Example**: `#[resource("stdio://help")]` now registers with key "stdio://help" not "help"
   - **Breaking Change**: No - this was a bug preventing correct MCP behavior
   - **Regression Test**: Added `test_resource_registration_lookup_by_uri` to prevent future regressions
-  - **Reported By**: turbomcpstudio dogfood team via RESOURCE_READ_ISSUE.md
   - **Severity**: Critical - Completely broke resource reading functionality
 
 ## [2.0.1] - 2025-10-19
@@ -5894,7 +5750,6 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
     - `turbomcp-client/src/lib.rs` - Updated documentation examples
     - `turbomcp/examples/comprehensive.rs` - Enhanced to display resource metadata
     - `turbomcp/examples/unix_client.rs` - Updated to use resource.uri field
-  - **Reported By**: turbomcpstudio dogfood team
   - **Severity**: High - Breaks core resource functionality
 
 ## [2.0.0] - 2025-10-18
@@ -6150,7 +6005,6 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
 
 **Test Results**:
 - ✅ 153 tests passed, 0 failed
-- ✅ Zero clippy warnings with `-D warnings`
 - ✅ All code formatted correctly
 
 **MCP Compliance**:
@@ -6166,7 +6020,6 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
 
 **Key Achievements**:
 - ✅ **Progressive Enhancement**: Minimal by default (stdio only), opt-in features for advanced needs
-- ✅ **Zero Technical Debt**: No warnings, no TODOs, no FIXMEs
 - ✅ **Security**: 1 mitigated vulnerability, 1 compile-time warning only
 - ✅ **Clean Architecture**: RBAC removed (application-layer concern)
 - ✅ **Latest Toolchain**: Rust 1.90.0 + 62 dependency updates
@@ -6237,12 +6090,10 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
 - **ENHANCED**: Session management with improved analytics and cleanup
 - **REFINED**: Error handling with comprehensive context preservation
 
-
 ### 🔧 **INTERNAL IMPROVEMENTS**
 - **CLEANED**: Removed obsolete tests and legacy code
 - **ENHANCED**: Test suite with comprehensive coverage of new modules
 - **IMPROVED**: Build system and CI/CD pipeline optimizations
-- **MAINTAINED**: Zero clippy warnings and consistent formatting
 
 ### 🔨 **TOOLCHAIN & DEPENDENCY UPDATES**
 - **UPDATED**: Rust toolchain from 1.89.0 → 1.90.0
@@ -6262,7 +6113,6 @@ async fn my_handler(ctx: &mut Context) -> Result<()> {
 - **FIXED**: Removed unused `McpResult` import in `turbomcp/transport.rs`
 - **FIXED**: Removed unused `RateLimitConfig` import in `turbomcp-server/core.rs`
 - **FIXED**: Clippy warnings (empty line after doc comments, manual is_multiple_of)
-- **RESULT**: Zero compiler warnings, zero clippy warnings with `-D warnings`
 
 ### 🛡️ **BACKWARD COMPATIBILITY**
 - **BREAKING**: RBAC feature removed (see migration notes below)
@@ -6309,7 +6159,6 @@ See `MIGRATION.md` for complete upgrade guide.
 **Codebase Quality**:
 - ✅ Compiler warnings: **0**
 - ✅ Clippy warnings (with `-D warnings`): **0**
-- ✅ Technical debt markers (TODO/FIXME): **0**
 - ✅ All examples compile: **Yes**
 - ✅ All tests pass: **Yes**
 
@@ -6477,7 +6326,6 @@ This release addresses compliance gaps identified during comprehensive MCP 2025-
 
 ### 🔧 Quality & Maintenance
 - **Version Consistency**: Updated all crate versions to 1.0.9 with proper internal dependency alignment
-- **Code Quality**: Maintained zero clippy warnings and perfect formatting standards
 - **Test Coverage**: All unit tests (392 tests) passing across all crates
 - **Build System**: Consistent build status reporting across all documentation
 
@@ -6511,7 +6359,6 @@ This release addresses compliance gaps identified during comprehensive MCP 2025-
 - **Zero-Tolerance Quality Standards Achieved**:
   - ✅ **100% Clippy Clean**: Fixed all clippy warnings with `-D warnings` across entire workspace
   - ✅ **Perfect Formatting**: All code consistently formatted with `cargo fmt`
-  - ✅ **All Tests Passing**: Complete test suite (800+ tests) running without issues
   - ✅ **Modern Rust Patterns**: Converted all nested if statements to use let chains
   - ✅ **Memory Management**: Removed unnecessary explicit `drop()` calls for better clarity
 
@@ -6547,15 +6394,7 @@ This release addresses compliance gaps identified during comprehensive MCP 2025-
 ### 🔧 Development Experience
 - **Make Test Integration**: Full compatibility with project's `make test` command
 - **CI/CD Ready**: All quality checks pass automated testing pipeline
-- **Zero Technical Debt**: Eliminated all placeholder code and TODOs from examples
 - **Consistent Standards**: Unified code style and documentation across all examples
-
-### 🏆 Quality Metrics Achieved
-- **Clippy**: Zero warnings with strict `-D warnings` enforcement
-- **Formatting**: 100% consistent code formatting across 35 examples
-- **Tests**: All integration and unit tests passing
-- **Documentation**: Complete and accurate example documentation
-- **Examples**: 35 fully-functional examples
 
 ## [1.0.6] - 2025-09-10
 
@@ -6711,7 +6550,6 @@ println!("Suggestions: {:?}", completions.values);
 - **Simplified API surface** while maintaining full functionality
 - **Enhanced Cargo.toml**: Reorganized feature flags with clear descriptions and recommendations
 - **Better error messages** and compile-time validation
-- **Improved test coverage** with real integration tests (800+ tests passing)
 - **Updated all dependencies** to latest versions
 - **Enhanced documentation** with clear examples and comprehensive method reference
 - **Ergonomic imports**: Single prelude import provides everything needed for most use cases
