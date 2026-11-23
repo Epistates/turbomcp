@@ -670,6 +670,23 @@ fn parse_elicit_url_params(
     })
 }
 
+/// Compile a schema a server sent: its regular expressions are held to the
+/// budget's size and backtracking limits, far below the engine's own
+/// defaults. The caller has checked the schema against the budget.
+pub(crate) fn compile_peer_schema(
+    schema: &Value,
+) -> Result<jsonschema::Validator, jsonschema::ValidationError<'static>> {
+    use turbomcp_core::budget::{MAX_PATTERN_BACKTRACK, MAX_PATTERN_BYTES, MAX_PATTERN_DFA_BYTES};
+    jsonschema::options()
+        .with_pattern_options(
+            jsonschema::PatternOptions::fancy_regex()
+                .size_limit(MAX_PATTERN_BYTES)
+                .dfa_size_limit(MAX_PATTERN_DFA_BYTES)
+                .backtrack_limit(MAX_PATTERN_BACKTRACK),
+        )
+        .build(schema)
+}
+
 /// Hold a form answer to the schema it was asked for ("Clients SHOULD
 /// validate all responses against the provided schema"): a handler that
 /// returns something else would hand the server data it never agreed to
@@ -680,7 +697,7 @@ fn check_form_answer(schema: &Value, outcome: &neutral::ElicitOutcome) -> Result
     if outcome.action != neutral::ElicitAction::Accept {
         return Ok(());
     }
-    let Ok(validator) = jsonschema::validator_for(schema) else {
+    let Ok(validator) = compile_peer_schema(schema) else {
         return Ok(());
     };
     validator

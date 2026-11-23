@@ -3046,14 +3046,13 @@ impl ToolFacts {
             if !turbomcp_core::budget::schema_within_budget(schema) {
                 tracing::warn!(
                     tool = %tool.name,
-                    "outputSchema exceeds the schema budget (depth {}, {} values); \
+                    "outputSchema exceeds the schema budget ({}); \
                      this tool's results are not validated",
-                    turbomcp_core::budget::MAX_SCHEMA_DEPTH,
-                    turbomcp_core::budget::MAX_SCHEMA_NODES
+                    turbomcp_core::budget::SchemaBudget
                 );
                 return None;
             }
-            jsonschema::validator_for(schema)
+            crate::handler::compile_peer_schema(schema)
                 .map(Arc::new)
                 .inspect_err(|e| {
                     tracing::warn!(

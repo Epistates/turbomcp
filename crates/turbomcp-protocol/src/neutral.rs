@@ -1887,9 +1887,8 @@ const ELICIT_PRIMITIVES: [&str; 4] = ["string", "number", "integer", "boolean"];
 fn validate_requested_schema(schema: &Value, primitives_only: bool) -> Result<(), String> {
     if !turbomcp_core::budget::schema_within_budget(schema) {
         return Err(alloc::format!(
-            "requestedSchema exceeds the schema budget (depth {}, {} values)",
-            turbomcp_core::budget::MAX_SCHEMA_DEPTH,
-            turbomcp_core::budget::MAX_SCHEMA_NODES
+            "requestedSchema exceeds the schema budget ({})",
+            turbomcp_core::budget::SchemaBudget
         ));
     }
     // The wire type makes both `type` and `properties` required, so this is

@@ -3,7 +3,10 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::{Arc, Weak};
-use turbomcp_core::budget::{MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES, schema_within_budget};
+use turbomcp_core::budget::{
+    MAX_PATTERN_BACKTRACK, MAX_PATTERN_BYTES, MAX_PATTERN_DFA_BYTES, SchemaBudget,
+    schema_within_budget,
+};
 use turbomcp_core::{McpError, McpResult};
 use turbomcp_protocol::neutral;
 
@@ -193,24 +196,38 @@ fn compile(schema: &Value) -> McpResult<jsonschema::Validator> {
     // A gateway compiles schemas an upstream wrote, so the budget comes first.
     if !schema_within_budget(schema) {
         return Err(McpError::internal(format!(
-            "tool schema exceeds the validation budget \
-             (depth {MAX_SCHEMA_DEPTH}, {MAX_SCHEMA_NODES} values)"
+            "tool schema exceeds the validation budget ({SchemaBudget})"
         )));
     }
-    jsonschema::validator_for(schema).map_err(|e| match e.kind() {
-        jsonschema::error::ValidationErrorKind::Referencing(
-            jsonschema::ReferencingError::UnknownSpecification { specification },
-        ) => McpError::internal(format!(
-            "unsupported JSON Schema dialect `{specification}` in tool schema"
-        )),
-        _ => McpError::internal(format!("invalid tool schema: {e}")),
-    })
+    peer_schema_options()
+        .build(schema)
+        .map_err(|e| match e.kind() {
+            jsonschema::error::ValidationErrorKind::Referencing(
+                jsonschema::ReferencingError::UnknownSpecification { specification },
+            ) => McpError::internal(format!(
+                "unsupported JSON Schema dialect `{specification}` in tool schema"
+            )),
+            _ => McpError::internal(format!("invalid tool schema: {e}")),
+        })
+}
+
+/// How a schema someone else wrote is compiled: its regular expressions are
+/// held to the budget's size and backtracking limits, far below the engine's
+/// own defaults.
+fn peer_schema_options() -> jsonschema::ValidationOptions<'static> {
+    jsonschema::options().with_pattern_options(
+        jsonschema::PatternOptions::fancy_regex()
+            .size_limit(MAX_PATTERN_BYTES)
+            .dfa_size_limit(MAX_PATTERN_DFA_BYTES)
+            .backtrack_limit(MAX_PATTERN_BACKTRACK),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::{Map, json};
+    use turbomcp_core::budget::{MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES};
 
     /// Validate `arguments` for a tool `name` with `schema`, as a call would.
     fn input(v: &Validators, name: &str, schema: &Value, arguments: &Value) -> McpResult<()> {
@@ -295,6 +312,28 @@ mod tests {
         let wide = json!({ "type": "object", "properties": wide });
         let err = input(&Validators::default(), "wide", &wide, &json!({})).unwrap_err();
         assert!(err.to_string().contains("validation budget"), "{err}");
+    }
+
+    /// A pattern that compiles past the budget's size limit is refused; one
+    /// within it still validates.
+    #[test]
+    fn a_pattern_past_the_size_limit_does_not_compile() {
+        let schema = |pattern: &str| json!({ "type": "object", "properties": { "s": { "type": "string", "pattern": pattern } } });
+        let err = input(
+            &Validators::default(),
+            "huge",
+            &schema("a{100000}b{100000}"),
+            &json!({ "s": "a" }),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid tool schema"), "{err}");
+        input(
+            &Validators::default(),
+            "small",
+            &schema("^a+$"),
+            &json!({ "s": "aaa" }),
+        )
+        .expect("a normal pattern compiles and matches");
     }
 
     #[test]
