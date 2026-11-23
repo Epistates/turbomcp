@@ -219,6 +219,63 @@ async fn an_empty_cursor_is_rejected() {
     );
 }
 
+/// A server alternating two cursors never repeats the one just sent, but it
+/// never ends either: any cursor already followed counts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn alternating_cursors_are_rejected() {
+    let client = client_against(|method, frame| match method {
+        "tools/list" => {
+            let next = match frame["params"]["cursor"].as_str() {
+                Some("a") => "b",
+                _ => "a",
+            };
+            Some(page(json!({
+                "tools": [{ "name": next, "inputSchema": { "type": "object" } }],
+                "nextCursor": next
+            })))
+        }
+        other => panic!("unexpected method {other}"),
+    })
+    .await;
+    let err = client
+        .list_all_tools()
+        .await
+        .expect_err("alternating cursors must not loop");
+    assert!(
+        matches!(&err, ClientError::Protocol(m) if m.contains("does not advance")),
+        "unexpected error: {err}"
+    );
+}
+
+/// Each new cursor is a new page, so the items are capped too: a server
+/// could otherwise fill memory up to the page cap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listing_past_the_item_cap_is_refused() {
+    let client = client_against(|method, frame| match method {
+        "prompts/list" => {
+            let n: u64 = frame["params"]["cursor"]
+                .as_str()
+                .map_or(0, |c| c.parse().unwrap());
+            let prompts: Vec<_> = (0..20_000)
+                .map(|i| json!({ "name": format!("p{i}") }))
+                .collect();
+            Some(page(
+                json!({ "prompts": prompts, "nextCursor": (n + 1).to_string() }),
+            ))
+        }
+        other => panic!("unexpected method {other}"),
+    })
+    .await;
+    let err = client
+        .list_all_prompts()
+        .await
+        .expect_err("an endless listing must stop");
+    assert!(
+        matches!(&err, ClientError::Protocol(m) if m.contains("more than 100000 items")),
+        "unexpected error: {err}"
+    );
+}
+
 /// An RPC failure mid-pagination propagates rather than silently truncating.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_mid_pagination_error_propagates() {

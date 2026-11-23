@@ -61,6 +61,11 @@ const MAX_INPUT_REQUESTS: usize = 64;
 /// (even at one item per page) so it only ever trips on a broken server.
 const MAX_LIST_PAGES: usize = 10_000;
 
+/// Cap on the items the `list_all_*` helpers collect. A server minting new
+/// cursors could otherwise fill memory up to the page cap times the frame
+/// size; past this, page with the single-page methods instead.
+const MAX_LIST_ITEMS: usize = 100_000;
+
 /// `resultType: "task"` marks a `CreateTaskResult` (SEP-2663).
 pub(crate) const RESULT_TYPE_TASK: &str = "task";
 
@@ -1050,11 +1055,13 @@ impl Client {
     /// first) and returns that page's items plus its `nextCursor`.
     ///
     /// The cursor is opaque and server-chosen, so following it is unbounded by
-    /// construction. Two guards keep a broken or hostile server from spinning
-    /// this loop forever: a `nextCursor` that repeats the one just sent is not
-    /// advancing, and [`MAX_LIST_PAGES`] caps the total. Both fail loudly
-    /// rather than silently returning a partial list — a truncated result that
-    /// looks complete is the failure mode these helpers exist to prevent.
+    /// construction. Three guards keep a broken or hostile server from spinning
+    /// this loop forever or filling memory: a `nextCursor` this listing already
+    /// followed is not advancing (a server alternating two cursors used to get
+    /// past a check against the last one only), [`MAX_LIST_PAGES`] caps the
+    /// pages and [`MAX_LIST_ITEMS`] the items. All fail loudly rather than
+    /// silently returning a partial list — a truncated result that looks
+    /// complete is the failure mode these helpers exist to prevent.
     ///
     /// An *empty* `nextCursor` is followed like any other. "Clients MUST treat
     /// cursors as opaque tokens: don't make assumptions about cursor format" —
@@ -1067,17 +1074,30 @@ impl Client {
         F: FnMut(Option<String>) -> Fut,
         Fut: Future<Output = ClientResult<(Vec<T>, Option<String>)>>,
     {
+        // Digests of the cursors followed: a repeat is caught without keeping
+        // every (server-sized) cursor.
+        let digest = |cursor: &str| {
+            use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+            BuildHasherDefault::<DefaultHasher>::default().hash_one(cursor)
+        };
+        let mut followed = std::collections::HashSet::new();
         let mut items = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..MAX_LIST_PAGES {
             let (page, next) = fetch(cursor.clone()).await?;
             items.extend(page);
+            if items.len() > MAX_LIST_ITEMS {
+                return Err(ClientError::Protocol(format!(
+                    "{method} listed more than {MAX_LIST_ITEMS} items; \
+                     page through it one call at a time instead"
+                )));
+            }
             match next {
                 None => return Ok(items),
-                Some(next) if Some(&next) == cursor.as_ref() => {
+                Some(next) if !followed.insert(digest(&next)) => {
                     return Err(ClientError::Protocol(format!(
-                        "{method} returned a nextCursor that does not advance; \
-                         refusing to page forever"
+                        "{method} returned a nextCursor that does not advance (it \
+                         was already followed); refusing to page forever"
                     )));
                 }
                 Some(next) => cursor = Some(next),
@@ -1188,11 +1208,18 @@ impl Client {
     /// Propagates RPC and decode failures, and rejects a server whose cursor
     /// doesn't advance (see [`ClientError::Protocol`]).
     pub async fn list_all_tools(&self) -> ClientResult<Vec<neutral::Tool>> {
-        self.collect_pages(request::TOOLS_LIST, |cursor| async move {
-            let page = self.list_tools(cursor.as_deref()).await?;
-            Ok((page.tools, page.next_cursor))
-        })
-        .await
+        let generation = self.conn.tools_generation();
+        let tools = self
+            .collect_pages(request::TOOLS_LIST, |cursor| async move {
+                let page = self.list_tools(cursor.as_deref()).await?;
+                Ok((page.tools, page.next_cursor))
+            })
+            .await?;
+        let mut catalog = self.tools.lock();
+        if catalog.generation == generation {
+            catalog.listed = Some(generation);
+        }
+        Ok(tools)
     }
 
     /// Call a tool by name with an arguments object.
@@ -1418,8 +1445,11 @@ impl Client {
         // Whether this tool takes a task is only knowable from its
         // definition. Learn it once rather than guess: guessing wrong either
         // way is a `-32601` for a tool the server lists.
+        // A tool missing from a complete listing that's still current isn't
+        // learned by listing again: that cost a full listing on every call.
         let support = match known(self) {
             Some(support) => support,
+            None if self.listed_completely() => None,
             None => {
                 self.list_all_tools().await?;
                 known(self).flatten()
@@ -2921,6 +2951,8 @@ struct ToolCatalog {
     /// hasn't changed keeps.
     previous: HashMap<String, ToolFacts>,
     generation: u64,
+    /// The generation a complete listing (every page) last finished at.
+    listed: Option<u64>,
 }
 
 impl Client {
@@ -2933,6 +2965,12 @@ impl Client {
         (catalog.generation == self.conn.tools_generation())
             .then(|| catalog.facts.get(name).cloned())
             .flatten()
+    }
+
+    /// Whether a complete listing finished since the server last said its
+    /// tools changed.
+    fn listed_completely(&self) -> bool {
+        self.tools.lock().listed == Some(self.conn.tools_generation())
     }
 
     /// Learn the tools again before a call, when what this client knew is out

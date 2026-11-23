@@ -564,6 +564,31 @@ async fn a_tool_without_task_support_is_never_augmented() {
     }
 }
 
+/// A tool the server doesn't list is looked up by listing once per catalog
+/// change: listing again on every call cost a whole catalog each time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unlisted_tool_is_listed_for_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let (sent, mut respond) = recording_inline(Some("optional"), tasks_capable());
+    let lists = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&lists);
+    let client = connect_scripted(move |method, frame| {
+        if method == "tools/list" {
+            counted.fetch_add(1, SeqCst);
+        }
+        respond(method, frame)
+    })
+    .await;
+    for _ in 0..3 {
+        client
+            .call_tool_task("ghost", Map::new(), None)
+            .await
+            .expect("plain call");
+    }
+    assert_eq!(lists.load(SeqCst), 1);
+    assert_eq!(*sent.lock().unwrap(), vec![None, None, None]);
+}
+
 /// "If `execution.taskSupport` is `required`, clients MUST invoke the tool as
 /// a task", even through plain `call_tool`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
