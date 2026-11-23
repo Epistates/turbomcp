@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Behavior change:** OAuth discovery tries at most 8 of the authorization
   servers a resource names. Each try is up to three fetches at hosts the
   resource's document picked.
+- **Behavior change:** the client's `list_all_*` helpers refuse a
+  `nextCursor` the listing already followed, where they caught only one
+  repeating the cursor just sent (a server alternating two never ended), and
+  refuse a listing past 100,000 items. Page with the single-page methods
+  past that.
+- A tool the server doesn't list makes the client list the tools once per
+  catalog change, instead of on every call that needs its task support.
 - Telemetry cuts a client's tool, prompt or resource name to the same
   limits before it reaches a span, and a request the server never answered
   (abandoned, or failed below the protocol) no longer puts the client's tool
