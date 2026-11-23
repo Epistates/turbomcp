@@ -35,6 +35,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconnecting an SSE stream, whatever `retry:` the server sends. With
   `retry: 0`, a stream the server kept closing or refusing was reopened in a
   busy loop.
+- **Behavior change:** the server refuses a resource URI longer than 8 KiB
+  (`turbomcp_core::budget::MAX_URI_BYTES`) with `-32602`, in
+  `resources/read`, `resources/subscribe` and `unsubscribe`, a
+  `subscriptions/listen` filter and a `ref/resource` completion. It ignores a
+  string `progressToken` longer than 1 KiB (`MAX_NAME_BYTES`), as it does a
+  malformed one. The server kept a subscription's URIs for the session, ran
+  each read's URI past every template, and echoed the token in every
+  progress notification, so a megabyte string cost a megabyte each time.
+- **Behavior change:** the client refuses a URL elicitation whose
+  `elicitationId` is longer than 1 KiB, and keeps no such id.
+- **Behavior change:** the gateway gives up a proxied call whose upstream
+  asks 64 questions in all, repeats included, as it did past 16 distinct
+  ones. A URL elicitation is keyed by its order, so an upstream could repeat
+  one without end.
+- **Behavior change:** OAuth discovery tries at most 8 of the authorization
+  servers a resource names. Each try is up to three fetches at hosts the
+  resource's document picked.
+- Telemetry cuts a client's tool, prompt or resource name to the same
+  limits before it reaches a span, and a request the server never answered
+  (abandoned, or failed below the protocol) no longer puts the client's tool
+  or prompt name on a metric label.
+- The CLI pads its name column to at most 40 characters.
 
 ### Fixed
 
