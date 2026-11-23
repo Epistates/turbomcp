@@ -21,7 +21,8 @@ pub struct ProxyArgs {
     #[arg(long, value_name = "FILE", env = "TURBOMCP_CONFIG")]
     pub config: PathBuf,
 
-    /// Serve Streamable HTTP on this address instead of stdio.
+    /// Serve Streamable HTTP on this address instead of stdio. Port 0
+    /// takes any free port; the log names the one it got.
     #[arg(long, value_name = "ADDR")]
     pub http: Option<SocketAddr>,
 
@@ -291,7 +292,14 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
         .context(Failure::Usage));
     }
     let front = match args.http {
-        Some(addr) => {
+        Some(requested) => {
+            // Bound before anything that names the address is built, so a
+            // port of 0 takes whichever is free and the resource URL the
+            // gateway advertises names the port it got.
+            let listener = tokio::net::TcpListener::bind(requested)
+                .await
+                .with_context(|| format!("binding {requested}"))?;
+            let addr = listener.local_addr().context("reading the bound address")?;
             let authenticator = authenticator(&args, addr, exchanging).context(Failure::Usage)?;
             if authenticator.is_none() && !addr.ip().is_loopback() && !args.insecure {
                 return Err(anyhow::anyhow!(
@@ -301,7 +309,7 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
                 )
                 .context(Failure::Usage));
             }
-            Some((addr, authenticator))
+            Some((listener, addr, authenticator))
         }
         None => None,
     };
@@ -365,7 +373,7 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
     let drains = front.is_some();
     let serving = async {
         match front {
-            Some((addr, authenticator)) => {
+            Some((listener, addr, authenticator)) => {
                 if authenticator.is_none() && !addr.ip().is_loopback() {
                     tracing::warn!(%addr, "serving beyond loopback with no authentication (--insecure)");
                 }
@@ -382,7 +390,7 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
                     config = config.with_allowed_host(host.clone());
                 }
                 server
-                    .serve(turbomcp::http::Http::bind(addr).with_config(config))
+                    .serve(turbomcp::http::Http::listener(listener).with_config(config))
                     .await
                     .context("serving")
             }

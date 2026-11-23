@@ -26,7 +26,7 @@ futures = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "signal", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "process", "rt-multi-thread", "signal", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
