@@ -886,8 +886,9 @@ impl Drop for ClearOnDrop {
     }
 }
 
-/// How many server→client requests may be in handlers at once. Past it a
-/// request is answered `-32603` at once, rather than the connection closing.
+/// How many server→client requests this client may hold at once, in
+/// handlers or parked until their task is announced. Past it a request is
+/// answered `-32603` at once, rather than the connection closing.
 const MAX_INBOUND_REQUESTS: usize = 64;
 
 /// How many notifications may wait for the handler. Past it one is dropped
@@ -951,6 +952,14 @@ struct Dispatch {
 }
 
 impl Dispatch {
+    /// The server requests this client holds: in their handlers, or parked
+    /// until their task is announced. Parked ones count too, or a server
+    /// could park any number for the parking window, each rescanned on every
+    /// message.
+    fn held(&self) -> usize {
+        self.inflight.len() + self.parked.values().map(Vec::len).sum::<usize>()
+    }
+
     fn new(
         handler: &ClientHandlers,
         http: bool,
@@ -1182,7 +1191,7 @@ fn route_inbound(
                 },
             )))
         }
-        JsonRpcMessage::Request(req) if dispatch.inflight.len() >= MAX_INBOUND_REQUESTS => {
+        JsonRpcMessage::Request(req) if dispatch.held() >= MAX_INBOUND_REQUESTS => {
             tracing::warn!(method = %req.method, "too many server requests in flight; refusing one");
             Some(JsonRpcMessage::Response(JsonRpcResponse::error(
                 req.id,
