@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Behavior change:** the HTTP server refuses a `2026-07-28` request that
+  repeats an `Mcp-Param-*` header, as it already did for `Mcp-Method` and
+  `Mcp-Name`. A gateway routing on one copy while the server checks the
+  other would act on a value nobody validated.
+- The HTTP server reads every `Accept` line, so a client that lists
+  `application/json` and `text/event-stream` on two lines is no longer
+  answered `406`.
+- **Behavior change:** the client treats a `resultType` that isn't a string
+  as unrecognized, so the result is invalid. It used to read as absent, so
+  as complete.
+- **Behavior change:** the HTTP client waits at least 100 ms before
+  reconnecting an SSE stream, whatever `retry:` the server sends. With
+  `retry: 0`, a stream the server kept closing or refusing was reopened in a
+  busy loop.
+
+### Fixed
+
+- `turbomcp proxy --http` with port 0 advertises the port it got. The
+  gateway bound its address only once it started serving, after building
+  the OAuth resource URL and metadata URL from the address it was given, so
+  they named port 0.
+
+### Documentation
+
+- The visibility docs say that on `2026-07-28` a catalog may vary only by
+  what the request presents, never per connection, so per-session
+  unlocking belongs to the stateful revisions.
+- `AuthPrincipal::has_scopes` says it matches scopes exactly and points at
+  `turbomcp_core::scopes::satisfies` for a hierarchy.
+
 ## [4.0.0-beta.1] - 2026-11-22
 
 The beta. This release freezes the public API: from here to 4.0.0, a
