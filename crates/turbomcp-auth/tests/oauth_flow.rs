@@ -693,6 +693,28 @@ async fn an_issuer_that_differs_by_a_trailing_slash_is_refused() {
     assert!(err.to_string().contains("issuer mismatch"), "{err}");
 }
 
+/// Discovery tries at most eight of the authorization servers a resource
+/// names: each try is up to three fetches at hosts the document chose.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_tries_at_most_eight_authorization_servers() {
+    let state = Shared::default();
+    let base = spawn_mock(Arc::clone(&state)).await;
+    // Nothing listens on port 1, so each of these fails fast.
+    let down = |n: usize| (0..n).map(|i| format!("http://127.0.0.1:1/as{i}"));
+    state.lock().unwrap().authorization_servers_override =
+        Some(down(7).chain([base.clone()]).collect());
+    engine(&base)
+        .discover(None)
+        .await
+        .expect("the eighth is tried");
+    state.lock().unwrap().authorization_servers_override =
+        Some(down(8).chain([base.clone()]).collect());
+    engine(&base)
+        .discover(None)
+        .await
+        .expect_err("the ninth is not");
+}
+
 /// Clients "MUST ... use the resource metadata URL from the parsed
 /// WWW-Authenticate headers when present", on another origin too: what makes
 /// the document trustworthy is that it names this resource (RFC 9728 §3.3).

@@ -33,6 +33,10 @@ use super::registration::{ClientCredentials, RegistrationStrategy};
 use super::store::{CredentialStore, MemoryCredentialStore};
 use super::{OAuthClientError, TokenSet};
 
+/// The most authorization servers discovery tries from one resource's
+/// metadata, preferred ones first.
+const MAX_AUTHORIZATION_SERVERS_TRIED: usize = 8;
+
 /// Everything discovery produced for one MCP server: its protected-resource
 /// metadata and the selected authorization server's validated metadata.
 #[derive(Debug, Clone)]
@@ -282,7 +286,10 @@ impl OAuthClient {
         }));
         let mut last =
             OAuthClientError::Discovery("the resource names no authorization server".into());
-        for issuer in candidates {
+        // Each try is up to three metadata fetches of up to the policy's
+        // timeout, at hosts the resource's document chose, so a document
+        // naming thousands would stall the flow for days.
+        for issuer in candidates.into_iter().take(MAX_AUTHORIZATION_SERVERS_TRIED) {
             match discover_authorization_server_with_policy(&self.http, issuer, &self.network).await
             {
                 Ok(server) => {
