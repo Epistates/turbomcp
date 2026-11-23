@@ -39,6 +39,11 @@ use turbomcp_server::ClientHandle;
 /// [`Bridge::key`]).
 const MAX_QUESTIONS: usize = 16;
 
+/// The most questions one proxied call may ask in all, counting repeats: a
+/// URL elicitation is keyed by order alone, so an upstream asking it over
+/// and over is one distinct question.
+const MAX_ASKS: u32 = 4 * MAX_QUESTIONS as u32;
+
 /// FNV-1a over `bytes`: a stable, non-cryptographic digest for question keys.
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
@@ -54,11 +59,14 @@ fn next_key(
     question: &impl core::fmt::Debug,
 ) -> ClientResult<String> {
     let digest = fnv1a(format!("{kind}:{question:?}").as_bytes());
-    if !asked.contains_key(&digest) && asked.len() >= MAX_QUESTIONS {
+    let too_many = (!asked.contains_key(&digest) && asked.len() >= MAX_QUESTIONS)
+        || asked.values().sum::<u32>() >= MAX_ASKS;
+    if too_many {
         return Err(ClientError::Rpc(JsonRpcError {
             code: turbomcp_core::codes::INTERNAL_ERROR,
             message: format!(
-                "the upstream asked more than {MAX_QUESTIONS} questions in one call; giving up"
+                "the upstream asked more than {MAX_QUESTIONS} questions, or \
+                 {MAX_ASKS} in all, in one call; giving up"
             ),
             data: None,
         }));
@@ -120,11 +128,11 @@ impl Bridge {
     /// across versions) still finds its answer.
     ///
     /// # Errors
-    /// Past [`MAX_QUESTIONS`] distinct questions in one execution. A retry
-    /// re-runs the upstream call, so an upstream that asks something new
-    /// every run asks one more each round: this bounds the rounds, where a
-    /// hostile or volatile upstream (a timestamp in its message) would
-    /// otherwise keep the caller retrying forever.
+    /// Past [`MAX_QUESTIONS`] distinct questions in one execution, or
+    /// [`MAX_ASKS`] in all. A retry re-runs the upstream call, so an upstream
+    /// that asks something new every run asks one more each round: this
+    /// bounds the rounds, where a hostile or volatile upstream (a timestamp
+    /// in its message) would otherwise keep the caller retrying forever.
     fn key(&self, kind: &str, question: &impl core::fmt::Debug) -> ClientResult<String> {
         next_key(&mut self.inner.asked.lock(), kind, question)
     }
@@ -331,7 +339,29 @@ impl RootsHandler for UpstreamHandlers {
 
 #[cfg(test)]
 mod tests {
-    use super::fnv1a;
+    use super::{MAX_ASKS, MAX_QUESTIONS, fnv1a, next_key};
+    use std::collections::HashMap;
+
+    /// Distinct questions are capped, and so are repeats of one: a URL
+    /// elicitation is keyed by order alone.
+    #[test]
+    fn a_call_may_ask_only_so_much() {
+        let mut asked = HashMap::new();
+        for i in 0..MAX_QUESTIONS {
+            next_key(&mut asked, "elicit", &i).unwrap();
+        }
+        assert!(next_key(&mut asked, "elicit", &MAX_QUESTIONS).is_err());
+        assert!(
+            next_key(&mut asked, "elicit", &0).is_ok(),
+            "a repeat is not new"
+        );
+
+        let mut asked = HashMap::new();
+        for _ in 0..MAX_ASKS {
+            next_key(&mut asked, "elicit_url", &()).unwrap();
+        }
+        assert!(next_key(&mut asked, "elicit_url", &()).is_err());
+    }
 
     /// The published FNV-1a 64 vectors: the key a retry looks up must not
     /// depend on which build computes it.
