@@ -116,9 +116,39 @@ pub struct ProxyArgs {
     pub drain: u64,
 }
 
-/// The front door for `--http`: bearer tokens checked against the issuer's
-/// keys, `aud`, `iss` and `exp`, with the RFC 9728 metadata a client needs
-/// to find the issuer.
+/// Refuse an `--http` front door the command line can't serve: an open
+/// gateway beyond loopback, an `--auth-jwks` over plain HTTP, or every
+/// address with no `--auth-audience`. Checked before anything is bound, so a
+/// port the system refuses doesn't hide a mistake in the command.
+fn front_door(args: &ProxyArgs, requested: SocketAddr) -> Result<()> {
+    let (Some(_), Some(jwks)) = (&args.auth_issuer, &args.auth_jwks) else {
+        if !requested.ip().is_loopback() && !args.insecure {
+            bail!(
+                "serving {requested} beyond loopback with no authentication would let anyone \
+                 who can reach it use every server behind it: authenticate callers with \
+                 --auth-issuer, or pass --insecure"
+            );
+        }
+        return Ok(());
+    };
+    if jwks.starts_with("http://") && !args.insecure && !is_loopback_url(jwks) {
+        bail!(
+            "--auth-jwks `{jwks}` is plain HTTP: whoever is on the path could hand the gateway \
+             their own keys (use https, or --insecure)"
+        );
+    }
+    if args.auth_audience.is_none() && requested.ip().is_unspecified() {
+        bail!(
+            "bound to every address, the gateway can't tell which URL clients reach it by: \
+             give it with --auth-audience"
+        );
+    }
+    Ok(())
+}
+
+/// The front door for `--http`, once [`front_door`] passed: bearer tokens
+/// checked against the issuer's keys, `aud`, `iss` and `exp`, with the
+/// RFC 9728 metadata a client needs to find the issuer, at `addr`.
 fn authenticator(
     args: &ProxyArgs,
     addr: SocketAddr,
@@ -127,18 +157,6 @@ fn authenticator(
     let (Some(issuer), Some(jwks)) = (&args.auth_issuer, &args.auth_jwks) else {
         return Ok(None);
     };
-    if jwks.starts_with("http://") && !args.insecure && !is_loopback_url(jwks) {
-        bail!(
-            "--auth-jwks `{jwks}` is plain HTTP: whoever is on the path could hand the gateway \
-             their own keys (use https, or --insecure)"
-        );
-    }
-    if args.auth_audience.is_none() && addr.ip().is_unspecified() {
-        bail!(
-            "bound to every address, the gateway can't tell which URL clients reach it by: \
-             give it with --auth-audience"
-        );
-    }
     let resource = args
         .auth_audience
         .clone()
@@ -293,6 +311,7 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
     }
     let front = match args.http {
         Some(requested) => {
+            front_door(&args, requested).context(Failure::Usage)?;
             // Bound before anything that names the address is built, so a
             // port of 0 takes whichever is free and the resource URL the
             // gateway advertises names the port it got.
@@ -301,14 +320,6 @@ pub async fn run(args: ProxyArgs) -> Result<()> {
                 .with_context(|| format!("binding {requested}"))?;
             let addr = listener.local_addr().context("reading the bound address")?;
             let authenticator = authenticator(&args, addr, exchanging).context(Failure::Usage)?;
-            if authenticator.is_none() && !addr.ip().is_loopback() && !args.insecure {
-                return Err(anyhow::anyhow!(
-                    "serving {addr} beyond loopback with no authentication would let anyone \
-                     who can reach it use every server behind it: authenticate callers with \
-                     --auth-issuer, or pass --insecure"
-                )
-                .context(Failure::Usage));
-            }
             Some((listener, addr, authenticator))
         }
         None => None,

@@ -347,12 +347,14 @@ fn an_open_gateway_beyond_loopback_is_refused() {
         "open",
         &format!(r#"{{"mcpServers": {{"hi": {{"command": {hello}}}}}}}"#),
     );
+    // 192.0.2.1 (TEST-NET-1) is no host's address, so binding it fails
+    // everywhere: the mistake in the command must be reported first.
     let output = turbomcp(&[
         "proxy",
         "--config",
         &path.to_string_lossy(),
         "--http",
-        "0.0.0.0:1",
+        "192.0.2.1:8080",
     ]);
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
