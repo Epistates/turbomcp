@@ -130,6 +130,9 @@ impl LegacyRoute {
 struct Subscription {
     peer: Peer,
     filter: v0728::SubscriptionFilter,
+    /// The filter's resource URIs, as a set: every `resources/updated`
+    /// checks each subscription, which scanned up to 1,024 URIs apiece.
+    uris: HashSet<String>,
 }
 
 /// Shared map of live subscriptions; dispatcher clones share it via `Arc`.
@@ -283,6 +286,7 @@ impl SubscriptionRegistry {
             (peer.id().as_str().to_owned(), id.clone()),
             Subscription {
                 peer: peer.clone(),
+                uris: filter.resource_subscriptions.iter().cloned().collect(),
                 filter,
             },
         ) {
@@ -453,7 +457,7 @@ impl SubscriptionRegistry {
             tokio::time::sleep(Duration::from_millis(COALESCE_WINDOW_MS)).await;
             registry.pending[kind.slot()].store(false, Ordering::Release);
             registry
-                .publish(kind.method(), None, |f| kind.wants(f))
+                .publish(kind.method(), None, |sub| kind.wants(&sub.filter))
                 .await;
             // Legacy has no opt-in filter: every live session gets it (the
             // advertised `listChanged` capability is the contract).
@@ -467,7 +471,7 @@ impl SubscriptionRegistry {
         self.publish(
             methods::notification::RESOURCES_UPDATED,
             Some(("uri", json!(uri))),
-            |f| f.resource_subscriptions.iter().any(|u| u == uri),
+            |sub| sub.uris.contains(uri),
         )
         .await;
         self.publish_legacy(
@@ -505,19 +509,19 @@ impl SubscriptionRegistry {
         }
     }
 
-    /// Deliver `method` to every subscription whose filter passes `wants`,
+    /// Deliver `method` to every subscription that passes `wants`,
     /// stamping each copy with its subscription id. Subscriptions whose
     /// connection is gone are pruned.
     async fn publish(
         &self,
         method: &str,
         extra: Option<(&str, Value)>,
-        wants: impl Fn(&v0728::SubscriptionFilter) -> bool,
+        wants: impl Fn(&Subscription) -> bool,
     ) {
         let targets: Vec<(String, RequestId, Peer)> = self
             .lock()
             .iter()
-            .filter(|(_, sub)| wants(&sub.filter))
+            .filter(|(_, sub)| wants(sub))
             .map(|((conn, id), sub)| (conn.clone(), id.clone(), sub.peer.clone()))
             .collect();
 
@@ -884,8 +888,8 @@ mod tests {
         reg.insert(&peer, &RequestId::from(2i64), filter(false, &[]));
 
         reg.publish_resource_updated("file://a").await;
-        reg.publish(methods::notification::TOOLS_LIST_CHANGED, None, |f| {
-            f.tools_list_changed == Some(true)
+        reg.publish(methods::notification::TOOLS_LIST_CHANGED, None, |sub| {
+            sub.filter.tools_list_changed == Some(true)
         })
         .await;
 
