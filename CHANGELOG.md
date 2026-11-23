@@ -63,6 +63,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repeating the cursor just sent (a server alternating two never ended), and
   refuse a listing past 100,000 items. Page with the single-page methods
   past that.
+- **Behavior change:** the client's response cache keeps about 64 MiB of
+  parsed results, evicting the least used past that, and keeps none longer
+  than an hour whatever its `ttlMs`. It held up to 1,024 results of any
+  size, for as long as the server said. It's built on `moka` now.
+- **Behavior change:** a task's wait between polls ends when the task's TTL
+  does, so a `pollIntervalMs` far past the TTL no longer sleeps through it,
+  and a task that asks the client for more than 1,024 inputs is given up.
+- **Behavior change:** server requests parked until their task is announced
+  count toward the 64 a client holds at once; past that they're refused
+  like any other.
+- **Behavior change:** the HTTP client gives up a notification or response
+  POST the server hasn't answered within `HttpClientLimits::body_timeout`
+  (30 s by default). Each one held its task and connection for the life of
+  the transport.
+- The OAuth session forgets prompt counts older than their window, so a
+  server naming a new scope set on every challenge doesn't grow them.
 - A tool the server doesn't list makes the client list the tools once per
   catalog change, instead of on every call that needs its task support.
 - Telemetry cuts a client's tool, prompt or resource name to the same
