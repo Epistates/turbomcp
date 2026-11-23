@@ -482,15 +482,7 @@ impl VarSpec {
 
 /// `template` as an error quotes it: whole, or its first 120 bytes and `…`.
 fn quoted(template: &str) -> String {
-    const SHOWN: usize = 120;
-    if template.len() <= SHOWN {
-        return template.to_owned();
-    }
-    let mut end = SHOWN;
-    while !template.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &template[..end])
+    turbomcp_core::budget::shortened(template, 120).into_owned()
 }
 
 /// What the cache of compiled templates may hold, in estimated bytes.

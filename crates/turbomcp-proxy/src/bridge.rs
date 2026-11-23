@@ -46,6 +46,28 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     })
 }
 
+/// The key of the next ask of `question`, counted in `asked` (see
+/// [`Bridge::key`]).
+fn next_key(
+    asked: &mut HashMap<u64, u32>,
+    kind: &str,
+    question: &impl core::fmt::Debug,
+) -> ClientResult<String> {
+    let digest = fnv1a(format!("{kind}:{question:?}").as_bytes());
+    if !asked.contains_key(&digest) && asked.len() >= MAX_QUESTIONS {
+        return Err(ClientError::Rpc(JsonRpcError {
+            code: turbomcp_core::codes::INTERNAL_ERROR,
+            message: format!(
+                "the upstream asked more than {MAX_QUESTIONS} questions in one call; giving up"
+            ),
+            data: None,
+        }));
+    }
+    let n = asked.entry(digest).or_insert(0);
+    *n += 1;
+    Ok(format!("upstream.{kind}.{digest:016x}.{n}"))
+}
+
 /// Asks one downstream call's caller what its upstream asks.
 #[derive(Clone)]
 pub(crate) struct Bridge {
@@ -104,20 +126,7 @@ impl Bridge {
     /// hostile or volatile upstream (a timestamp in its message) would
     /// otherwise keep the caller retrying forever.
     fn key(&self, kind: &str, question: &impl core::fmt::Debug) -> ClientResult<String> {
-        let digest = fnv1a(format!("{kind}:{question:?}").as_bytes());
-        let mut asked = self.inner.asked.lock();
-        if !asked.contains_key(&digest) && asked.len() >= MAX_QUESTIONS {
-            return Err(ClientError::Rpc(JsonRpcError {
-                code: turbomcp_core::codes::INTERNAL_ERROR,
-                message: format!(
-                    "the upstream asked more than {MAX_QUESTIONS} questions in one call; giving up"
-                ),
-                data: None,
-            }));
-        }
-        let n = asked.entry(digest).or_insert(0);
-        *n += 1;
-        Ok(format!("upstream.{kind}.{digest:016x}.{n}"))
+        next_key(&mut self.inner.asked.lock(), kind, question)
     }
 
     /// What asking the downstream came to, for the upstream: the answer, or

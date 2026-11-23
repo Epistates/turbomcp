@@ -9,8 +9,23 @@
 //! number of subschemas"). The server, the client and the gateway check every
 //! schema against this one budget before they compile it.
 
-use alloc::vec;
+use alloc::{borrow::Cow, format, vec};
 use serde_json::Value;
+
+/// `text` cut to at most `max` bytes, on a character boundary, with `…`
+/// appended when anything was cut: how a peer's string is quoted in an
+/// error, a log line or a span.
+#[must_use]
+pub fn shortened(text: &str, max: usize) -> Cow<'_, str> {
+    if text.len() <= max {
+        return Cow::Borrowed(text);
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    Cow::Owned(format!("{}…", &text[..end]))
+}
 
 /// The deepest schema compiled (nesting of objects and arrays).
 pub const MAX_SCHEMA_DEPTH: usize = 64;
@@ -44,6 +59,14 @@ mod tests {
     use super::*;
     use alloc::string::String;
     use serde_json::{Map, json};
+
+    #[test]
+    fn a_long_string_is_cut_on_a_character_boundary() {
+        assert_eq!(shortened("short", 8), "short");
+        assert_eq!(shortened("abcdefgh", 4), "abcd…");
+        // "é" is two bytes: a cut inside it backs up to before it.
+        assert_eq!(shortened("aé", 2), "a…");
+    }
 
     #[test]
     fn depth_and_size_are_both_bounded() {

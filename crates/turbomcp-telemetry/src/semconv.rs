@@ -27,13 +27,8 @@ const MAX_REQUEST_ID: usize = 128;
 pub(crate) fn request_id(id: &turbomcp_core::RequestId) -> String {
     match id {
         turbomcp_core::RequestId::Number(n) => n.to_string(),
-        turbomcp_core::RequestId::String(s) if s.len() <= MAX_REQUEST_ID => s.clone(),
         turbomcp_core::RequestId::String(s) => {
-            let mut end = MAX_REQUEST_ID;
-            while !s.is_char_boundary(end) {
-                end -= 1;
-            }
-            format!("{}…", &s[..end])
+            turbomcp_core::budget::shortened(s, MAX_REQUEST_ID).into_owned()
         }
     }
 }

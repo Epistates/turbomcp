@@ -569,14 +569,7 @@ fn log_upstream(upstream: &str, params: Option<&Value>) {
 
 /// `text` cut at [`MAX_LOGGED`] bytes, on a character boundary.
 fn bounded(text: &str) -> String {
-    if text.len() <= MAX_LOGGED {
-        return text.to_owned();
-    }
-    let mut end = MAX_LOGGED;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
+    turbomcp_core::budget::shortened(text, MAX_LOGGED).into_owned()
 }
 
 /// A catalogue as fetched, and when.
