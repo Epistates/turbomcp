@@ -108,11 +108,10 @@ impl OAuthSession {
         key.sort();
         let mut prompts = self.prompts.lock();
         let now = std::time::Instant::now();
-        let (count, since) = prompts.entry(key).or_insert((0, now));
-        if now.duration_since(*since) > PROMPT_WINDOW {
-            *count = 0;
-            *since = now;
-        }
+        // A count from before the window has nothing left to limit; dropping
+        // it keeps a server naming new scope sets from growing the map.
+        prompts.retain(|_, (_, since)| now.duration_since(*since) <= PROMPT_WINDOW);
+        let (count, _) = prompts.entry(key).or_insert((0, now));
         if *count >= MAX_PROMPTS {
             return Err(format!(
                 "authorization for [{}] already failed {MAX_PROMPTS} times; not asking again yet",
