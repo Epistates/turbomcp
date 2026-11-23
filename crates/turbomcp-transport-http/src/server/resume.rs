@@ -109,8 +109,9 @@ pub trait EventStore: Send + Sync {
 }
 
 struct StreamLog {
-    /// Each event with its serialized size.
-    events: VecDeque<(StoredEvent, usize)>,
+    /// Each event with its serialized size. Shared, so a replay copies
+    /// pointers under the store's lock and the events themselves after it.
+    events: VecDeque<(Arc<StoredEvent>, usize)>,
     /// The highest seq dropped to stay within a bound.
     dropped_through: u64,
     /// When the stream got its last event, and its place in
@@ -375,10 +376,10 @@ impl EventStore for InMemoryEventStore {
                 return Ok(());
             }
             log.events.push_back((
-                StoredEvent {
+                Arc::new(StoredEvent {
                     seq,
                     message: message.clone(),
-                },
+                }),
                 size,
             ));
             log.bytes += size;
@@ -402,26 +403,29 @@ impl EventStore for InMemoryEventStore {
         before: u64,
     ) -> EventFuture<'a, Result<Option<Vec<StoredEvent>>, EventStoreError>> {
         Box::pin(async move {
-            let logs = self.lock();
-            let Some(log) = logs.get(session, stream) else {
-                return Ok(None);
-            };
-            // Expired streams are dropped as new ones arrive; one past its
-            // retention is gone to a resume whether or not that has happened.
-            if log.expired(self.retention) {
-                return Ok(None);
-            }
-            if after < log.dropped_through {
-                return Ok(None);
-            }
-            Ok(Some(
+            // A stream may hold 64 MiB, and copying it under the one lock
+            // stalled every other stream's appends and resumes meanwhile.
+            let events: Vec<Arc<StoredEvent>> = {
+                let logs = self.lock();
+                let Some(log) = logs.get(session, stream) else {
+                    return Ok(None);
+                };
+                // Expired streams are dropped as new ones arrive; one past its
+                // retention is gone to a resume whether or not that has happened.
+                if log.expired(self.retention) {
+                    return Ok(None);
+                }
+                if after < log.dropped_through {
+                    return Ok(None);
+                }
                 log.events
                     .iter()
                     .map(|(event, _)| event)
                     .filter(|e| e.seq > after && e.seq < before)
                     .cloned()
-                    .collect(),
-            ))
+                    .collect()
+            };
+            Ok(Some(events.into_iter().map(Arc::unwrap_or_clone).collect()))
         })
     }
 
