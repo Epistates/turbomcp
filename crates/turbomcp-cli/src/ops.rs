@@ -54,9 +54,19 @@ fn print_json(value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// The widest the name column is padded to. The names are the server's, and
+/// padding every row to one huge name made the output that wide times the
+/// row count.
+const MAX_NAME_COLUMN: usize = 40;
+
 /// `name — summary`, aligned.
 fn print_rows(rows: &[(String, String)]) {
-    let width = rows.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let width = rows
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0)
+        .min(MAX_NAME_COLUMN);
     for (name, summary) in rows {
         let (name, summary) = (shown(name), shown(summary));
         if summary.is_empty() {
