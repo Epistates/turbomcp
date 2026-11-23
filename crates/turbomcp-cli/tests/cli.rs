@@ -220,18 +220,64 @@ fn a_configuration_the_proxy_cannot_serve_is_refused_with_a_reason() {
     let _ = std::fs::remove_file(path);
 }
 
-/// Held by a test while its gateway owns a port it found free: two found
-/// at once can be the same port (one is released before the gateway binds
-/// it), and a test would then talk to the other's gateway.
-static PORT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Start the gateway `command` serving HTTP on a port the system picks, and
+/// the address it got, read back from its log. Finding a free port first and
+/// passing it in left a window in which any other process could take it,
+/// and then the gateway failed with "address already in use".
+fn listening(command: &mut Command) -> (std::process::Child, std::net::SocketAddr) {
+    use std::io::BufRead;
+    let mut gateway = command
+        .args(["--http", "127.0.0.1:0"])
+        .env("RUST_LOG", "warn,turbomcp_transport_http=info")
+        .env("NO_COLOR", "1")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = gateway.stderr.take().unwrap();
+    let (found, address) = std::sync::mpsc::channel();
+    // Keeps reading after the address, so the gateway never blocks on a
+    // full pipe, and passes its log on to the test's output.
+    std::thread::spawn(move || {
+        let mut found = Some(found);
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
+            let plain = without_escapes(&line);
+            if let Some(addr) = plain
+                .split("listening addr=")
+                .nth(1)
+                .and_then(|addr| addr.trim().parse().ok())
+                && let Some(found) = found.take()
+            {
+                let _ = found.send(addr);
+            }
+            eprintln!("{line}");
+        }
+    });
+    let addr = address
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("the gateway never listened");
+    (gateway, addr)
+}
 
-/// A loopback port free now, and the guard that keeps other tests off it.
-fn free_port() -> (std::net::SocketAddr, std::sync::MutexGuard<'static, ()>) {
-    let guard = PORT
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    (probe.local_addr().unwrap(), guard)
+/// `line` without terminal color sequences (`ESC [ … m`).
+fn without_escapes(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// A raw HTTP/1.1 exchange with `addr`: the status line and the rest.
@@ -255,28 +301,12 @@ fn the_http_gateway_can_require_bearer_tokens() {
         "auth",
         &format!(r#"{{"mcpServers": {{"hi": {{"command": {hello}}}}}}}"#),
     );
-    let (addr, _port) = free_port();
-    let mut gateway = Command::new(env!("CARGO_BIN_EXE_turbomcp"))
-        .args([
-            "proxy",
-            "--config",
-            &path.to_string_lossy(),
-            "--http",
-            &addr.to_string(),
-        ])
-        .args(["--auth-issuer", "https://auth.example.com"])
-        .args(["--auth-jwks", "https://auth.example.com/jwks.json"])
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while std::net::TcpStream::connect(addr).is_err() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the gateway never listened"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    let (mut gateway, addr) = listening(
+        Command::new(env!("CARGO_BIN_EXE_turbomcp"))
+            .args(["proxy", "--config", &path.to_string_lossy()])
+            .args(["--auth-issuer", "https://auth.example.com"])
+            .args(["--auth-jwks", "https://auth.example.com/jwks.json"]),
+    );
 
     let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let (status, rest) = http(
@@ -340,26 +370,11 @@ fn the_gateway_shuts_down_on_sigterm() {
         "sigterm",
         &format!(r#"{{"mcpServers": {{"hi": {{"command": {hello}}}}}}}"#),
     );
-    let (addr, _port) = free_port();
-    let mut gateway = Command::new(env!("CARGO_BIN_EXE_turbomcp"))
-        .args([
-            "proxy",
-            "--config",
-            &path.to_string_lossy(),
-            "--http",
-            &addr.to_string(),
-        ])
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while std::net::TcpStream::connect(addr).is_err() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the gateway never listened"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    let (mut gateway, _addr) = listening(Command::new(env!("CARGO_BIN_EXE_turbomcp")).args([
+        "proxy",
+        "--config",
+        &path.to_string_lossy(),
+    ]));
     let sent = Command::new("kill")
         .args(["-TERM", &gateway.id().to_string()])
         .status()
