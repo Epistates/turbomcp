@@ -414,7 +414,8 @@ pub struct HttpClientLimits {
     pub max_posts: usize,
     /// Maximum JSON response body or individual SSE event in bytes.
     pub max_response_bytes: usize,
-    /// Deadline for a non-streaming response body.
+    /// Deadline for a non-streaming response body, and for the whole POST of
+    /// a notification or a response, which nobody waits on.
     pub body_timeout: Duration,
 }
 impl Default for HttpClientLimits {
@@ -954,10 +955,24 @@ impl Transport for HttpClientTransport {
             },
         };
         let shutdown = shared.shutdown.clone();
+        // A notification or response has nobody waiting on it, and the
+        // server answers it `202` with no body. One the server never answers
+        // used to hold its task and connection for the transport's life.
+        let deadline = cancel.is_none().then_some(shared.limits.body_timeout);
         self.shared.tasks.spawn(async move {
+            let posting = post_and_pump(shared, msg, version, mirrors, cancel, permit);
             tokio::select! {
                 () = shutdown.cancelled() => {}
-                () = post_and_pump(shared, msg, version, mirrors, cancel, permit) => {}
+                () = async {
+                    match deadline {
+                        Some(deadline) => {
+                            if tokio::time::timeout(deadline, posting).await.is_err() {
+                                tracing::debug!("a notification or response POST went unanswered; dropped");
+                            }
+                        }
+                        None => posting.await,
+                    }
+                } => {}
             }
         });
         Ok(())
