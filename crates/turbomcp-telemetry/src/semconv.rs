@@ -123,23 +123,26 @@ impl Target {
         Self::from_parts(&r.method, r.params.as_ref().and_then(Value::as_object))
     }
 
-    /// The target of a request for `method` with `params`.
+    /// The target of a request for `method` with `params`. The name or URI
+    /// is the client's, so it is cut at the budget's limit before it reaches
+    /// a span name, an attribute or a label.
     pub(crate) fn from_parts(
         method: &str,
         params: Option<&serde_json::Map<String, Value>>,
     ) -> Option<Self> {
-        let field = |key: &str| {
+        use turbomcp_core::budget::{MAX_NAME_BYTES, MAX_URI_BYTES, shortened};
+        let field = |key: &str, max: usize| {
             params
                 .and_then(|p| p.get(key))
                 .and_then(Value::as_str)
-                .map(str::to_owned)
+                .map(|text| shortened(text, max).into_owned())
         };
         match method {
-            request::TOOLS_CALL => field("name").map(Self::Tool),
-            request::PROMPTS_GET => field("name").map(Self::Prompt),
+            request::TOOLS_CALL => field("name", MAX_NAME_BYTES).map(Self::Tool),
+            request::PROMPTS_GET => field("name", MAX_NAME_BYTES).map(Self::Prompt),
             request::RESOURCES_READ
             | request::RESOURCES_SUBSCRIBE
-            | request::RESOURCES_UNSUBSCRIBE => field("uri").map(Self::Resource),
+            | request::RESOURCES_UNSUBSCRIBE => field("uri", MAX_URI_BYTES).map(Self::Resource),
             _ => None,
         }
     }
@@ -188,7 +191,7 @@ impl Outcome {
     /// Classify a finished request.
     pub(crate) fn of<E>(result: &Result<Option<JsonRpcMessage>, E>) -> Self {
         match result {
-            Err(_) => Self::other("_OTHER"),
+            Err(_) => Self::unanswered("_OTHER"),
             Ok(Some(JsonRpcMessage::Response(r))) => match &r.error {
                 Some(error) => Self::rpc_error(error.code, &error.message),
                 None => r.result.as_ref().map(Self::result).unwrap_or_default(),
@@ -231,6 +234,17 @@ impl Outcome {
         Self {
             error_type: Some(Cow::Borrowed(error_type)),
             ..Self::default()
+        }
+    }
+
+    /// A request the server never answered: abandoned mid-flight (`error`
+    /// is `cancelled`), or failed in the service below the protocol. Nothing
+    /// says the server knew the client's target, so it stays off metric
+    /// labels.
+    pub(crate) fn unanswered(error_type: &'static str) -> Self {
+        Self {
+            unknown_target: true,
+            ..Self::other(error_type)
         }
     }
 
@@ -368,6 +382,31 @@ mod tests {
             JsonRpcResponse::success(1, json!({ "content": [] })).into(),
         ));
         assert_eq!(Outcome::of(&ok), Outcome::default());
+    }
+
+    /// Only an answer says the server knew the target; without one, the
+    /// client's name stays off metric labels.
+    #[test]
+    fn an_unanswered_request_keeps_its_target_off_labels() {
+        let failed: Result<Option<JsonRpcMessage>, ()> = Err(());
+        assert!(Outcome::of(&failed).unknown_target);
+        assert!(Outcome::unanswered("cancelled").unknown_target);
+        assert!(!Outcome::of(&error(codes::INTERNAL_ERROR)).unknown_target);
+    }
+
+    #[test]
+    fn a_long_target_is_cut_at_the_budget() {
+        let max = turbomcp_core::budget::MAX_NAME_BYTES;
+        let call: JsonRpcMessage = JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "n".repeat(max * 4) })),
+        )
+        .into();
+        let Some(Target::Tool(name)) = Target::of(&call) else {
+            panic!("a tool target")
+        };
+        assert_eq!(name, format!("{}…", "n".repeat(max)));
     }
 
     #[test]

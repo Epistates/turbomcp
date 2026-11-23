@@ -18,8 +18,9 @@
 //! so it is one of the spec's names (or one registered with
 //! [`MetricsLayer::with_methods`]) or `_OTHER`; the version is a supported
 //! revision or `other`. A tool or prompt name is recorded only when the server
-//! knew it (the call didn't fail with `-32601`/`-32602`), so it is bounded by
-//! the server's own catalogue rather than by what callers invent. Resource
+//! answered for it (the call didn't fail with `-32601`/`-32602`, and wasn't
+//! abandoned or failed before an answer), so it is bounded by the server's
+//! own catalogue rather than by what callers invent. Resource
 //! URIs (opt-in in the conventions) and identity are never labels: unbounded,
 //! and identity is PII.
 
@@ -245,7 +246,7 @@ pin_project! {
         fn drop(this: Pin<&mut Self>) {
             let this = this.project();
             if let Some(pending) = this.pending.take() {
-                record(this.instruments, pending, &Outcome::cancelled(), *this.start);
+                record(this.instruments, pending, &Outcome::unanswered("cancelled"), *this.start);
             }
         }
     }
