@@ -1123,7 +1123,19 @@ pub(super) fn progress_reporter<W: WireFamily>(
         return ProgressReporter::disabled();
     };
     if !(token.is_string() || token.is_i64() || token.is_u64()) {
-        tracing::warn!(?token, "progressToken must be a string or integer; ignored");
+        tracing::warn!("progressToken must be a string or integer; ignored");
+        return ProgressReporter::disabled();
+    }
+    // Every notification echoes the token, so a megabyte token costs a
+    // megabyte per report.
+    if token
+        .as_str()
+        .is_some_and(|t| t.len() > turbomcp_core::budget::MAX_NAME_BYTES)
+    {
+        tracing::warn!(
+            "progressToken is longer than {} bytes; ignored",
+            turbomcp_core::budget::MAX_NAME_BYTES
+        );
         return ProgressReporter::disabled();
     }
     ProgressReporter::new(token.clone(), Route::for_request(&ctx.extensions, !W::MRTR))

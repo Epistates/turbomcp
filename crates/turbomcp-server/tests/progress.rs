@@ -172,6 +172,18 @@ async fn a_token_that_is_not_a_string_or_integer_is_ignored() {
     }
 }
 
+/// Every notification echoes the token, so one past the budget is ignored
+/// like a malformed one, and the call still succeeds.
+#[tokio::test]
+async fn an_overlong_token_is_ignored() {
+    let max = turbomcp_core::budget::MAX_NAME_BYTES;
+    let fits = run_one(draft_call(json!({ "progressToken": "t".repeat(max) }))).await;
+    assert_eq!(fits.len(), 3, "{fits:#?}");
+    let frames = run_one(draft_call(json!({ "progressToken": "t".repeat(max + 1) }))).await;
+    assert_eq!(frames.len(), 1, "just the response: {frames:#?}");
+    assert_eq!(frames[0]["result"]["content"][0]["text"], "done");
+}
+
 #[tokio::test]
 async fn no_token_means_no_notifications() {
     let frames = run_one(draft_call(json!({}))).await;

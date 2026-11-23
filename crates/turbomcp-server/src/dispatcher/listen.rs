@@ -106,6 +106,13 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
             )),
         )));
     }
+    if let Err(e) = wanted
+        .resource_subscriptions
+        .iter()
+        .try_for_each(|uri| super::params::check_uri(uri))
+    {
+        return Ok(Some(error_response(id, &e)));
+    }
     // Resource URIs the policy hides: acknowledged like any other, but never
     // watched. See the comment on `resource_subscriptions` below.
     let mut unwatched = std::collections::HashSet::new();

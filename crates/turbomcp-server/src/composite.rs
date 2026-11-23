@@ -920,7 +920,12 @@ pub(crate) fn resume_at<'a>(
     let Some(cursor) = cursor else {
         return Ok((0, None));
     };
-    let bad = || McpError::invalid_params(format!("not a cursor this server issued: `{cursor}`"));
+    let bad = || {
+        McpError::invalid_params(format!(
+            "not a cursor this server issued: `{}`",
+            turbomcp_core::budget::shortened(cursor, 120)
+        ))
+    };
     let (id, own) = cursor.split_once(CURSOR_SEP).ok_or_else(bad)?;
     let at = cursor_ids
         .into_iter()

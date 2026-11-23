@@ -1,4 +1,11 @@
-//! What a JSON Schema from a peer may cost before anything compiles it.
+//! What a peer's message may cost: the length of the names and URIs it sends,
+//! and the size of a JSON Schema before anything compiles it.
+//!
+//! A name or URI arrives inside a body of up to a megabyte, and the SDK keeps
+//! some (a subscription's URIs), matches some against templates (a resource
+//! URI), echoes some (a progress token on every notification) and records
+//! some in telemetry. [`MAX_NAME_BYTES`] and [`MAX_URI_BYTES`] bound them, far
+//! above any real one.
 //!
 //! A tool's `inputSchema` and `outputSchema` and an elicitation's
 //! `requestedSchema` can come from the other side of the connection, or from
@@ -11,6 +18,15 @@
 
 use alloc::{borrow::Cow, format, vec};
 use serde_json::Value;
+
+/// The longest id the SDK keeps or echoes for a peer: a URL elicitation's
+/// `elicitationId`, a string `progressToken`. Telemetry cuts a tool or prompt
+/// name to it.
+pub const MAX_NAME_BYTES: usize = 1024;
+
+/// The longest resource URI a peer may name, to read, subscribe to, watch or
+/// complete against. Telemetry cuts a URI to it.
+pub const MAX_URI_BYTES: usize = 8 * 1024;
 
 /// `text` cut to at most `max` bytes, on a character boundary, with `…`
 /// appended when anything was cut: how a peer's string is quoted in an

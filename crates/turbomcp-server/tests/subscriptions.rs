@@ -317,6 +317,37 @@ async fn malformed_listen_filter_is_invalid_params() {
     h.driver.await.unwrap().expect("clean shutdown on EOF");
 }
 
+/// The server keeps a watched URI for the stream's life, so one past the
+/// budget is refused rather than held.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_listen_filter_with_an_overlong_uri_is_invalid_params() {
+    let mut h = spawn_harness();
+    let long = format!(
+        "file://{}",
+        "a".repeat(turbomcp_core::budget::MAX_URI_BYTES)
+    );
+    h.in_tx
+        .send(listen(
+            1,
+            json!({ "resourceSubscriptions": ["file://a", long] }),
+        ))
+        .await
+        .unwrap();
+    let msg = tokio::time::timeout(Duration::from_secs(5), h.out_rx.recv())
+        .await
+        .expect("an error response")
+        .unwrap();
+    let JsonRpcMessage::Response(r) = msg else {
+        panic!("expected response");
+    };
+    let error = r.error.expect("invalid params");
+    assert_eq!(error.code, -32602);
+    assert!(error.message.contains("at most"), "{}", error.message);
+
+    drop(h.in_tx);
+    h.driver.await.unwrap().expect("clean shutdown on EOF");
+}
+
 /// Lists one resource the policy hides and one it doesn't.
 #[derive(Clone)]
 struct Guarded;

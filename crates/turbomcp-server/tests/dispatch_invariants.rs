@@ -403,6 +403,58 @@ async fn malformed_params_get_invalid_params() {
     }
 }
 
+/// A resource URI past the budget is refused before any handler or template
+/// sees it, wherever a request names one.
+#[tokio::test]
+async fn an_overlong_resource_uri_is_invalid_params() {
+    let mut svc = kitchen();
+    let long = format!("mem://{}", "a".repeat(turbomcp_core::budget::MAX_URI_BYTES));
+    let cases = [
+        (
+            1,
+            "resources/read",
+            json!({ "uri": long, "_meta": draft_meta() }),
+        ),
+        (
+            2,
+            "completion/complete",
+            json!({
+                "ref": { "type": "ref/resource", "uri": long },
+                "argument": { "name": "a", "value": "" },
+                "_meta": draft_meta(),
+            }),
+        ),
+    ];
+    for (id, method, params) in cases {
+        let out = call(&mut svc, JsonRpcRequest::new(id, method, Some(params))).await;
+        assert_eq!(out["error"]["code"], -32602, "{method}: {out}");
+        assert!(
+            out["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("a resource URI can be at most"),
+            "{method}: {out}"
+        );
+    }
+    let fits = format!("mem://{}", "a".repeat(64));
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            3,
+            "resources/read",
+            Some(json!({ "uri": fits, "_meta": draft_meta() })),
+        ),
+    )
+    .await;
+    assert!(
+        !out["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("at most"),
+        "{out}"
+    );
+}
+
 /// The dual-version headline: `server/discover` names BOTH supported versions.
 #[tokio::test]
 async fn discover_lists_both_supported_versions() {

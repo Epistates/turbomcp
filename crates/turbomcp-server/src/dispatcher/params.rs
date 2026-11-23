@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 use turbomcp_core::{
     Extensions, Identity, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcRequest,
-    JsonRpcResponse, McpError, ProtocolVersion, RequestContext, meta,
+    JsonRpcResponse, McpError, ProtocolVersion, RequestContext, budget, meta,
 };
 use turbomcp_protocol::{methods, neutral, version};
 use turbomcp_service::ProtocolError;
@@ -184,7 +184,22 @@ pub(super) fn parse_uri_param(params: Option<&Value>, method: &str) -> Result<St
         params.ok_or_else(|| McpError::invalid_params(format!("{method} requires params")))?;
     let raw: RawReadResourceParams = serde_json::from_value(params.clone())
         .map_err(|e| McpError::invalid_params(format!("invalid {method} params: {e}")))?;
+    check_uri(&raw.uri)?;
     Ok(raw.uri)
+}
+
+/// Refuse a resource URI past [`budget::MAX_URI_BYTES`]. The server keeps a
+/// subscription's URIs for the life of the session and matches a read's
+/// against every template, so a megabyte URI costs a megabyte each time.
+pub(super) fn check_uri(uri: &str) -> Result<(), McpError> {
+    if uri.len() > budget::MAX_URI_BYTES {
+        return Err(McpError::invalid_params(format!(
+            "a resource URI can be at most {} bytes; this one is {}",
+            budget::MAX_URI_BYTES,
+            uri.len()
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn parse_read_resource_params(
@@ -258,9 +273,11 @@ pub(super) fn parse_complete_params(
                 .ok_or_else(|| McpError::invalid_params("ref/prompt completion requires `name`"))?,
         ),
         "ref/resource" => {
-            neutral::CompletionReference::resource_template(raw.reference.uri.ok_or_else(|| {
+            let uri = raw.reference.uri.ok_or_else(|| {
                 McpError::invalid_params("ref/resource completion requires `uri`")
-            })?)
+            })?;
+            check_uri(&uri)?;
+            neutral::CompletionReference::resource_template(uri)
         }
         other => {
             return Err(McpError::invalid_params(format!(
