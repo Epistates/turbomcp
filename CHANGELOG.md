@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `WebSocketConfig::with_serve_config`: the limits each WebSocket connection
+  is served with (handlers and control messages in flight, the grace after
+  the client closes, the write timeout). alpha.5's WebSocket config could set
+  them, and beta.1's couldn't.
+
 ### Changed
 
 - **Behavior change:** the HTTP server refuses a `2026-07-28` request that
@@ -19,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Behavior change:** the client treats a `resultType` that isn't a string
   as unrecognized, so the result is invalid. It used to read as absent, so
   as complete.
+- **Behavior change:** when a server's question to the client (an
+  elicitation, sampling or roots request on `2025-06-18` or `2025-11-25`)
+  times out, the server sends `notifications/cancelled` for it, as the spec
+  says a sender SHOULD. A client showing an approval form the server had
+  given up on can take it down.
 - **Behavior change:** the HTTP client waits at least 100 ms before
   reconnecting an SSE stream, whatever `retry:` the server sends. With
   `retry: 0`, a stream the server kept closing or refusing was reopened in a
@@ -33,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- The CHANGELOG's "Upgrading from 4.0.0-alpha.5" list and MIGRATION.md (a new
+  "alpha.5 to alpha.6" section) name the two changes that compile unchanged:
+  cooperative cancellation by default, and the 2-second grace when standard
+  input closes.
+- `ClientHandle::store_state` says the state is sealed (the client can't read
+  it), not signed. The HTTP crate's docs say a session's response streams
+  resume from `Last-Event-ID` by default. `with_allowed_origin`'s panic
+  names it, and MIGRATION.md no longer names the removed codec crate.
 - The visibility docs say that on `2026-07-28` a catalog may vary only by
   what the request presents, never per connection, so per-session
   unlocking belongs to the stateful revisions.
@@ -444,6 +464,13 @@ gathers them by area.
   `with_extension` refuses a colliding registration.
 - **Telemetry.** Spans and metrics follow the OpenTelemetry MCP semantic
   conventions; the tower service is `TraceContextService`.
+- **Cancellation (no compile error).** A cancelled call's handler runs on
+  with its `ctx.base.cancellation` fired, where it used to be dropped at its
+  next `.await`. A handler with side effects must check the token before it
+  acts, or set `with_cancellation(Cancellation::Abort)`.
+- **stdio end of input (no compile error).** Calls in flight when standard
+  input closes get `ServeConfig::eof_grace` (2 s), then are cancelled. They
+  used to get the drain window.
 - **Non-exhaustive.** `ServeConfig`, `Image`, `Audio`, `ConnectMode`,
   `ClientCredentials` and more: build them with `new` and the `with_*`
   setters.
