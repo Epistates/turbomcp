@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 use std::sync::OnceLock;
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde_json::Value;
 use sha2::Sha256;
 use turbomcp_core::{JsonRpcMessage, ProtocolVersion, codes, meta};
@@ -314,8 +314,8 @@ impl RedactionKey {
     /// Never: HMAC takes a key of any length.
     #[must_use]
     pub fn redact(&self, prefix: &str, value: &str) -> String {
-        let mut mac =
-            <Hmac<Sha256> as Mac>::new_from_slice(&self.0).expect("HMAC accepts any key length");
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.0)
+            .expect("HMAC accepts any key length");
         mac.update(value.as_bytes());
         let digest = mac.finalize().into_bytes();
         let mut out = String::with_capacity(prefix.len() + 17);

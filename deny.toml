@@ -219,6 +219,19 @@ skip = [
     { crate = "tower-http@0.6", reason = "reqwest 0.13's HTTP client stack; our server is on 0.7" },
     { crate = "syn@2", reason = "proc macros across the ecosystem (tokio, tracing, prost, pin-project, zerovec); serde_derive, thiserror and ours are on syn 3" },
     { crate = "untrusted@0.7", reason = "aws-lc-rs; rustls-webpki is on 0.9" },
+    { crate = "tokio-tungstenite@0.29", reason = "axum 0.8's WebSocket upgrade; our client is on 0.30" },
+    { crate = "tungstenite@0.29", reason = "tokio-tungstenite 0.29, via axum 0.8" },
+    { crate = "sha1@0.10", reason = "axum 0.8 and tungstenite 0.29 (the WebSocket handshake); tungstenite 0.30 is on 0.11" },
+    { crate = "sha2@0.10", reason = "oauth2 5 (client-oauth only); we are on 0.11" },
+    { crate = "digest@0.10", reason = "sha1 0.10 and sha2 0.10, above; RustCrypto 0.11 is on digest 0.11" },
+    { crate = "block-buffer@0.10", reason = "digest 0.10, above" },
+    { crate = "crypto-common@0.1", reason = "digest 0.10, above" },
+    { crate = "cpufeatures@0.2", reason = "sha1 0.10 and sha2 0.10, above" },
+    { crate = "parking_lot@0.12", reason = "governor 0.10, moka 0.12 and referencing (jsonschema); we are on 0.13" },
+    { crate = "parking_lot_core@0.9", reason = "parking_lot 0.12, above" },
+    { crate = "lock_api@0.4", reason = "parking_lot 0.12, above" },
+    { crate = "redox_syscall@0.5", reason = "parking_lot_core 0.9, above (Redox only)" },
+    { crate = "rand@0.9", reason = "opentelemetry_sdk 0.33 and tungstenite 0.29; tungstenite 0.30 is on 0.10" },
 ]
 
 # Skip dependency trees while we fix the root causes

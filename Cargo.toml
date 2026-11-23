@@ -68,7 +68,7 @@ const_is_empty = "allow"
 tokio = { version = "1.54" }
 tokio-util = { version = "0.7.20" }
 futures = "0.3.34"
-pin-project-lite = "0.2.17"
+pin-project-lite = "0.2.18"
 
 # URI template (RFC 6570) matching for #[resource("…/{var}")] — the pattern core
 regex = "1.13"
@@ -79,11 +79,11 @@ percent-encoding = "2.3"
 # 2.5e-308 gain 1 ulp on decode — wire fidelity is worth the small parse cost).
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.154", features = ["raw_value", "preserve_order", "float_roundtrip"] }
-sonic-rs = "0.5.11"   # High-performance JSON (core `simd` codec)
+sonic-rs = "0.5.12"   # High-performance JSON (core `simd` codec)
 
 # Schema validation and generation
 schemars = { version = "1.2.3" }
-jsonschema = { version = "0.61", default-features = false }
+jsonschema = { version = "0.63", default-features = false }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
@@ -101,7 +101,7 @@ tower = { version = "0.5.3", features = ["util", "retry", "timeout", "limit"] }
 # async-compression into every HTTP server build for nothing.
 tower-http = { version = "0.7.1", default-features = false, features = ["cors"] }
 # 0.29 is the version axum's `ws` feature uses: one tungstenite stack, not two.
-tokio-tungstenite = { version = "0.29.0", default-features = false }
+tokio-tungstenite = { version = "0.30.0", default-features = false }
 
 # Error handling and diagnostics
 thiserror = "2.0.21"
@@ -118,7 +118,7 @@ opentelemetry-otlp = { version = "0.33", default-features = false, features = ["
 opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
 
 # URL
-url = "2.5.8"
+url = "2.5.9"
 # RFC 3986 parsing where WHATWG `url` (and its IDNA/ICU stack) is not
 # needed; jsonschema already links it.
 fluent-uri = "0.4.1"
@@ -130,11 +130,11 @@ subtle = "2.6"  # Constant-time comparison for secret values
 # HMAC-SHA-256. The digest 0.10 generation, not 0.11: the WebSocket handshake
 # (sha1, via tungstenite) and oauth2 already link digest 0.10, so 0.11 would
 # put a second copy of the RustCrypto stack in every build that has either.
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 # MRTR requestState sealing. 0.10, the generation sha2/hmac share (0.11
 # moves to crypto-common 0.2; all of them move together).
-chacha20poly1305 = "0.10"
+chacha20poly1305 = "0.11"
 # Wipes secrets on drop. Already linked (rustls, aws-lc-rs, the AEAD).
 zeroize = "1.9"
 # RFC 8785 canonical JSON, for the MRTR request binding.
@@ -143,7 +143,7 @@ serde_path_to_error = "0.1.20"
 # OS randomness for keys (uuid already links it).
 getrandom = "0.4"
 base64 = "0.23.1"
-uuid = { version = "1.26", features = ["v4"] }
+uuid = { version = "1.29", features = ["v4"] }
 # OAuth 2.1 client flows (auth-code + PKCE + token exchange); HTTP is supplied
 # by our reqwest adapter, so no default features.
 oauth2 = { version = "5", default-features = false }
@@ -159,7 +159,7 @@ bytes = "1.12.2"
 moka = { version = "0.12.16", default-features = false }
 # Locks that don't poison: one panic under a registry lock no longer
 # turns into a permanent outage of that registry (already linked via tokio).
-parking_lot = "0.12"
+parking_lot = "0.13"
 
 # Rate limiting (lock-free GCRA, replaces hand-rolled token bucket / sliding window)
 # Without the defaults' `jitter` (rand) and `dashmap` (a second hashbrown):

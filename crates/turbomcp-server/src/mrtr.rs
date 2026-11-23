@@ -197,7 +197,7 @@ impl StateSealer {
         let sealed = key
             .cipher
             .encrypt(
-                XNonce::from_slice(&nonce),
+                &XNonce::from(nonce),
                 Payload {
                     msg: payload,
                     aad: &key.associated_data(),
@@ -238,6 +238,7 @@ impl StateSealer {
         }
         let (kid, rest) = bytes.split_at(KID_LEN);
         let (nonce, sealed) = rest.split_at(NONCE_LEN);
+        let nonce = XNonce::try_from(nonce).map_err(|_| rejected())?;
         let payload = self
             .keys
             .iter()
@@ -245,7 +246,7 @@ impl StateSealer {
             .find_map(|key| {
                 key.cipher
                     .decrypt(
-                        XNonce::from_slice(nonce),
+                        &nonce,
                         Payload {
                             msg: sealed,
                             aad: &key.associated_data(),
