@@ -417,7 +417,12 @@ impl ClientHandlers {
         if params.get("mode").and_then(Value::as_str) != Some("url") {
             return;
         }
-        if let Some(id) = params.get("elicitationId").and_then(Value::as_str) {
+        if let Some(id) = params
+            .get("elicitationId")
+            .and_then(Value::as_str)
+            // Refused when the request is parsed, so never worth keeping.
+            .filter(|id| id.len() <= turbomcp_core::budget::MAX_NAME_BYTES)
+        {
             let mut outstanding = self.outstanding_elicitations.lock();
             if outstanding.iter().any(|known| known == id) {
                 return;
@@ -638,6 +643,17 @@ fn parse_elicit_url_params(
             .and_then(Value::as_str)
             .map(str::to_owned)
     };
+    // The client keeps the id until its completion arrives, and a gateway
+    // keeps it per upstream for an hour.
+    if id
+        .as_ref()
+        .is_some_and(|id| id.len() > turbomcp_core::budget::MAX_NAME_BYTES)
+    {
+        return Err(invalid_params(&format!(
+            "an elicitationId can be at most {} bytes",
+            turbomcp_core::budget::MAX_NAME_BYTES
+        )));
+    }
     let url = field("url")?;
     let parsed = url::Url::parse(url)
         .map_err(|e| invalid_params(&format!("url-mode elicitation `url` is not a URL: {e}")))?;
@@ -1235,11 +1251,16 @@ mod must_tests {
             }
             params
         };
+        let long_id = "e".repeat(turbomcp_core::budget::MAX_NAME_BYTES + 1);
         for (params, why) in [
             (ask("file:///etc/passwd", Some("e")), "file:"),
             (ask("javascript:alert(1)", Some("e")), "javascript:"),
             (ask("not a url", Some("e")), "unparsable"),
             (ask("https://ok.example", None), "no elicitationId"),
+            (
+                ask("https://ok.example", Some(&long_id)),
+                "an overlong elicitationId",
+            ),
         ] {
             let err = dispatch(&handlers, request::ELICITATION_CREATE, Some(params))
                 .await
