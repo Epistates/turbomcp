@@ -14,7 +14,7 @@ use turbomcp_core::{
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, LegacySessionAdapter, ListToolsContext, McpServerCore, MethodRouter,
-    VersionDispatcher, WithTools,
+    ServerConfig, VersionDispatcher, WithTools,
 };
 use turbomcp_service::{ServeConfig, Transport, serve_with};
 
@@ -91,9 +91,14 @@ struct Pipe {
 }
 
 fn spawn_pipe() -> Pipe {
-    let service = LegacySessionAdapter::new(VersionDispatcher::new(
+    spawn_pipe_with(ServerConfig::new())
+}
+
+fn spawn_pipe_with(config: ServerConfig) -> Pipe {
+    let service = LegacySessionAdapter::new(VersionDispatcher::with_config(
         Confirmer,
         MethodRouter::new().with_tools(),
+        config,
     ));
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, out_rx) = mpsc::unbounded_channel();
@@ -179,6 +184,44 @@ async fn inline_elicitation_round_trip_on_one_pipe() {
     assert_eq!(done.id, Some(RequestId::from(2i64)));
     let result = done.result.expect("tool result");
     assert_eq!(result["content"][0]["text"], "confirmed=true");
+
+    drop(p.in_tx);
+    p.driver.await.unwrap().expect("clean shutdown");
+}
+
+/// "When the request has not received a success or error response within the
+/// timeout period, the sender SHOULD issue a cancellation notification for
+/// that request": the client can take down the question it is still showing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unanswered_inline_question_is_cancelled_when_it_times_out() {
+    let mut p = spawn_pipe_with(
+        ServerConfig::new().with_inline_request_timeout(Duration::from_millis(100)),
+    );
+    handshake(&mut p, json!({ "elicitation": {} })).await;
+    p.in_tx.send(call_frame(2)).await.unwrap();
+    let JsonRpcMessage::Request(elicit) = recv(&mut p.out_rx).await else {
+        panic!("expected the server-initiated elicitation request");
+    };
+    // The cancellation goes out on the server-to-client channel and the
+    // call's answer on the response path, so they may arrive in either order.
+    let (mut cancelled, mut done) = (None, None);
+    for _ in 0..2 {
+        match recv(&mut p.out_rx).await {
+            JsonRpcMessage::Notification(n) => cancelled = Some(n),
+            JsonRpcMessage::Response(r) => done = Some(r),
+            other => panic!("unexpected frame {other:?}"),
+        }
+    }
+    let cancelled = cancelled.expect("notifications/cancelled for the unanswered question");
+    assert_eq!(cancelled.method, "notifications/cancelled");
+    assert_eq!(
+        cancelled.params.expect("params")["requestId"],
+        json!(elicit.id)
+    );
+    assert_eq!(
+        done.expect("the tools/call response").id,
+        Some(RequestId::from(2i64))
+    );
 
     drop(p.in_tx);
     p.driver.await.unwrap().expect("clean shutdown");

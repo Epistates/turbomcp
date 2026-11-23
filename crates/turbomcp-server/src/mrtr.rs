@@ -1242,14 +1242,28 @@ async fn send_and_await(
         )
     })?;
     writer
-        .send(JsonRpcRequest::new(id, method, params).into())
+        .send(JsonRpcRequest::new(id.clone(), method, params).into())
         .await
         .map_err(|_| McpError::transport("server→client channel closed"))?;
 
-    let response = tokio::time::timeout(pending.timeout, rx)
-        .await
-        .map_err(|_| McpError::timeout("client did not answer the input request in time"))?
-        .map_err(|_| McpError::transport("server→client request dropped"))?;
+    let response = match tokio::time::timeout(pending.timeout, rx).await {
+        Ok(answer) => answer.map_err(|_| McpError::transport("server→client request dropped"))?,
+        Err(_) => {
+            // "When the request has not received a success or error response
+            // within the timeout period, the sender SHOULD issue a
+            // cancellation notification for that request" (lifecycle,
+            // Timeouts), so the client can take down a question it may
+            // still be showing.
+            let cancelled = turbomcp_core::JsonRpcNotification::new(
+                turbomcp_protocol::methods::notification::CANCELLED,
+                Some(json!({ "requestId": id, "reason": "timed out" })),
+            );
+            let _ = writer.send(cancelled.into()).await;
+            return Err(McpError::timeout(
+                "client did not answer the input request in time",
+            ));
+        }
+    };
     match (response.result, response.error) {
         (Some(result), None) => Ok(result),
         // The client's own error, as it sent it, for the handler to act on.
