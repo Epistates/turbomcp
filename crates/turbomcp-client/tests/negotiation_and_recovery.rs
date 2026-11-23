@@ -691,6 +691,22 @@ async fn driven_task_terminal_states_map_to_client_errors() {
     assert!(matches!(&err, ClientError::Timeout), "{err:?}");
 }
 
+/// A `pollIntervalMs` far past the task's TTL doesn't put the call to sleep
+/// past it: the TTL was checked only between waits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_poll_interval_longer_than_the_ttl_still_times_out_at_the_ttl() {
+    let client = task_client(
+        json!({ "taskId": "t1", "status": "working", "pollIntervalMs": 600_000, "ttlMs": 100 }),
+        100,
+    )
+    .await;
+    let err = tokio::time::timeout(Duration::from_secs(5), client.call_tool("t", Map::new()))
+        .await
+        .expect("the ttl ends the wait")
+        .expect_err("ttl exceeded");
+    assert!(matches!(&err, ClientError::Timeout), "{err:?}");
+}
+
 // ---- elicitation/complete routing -----------------------------------------------
 
 /// Records the ids handed to the dedicated `on_elicitation_complete` hook, and

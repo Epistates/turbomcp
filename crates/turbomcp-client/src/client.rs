@@ -61,6 +61,24 @@ const MAX_INPUT_REQUESTS: usize = 64;
 /// (even at one item per page) so it only ever trips on a broken server.
 const MAX_LIST_PAGES: usize = 10_000;
 
+/// Cap on the inputs one task may ask this client for over its life.
+const MAX_TASK_INPUTS: usize = 1024;
+
+/// How long to wait before polling a task again: the server's interval,
+/// but never past the task's TTL, which was only checked between waits (a
+/// huge `pollInterval` slept through it).
+fn until_next_poll(
+    interval_ms: u64,
+    ttl: Option<Duration>,
+    first_seen: std::time::Instant,
+) -> Duration {
+    let interval = Duration::from_millis(interval_ms);
+    match ttl {
+        Some(ttl) => interval.min(ttl.saturating_sub(first_seen.elapsed())),
+        None => interval,
+    }
+}
+
 /// Cap on the items the `list_all_*` helpers collect. A server minting new
 /// cursors could otherwise fill memory up to the page cap times the frame
 /// size; past this, page with the single-page methods instead.
@@ -2309,6 +2327,14 @@ impl Client {
                             if answered.contains(key) {
                                 continue;
                             }
+                            // Every new key runs a handler, and a task can
+                            // name new ones for as long as it runs.
+                            if answered.len() >= MAX_TASK_INPUTS {
+                                return Err(ClientError::Protocol(format!(
+                                    "task {task_id} asked for more than \
+                                     {MAX_TASK_INPUTS} inputs; giving up"
+                                )));
+                            }
                             let req_method = req
                                 .get("method")
                                 .and_then(Value::as_str)
@@ -2349,7 +2375,7 @@ impl Client {
                 .and_then(Value::as_u64)
                 .unwrap_or(DEFAULT_TASK_POLL_MS)
                 .max(MIN_TASK_POLL_MS);
-            tokio::time::sleep(Duration::from_millis(interval)).await;
+            tokio::time::sleep(until_next_poll(interval, ttl, first_seen)).await;
             current = self.task_get_raw(&task_id).await?;
         }
     }
@@ -2422,7 +2448,7 @@ impl Client {
                 .and_then(Value::as_u64)
                 .unwrap_or(DEFAULT_TASK_POLL_MS)
                 .max(MIN_TASK_POLL_MS);
-            let nap = tokio::time::sleep(Duration::from_millis(interval));
+            let nap = tokio::time::sleep(until_next_poll(interval, ttl, first_seen));
             if let Some(pending) = early.as_mut() {
                 tokio::select! {
                     outcome = pending => match outcome {
