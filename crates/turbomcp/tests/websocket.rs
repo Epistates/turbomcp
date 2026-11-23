@@ -52,6 +52,13 @@ impl Srv {
             .to_owned()
     }
 
+    /// Hold a call in flight for a while (`slow` without its flag).
+    #[tool]
+    async fn nap(&self) -> String {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        "rested".into()
+    }
+
     /// Finish after a while.
     #[tool]
     async fn slow(&self) -> String {
@@ -332,6 +339,40 @@ async fn the_rate_limit_applies_to_each_request_not_just_the_upgrade() {
         reply["result"]["content"][0]["text"], "hi",
         "the budget refills"
     );
+}
+
+/// A connection is served with the route's `ServeConfig`: here, one call in
+/// flight at a time, so a second while the first runs is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_connection_is_served_with_the_configured_limits() {
+    let one_at_a_time = HttpConfig::new().with_websocket(
+        WebSocketConfig::new("/ws")
+            .with_serve_config(turbomcp::ServeConfig::new().with_max_in_flight(1)),
+    );
+    let server = spawn(one_at_a_time).await;
+    let (mut socket, _) = tokio_tungstenite::connect_async(server.url.as_str())
+        .await
+        .unwrap();
+    let call = |id: u64| {
+        json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {
+                "name": "nap", "arguments": {},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+            },
+        })
+        .to_string()
+    };
+    socket.send(Message::text(call(1))).await.unwrap();
+    socket.send(Message::text(call(2))).await.unwrap();
+    let refused = next_json(&mut socket).await;
+    assert_eq!(refused["id"], 2, "{refused}");
+    assert_eq!(refused["error"]["message"], "server at capacity");
+    let answered = next_json(&mut socket).await;
+    assert_eq!(answered["result"]["content"][0]["text"], "rested");
 }
 
 async fn next_json<S>(socket: &mut S) -> Value

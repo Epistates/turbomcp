@@ -49,6 +49,7 @@ pub struct WebSocketConfig {
     max_idle_pings: Option<u32>,
     max_connections: u32,
     slots: Arc<Semaphore>,
+    serve: ServeConfig,
 }
 
 impl core::fmt::Debug for WebSocketConfig {
@@ -58,6 +59,7 @@ impl core::fmt::Debug for WebSocketConfig {
             .field("ping_interval", &self.ping_interval)
             .field("max_idle_pings", &self.max_idle_pings)
             .field("max_connections", &self.max_connections)
+            .field("serve", &self.serve)
             .finish()
     }
 }
@@ -74,7 +76,24 @@ impl WebSocketConfig {
             max_idle_pings: Some(2),
             max_connections: 1024,
             slots: Arc::new(Semaphore::new(1024)),
+            serve: ServeConfig::new(),
         }
+    }
+
+    /// How each connection is served: its limits on handlers and control
+    /// messages in flight ([`max_in_flight`](ServeConfig::max_in_flight),
+    /// [`max_control_in_flight`](ServeConfig::max_control_in_flight)), how
+    /// long its handlers run on after the client closes
+    /// ([`eof_grace`](ServeConfig::eof_grace)), and how long a frame may
+    /// wait on a client that stopped reading
+    /// ([`write_timeout`](ServeConfig::write_timeout)). The rest is the
+    /// route's: shutdown and the drain deadline follow the HTTP server, and
+    /// the identity, token and scope rules come from the upgrade's
+    /// authentication, so those fields of `config` are not used.
+    #[must_use]
+    pub fn with_serve_config(mut self, config: ServeConfig) -> Self {
+        self.serve = config;
+        self
     }
 
     /// Ping a connection that has sent nothing for `interval`, so idle NAT
@@ -252,7 +271,10 @@ async fn connection<H: ServerHandle>(
     }
     let close_with = link.close_with();
     let expiry = identity.as_ref().and_then(expires_at);
-    let mut config = ServeConfig::new()
+    let mut config = state
+        .config
+        .serve
+        .clone()
         .with_shutdown(shutdown.clone())
         .with_drain_timeout(state.drain);
     config.identity = identity;
