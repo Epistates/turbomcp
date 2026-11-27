@@ -261,7 +261,7 @@ async fn disabled_cache_always_hits_the_wire() {
 }
 
 #[tokio::test]
-async fn read_cache_is_per_uri_and_resources_updated_invalidates_only_that_uri() {
+async fn read_cache_is_per_uri_and_resources_updated_invalidates_every_read() {
     let read_hits = Arc::new(AtomicUsize::new(0));
     let update_uri = Arc::new(std::sync::Mutex::new(None));
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
@@ -288,12 +288,17 @@ async fn read_cache_is_per_uri_and_resources_updated_invalidates_only_that_uri()
     client.read_resource("mem://b").await.unwrap();
     assert_eq!(read_hits.load(Ordering::SeqCst), 2, "mem://b is distinct");
 
-    // `resources/updated { uri: mem://a }` drops ONLY that entry.
-    *update_uri.lock().unwrap() = Some("mem://a".to_owned());
+    // An update for a sub-resource of mem://a. The spec has no rule for which
+    // resources contain it, so every cached read is dropped.
+    *update_uri.lock().unwrap() = Some("mem://a/part".to_owned());
     client.list_prompts(None).await.unwrap();
 
-    client.read_resource("mem://b").await.unwrap();
-    assert_eq!(read_hits.load(Ordering::SeqCst), 2, "mem://b still cached");
     client.read_resource("mem://a").await.unwrap();
     assert_eq!(read_hits.load(Ordering::SeqCst), 3, "mem://a refetched");
+    client.read_resource("mem://b").await.unwrap();
+    assert_eq!(read_hits.load(Ordering::SeqCst), 4, "mem://b refetched");
+    // The refetched reads are cached again.
+    client.read_resource("mem://a").await.unwrap();
+    client.read_resource("mem://b").await.unwrap();
+    assert_eq!(read_hits.load(Ordering::SeqCst), 4, "both cached again");
 }

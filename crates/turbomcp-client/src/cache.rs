@@ -232,8 +232,8 @@ impl ResponseCache {
     /// Invalidate the entries a server notification obsoletes: each
     /// `*_list_changed` drops its capability's entries (`resources` also
     /// drops templates and reads — the resource set changed under them), and
-    /// `resources/updated` drops the named URI's read entry.
-    pub(crate) fn on_notification(&self, method: &str, params: Option<&Value>) {
+    /// `resources/updated` drops every read entry.
+    pub(crate) fn on_notification(&self, method: &str) {
         if let Some(family) = Family::of_notification(method) {
             self.generations[family as usize].fetch_add(1, Ordering::AcqRel);
         }
@@ -245,12 +245,17 @@ impl ResponseCache {
                 self.drop_method(request::RESOURCES_TEMPLATES_LIST);
                 self.drop_method(request::RESOURCES_READ);
             }
-            notification::RESOURCES_UPDATED => {
-                if let Some(uri) = params.and_then(|p| p.get("uri")).and_then(Value::as_str) {
-                    self.entries
-                        .invalidate(&(request::RESOURCES_READ.to_owned(), Some(uri.to_owned())));
-                }
-            }
+            // The update invalidates a cached read "for that resource or a
+            // sub-resource of it" (2026-07-28, server/utilities/caching), and
+            // the URI it names "might be a sub-resource of the one that the
+            // client actually subscribed to" (schema). The spec has no rule,
+            // such as a path prefix, for which resources another contains, so
+            // the client can't tell which cached reads hold the one named:
+            // every cached read is dropped. A narrower rule could keep a stale
+            // read that looks fresh, which is a correctness bug, where
+            // dropping too much costs only a request. Don't narrow this
+            // without a spec rule to point at.
+            notification::RESOURCES_UPDATED => self.drop_method(request::RESOURCES_READ),
             _ => {}
         }
     }
@@ -307,7 +312,7 @@ mod tests {
     fn a_response_that_predates_an_invalidation_is_not_stored() {
         let cache = ResponseCache::default();
         let requested = cache.requesting("tools/list");
-        cache.on_notification(notification::TOOLS_LIST_CHANGED, None);
+        cache.on_notification(notification::TOOLS_LIST_CHANGED);
         cache.store(
             "tools/list",
             None,
@@ -317,7 +322,7 @@ mod tests {
         assert!(cache.get("tools/list", None).is_none());
         // Another family's notification doesn't spoil it.
         let requested = cache.requesting("tools/list");
-        cache.on_notification(notification::PROMPTS_LIST_CHANGED, None);
+        cache.on_notification(notification::PROMPTS_LIST_CHANGED);
         cache.store(
             "tools/list",
             None,
@@ -417,11 +422,11 @@ mod tests {
         );
         cache.store(request::PROMPTS_LIST, None, &result, Requested(None));
 
-        cache.on_notification(notification::TOOLS_LIST_CHANGED, None);
+        cache.on_notification(notification::TOOLS_LIST_CHANGED);
         assert!(cache.get(request::TOOLS_LIST, None).is_none());
         assert!(cache.get(request::PROMPTS_LIST, None).is_some());
 
-        cache.on_notification(notification::RESOURCES_LIST_CHANGED, None);
+        cache.on_notification(notification::RESOURCES_LIST_CHANGED);
         assert!(cache.get(request::RESOURCES_LIST, None).is_none());
         assert!(cache.get(request::RESOURCES_TEMPLATES_LIST, None).is_none());
         assert!(
@@ -433,40 +438,28 @@ mod tests {
 
         // The prompts branch fires too (each capability invalidates only its own).
         cache.store(request::TOOLS_LIST, None, &result, Requested(None));
-        cache.on_notification(notification::PROMPTS_LIST_CHANGED, None);
+        cache.on_notification(notification::PROMPTS_LIST_CHANGED);
         assert!(cache.get(request::PROMPTS_LIST, None).is_none());
         assert!(cache.get(request::TOOLS_LIST, None).is_some());
     }
 
     #[test]
-    fn resources_updated_invalidates_only_the_named_uri() {
+    fn resources_updated_invalidates_every_cached_read() {
         let cache = ResponseCache::default();
         let result = json!({ "ttlMs": 60_000 });
-        cache.store(
-            request::RESOURCES_READ,
-            Some("file:///a"),
-            &result,
-            Requested(None),
-        );
-        cache.store(
-            request::RESOURCES_READ,
-            Some("file:///b"),
-            &result,
-            Requested(None),
-        );
-        cache.on_notification(
-            notification::RESOURCES_UPDATED,
-            Some(&json!({ "uri": "file:///a" })),
-        );
-        assert!(
-            cache
-                .get(request::RESOURCES_READ, Some("file:///a"))
-                .is_none()
-        );
-        assert!(
-            cache
-                .get(request::RESOURCES_READ, Some("file:///b"))
-                .is_some()
-        );
+        for uri in ["file:///dir", "file:///dir/a", "file:///b"] {
+            cache.store(request::RESOURCES_READ, Some(uri), &result, Requested(None));
+        }
+        cache.store(request::RESOURCES_LIST, None, &result, Requested(None));
+        // An update for a sub-resource: the cached read of its parent holds it.
+        cache.on_notification(notification::RESOURCES_UPDATED);
+        for uri in ["file:///dir", "file:///dir/a", "file:///b"] {
+            assert!(
+                cache.get(request::RESOURCES_READ, Some(uri)).is_none(),
+                "{uri} is still cached"
+            );
+        }
+        // A resource changed, not the set of them.
+        assert!(cache.get(request::RESOURCES_LIST, None).is_some());
     }
 }

@@ -1087,7 +1087,7 @@ fn route_inbound(
             // Invalidate cached responses the notification obsoletes, then
             // hand it to the user's handler (default: ignore).
             if let Some(cache) = cache {
-                cache.on_notification(&n.method, n.params.as_ref());
+                cache.on_notification(&n.method);
             }
             if n.method == notification::TOOLS_LIST_CHANGED {
                 tools_generation.fetch_add(1, Ordering::AcqRel);

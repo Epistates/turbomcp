@@ -78,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parsed results, evicting the least used past that, and keeps none longer
   than an hour whatever its `ttlMs`. It held up to 1,024 results of any
   size, for as long as the server said. It's built on `moka` now.
+- **Behavior change:** a `resources/updated` notification makes every
+  cached `resources/read` stale. The client dropped only the read of the URI
+  the notification names, but that URI may be a sub-resource of one the
+  client read (a file in a directory, say), and the spec gives no rule for
+  telling which reads contain it. So a cached read could stay fresh for up to
+  an hour after what it returned had changed.
 - **Behavior change:** a task's wait between polls ends when the task's TTL
   does, so a `pollIntervalMs` far past the TTL no longer sleeps through it,
   and a task that asks the client for more than 1,024 inputs is given up.
