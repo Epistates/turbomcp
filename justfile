@@ -37,7 +37,7 @@ mcp_schema_root := env_var_or_default("MCP_SCHEMA_ROOT", "../reference/modelcont
 # `just --evaluate` and clones that exact ref, so a local `just codegen` and CI
 # cannot disagree about which schema is authoritative. Bump it deliberately when
 # adopting a new revision, after checking the code against what changed.
-mcp_schema_ref := "862397cec702e8f828713071da501cf56158e8fc"
+mcp_schema_ref := "024d5255eb4466ba4fab21e044b5ba84d6a79327"
 
 # Set shell for both unix and Windows environments
 set shell := ["sh", "-euc"]

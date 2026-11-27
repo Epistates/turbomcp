@@ -141,6 +141,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uuid 1.29. None of them appears in the public API.
 - The MSRV job no longer checks the unpublished codegen tool, which may need
   a newer Rust than the published crates.
+- Checked against the MCP spec as it stands (upstream `024d5255`,
+  2026-11-26), whose edits to the `2026-07-28` texts called for one change,
+  the cached-read invalidation above. The vendored `2026-07-28` schema takes
+  its reworded `PrimitiveSchemaDefinition` description; the generated types
+  are unchanged.
 
 ## [4.0.0-beta.1] - 2026-11-22
 
