@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0-beta.2] - 2026-11-29
+
 ### Upgrading from 4.0.0-beta.1
 
 - **The MSRV is 1.95** (it was 1.88). `VERSIONING.md` now says how it moves:

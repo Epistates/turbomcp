@@ -2654,7 +2654,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-client"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "async-trait",
  "futures",
@@ -2677,7 +2677,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-core"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "bytes",
  "hashbrown 0.17.2",
@@ -2704,7 +2704,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-protocol"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2713,7 +2713,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-server"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-service"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "base64",
  "futures",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-http"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "async-trait",
  "axum",

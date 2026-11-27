@@ -1,6 +1,6 @@
 # v4 documentation
 
-The current release is 4.0.0-beta.1, the API we intend to ship as 4.0.0. It
+The current release is 4.0.0-beta.2, the API we intend to ship as 4.0.0. It
 provides the server and typed client, three protocol revisions, stdio and
 Streamable HTTP (with WebSocket as a route on the same endpoint), OAuth on both
 sides, telemetry, Tasks, Server Cards, and the gateway (`turbomcp-proxy`, and

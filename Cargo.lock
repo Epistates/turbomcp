@@ -3902,7 +3902,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "axum",
  "criterion",
@@ -3932,7 +3932,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-auth"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -3958,7 +3958,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-cli"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -3976,7 +3976,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-client"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "async-trait",
  "futures",
@@ -4001,7 +4001,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-codegen"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -4014,7 +4014,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-core"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "bytes",
  "hashbrown 0.17.2",
@@ -4026,7 +4026,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-ext-tasks"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "async-trait",
  "futures",
@@ -4046,7 +4046,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-macros"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4057,7 +4057,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-protocol"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "jsonschema",
  "serde",
@@ -4067,7 +4067,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-proxy"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "async-trait",
  "futures",
@@ -4091,7 +4091,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-server"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4123,7 +4123,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-service"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "base64 0.23.1",
  "futures",
@@ -4141,7 +4141,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-telemetry"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "futures",
  "getrandom 0.4.3",
@@ -4168,7 +4168,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-http"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -4208,7 +4208,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-wire-check"
-version = "4.0.0-beta.1"
+version = "4.0.0-beta.2"
 dependencies = [
  "jsonschema",
  "parking_lot 0.13.0",

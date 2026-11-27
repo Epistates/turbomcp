@@ -4,7 +4,7 @@ Where TurboMCP is going, and what it is deliberately not doing. No dates —
 this is maintained around a day job, and a date I can't keep is worse than none.
 Order within a section is roughly the order things will be picked up.
 
-Current release: **`4.0.0-beta.1`**, the API we intend to ship as `4.0.0`
+Current release: **`4.0.0-beta.2`**, the API we intend to ship as `4.0.0`
 (see [VERSIONING.md](VERSIONING.md)). The stable line is `3.x`.
 
 ## Shipped
