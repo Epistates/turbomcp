@@ -176,6 +176,22 @@ async fn what_is_refused() {
         ),
         ("no-issuer", active(json!({ "iss": null }))),
         ("nobody", active(json!({ "sub": null }))),
+        // An empty subject would be one principal shared by every token
+        // that has it; a `sub` that is present names the caller, so an
+        // empty or non-string one is refused, not replaced by `client_id`.
+        ("empty-subject", active(json!({ "sub": "" }))),
+        (
+            "empty-subject-with-client",
+            active(json!({ "sub": "", "client_id": "ci-runner" })),
+        ),
+        (
+            "numeric-subject",
+            active(json!({ "sub": 42, "client_id": "ci-runner" })),
+        ),
+        (
+            "empty-client",
+            active(json!({ "sub": null, "client_id": "" })),
+        ),
     ];
     let v = validator(&url).with_required_issuer(ISSUER);
     for (token, answer) in cases {

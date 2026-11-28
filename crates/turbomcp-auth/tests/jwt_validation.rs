@@ -235,6 +235,20 @@ async fn missing_sub_is_rejected() {
     ));
 }
 
+/// An empty `sub` names nobody: accepted, every token carrying one would be
+/// the same principal (sessions, tasks, quotas and pooled upstreams all key
+/// on issuer and subject).
+#[tokio::test]
+async fn an_empty_sub_is_rejected() {
+    let rs = resource_server();
+    let mut claims = good_claims();
+    claims["sub"] = json!("");
+    assert!(matches!(
+        rs.authenticate(Some(&bearer(&sign(claims)))).await,
+        AuthDecision::Challenge { status: 401, .. }
+    ));
+}
+
 /// `kid` resolution: an unknown `kid` is a 401, and a `kid`-less token against
 /// a multi-key set is ambiguous and rejected rather than guessed.
 #[tokio::test]

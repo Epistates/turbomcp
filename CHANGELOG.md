@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Behavior change:** OAuth discovery tries at most 8 of the authorization
   servers a resource names. Each try is up to three fetches at hosts the
   resource's document picked.
+- **Behavior change:** the resource server refuses a bearer token whose
+  subject is empty (`401 invalid_token`): a JWT's `sub`, or an introspection
+  answer's `sub` (its `client_id`, for a client-credentials token with no
+  `sub`). Accepted, every such token from one issuer was the same
+  principal, so they shared sessions, tasks, quotas and the gateway's
+  per-principal upstream connections.
 - **Behavior change:** the client's `list_all_*` helpers refuse a
   `nextCursor` the listing already followed, where they caught only one
   repeating the cursor just sent (a server alternating two never ended), and

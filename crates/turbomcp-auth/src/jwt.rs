@@ -134,12 +134,15 @@ impl<S: JwkSource> BearerValidator for JwtValidator<S> {
     }
 }
 
-/// Build a principal from a validated claim set: `sub` is required; scopes come
-/// from the space-delimited `scope` string (RFC 8693) or the `scp` array.
+/// Build a principal from a validated claim set: a non-empty `sub` is
+/// required (an empty one would make every token carrying it one principal);
+/// scopes come from the space-delimited `scope` string (RFC 8693) or the `scp`
+/// array.
 fn principal_from_claims(claims: Map<String, Value>) -> Result<AuthPrincipal, AuthError> {
     let subject = claims
         .get("sub")
         .and_then(Value::as_str)
+        .filter(|sub| !sub.is_empty())
         .ok_or_else(|| AuthError::InvalidToken("token has no `sub` claim".to_owned()))?
         .to_owned();
     Ok(AuthPrincipal::new(subject, claims))

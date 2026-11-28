@@ -399,11 +399,14 @@ impl IntrospectionValidator {
             }
         }
         // A client-credentials token may name no user: its client is who
-        // the caller is.
+        // the caller is. A `sub` that is present names the caller, so it is
+        // never replaced by `client_id`; and an empty one names nobody, since
+        // every token carrying it would be one principal.
         let subject = claims
             .get("sub")
             .or_else(|| claims.get("client_id"))
             .and_then(Value::as_str)
+            .filter(|subject| !subject.is_empty())
             .ok_or_else(|| AuthError::InvalidToken("the token names no subject".into()))?
             .to_owned();
         Ok((AuthPrincipal::new(subject, claims), exp))
