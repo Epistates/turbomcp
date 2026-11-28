@@ -350,4 +350,28 @@ mod tests {
             ));
         }
     }
+
+    /// The two codecs' nesting limits differ on purpose (module docs): pinned
+    /// here so neither can drift unnoticed. `serde_json` refuses the 128th
+    /// nested array or object, `sonic-rs` the 255th.
+    #[test]
+    fn nesting_limits_are_pinned() {
+        fn nested(depth: usize) -> alloc::string::String {
+            "[".repeat(depth) + &"]".repeat(depth)
+        }
+        fn accepts<C: Codec>(codec: &C, depth: usize) -> bool {
+            codec
+                .decode::<serde_json::Value>(nested(depth).as_bytes())
+                .is_ok()
+        }
+        assert!(accepts(&SerdeJsonCodec, 127));
+        assert!(!accepts(&SerdeJsonCodec, 128));
+        #[cfg(all(feature = "simd", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            assert!(accepts(&SonicRsCodec, 254));
+            assert!(!accepts(&SonicRsCodec, 255));
+        }
+        // Far past either limit, both refuse without exhausting the stack.
+        assert!(!accepts(&DefaultCodec::default(), 100_000));
+    }
 }
