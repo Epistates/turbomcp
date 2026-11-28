@@ -12,6 +12,11 @@
 //! All codecs are version-independent: they serialize whatever
 //! [`serde::Serialize`] value they are given. The per-version typed modules and
 //! the [`JsonRpcMessage`] envelope sit above this layer.
+//!
+//! The two decode the same frames, with one exception: how deep a frame may
+//! nest. `serde_json` refuses the 128th nested array or object, and `sonic-rs`
+//! the 255th, so a frame nested 128 to 254 deep decodes only under
+//! `SonicRsCodec`. Both limits keep a decode well within a worker's stack.
 
 use alloc::string::{String, ToString};
 

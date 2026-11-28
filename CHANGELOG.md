@@ -119,6 +119,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- The codec docs say where the two codecs differ: `serde_json` refuses a
+  frame nested 128 deep and `sonic-rs` (feature `simd`) one nested 255
+  deep, so a frame nested between the two decodes only in a `simd` build.
 - The CHANGELOG's "Upgrading from 4.0.0-alpha.5" list and MIGRATION.md (a new
   "alpha.5 to alpha.6" section) name the two changes that compile unchanged:
   cooperative cancellation by default, and the 2-second grace when standard
