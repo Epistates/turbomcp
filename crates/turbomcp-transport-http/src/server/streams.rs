@@ -19,30 +19,6 @@ use turbomcp_service::RateKey;
 
 use super::reject::{service_unavailable, too_many_streams};
 
-/// The request slot a request was admitted on. The admission middleware puts
-/// one on every request and holds it until the response body ends; a
-/// handler whose response is a long-lived stream [releases](Self::release)
-/// it once the stream has its own [`StreamSlot`].
-#[derive(Clone)]
-pub(super) struct Admission(Arc<Mutex<Option<OwnedSemaphorePermit>>>);
-
-impl Admission {
-    pub(super) fn new(permit: OwnedSemaphorePermit) -> Self {
-        Self(Arc::new(Mutex::new(Some(permit))))
-    }
-
-    /// Give the request slot back.
-    pub(super) fn release(&self) {
-        self.0.lock().take();
-    }
-
-    /// Take the request slot to hold elsewhere: a call that runs on a task of
-    /// its own keeps it until the call ends, not until the response does.
-    pub(super) fn take(&self) -> Option<OwnedSemaphorePermit> {
-        self.0.lock().take()
-    }
-}
-
 /// How many streams each caller has open.
 type OpenCounts = Arc<Mutex<HashMap<RateKey, usize>>>;
 

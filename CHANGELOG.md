@@ -100,6 +100,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   POST the server hasn't answered within `HttpClientLimits::body_timeout`
   (30 s by default). Each one held its task and connection for the life of
   the transport.
+- **Behavior change:** an HTTP call keeps its place under
+  `HttpConfig::with_max_in_flight` until its handler actually ends, also
+  when the call was abandoned: its client hung up, or `call_timeout`
+  answered it. Under the default, cooperative cancellation the handler is
+  told and runs on until it stops, and its place used to be given back at
+  once, so a client could start a slow call, hang up, and start another,
+  running more at once than the limit allows.
 - The OAuth session forgets prompt counts older than their window, so a
   server naming a new scope set on every challenge doesn't grow them.
 - A tool the server doesn't list makes the client list the tools once per

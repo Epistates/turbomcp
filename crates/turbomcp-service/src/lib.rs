@@ -26,6 +26,7 @@
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod admission;
 mod auth;
 mod error;
 mod host;
@@ -69,6 +70,7 @@ pub use turbomcp_core::CancellationToken;
 /// each other at exactly the same version.
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::admission::Admission;
     pub use crate::host::close_then_shut_down;
     pub mod mcp_headers {
         pub use crate::mcp_headers::*;
