@@ -777,6 +777,7 @@ async fn handle<S: McpServerCore>(
             let ext = ext.with(lifetime);
             let call_timeout = shared.call_timeout;
             let abort_on_cancel = shared.cancellation == Cancellation::Abort;
+            let admission = ext.get::<turbomcp_service::__private::Admission>().cloned();
             let id = req.id.clone();
             let call = {
                 let cancel = cancel.clone();
@@ -791,7 +792,10 @@ async fn handle<S: McpServerCore>(
                 // request abandoned by dropping this future (an HTTP client
                 // disconnecting, the call limit) fires its token, as a
                 // `notifications/cancelled` does, instead of cutting the
-                // handler off at whatever `.await` it had reached.
+                // handler off at whatever `.await` it had reached. Its task
+                // takes the request's admission slot, so a handler running
+                // on after its request was abandoned still counts against
+                // the transport's in-flight limit until it ends.
                 // The request's span goes with it, so its logs and
                 // telemetry stay the request's.
                 let mut call = Box::pin(tracing::Instrument::instrument(
@@ -809,7 +813,11 @@ async fn handle<S: McpServerCore>(
                         abandoned.disarm();
                         return out;
                     }
-                    let task = tokio::spawn(call);
+                    let held = admission.as_ref().and_then(|slot| slot.take());
+                    let task = tokio::spawn(async move {
+                        let _held = held;
+                        call.await
+                    });
                     let out = task.await;
                     abandoned.disarm();
                     match out {

@@ -60,7 +60,8 @@ use reject::{
     unsupported_media_type_rejection, version_header_rejection,
 };
 use sse::{AbortOnDrop, Outlet, SSE_CHANNEL_CAPACITY, request_stream, sse_response};
-use streams::{Admission, StreamBudget, StreamSlot};
+use streams::{StreamBudget, StreamSlot};
+use turbomcp_service::__private::Admission;
 use validate::{
     declared_version, message_has_version, request_id, validate_request_headers, version_header,
 };
@@ -317,6 +318,16 @@ fn card_routes(
 /// has been streamed out, unless the handler hands it back because the
 /// response is a long-lived stream with a slot of its own (see
 /// [`Admission`]).
+/// Gives a request's slot back when the call's task ends, however it ends,
+/// unless a handler running on past the call has taken it.
+struct ReleaseOnDrop(Admission);
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
 async fn admit(
     admission: Arc<tokio::sync::Semaphore>,
     request_timeout: Duration,
@@ -1067,10 +1078,14 @@ where
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
         return protocol_error_response(&e, Some(request_id));
     }
-    let call = catch_handler_panic(Some(request_id.clone()), svc.call(request));
     // The request slot goes with the call, so a call that outlives its
-    // response still counts against `max_concurrent_requests`.
-    let slot = admission.take();
+    // response still counts against `max_concurrent_requests`, and with the
+    // request: a handler that runs on after the call was abandoned takes it
+    // (see `Admission`). The call's task gives it back when it ends, if
+    // nothing took it.
+    request.extensions.insert(admission.clone());
+    let call = catch_handler_panic(Some(request_id.clone()), svc.call(request));
+    let slot = ReleaseOnDrop(admission.clone());
     // The call's outcome travels apart from its mid-flight messages, so a
     // protocol error keeps its HTTP status (404 for an unknown session, 503
     // for a store outage). The channel closes exactly when the task ends (the
@@ -1149,8 +1164,9 @@ where
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
         return protocol_error_response(&e, Some(request_id));
     }
+    request.extensions.insert(admission.clone());
     let call = catch_handler_panic(Some(request_id.clone()), svc.call(request));
-    let slot = admission.take();
+    let slot = ReleaseOnDrop(admission.clone());
     let (attached, mut events) = tokio::sync::mpsc::channel(SSE_CHANNEL_CAPACITY);
     let (recorder, publisher) = state.resumable.open_held(store, &session, attached);
     let stream = publisher.id().to_owned();
